@@ -1,0 +1,8 @@
+server:
+  # 8080 collides with the benchmark oracle, 9191 with oMLX, 8765 with agentbench-service itself.
+  port: 8800
+
+agentbench:
+  service:
+    # The FastAPI service from agentbench-trading-service (AB_SERVICE_PORT).
+    base-url: http://127.0.0.1:8765

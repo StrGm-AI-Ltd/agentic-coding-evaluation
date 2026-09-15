@@ -1,0 +1,9 @@
+.gradle/
+build/
+node_modules/
+src/main/frontend/generated/
+frontend/generated/
+.idea/
+*.iml
+.vscode/
+.DS_Store
