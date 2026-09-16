@@ -68,11 +68,12 @@ standalone `/file-view` route — JSON pretty-printed, **JSONL rendered one pret
 line** (all-or-nothing: a broken line keeps the file verbatim), everything else verbatim,
 with a raw link back to the service. Binary files link straight out to the service.
 
-The job page mirrors the original's two transports: a 2 s poll of `/api/jobs/{id}` drives
-status and actions, and the same `/jobs/{id}/events` SSE stream the Jinja page's EventSource
-uses feeds the live panel server-side — parsed events accumulate in `JobLiveState` and flush
-to the browser through @Push (no client-side JavaScript). One difference: the SSE stream
-carries step ids but not the plan's task titles, so the panel shows ids only. Task and model pickers suggest values seen in imported runs plus free
+The job page mirrors the original's two transports: a 2 s poll of `/api/jobs/{id}` and the same
+`/jobs/{id}/events` SSE stream the Jinja page's EventSource uses feed a **build-once** page —
+events update individual fields through @Push, never rebuilding the DOM, so focus and text
+selection survive live updates. One difference: the SSE stream carries step ids but not the
+plan's task titles, so the live panel shows ids only. The queue's experiment status is derived
+from its jobs (the service never writes `running` to the experiments table). Task and model pickers suggest values seen in imported runs plus free
 text (the service does not expose its rung ladder or oMLX model list over JSON; the server
 re-validates everything). Remaining service-only surface: the SSE log tail stream.
 
@@ -80,13 +81,16 @@ re-validates everything). Remaining service-only surface: the SSE log tail strea
 
 ```sh
 ./gradlew build      # compiles + Vaadin production frontend bundle
-./gradlew test       # 64 deterministic, service-independent tests (unit + stub-server wire tests)
-./gradlew testLive   # 3 live wire-mapping tests against the running service (skipped if it is down,
+./gradlew test       # 139 deterministic, service-independent tests (unit + stub-server wire tests)
+./gradlew testLive   # 5 live wire-mapping tests against the running service (skipped if it is down,
                      # override with -Dagentbench.service.base-url=…)
 ```
 
 The default `test` task is fully offline: the wire tier runs against an in-process stub HTTP
 server (com.sun.net.httpserver, no extra dependencies), covering every endpoint, both POST body
-shapes (`/api/jobs`, `/api/experiments`), the 422/404 error paths and the read-timeout budget.
-View-level logic (job spec/experiment param normalization, status→action mapping, file listing,
-path guards, badge/format rules) is extracted into pure classes and unit-tested directly.
+shapes (`/api/jobs`, `/api/experiments`), the 422/404 error paths, the read-timeout budget, and
+SSE delivery + abort-on-detach. View-level logic (job spec/experiment param normalization,
+status→action mapping, live-state accumulation, comparison verdict cards, file listing, path
+guards, badge/format rules, the SSE retry loop, serialization round-trip) is extracted into
+pure classes and unit-tested directly, including concurrency (the live state is written by the
+SSE thread while the UI thread reads snapshots).

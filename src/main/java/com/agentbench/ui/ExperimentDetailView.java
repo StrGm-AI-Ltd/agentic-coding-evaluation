@@ -3,8 +3,6 @@ package com.agentbench.ui;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
-import com.vaadin.flow.component.html.H1;
-import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
@@ -18,7 +16,9 @@ import com.vaadin.flow.router.RouterLink;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import tools.jackson.databind.JsonNode;
 
 /** Experiment detail — the UI twin of GET /api/experiments/{id}: params and its arm × repeat jobs. */
 @Route(value = "experiments/:experimentId", layout = MainLayout.class)
@@ -46,20 +46,20 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
     private void render() {
         removeAll();
         if (experimentId < 0) {
-            add(new H3("Experiment"), Panels.error("No valid experiment id in the URL."));
+            add(new com.vaadin.flow.component.html.H2("Experiment"), Panels.error("No valid experiment id in the URL."));
             return;
         }
         Api.Experiment experiment;
         try {
             experiment = client.experiment(experimentId);
         } catch (Exception e) {
-            add(new H3("Experiment #" + experimentId), Panels.error(client.errorText(e)));
+            add(new com.vaadin.flow.component.html.H2("Experiment #" + experimentId), Panels.error(client.errorText(e)));
             return;
         }
 
         add(new RouterLink("← Experiments", ExperimentsView.class));
 
-        H1 title = new H1(experiment.name());
+        com.vaadin.flow.component.html.H2 title = new com.vaadin.flow.component.html.H2(experiment.name());
         title.getStyle().set("margin", "4px 0").set("font-size", "1.6em");
         add(title);
 
@@ -104,9 +104,7 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
             add(blockedPanel);
         }
 
-        H3 jobsTitle = new H3("Jobs (" + jobs.size() + ")");
-        jobsTitle.getStyle().set("margin", "16px 0 4px 0");
-        add(jobsTitle);
+        add(Panels.sectionTitle("Jobs (" + jobs.size() + ")"));
 
         Grid<Api.ExperimentJob> grid = new Grid<>(Api.ExperimentJob.class, false);
         grid.addColumn(Api.ExperimentJob::id).setHeader("#").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
@@ -123,6 +121,8 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         grid.setItems(jobs);
         grid.setAllRowsVisible(true);
         add(grid);
+
+        addComparison(experiment);
     }
 
     private static com.vaadin.flow.component.badge.Badge statusBadge(Api.ExperimentJob job,
@@ -168,6 +168,95 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
             }
         }
         return failures.isEmpty() ? null : String.join("\n", failures);
+    }
+
+    /** One comparison verdict card, as rendered from experiments.comparison (M3). */
+    record ComparisonCard(String label, String calloutKind, String calloutText, String printed) {
+    }
+
+    /**
+     * Extracts the verdict cards from the experiment's comparison JSON — the twin of
+     * experiment_detail.html's Comparison section: error/refused callouts, the
+     * A − B diff · 90 % CI · p-value · supported/not-supported verdict, or the empty case.
+     */
+    static List<ComparisonCard> comparisonCards(JsonNode comparison) {
+        List<ComparisonCard> cards = new ArrayList<>();
+        if (comparison == null || !comparison.isObject()) {
+            return cards;
+        }
+        comparison.propertyNames().stream().sorted().forEach(label -> {
+            JsonNode c = comparison.get(label);
+            String title = label.replace("_vs_", " vs ");
+            String printed = Fmt.textOr(c.path("printed"), null);
+
+            JsonNode error = c.path("error");
+            if (!error.isMissingNode() && !error.isNull()) {
+                cards.add(new ComparisonCard(title, "warn", Fmt.textOr(error, ""), printed));
+                return;
+            }
+            JsonNode refused = c.path("refused");
+            if (!refused.isMissingNode() && !refused.isNull()) {
+                cards.add(new ComparisonCard(title, "error", "stats.py refused: " + Fmt.textOr(refused, ""), printed));
+                return;
+            }
+            JsonNode cmp = c.path("result").path("compare");
+            if (cmp.isObject()) {
+                double diff = cmp.path("diff").asDouble(0);
+                double p = cmp.path("p").asDouble(1);
+                String text = "A − B = " + Fmt.num(diff) + " " + Fmt.textOr(cmp.path("metric"), "")
+                        + " points · 90% CI [" + Fmt.num(cmp.path("ci90").path(0).asDouble())
+                        + ", " + Fmt.num(cmp.path("ci90").path(1).asDouble()) + "] · p = "
+                        + String.format(Locale.ROOT, "%.3f", p) + " · "
+                        + (p < 0.10 ? "supported (p < 0.10)" : "not supported at α = 0.10");
+                cards.add(new ComparisonCard(title, p < 0.10 ? "good" : "muted", text, printed));
+                return;
+            }
+            cards.add(new ComparisonCard(title, "warn",
+                    "No comparison: one side had no comparable runs after exclusions.", printed));
+        });
+        return cards;
+    }
+
+    private void addComparison(Api.Experiment experiment) {
+        add(Panels.sectionTitle("Comparison"));
+        if (!"finished".equals(experiment.status())) {
+            Span note = new Span("Computed automatically once every job above is terminal.");
+            note.getStyle().set("color", "var(--lumo-secondary-text-color)");
+            add(note);
+            return;
+        }
+        List<ComparisonCard> cards = comparisonCards(experiment.comparison());
+        if (cards.isEmpty()) {
+            Span note = new Span("No comparison recorded.");
+            note.getStyle().set("color", "var(--lumo-secondary-text-color)");
+            add(note);
+            return;
+        }
+        for (ComparisonCard card : cards) {
+            VerticalLayout cardLayout = new VerticalLayout();
+            cardLayout.setPadding(false);
+            cardLayout.setSpacing(true);
+            cardLayout.getStyle()
+                    .set("border", "1px solid var(--lumo-contrast-20pct)")
+                    .set("border-radius", "8px")
+                    .set("padding", "12px 16px")
+                    .set("margin", "6px 0");
+            Span header = new Span(card.label());
+            header.getStyle().set("font-weight", "600");
+            cardLayout.add(header);
+            switch (card.calloutKind()) {
+                case "good" -> cardLayout.add(Panels.callout("var(--lumo-success-color)",
+                        "var(--lumo-success-color-10pct)", new Span(card.calloutText())));
+                case "error" -> cardLayout.add(Panels.error(card.calloutText()));
+                case "warn" -> cardLayout.add(Panels.warn(card.calloutText()));
+                default -> cardLayout.add(new Span(card.calloutText()));
+            }
+            if (card.printed() != null && !card.printed().isBlank()) {
+                cardLayout.add(new com.vaadin.flow.component.details.Details("stats.py output",
+                        Panels.mono(card.printed())));
+            }
+            add(cardLayout);
+        }
     }
 
     private String metaLine(Api.Experiment experiment) {

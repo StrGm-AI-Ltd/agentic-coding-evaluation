@@ -52,6 +52,21 @@ class FilesBrowserTest {
         assertEquals(List.of(), FilesBrowser.listFiles("/definitely/not/a/real/dir"));
     }
 
+    /** The size column's display and sort key (T-9a). */
+    @Test
+    void sizeOf_formatsBytesKiBMiB() throws IOException {
+        write(dir.resolve("a.json"), "x".repeat(512));
+        write(dir.resolve("b.json"), "x".repeat(2048));
+        write(dir.resolve("c.json"), "x".repeat(3 * 1024 * 1024));
+        assertEquals("512 B", FilesBrowser.sizeOf(dir.toString(), "a.json"));
+        assertEquals("2.0 KiB", FilesBrowser.sizeOf(dir.toString(), "b.json"));
+        assertEquals("3.0 MiB", FilesBrowser.sizeOf(dir.toString(), "c.json"));
+        assertEquals("–", FilesBrowser.sizeOf(dir.toString(), "missing.json"),
+                "missing files format as – and sort last via sizeOr");
+        assertEquals(Long.MAX_VALUE, FilesBrowser.sizeOr(dir.toString(), "missing.json"));
+        assertEquals(2048L, FilesBrowser.sizeOr(dir.toString(), "b.json"));
+    }
+
     @Test
     void isText_suffixMatrix() {
         for (String text : new String[]{".md", ".log", ".json", ".jsonl", ".txt", ".yaml", ".yml"}) {

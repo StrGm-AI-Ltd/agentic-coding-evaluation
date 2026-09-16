@@ -5,7 +5,6 @@ import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.Div;
-import com.vaadin.flow.component.html.H4;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 
 import java.io.IOException;
@@ -37,9 +36,7 @@ public class FilesBrowser extends VerticalLayout {
         setPadding(false);
         setSpacing(false);
 
-        H4 title = new H4("Files");
-        title.getStyle().set("margin", "16px 0 4px 0");
-        add(title);
+        add(Panels.sectionTitle("Files"));
 
         List<String> files = listFiles(resultsDir);
         if (files.isEmpty()) {

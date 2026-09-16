@@ -4,9 +4,7 @@ import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.Anchor;
-import com.vaadin.flow.component.html.H1;
 import com.vaadin.flow.component.html.H3;
-import com.vaadin.flow.component.html.H4;
 import com.vaadin.flow.component.html.ListItem;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.html.UnorderedList;
@@ -71,7 +69,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
     private void render(Api.Run run) {
         add(new RouterLink("← Runs", RunsView.class));
 
-        H1 title = new H1(run.run_id());
+        com.vaadin.flow.component.html.H2 title = new com.vaadin.flow.component.html.H2(run.run_id());
         title.getStyle().set("margin", "4px 0").set("font-size", "1.6em");
         add(title);
 
@@ -235,7 +233,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     private void addChecks(List<Api.Check> checks) {
-        add(sectionTitle("Checks"));
+        add(Panels.sectionTitle("Checks"));
         Grid<Api.Check> grid = new Grid<>(Api.Check.class, false);
         grid.addColumn(Api.Check::check_id).setHeader("id").setAutoWidth(true);
         grid.addColumn(Api.Check::category).setHeader("category").setAutoWidth(true);
@@ -251,17 +249,16 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         add(grid);
     }
 
-    private record PerTaskRow(String tid, String reported, String doneVerified, Long requests,
+    record PerTaskRow(String tid, String reported, String doneVerified, Long requests,
             Long tokens, Long maxPrompt, Double wall, String filesChanged, String overBudget) {
     }
 
-    /** The metrics.per_task table from the Jinja2 run page (V-4). */
-    private void addPlanTasks(JsonNode metrics) {
+    /** The metrics.per_task table rows (T-7) — pure, tested against real-shape fixtures. */
+    static List<PerTaskRow> perTaskRows(JsonNode metrics) {
         JsonNode perTask = metrics == null ? null : metrics.get("per_task");
         if (perTask == null || !perTask.isObject() || perTask.isEmpty()) {
-            return;
+            return List.of();
         }
-        add(sectionTitle("Plan tasks"));
         List<PerTaskRow> rows = new ArrayList<>();
         perTask.propertyNames().stream().sorted().forEach(tid -> {
             JsonNode t = perTask.get(tid);
@@ -276,6 +273,16 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
                     t.path("files_changed").isNumber() ? String.valueOf(t.path("files_changed").intValue()) : "–",
                     t.path("over_budget").asBoolean(false) ? "yes" : ""));
         });
+        return rows;
+    }
+
+    /** The metrics.per_task table from the Jinja2 run page (V-4). */
+    private void addPlanTasks(JsonNode metrics) {
+        List<PerTaskRow> rows = perTaskRows(metrics);
+        if (rows.isEmpty()) {
+            return;
+        }
+        add(Panels.sectionTitle("Plan tasks"));
         Grid<PerTaskRow> grid = new Grid<>(PerTaskRow.class, false);
         grid.addColumn(PerTaskRow::tid).setHeader("task").setAutoWidth(true);
         grid.addColumn(PerTaskRow::reported).setHeader("reported").setAutoWidth(true);
@@ -296,21 +303,30 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         add(grid);
     }
 
-    private record StepRow(String sid, Double scorePct, boolean measured) {
+    record StepRow(String sid, Double scorePct, boolean measured) {
     }
 
-    /** The metrics.steps table from the Jinja2 run page (V-4). */
-    private void addStepScores(JsonNode metrics) {
+    /** The metrics.steps table rows (T-7) — pure, tested against real-shape fixtures. */
+    static List<StepRow> stepRows(JsonNode metrics) {
         JsonNode steps = metrics == null ? null : metrics.get("steps");
         if (steps == null || !steps.isObject() || steps.isEmpty()) {
-            return;
+            return List.of();
         }
-        add(sectionTitle("Per-step scores"));
         List<StepRow> rows = new ArrayList<>();
         steps.propertyNames().stream().sorted().forEach(sid -> {
             JsonNode s = steps.get(sid);
             rows.add(new StepRow(sid, doubleOrNull(s.path("score_pct")), s.path("measured").asBoolean(true)));
         });
+        return rows;
+    }
+
+    /** The metrics.steps table from the Jinja2 run page (V-4). */
+    private void addStepScores(JsonNode metrics) {
+        List<StepRow> rows = stepRows(metrics);
+        if (rows.isEmpty()) {
+            return;
+        }
+        add(Panels.sectionTitle("Per-step scores"));
         Grid<StepRow> grid = new Grid<>(StepRow.class, false);
         grid.addColumn(StepRow::sid).setHeader("step").setAutoWidth(true);
         grid.addColumn(r -> Fmt.pct(r.scorePct())).setHeader("score %").setTextAlign(ColumnTextAlign.END)
@@ -324,7 +340,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
     /** The provenance block from the Jinja2 run page (V-4) — values may be objects
      * (e.g. quantization is an 11-property map in real manifests), so never asText() them. */
     private void addProvenance(Api.Run run) {
-        add(sectionTitle("Provenance"));
+        add(Panels.sectionTitle("Provenance"));
         VerticalLayout provenance = new VerticalLayout();
         provenance.setPadding(false);
         provenance.setSpacing(false);
@@ -366,12 +382,6 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
             lines.add("results: " + resultsDir);
         }
         return lines;
-    }
-
-    private static H4 sectionTitle(String title) {
-        H4 header = new H4(title);
-        header.getStyle().set("margin", "16px 0 4px 0");
-        return header;
     }
 
     private static Long longOrNull(JsonNode node) {

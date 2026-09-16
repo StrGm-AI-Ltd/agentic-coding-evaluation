@@ -3,7 +3,6 @@ package com.agentbench.ui;
 import com.vaadin.flow.component.dependency.CssImport;
 import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.Div;
-import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.router.BeforeEnterEvent;
@@ -43,14 +42,14 @@ public class FileViewerView extends VerticalLayout implements BeforeEnterObserve
     private void render(String runId, String path) {
         removeAll();
         if (runId == null || runId.isBlank() || path == null || path.isBlank()) {
-            add(new H3("File viewer"), Panels.error("URL needs ?run=<run id>&path=<file>"));
+            add(new com.vaadin.flow.component.html.H2("File viewer"), Panels.error("URL needs ?run=<run id>&path=<file>"));
             return;
         }
         try {
             String content = client.runFileText(runId, path);
             add(new FileViewerContent(runId, path, content));
         } catch (Exception e) {
-            add(new H3(runId + " — " + path));
+            add(new com.vaadin.flow.component.html.H2(runId + " — " + path));
             add(Panels.error(client.errorText(e)));
         }
     }
@@ -62,7 +61,7 @@ public class FileViewerView extends VerticalLayout implements BeforeEnterObserve
             setSpacing(false);
             setSizeFull();
 
-            H3 title = new H3(runId + " — " + path);
+            com.vaadin.flow.component.html.H2 title = new com.vaadin.flow.component.html.H2(runId + " — " + path);
             title.getStyle().set("margin", "0 0 4px 0").set("font-size", "1.2em");
             add(title);
 

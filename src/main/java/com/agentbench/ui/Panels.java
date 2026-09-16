@@ -29,6 +29,13 @@ public final class Panels {
         return div;
     }
 
+    /** The one section-title helper (m15): consistent H3 rhythm across the app. */
+    public static com.vaadin.flow.component.html.H3 sectionTitle(String title) {
+        com.vaadin.flow.component.html.H3 header = new com.vaadin.flow.component.html.H3(title);
+        header.getStyle().set("margin", "16px 0 4px 0");
+        return header;
+    }
+
     private static Div panel(String text, String edge, String background) {
         Div div = new Div();
         div.setText(text);
