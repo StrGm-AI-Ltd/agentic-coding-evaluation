@@ -118,13 +118,16 @@ public class ExperimentNewView extends VerticalLayout {
         add(errors);
 
         add(Forms.section("Experiment",
-                Forms.row(name, template, k),
+                Forms.row(name, template, k, model),
                 Forms.row(taskWall, taskTokens, contextWindow, noContextProbe)));
 
+        // NB: Vaadin components have exactly ONE parent — a shared field must live in
+        // one section only (this bug shipped the model picker away from harness_effect
+        // when it was added to two sections).
         harnessEffectSection.setPadding(false);
         harnessEffectSection.setSpacing(false);
         harnessEffectSection.add(Forms.section("Arms (harness_effect)",
-                Forms.row(model, orch, mono, monoRules, par),
+                Forms.row(orch, mono, monoRules, par),
                 Forms.row(parallel)));
         modelAbSection.setPadding(false);
         modelAbSection.setSpacing(false);
@@ -133,7 +136,7 @@ public class ExperimentNewView extends VerticalLayout {
         agentAbSection.setPadding(false);
         agentAbSection.setSpacing(false);
         agentAbSection.add(Forms.section("Agents (agent_ab)",
-                Forms.row(model, agentMode, agentA, agentB)));
+                Forms.row(agentMode, agentA, agentB)));
         add(harnessEffectSection, modelAbSection, agentAbSection);
 
         add(Forms.section("Reviewers (all templates)",
@@ -172,9 +175,15 @@ public class ExperimentNewView extends VerticalLayout {
 
     private void updateVisibility() {
         String value = template.getValue();
+        model.setVisible(modelPickerVisible(value)); // shared by harness_effect and agent_ab
         harnessEffectSection.setVisible("harness_effect".equals(value));
         modelAbSection.setVisible("model_ab".equals(value));
         agentAbSection.setVisible("agent_ab".equals(value));
+    }
+
+    /** The single model picker serves every template except model_ab (A/B pair). */
+    static boolean modelPickerVisible(String template) {
+        return !"model_ab".equals(template);
     }
 
     private void loadSuggestions() {
