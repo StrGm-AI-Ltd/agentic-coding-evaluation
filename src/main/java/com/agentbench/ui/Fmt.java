@@ -101,4 +101,9 @@ public final class Fmt {
         return Comparator.comparing(timeGetter.andThen(Fmt::parseTime),
                 Comparator.nullsLast(Comparator.naturalOrder()));
     }
+
+    /** Sort comparator for any nullable comparable column value; absent values last. */
+    public static <T, V extends Comparable<? super V>> Comparator<T> nullsLast(Function<T, V> valueGetter) {
+        return Comparator.comparing(valueGetter, Comparator.nullsLast(Comparator.naturalOrder()));
+    }
 }

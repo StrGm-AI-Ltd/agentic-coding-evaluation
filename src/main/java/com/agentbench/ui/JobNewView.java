@@ -92,7 +92,7 @@ public class JobNewView extends VerticalLayout {
 
         reasoning.setPlaceholder("default=high (or step=low,review=high)");
         phases.setPlaceholder("definition,plan,t1,t2 (comma list)");
-        parallel.setPlaceholder("auto, or 2–99");
+        parallel.setPlaceholder("auto, or 1–99");
         manageDocker.setValue(true);
         priority.setValue(0);
         taskWall.setMin(1);

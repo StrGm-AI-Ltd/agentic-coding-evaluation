@@ -3,6 +3,10 @@ package com.agentbench.ui;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.ResourceAccessException;
 
+import java.util.Comparator;
+import java.util.List;
+import java.util.Objects;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -39,6 +43,33 @@ class JobDetailViewTest {
                 "network trouble: do not offer a link we could not verify");
     }
 
+    /**
+     * The fixed live-requests ClassCastException, pinned as a regression: every
+     * comparator must sort rows with null fields without throwing, nulls last.
+     */
+    @Test
+    void requestRowComparators_sortNullFieldsWithoutThrowing() {
+        List<JobLiveState.RequestRow> rows = List.of(
+                new JobLiveState.RequestRow(null, null, null, null, null, false),
+                new JobLiveState.RequestRow("2026-09-15T02:00:00Z", 500, 1.5, 0.5, 10L, false),
+                new JobLiveState.RequestRow("2026-09-14T23:00:00+01:00", 404, null, null, null, true));
+        java.util.function.Consumer<Comparator<JobLiveState.RequestRow>> sortAll =
+                by -> rows.stream().sorted(by).forEach(r -> r.status()); // any terminal op forces the sort
+        sortAll.accept(JobDetailView.REQUESTS_BY_STATUS);
+        sortAll.accept(JobDetailView.REQUESTS_BY_LATENCY);
+        sortAll.accept(JobDetailView.REQUESTS_BY_TTFT);
+        sortAll.accept(JobDetailView.REQUESTS_BY_TOKENS);
+
+        List<String> byTs = rows.stream().sorted(JobDetailView.REQUESTS_BY_TS)
+                .map(r -> r.ts() == null ? "null" : r.ts()).toList();
+        assertEquals(List.of("2026-09-14T23:00:00+01:00", "2026-09-15T02:00:00Z", "null"),
+                byTs, "chronological across formats, absent last");
+
+        List<Integer> byStatusNullsLast = rows.stream().sorted(JobDetailView.REQUESTS_BY_STATUS)
+                .map(JobLiveState.RequestRow::status).filter(Objects::nonNull).toList();
+        assertEquals(List.of(404, 500), byStatusNullsLast);
+    }
+
     /** The 2026-09-16 confusing-hint fix: the message explains the job's own state. */
     @Test
     void notImportedHint_isStateAware() {
@@ -49,8 +80,8 @@ class JobDetailViewTest {
                 JobDetailView.runNotImportedHint("queued"));
         assertEquals(JobDetailView.runNotImportedHint("running"),
                 JobDetailView.runNotImportedHint("waiting_lock"));
-        assertEquals(JobDetailView.runNotImportedHint("running"),
-                JobDetailView.runNotImportedHint("blocked"));
+        assertTrue(JobDetailView.runNotImportedHint("blocked").startsWith("this job is blocked"),
+                "blocked jobs need a requeue, not a wait — their own message since n20");
 
         assertEquals("this job ended without a scored result — such runs are never imported",
                 JobDetailView.runNotImportedHint("cancelled"));

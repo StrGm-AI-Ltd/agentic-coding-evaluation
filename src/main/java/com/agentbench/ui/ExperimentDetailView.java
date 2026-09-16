@@ -63,17 +63,24 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         title.getStyle().set("margin", "4px 0").set("font-size", "1.6em");
         add(title);
 
-        HorizontalLayout statusLine = new HorizontalLayout(Badges.status(experiment.status()));
+        List<Api.ExperimentJob> jobs = experiment.jobs() == null ? List.of() : experiment.jobs();
+        String effectiveStatus = ExperimentStatuses.effective(experiment.status(),
+                jobs.stream().map(Api.ExperimentJob::status).toList());
+        HorizontalLayout statusLine = new HorizontalLayout(Badges.status(effectiveStatus));
         statusLine.setPadding(false);
         statusLine.setSpacing(true);
         statusLine.getStyle().set("margin", "4px 0");
+        if (!effectiveStatus.equals(experiment.status())) {
+            Span raw = new Span("(table status: " + experiment.status() + " — derived from its jobs)");
+            raw.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em");
+            statusLine.add(raw);
+        }
         statusLine.add(new Span(metaLine(experiment)));
         add(statusLine);
 
         add(new Span("Parameters"));
         add(Panels.mono(Fmt.json(experiment.params())));
 
-        List<Api.ExperimentJob> jobs = experiment.jobs() == null ? List.of() : experiment.jobs();
         Map<Long, String> blockedReasons = blockedReasons(client, jobs);
         long blockedCount = jobs.stream().filter(j -> "blocked".equals(j.status())).count();
         if (blockedCount > 0) {
@@ -106,12 +113,12 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         grid.addColumn(job -> job.arm() == null ? "–" : job.arm()).setHeader("arm").setAutoWidth(true);
         grid.addColumn(job -> job.repeat() == null ? "–" : "r" + job.repeat())
                 .setHeader("repeat").setAutoWidth(true);
-        grid.addColumn(new ComponentRenderer<>(job -> Links.runLink(job.run_id())))
+        grid.addColumn(new ComponentRenderer<>(job -> Links.runToJobLink(job.run_id(), job.id())))
                 .setHeader("run").setAutoWidth(true)
-                .setSortable(true).setComparator(Comparator.comparing(Api.ExperimentJob::run_id));
+                .setSortable(true).setComparator(Fmt.nullsLast(Api.ExperimentJob::run_id));
         grid.addColumn(new ComponentRenderer<>(job -> statusBadge(job, blockedReasons)))
                 .setHeader("status").setAutoWidth(true)
-                .setSortable(true).setComparator(Comparator.comparing(Api.ExperimentJob::status));
+                .setSortable(true).setComparator(Fmt.nullsLast(Api.ExperimentJob::status));
         grid.addColumn(Api.ExperimentJob::result_line).setHeader("result").setFlexGrow(1);
         grid.setItems(jobs);
         grid.setAllRowsVisible(true);

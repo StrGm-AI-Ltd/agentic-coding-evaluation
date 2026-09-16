@@ -20,7 +20,7 @@ public class GroupCard extends VerticalLayout {
         setPadding(false);
         setSpacing(true);
         getStyle()
-                .set("border", "1px solid var(--lumo-contrast-20%)")
+                .set("border", "1px solid var(--lumo-contrast-20pct)")
                 .set("border-radius", "8px")
                 .set("padding", "12px 16px")
                 .set("margin", "6px 0");

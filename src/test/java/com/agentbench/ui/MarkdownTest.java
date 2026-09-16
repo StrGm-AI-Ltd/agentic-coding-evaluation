@@ -85,4 +85,39 @@ class MarkdownTest {
         assertTrue(html.contains("quoted words"));
         assertTrue(html.contains("<hr />"));
     }
+
+    /** Completing the security matrix: scheme smuggling and content vectors the base tests miss. */
+    @Test
+    void dataUriLinkIsSanitized() {
+        String html = Markdown.toHtml("[x](data:text/html,<b>hi</b>)\n");
+        assertFalse(html.contains("href=\"data:"), "data: URIs never become hrefs: " + html);
+        assertTrue(html.contains("href=\"#\""), "the scheme allowlist blanks anything non-http(s)");
+        assertTrue(html.contains(">x</a>"), "the label survives as inert text");
+    }
+
+    @Test
+    void javascriptImageDestinationIsSanitized() {
+        String html = Markdown.toHtml("![boom](javascript:alert(1))\n");
+        assertFalse(html.contains("javascript:"), "image destinations are sanitized too");
+        assertFalse(html.contains("src=\"javascript:"));
+    }
+
+    @Test
+    void uppercaseSchemeIsSanitized() {
+        String html = Markdown.toHtml("[x](JAVASCRIPT:alert(1))\n");
+        assertFalse(html.toLowerCase().contains("href=\"javascript:"),
+                "scheme checks are case-insensitive: " + html);
+    }
+
+    @Test
+    void htmlInsideTableCellIsEscaped() {
+        String html = Markdown.toHtml("""
+                | a | b |
+                |---|---|
+                | <script>alert(1)</script> | <img src=x onerror=y> |
+                """);
+        assertFalse(html.contains("<script>"), "no live script tag: " + html);
+        assertTrue(html.contains("&lt;script&gt;"), "the source stays visible as text");
+        assertFalse(html.contains("<img src=x"), "no live img tag");
+    }
 }

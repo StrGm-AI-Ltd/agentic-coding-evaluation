@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -49,7 +50,8 @@ public class FilesBrowser extends VerticalLayout {
         Grid<String> grid = new Grid<>(String.class, false);
         grid.addColumn(name -> name).setHeader("path").setFlexGrow(1);
         grid.addColumn(name -> sizeOf(resultsDir, name)).setHeader("size")
-                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
+                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true)
+                .setComparator(Comparator.comparingLong(name -> sizeOr(resultsDir, name)));
         grid.addComponentColumn(this::fileLink).setFlexGrow(0);
         grid.setItems(files);
         grid.setAllRowsVisible(true);
@@ -60,9 +62,9 @@ public class FilesBrowser extends VerticalLayout {
     private Component fileLink(String name) {
         Anchor anchor = isText(name)
                 ? new Anchor(viewRoute(runId, name), "view")   // opens the formatted viewer
-                : new Anchor(client.baseUrl() + "/runs/" + runId + "/files/" + name, "open");
+                : new Anchor(Links.rawFileUrl(client.baseUrl(), runId, name), "open");
         anchor.getElement().setAttribute("target", "_blank");
-        anchor.getElement().setAttribute("rel", "noopener");
+        anchor.getElement().setAttribute("rel", "noopener noreferrer");
         return anchor;
     }
 
@@ -77,14 +79,27 @@ public class FilesBrowser extends VerticalLayout {
         return dot >= 0 && TEXT_SUFFIXES.contains(name.substring(dot));
     }
 
-    private static String sizeOf(String resultsDir, String name) {
+    static String sizeOf(String resultsDir, String name) {
         try {
-            long size = Files.size(Path.of(resultsDir, name.split("/")));
-            return size < 1024 ? size + " B"
+            long size = sizeBytes(resultsDir, name);
+            return size < 0 ? "–" : size < 1024 ? size + " B"
                     : size < 1024 * 1024 ? String.format("%.1f KiB", size / 1024.0)
                     : String.format("%.1f MiB", size / 1024.0 / 1024.0);
         } catch (IOException e) {
             return "–";
+        }
+    }
+
+    private static long sizeBytes(String resultsDir, String name) throws IOException {
+        return Files.size(Path.of(resultsDir, name.split("/")));
+    }
+
+    /** Sort key for the size column: actual bytes, missing files last. */
+    static long sizeOr(String resultsDir, String name) {
+        try {
+            return sizeBytes(resultsDir, name);
+        } catch (IOException e) {
+            return Long.MAX_VALUE;
         }
     }
 

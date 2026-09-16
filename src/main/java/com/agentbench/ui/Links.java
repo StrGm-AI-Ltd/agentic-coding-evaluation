@@ -41,6 +41,11 @@ public final class Links {
         return link;
     }
 
+    /** Raw service URL for a run file, segment-encoded so names with %, spaces, or non-ASCII survive. */
+    static String rawFileUrl(String baseUrl, String runId, String path) {
+        return baseUrl + "/runs/" + ServiceClient.encodeSegment(runId) + "/files/" + ServiceClient.encodePath(path);
+    }
+
     /** Distinct, sorted, non-null values of a run attribute (used for picker suggestions). */
     public static List<String> distinctRuns(List<Api.Run> runs, Function<Api.Run, String> getter) {
         return runs.stream().map(getter).filter(Objects::nonNull).distinct().sorted().toList();

@@ -2,7 +2,15 @@ package com.agentbench.ui;
 
 import com.vaadin.flow.component.badge.Badge;
 
-/** Status → colored badge, mirroring the .badge/.status CSS of the original UI. */
+/**
+ * Status → colored badge, mirroring the .badge/.status CSS of the original UI.
+ *
+ * <p>Two intentional divergences from the service's own colors, both upgrades:
+ * {@code blocked} is amber here (the service paints it red) because a blocked job is
+ * an actionable recovery state in this UI (Requeue), not a failure; and
+ * {@code not_attempted} is neutral (the service: red) because the oracle scores it
+ * as a fail already — see README "What it measures".
+ */
 public final class Badges {
 
     public static final String SUCCESS = "success";

@@ -26,24 +26,28 @@ public class JobsView extends VerticalLayout {
     private final Grid<Api.Job> grid = new Grid<>(Api.Job.class, false);
     private final Span error = new Span();
     private final Span running = new Span();
+    private final Span emptyState = new Span();
 
     public JobsView(ServiceClient client) {
         this.client = client;
         setPadding(true);
 
         Button refresh = new Button(VaadinIcon.REFRESH.create(), e -> load());
+        refresh.getElement().setAttribute("aria-label", "refresh the queue");
         Button newJob = new Button("New job", VaadinIcon.PLUS.create(),
                 e -> getUI().ifPresent(ui -> ui.navigate("jobs/new")));
         running.getStyle().set("color", "var(--lumo-secondary-text-color)");
         error.getStyle().set("color", "var(--lumo-error-color)");
+        emptyState.getStyle().set("color", "var(--lumo-secondary-text-color)");
+        emptyState.setVisible(false);
 
         grid.addColumn(Api.Job::id).setHeader("#").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
         grid.addColumn(new ComponentRenderer<>(job -> Links.runToJobLink(job.run_id(), job.id())))
                 .setHeader("run").setAutoWidth(true)
-                .setSortable(true).setComparator(Comparator.comparing(Api.Job::run_id));
+                .setSortable(true).setComparator(Fmt.nullsLast(Api.Job::run_id));
         grid.addColumn(Api.Job::kind).setHeader("kind").setAutoWidth(true);
         grid.addColumn(new ComponentRenderer<>(this::statusCell)).setHeader("status").setAutoWidth(true)
-                .setSortable(true).setComparator(Comparator.comparing(Api.Job::status));
+                .setSortable(true).setComparator(Fmt.nullsLast(Api.Job::status));
         grid.addColumn(Api.Job::priority).setHeader("priority").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true);
         grid.addColumn(job -> job.arm() == null ? "–"
@@ -53,20 +57,27 @@ public class JobsView extends VerticalLayout {
                 .setComparator(Fmt.comparingTime(Api.Job::started_at));
         grid.addColumn(new ComponentRenderer<>(this::actions)).setHeader("actions").setFlexGrow(1);
 
-        add(new H2("Queue"), new HorizontalLayout(refresh, newJob, running, error), grid);
+        add(new H2("Queue"), new HorizontalLayout(refresh, newJob, running, error), emptyState, grid);
         setSizeFull();
         expand(grid);
 
         addAttachListener(e -> load());
     }
 
-    /** Status badge with the blocked reason surfaced as a tooltip (V-1). */
-    private com.vaadin.flow.component.badge.Badge statusCell(Api.Job job) {
+    /** Status badge with the blocked reason inline (keyboard/touch discoverable, not tooltip-only). */
+    private com.vaadin.flow.component.html.Div statusCell(Api.Job job) {
+        com.vaadin.flow.component.html.Div cell = new com.vaadin.flow.component.html.Div();
         com.vaadin.flow.component.badge.Badge badge = Badges.status(job.status());
         if ("blocked".equals(job.status()) && job.blocked_reason() != null) {
             badge.getElement().setAttribute("title", job.blocked_reason());
+            Span reason = new Span(job.blocked_reason());
+            reason.getStyle().set("color", "var(--lumo-secondary-text-color)")
+                    .set("font-size", "0.75em").set("white-space", "normal");
+            cell.add(badge, reason);
+            return cell;
         }
-        return badge;
+        cell.add(badge);
+        return cell;
     }
 
     private HorizontalLayout actions(Api.Job job) {
@@ -80,8 +91,10 @@ public class JobsView extends VerticalLayout {
         if (JobStatuses.canRequeue(job.status())) {
             layout.add(new Button("Requeue", e -> act(() -> client.requeue(job.id()), job)));
         }
-        layout.add(new Button(VaadinIcon.ARROW_UP.create(),
-                e -> act(() -> client.setPriority(job.id(), job.priority() == null ? 1 : job.priority() + 1), job)));
+        Button raise = new Button(VaadinIcon.ARROW_UP.create(),
+                e -> act(() -> client.setPriority(job.id(), job.priority() == null ? 1 : job.priority() + 1), job));
+        raise.getElement().setAttribute("aria-label", "raise priority");
+        layout.add(raise);
         return layout;
     }
 
@@ -104,9 +117,12 @@ public class JobsView extends VerticalLayout {
         } catch (Exception e) {
             grid.setItems(List.of());
             error.setText(client.errorText(e));
+            emptyState.setVisible(false);
             return;
         }
         grid.setItems(jobs);
+        emptyState.setText("The queue is empty — queue a run with “New job” or an experiment.");
+        emptyState.setVisible(jobs.isEmpty());
         long runningNow = jobs.stream().filter(j -> "running".equals(j.status())).count();
         long blocked = jobs.stream().filter(j -> "blocked".equals(j.status())).count();
         running.setText(jobs.size() + " jobs · " + runningNow + " running"

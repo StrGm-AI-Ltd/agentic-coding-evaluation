@@ -12,7 +12,11 @@ import java.util.List;
  * The job page's live progress, accumulated from /jobs/{id}/events — the server-side
  * twin of the Jinja page's streaming JS: step list (with continuation marks), sessions,
  * request count and last completion tokens, the 20 most recent requests (newest first),
- * and the log tail the status events carry. Pure: unit-tested without a server.
+ * and the log tail the status events carry.
+ *
+ * <p>Synchronized: events are applied on the SSE thread while the UI thread reads
+ * snapshots, and the service emits request bursts — without the lock, a snapshot
+ * mid-burst throws {@code ConcurrentModificationException} inside the UI render.
  */
 public final class JobLiveState implements Serializable {
 
@@ -32,7 +36,7 @@ public final class JobLiveState implements Serializable {
     private Long lastTokens;
     private String logTail;
 
-    public void apply(SseEvent event) {
+    public synchronized void apply(SseEvent event) {
         JsonNode data = event.data();
         switch (event.payloadType()) {
             case "step_started" -> {
@@ -73,35 +77,38 @@ public final class JobLiveState implements Serializable {
     private static String sessionLabel(JsonNode data) {
         String id = Fmt.textOr(data.path("session_id"), "");
         String effort = Fmt.textOr(data.path("reasoning_effort"), null);
-        String shortId = id.length() > 8 ? id.substring(0, 8) : id;
-        return effort == null ? shortId : shortId + " (" + effort + ")";
+        String shortId = id.isBlank() ? "?" : (id.length() > 8 ? id.substring(0, 8) : id);
+        return effort == null || effort.isBlank() ? shortId : shortId + " (" + effort + ")";
     }
 
-    public List<String> steps() {
-        return steps;
+    /** A snapshot copy — never the live list. */
+    public synchronized List<String> steps() {
+        return new ArrayList<>(steps);
     }
 
-    public String currentStep() {
+    public synchronized String currentStep() {
         return steps.isEmpty() ? null : steps.get(steps.size() - 1);
     }
 
-    public List<String> sessions() {
-        return sessions;
+    /** A snapshot copy — never the live list. */
+    public synchronized List<String> sessions() {
+        return new ArrayList<>(sessions);
     }
 
-    public long requestCount() {
+    public synchronized long requestCount() {
         return requestCount;
     }
 
-    public Long lastTokens() {
+    public synchronized Long lastTokens() {
         return lastTokens;
     }
 
-    public List<RequestRow> recentRequests() {
+    /** A snapshot copy — never the live deque. */
+    public synchronized List<RequestRow> recentRequests() {
         return new ArrayList<>(recentRequests);
     }
 
-    public String logTail() {
+    public synchronized String logTail() {
         return logTail;
     }
 }

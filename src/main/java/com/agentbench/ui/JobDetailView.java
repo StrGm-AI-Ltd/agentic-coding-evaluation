@@ -43,6 +43,18 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     /** Built once so the user's column sorting survives the 2 s live re-renders. */
     private final Grid<JobLiveState.RequestRow> requestsGrid = buildRequestsGrid();
 
+    // The live-requests sort keys — typed and null-safe (the ClassCastException regression).
+    static final java.util.Comparator<JobLiveState.RequestRow> REQUESTS_BY_TS =
+            Fmt.comparingTime(JobLiveState.RequestRow::ts);
+    static final java.util.Comparator<JobLiveState.RequestRow> REQUESTS_BY_STATUS =
+            Fmt.nullsLast(JobLiveState.RequestRow::status);
+    static final java.util.Comparator<JobLiveState.RequestRow> REQUESTS_BY_LATENCY =
+            Fmt.nullsLast(JobLiveState.RequestRow::latencySec);
+    static final java.util.Comparator<JobLiveState.RequestRow> REQUESTS_BY_TTFT =
+            Fmt.nullsLast(JobLiveState.RequestRow::ttftSec);
+    static final java.util.Comparator<JobLiveState.RequestRow> REQUESTS_BY_TOKENS =
+            Fmt.nullsLast(JobLiveState.RequestRow::tokens);
+
     public JobDetailView(ServiceClient client) {
         this.client = client;
         setPadding(true);
@@ -241,23 +253,19 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
     private static Grid<JobLiveState.RequestRow> buildRequestsGrid() {
         Grid<JobLiveState.RequestRow> requests = new Grid<>(JobLiveState.RequestRow.class, false);
-        requests.addColumn(JobLiveState.RequestRow::ts).setHeader("ts").setAutoWidth(true)
-                .setComparator(Fmt.comparingTime(JobLiveState.RequestRow::ts));
+        requests.addColumn(r -> Fmt.when(r.ts())).setHeader("ts").setAutoWidth(true)
+                .setComparator(REQUESTS_BY_TS);
         requests.addColumn(r -> r.status() == null ? "–" : r.status()).setHeader("status").setAutoWidth(true)
-                .setComparator(Comparator.comparing(JobLiveState.RequestRow::status,
-                        Comparator.nullsLast(Comparator.naturalOrder())));
+                .setComparator(REQUESTS_BY_STATUS);
         requests.addColumn(r -> Fmt.num(r.latencySec())).setHeader("latency").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true)
-                .setComparator(Comparator.comparing(JobLiveState.RequestRow::latencySec,
-                        Comparator.nullsLast(Comparator.naturalOrder())));
+                .setComparator(REQUESTS_BY_LATENCY);
         requests.addColumn(r -> Fmt.num(r.ttftSec())).setHeader("ttft").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true)
-                .setComparator(Comparator.comparing(JobLiveState.RequestRow::ttftSec,
-                        Comparator.nullsLast(Comparator.naturalOrder())));
+                .setComparator(REQUESTS_BY_TTFT);
         requests.addColumn(r -> Fmt.count(r.tokens())).setHeader("tokens").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true)
-                .setComparator(Comparator.comparing(JobLiveState.RequestRow::tokens,
-                        Comparator.nullsLast(Comparator.naturalOrder())));
+                .setComparator(REQUESTS_BY_TOKENS);
         requests.addColumn(r -> r.clientAborted() ? "yes" : "").setHeader("aborted").setAutoWidth(true);
         requests.setAllRowsVisible(true);
         return requests;
@@ -307,7 +315,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         if (job.stdout_path() != null) {
             Anchor rawLog = new Anchor(client.baseUrl() + "/jobs/" + job.id() + "/log", "raw log");
             rawLog.getElement().setAttribute("target", "_blank");
-            rawLog.getElement().setAttribute("rel", "noopener");
+            rawLog.getElement().setAttribute("rel", "noopener noreferrer");
             actions.add(rawLog);
         }
         add(actions);
@@ -319,9 +327,12 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      */
     static String runNotImportedHint(String status) {
         return switch (status == null ? "" : status) {
-            case "queued", "waiting_lock", "running", "blocked" ->
+            case "queued", "waiting_lock", "running" ->
                     "the run is still in progress — its results appear here automatically "
                     + "when the job finishes with a score";
+            case "blocked" ->
+                    "this job is blocked — requeue it (queue or experiment page); its results "
+                    + "appear once it finishes with a score";
             case "failed", "cancelled" ->
                     "this job ended without a scored result — such runs are never imported";
             case "succeeded" ->

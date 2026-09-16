@@ -49,7 +49,7 @@ public final class Panels {
         div.getStyle()
                 .set("font-family", "ui-monospace, 'SF Mono', Menlo, monospace")
                 .set("font-size", "12px")
-                .set("background", "var(--lumo-contrast-10%)")
+                .set("background", "var(--lumo-contrast-10pct)")
                 .set("padding", "12px")
                 .set("border-radius", "6px")
                 .set("overflow-x", "auto")

@@ -96,6 +96,24 @@ class FmtTest {
         assertNull(Fmt.parseTime("not a time"));
     }
 
+    /** Near-miss shapes a future regex edit could break. */
+    @Test
+    void parseTime_dateOnlyYieldsNull() {
+        assertNull(Fmt.parseTime("2026-09-15"), "no time component is not a sortable instant");
+    }
+
+    @Test
+    void parseTime_sqlStyleOffsetWithoutColonNormalizes() {
+        assertEquals(java.time.OffsetDateTime.parse("2026-09-15T03:02:30+01:00"),
+                Fmt.parseTime("2026-09-15 03:02:30+01"), "two-digit offsets gain the :00");
+    }
+
+    @Test
+    void parseTime_secondAndMinutePrecisionParse() {
+        assertEquals(java.time.OffsetDateTime.parse("2026-09-15T03:02:00Z"),
+                Fmt.parseTime("2026-09-15 03:02"), "minute precision still sorts");
+    }
+
     @Test
     void comparingTime_sortsChronologicallyAcrossFormatsWithNullsLast() {
         record Row(String t) {

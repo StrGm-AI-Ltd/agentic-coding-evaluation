@@ -30,6 +30,7 @@ public class RunsView extends VerticalLayout {
     private final Select<String> valid = new Select<>();
     private final Select<String> poolable = new Select<>();
     private final Span error = new Span();
+    private final Span emptyState = new Span();
     private boolean optionsLoaded;
 
     public RunsView(ServiceClient client) {
@@ -70,9 +71,11 @@ public class RunsView extends VerticalLayout {
         filters.getStyle().set("flex-wrap", "wrap");
 
         error.getStyle().set("color", "var(--lumo-error-color)");
+        emptyState.getStyle().set("color", "var(--lumo-secondary-text-color)");
+        emptyState.setVisible(false);
 
         grid.addColumn(new ComponentRenderer<>(run -> Links.runLink(run.run_id())))
-                .setHeader("run").setAutoWidth(true).setFlexGrow(0)
+                .setHeader("run").setAutoWidth(true).setFlexGrow(0).setKey("run")
                 .setSortable(true).setComparator(Comparator.comparing(Api.Run::run_id));
         grid.addColumn(Api.Run::task).setHeader("task").setAutoWidth(true);
         grid.addColumn(Api.Run::model).setHeader("model").setAutoWidth(true);
@@ -80,30 +83,29 @@ public class RunsView extends VerticalLayout {
         grid.addColumn(functionalCell()).setHeader("functional %").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true)
                 .setSortable(true)
-                .setComparator(Comparator.comparing(Api.Run::functional_score_pct,
-                        Comparator.nullsLast(Comparator.naturalOrder())));
+                .setComparator(Fmt.nullsLast(Api.Run::functional_score_pct));
         grid.addColumn(this::compositeCell).setHeader("composite %").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true)
-                .setComparator(Comparator.comparing(RunsView::effectiveScore,
-                        Comparator.nullsLast(Comparator.naturalOrder())));
+                .setComparator(Fmt.nullsLast(RunsView::effectiveScore));
         grid.addColumn(new ComponentRenderer<>(this::validBadge)).setHeader("valid").setAutoWidth(true)
                 .setSortable(true)
-                .setComparator(Comparator.comparing(Api.Run::valid,
-                        Comparator.nullsLast(Comparator.naturalOrder())));
+                .setComparator(Fmt.nullsLast(Api.Run::valid));
         grid.addColumn(r -> Fmt.duration(r.wall_sec())).setHeader("wall").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true)
-                .setComparator(Comparator.comparing(Api.Run::wall_sec,
-                        Comparator.nullsLast(Comparator.naturalOrder())));
+                .setComparator(Fmt.nullsLast(Api.Run::wall_sec));
         grid.addColumn(r -> Fmt.count(r.completion_tokens())).setHeader("tokens").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true)
-                .setComparator(Comparator.comparing(Api.Run::completion_tokens,
-                        Comparator.nullsLast(Comparator.naturalOrder())));
+                .setComparator(Fmt.nullsLast(Api.Run::completion_tokens));
         grid.addColumn(r -> Fmt.when(r.started())).setHeader("started").setAutoWidth(true)
                 .setComparator(Fmt.comparingTime(Api.Run::started));
-        grid.addItemClickListener(e -> e.getSource().getUI()
-                .ifPresent(ui -> ui.navigate("runs/" + e.getItem().run_id())));
+        grid.addItemClickListener(e -> {
+            if ("run".equals(e.getColumn() == null ? null : e.getColumn().getKey())) {
+                return; // the run link already navigates — no double fetch
+            }
+            e.getSource().getUI().ifPresent(ui -> ui.navigate("runs/" + e.getItem().run_id()));
+        });
 
-        add(new H2("Runs"), filters, error, grid);
+        add(new H2("Runs"), filters, error, emptyState, grid);
         setSizeFull();
         expand(grid);
 
@@ -119,6 +121,7 @@ public class RunsView extends VerticalLayout {
         } catch (Exception e) {
             grid.setItems(List.of());
             error.setText(client.errorText(e));
+            emptyState.setVisible(false);
             return;
         }
 
@@ -132,6 +135,10 @@ public class RunsView extends VerticalLayout {
             optionsLoaded = true;
         }
         grid.setItems(runs);
+        emptyState.setText(noFiltersSet()
+                ? "No runs yet — press “Rescan results/” after the first run finishes."
+                : "No runs match the filters.");
+        emptyState.setVisible(runs.isEmpty());
     }
 
     private boolean noFiltersSet() {

@@ -2,6 +2,7 @@ package com.agentbench.ui;
 
 import org.commonmark.Extension;
 import org.commonmark.ext.gfm.tables.TablesExtension;
+import org.commonmark.node.Image;
 import org.commonmark.node.Link;
 import org.commonmark.node.Node;
 import org.commonmark.parser.Parser;
@@ -40,7 +41,9 @@ public final class Markdown {
         return RENDERER.render(PARSER.parse(markdown == null ? "" : markdown));
     }
 
-    /** Adds target/rel to link attributes through the library's official hook. */
+    /** Adds target/rel to link attributes through the library's official hook — and
+     *  enforces the http(s)-only allowlist for resolved URLs, because commonmark's
+     *  sanitizeUrls still lets data: and other non-js schemes through. */
     static final class LinkTargetProvider implements AttributeProvider {
 
         static final class Factory implements AttributeProviderFactory {
@@ -55,6 +58,19 @@ public final class Markdown {
             if (node instanceof Link) {
                 attributes.put("target", "_blank");
                 attributes.put("rel", "noopener noreferrer");
+                allowHttpOnly(attributes, "href");
+            } else if (node instanceof Image) {
+                allowHttpOnly(attributes, "src");
+            }
+        }
+
+        private static void allowHttpOnly(Map<String, String> attributes, String key) {
+            String value = attributes.get(key);
+            if (value != null) {
+                String scheme = value.toLowerCase(java.util.Locale.ROOT);
+                if (!scheme.startsWith("http://") && !scheme.startsWith("https://")) {
+                    attributes.put(key, "#");
+                }
             }
         }
     }

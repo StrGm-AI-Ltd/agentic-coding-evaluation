@@ -11,7 +11,6 @@ public final class JobStatuses {
 
     public static final Set<String> TERMINAL = Set.of("succeeded", "failed", "cancelled");
     public static final Set<String> REQUEUEABLE = Set.of("failed", "cancelled", "blocked");
-    public static final Set<String> ACTIVE = Set.of("queued", "waiting_lock", "running", "blocked");
 
     private JobStatuses() {
     }

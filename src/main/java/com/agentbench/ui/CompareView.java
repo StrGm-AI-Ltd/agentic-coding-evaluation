@@ -52,7 +52,7 @@ public class CompareView extends VerticalLayout {
 
         Button run = new Button("Compare", e -> compare());
 
-        add(row1, options, run, new Span(), result);
+        add(row1, options, run, result);
 
         addAttachListener(e -> loadRunIds());
     }

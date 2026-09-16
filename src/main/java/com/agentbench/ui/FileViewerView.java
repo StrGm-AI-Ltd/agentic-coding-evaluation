@@ -66,10 +66,10 @@ public class FileViewerView extends VerticalLayout implements BeforeEnterObserve
             title.getStyle().set("margin", "0 0 4px 0").set("font-size", "1.2em");
             add(title);
 
-            Anchor raw = new Anchor(client.baseUrl() + "/runs/" + runId + "/files/" + path,
+            Anchor raw = new Anchor(Links.rawFileUrl(client.baseUrl(), runId, path),
                     "raw (unformatted) at the service");
             raw.getElement().setAttribute("target", "_blank");
-            raw.getElement().setAttribute("rel", "noopener");
+            raw.getElement().setAttribute("rel", "noopener noreferrer");
             raw.getStyle().set("font-size", "0.85em");
             add(raw);
 
@@ -80,7 +80,6 @@ public class FileViewerView extends VerticalLayout implements BeforeEnterObserve
             Div contentDiv;
             if (isMarkdown(path)) {
                 contentDiv = new Div();
-                contentDiv.setClassName("md-body");
                 contentDiv.add(new com.vaadin.flow.component.Html(
                         "<div class=\"md-body\">" + Markdown.toHtml(content) + "</div>"));
             } else {

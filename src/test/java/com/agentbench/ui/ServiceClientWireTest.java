@@ -116,6 +116,14 @@ class ServiceClientWireTest {
                         data: {"status": "succeeded", "pid": 99, "result_line": "all done"}
 
                         """);
+                case "GET /jobs/31/events" -> respond(exchange, 200, """
+                        event: broken
+                        data: {not json
+
+                        event: status
+                        data: {"status": "running", "pid": 7}
+
+                        """);
                 case "GET /runs/r1/files/slow" -> {
                     try {
                         Thread.sleep(3000);
@@ -420,5 +428,15 @@ class ServiceClientWireTest {
             throw new IllegalStateException("view detached");
         }));
         assertEquals(1, seen.size(), "the abort happens on the first delivered event");
+    }
+
+    /** A malformed block mid-stream is skipped, not fatal — the stream continues. */
+    @Test
+    void streamJobEvents_skipsMalformedBlockInsideStream() throws Exception {
+        List<SseEvent> received = new java.util.ArrayList<>();
+        client.streamJobEvents(31, received::add);
+        assertEquals(1, received.size(), "only the well-formed block is delivered");
+        assertEquals("status", received.get(0).type());
+        assertEquals(7, received.get(0).data().path("pid").intValue());
     }
 }

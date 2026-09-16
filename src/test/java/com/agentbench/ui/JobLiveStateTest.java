@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 /** The live panel's accumulation rules — the Jinja page's JS, in Java. */
@@ -89,5 +90,109 @@ class JobLiveStateTest {
         assertEquals(0, state.requestCount());
         assertNull(state.currentStep());
         assertNull(state.logTail());
+    }
+
+    /** The M1 race, pinned: concurrent bursts + snapshots must never throw, and no event is lost. */
+    @Test
+    void concurrentApplyAndSnapshotNeverThrows() throws Exception {
+        JobLiveState state = new JobLiveState();
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure = new java.util.concurrent.atomic.AtomicReference<>();
+        int events = 5_000;
+
+        Thread writer = new Thread(() -> {
+            try {
+                for (int i = 0; i < events; i++) {
+                    if (i % 10 == 0) {
+                        state.apply(event("{\"type\": \"step_started\", \"step\": \"T" + (i / 10) + "\"}"));
+                    }
+                    if (i % 7 == 0) {
+                        state.apply(event("{\"type\": \"session_started\", \"session_id\": \"s-0000000-" + i
+                                + "\", \"reasoning_effort\": \"high\"}"));
+                    }
+                    state.apply(event("{\"type\": \"request\", \"seq\": " + i + ", \"ts\": \"t" + i
+                            + "\", \"status\": 200, \"latency_sec\": " + (i / 10.0)
+                            + ", \"ttft_sec\": 1.0, \"budget_spent_completion_tokens\": " + (i * 10) + "}"));
+                    state.apply(event("{\"type\": \"status\", \"status\": \"running\", \"result_line\": \"line " + i + "\"}"));
+                }
+            } catch (Throwable t) {
+                failure.compareAndSet(null, t);
+            }
+        }, "live-state-writer");
+
+        Thread reader = new Thread(() -> {
+            try {
+                for (int i = 0; i < 5_000; i++) {
+                    state.currentStep();
+                    state.sessions();
+                    state.requestCount();
+                    state.lastTokens();
+                    state.recentRequests();
+                    state.logTail();
+                    state.steps();
+                }
+            } catch (Throwable t) {
+                failure.compareAndSet(null, t);
+            }
+        }, "live-state-reader");
+
+        writer.start();
+        reader.start();
+        writer.join(10_000);
+        reader.join(10_000);
+        assertNull(failure.get(), "no ConcurrentModificationException or other failure");
+        assertEquals(events, state.requestCount(), "every request event is applied exactly once");
+        assertEquals(JobLiveState.MAX_RECENT_REQUESTS, state.recentRequests().size());
+        assertEquals("line " + (events - 1), state.logTail());
+    }
+
+    /** Degenerate payloads the tailer can deliver mid-write — no field is guaranteed. */
+    @Test
+    void requestEventWithMissingOrNullFieldsBuildsNullRow() {
+        JobLiveState state = new JobLiveState();
+        SseParser.parseAll("""
+                event: request
+                data: {"type": "request", "seq": 1}
+
+                """).forEach(state::apply);
+        assertEquals(1, state.requestCount());
+        JobLiveState.RequestRow row = state.recentRequests().get(0);
+        assertNull(row.ts());
+        assertNull(row.status());
+        assertNull(row.latencySec());
+        assertNull(row.ttftSec());
+        assertNull(row.tokens());
+        assertFalse(row.clientAborted());
+        assertNull(state.lastTokens());
+    }
+
+    @Test
+    void statusEventWithNullResultLineKeepsPreviousTail() {
+        JobLiveState state = new JobLiveState();
+        SseParser.parseAll("""
+                event: status
+                data: {"status": "running", "result_line": "step 2 running"}
+
+                """).forEach(state::apply);
+        SseParser.parseAll("""
+                event: status
+                data: {"status": "running", "result_line": null}
+
+                """).forEach(state::apply);
+        assertEquals("step 2 running", state.logTail(), "a null tail does not wipe the previous one");
+    }
+
+    @Test
+    void sessionEventWithoutIdRendersBare() {
+        JobLiveState state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"reasoning_effort": null}
+
+                """).forEach(state::apply);
+        assertEquals(List.of("?"), state.sessions(), "missing ids render as ? without throwing");
+    }
+
+    private static SseEvent event(String json) {
+        return new SseEvent(null, Json.MAPPER.readTree(json));
     }
 }

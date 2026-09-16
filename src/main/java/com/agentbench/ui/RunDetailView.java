@@ -150,7 +150,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
 
         Anchor servicePage = new Anchor(client.baseUrl() + "/runs/" + runId, "open in the service UI");
         servicePage.getElement().setAttribute("target", "_blank");
-        servicePage.getElement().setAttribute("rel", "noopener");
+        servicePage.getElement().setAttribute("rel", "noopener noreferrer");
         servicePage.getStyle().set("display", "inline-block").set("margin-top", "16px");
         add(servicePage);
 
@@ -243,7 +243,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
                 .setAutoWidth(true);
         grid.addColumn(new ComponentRenderer<>(c -> Badges.status(c.status())))
                 .setHeader("status").setAutoWidth(true)
-                .setSortable(true).setComparator(Comparator.comparing(Api.Check::status));
+                .setSortable(true).setComparator(Fmt.nullsLast(Api.Check::status));
         grid.addColumn(Api.Check::description).setHeader("check").setAutoWidth(true);
         grid.addColumn(Api.Check::detail).setHeader("detail").setFlexGrow(1);
         grid.setItems(checks == null ? List.of() : checks);

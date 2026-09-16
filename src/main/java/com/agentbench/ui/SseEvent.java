@@ -9,6 +9,6 @@ public record SseEvent(String type, JsonNode data) {
 
     /** The payload's own "type" field, matching the server's event dicts. */
     public String payloadType() {
-        return data != null && data.hasNonNull("type") ? data.get("type").asText() : type;
+        return data != null && data.has("type") ? Fmt.textOr(data.get("type"), type) : type;
     }
 }
