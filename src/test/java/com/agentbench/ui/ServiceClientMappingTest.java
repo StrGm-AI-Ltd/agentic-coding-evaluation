@@ -94,6 +94,27 @@ class ServiceClientMappingTest {
                 "the exact message the queue rows hit");
     }
 
+    /** The 2026-09-16 runs-page crash on real manifests: provenance.quantization is an
+     *  11-property object; rendering a real run's provenance must not throw. */
+    @Test
+    void runDetailProvenanceRendersFromRealManifest() {
+        List<Api.Run> runs;
+        try {
+            runs = client.runs(null, null, null, null, null);
+        } catch (Exception e) {
+            Assumptions.assumeTrue(false, "agentbench-service not running: " + e.getMessage());
+            return;
+        }
+        Assumptions.assumeTrue(!runs.isEmpty(), "no runs imported");
+        Api.Run run = client.run(runs.get(0).run_id());
+        List<String> lines = RunDetailView.provenanceLines(run.manifest(), run.results_dir());
+        assertFalse(lines.isEmpty(), "a real manifest produces provenance lines");
+        for (String line : lines) {
+            assertTrue(line.length() < 10_000, "no runaway line: "
+                    + line.substring(0, Math.min(40, line.length())) + "…");
+        }
+    }
+
     @Test
     void groupsJobsExperimentsPreflightMap() {
         runsOrSkip(); // skip everything when the service is down

@@ -56,4 +56,16 @@ public final class Fmt {
             return node.toString();
         }
     }
+
+    /**
+     * Jackson 3-safe node text: unlike Jackson 2, JsonNode.asText() THROWS on
+     * non-textual nodes, so never call it blindly — textual nodes return their
+     * text, other scalars/containers their JSON form, absent/null the fallback.
+     */
+    public static String textOr(JsonNode node, String fallback) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return fallback;
+        }
+        return node.isTextual() ? node.asText() : node.toString();
+    }
 }

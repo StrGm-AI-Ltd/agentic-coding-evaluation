@@ -60,4 +60,21 @@ class FmtTest {
                   "a" : 1
                 }""", printed);
     }
+
+    /**
+     * The 2026-09-16 provenance crash: Jackson 3's asText() throws on non-textual
+     * nodes, so Fmt.textOr must never throw — whatever the node holds.
+     */
+    @Test
+    void textOr_neverThrowsOnAnyNodeShape() {
+        assertEquals("plain", Fmt.textOr(Json.MAPPER.readTree("\"plain\""), "–"));
+        assertEquals("42", Fmt.textOr(Json.MAPPER.readTree("42"), "–"), "numbers stringify");
+        assertEquals("true", Fmt.textOr(Json.MAPPER.readTree("true"), "–"), "booleans stringify");
+        assertEquals("{\"a\":1}", Fmt.textOr(Json.MAPPER.readTree("{\"a\":1}"), "–"),
+                "objects fall back to their JSON form instead of throwing");
+        assertEquals("[1,2]", Fmt.textOr(Json.MAPPER.readTree("[1,2]"), "–"));
+        assertEquals("–", Fmt.textOr(Json.MAPPER.readTree("null"), "–"));
+        assertEquals("–", Fmt.textOr(tools.jackson.databind.node.JsonNodeFactory.instance.missingNode(), "–"));
+        assertEquals("–", Fmt.textOr(null, "–"));
+    }
 }

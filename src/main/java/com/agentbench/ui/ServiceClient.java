@@ -215,8 +215,8 @@ public class ServiceClient implements Serializable {
                             }
                             JsonNode loc = err.path("loc");
                             String field = loc.isArray() && !loc.isEmpty()
-                                    ? loc.get(loc.size() - 1).asText("?") : "?";
-                            sb.append(field).append(": ").append(err.path("msg").asText("invalid"));
+                                    ? Fmt.textOr(loc.get(loc.size() - 1), "?") : "?";
+                            sb.append(field).append(": ").append(Fmt.textOr(err.path("msg"), "invalid"));
                         }
                         return sb.toString();
                     }

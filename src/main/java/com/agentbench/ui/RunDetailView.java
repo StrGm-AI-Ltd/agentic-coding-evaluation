@@ -209,13 +209,13 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
             JsonNode t = perTask.get(tid);
             rows.add(new PerTaskRow(
                     tid,
-                    textOr(t.path("reported"), "–"),
-                    textOr(t.path("done_verified"), "–"),
+                    Fmt.textOr(t.path("reported"), "–"),
+                    Fmt.textOr(t.path("done_verified"), "–"),
                     longOrNull(t.path("requests")),
                     longOrNull(t.path("completion_tokens")),
                     longOrNull(t.path("max_prompt")),
                     doubleOrNull(t.path("task_wall_sec")),
-                    t.has("files_changed") ? String.valueOf(t.get("files_changed").asInt(-1)) : "–",
+                    t.path("files_changed").isNumber() ? String.valueOf(t.path("files_changed").intValue()) : "–",
                     t.path("over_budget").asBoolean(false) ? "yes" : ""));
         });
         Grid<PerTaskRow> grid = new Grid<>(PerTaskRow.class, false);
@@ -263,46 +263,57 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         add(grid);
     }
 
-    /** The provenance block from the Jinja2 run page (V-4). */
+    /** The provenance block from the Jinja2 run page (V-4) — values may be objects
+     * (e.g. quantization is an 11-property map in real manifests), so never asText() them. */
     private void addProvenance(Api.Run run) {
         add(sectionTitle("Provenance"));
         VerticalLayout provenance = new VerticalLayout();
         provenance.setPadding(false);
         provenance.setSpacing(false);
-        JsonNode prov = run.manifest() == null ? null : run.manifest().get("provenance");
-        for (String key : PROVENANCE_KEYS) {
-            JsonNode value = prov == null ? null : prov.get(key);
-            if (value != null && !value.isNull()) {
-                Span line = new Span(key + ": ");
-                line.add(code(value.asText()));
-                provenance.add(line);
-            }
+        for (String line : provenanceLines(run.manifest(), run.results_dir())) {
+            Span span = new Span(line);
+            span.getStyle().set("font-variant-numeric", "tabular-nums");
+            provenance.add(span);
         }
-        if (run.manifest() != null && run.manifest().has("usable_context")) {
-            Span line = new Span("usable_context: ");
-            line.add(code(Fmt.count(run.manifest().get("usable_context").asLong())));
-            provenance.add(line);
+        if (provenance.getComponentCount() == 0) {
+            provenance.add(new Span("no provenance recorded"));
         }
-        Span results = new Span("results: ");
-        results.add(code(run.results_dir()));
-        provenance.add(results);
         add(provenance);
     }
 
-    private static Span code(String text) {
-        Span span = new Span(text);
-        span.getStyle().set("font-family", "ui-monospace, 'SF Mono', Menlo, monospace").set("font-size", "12px");
-        return span;
+    /**
+     * Pure line extraction for the provenance block: every real value goes through
+     * Fmt.textOr (scalars) or Fmt.json (containers) — both Jackson 3-safe. Keys are
+     * taken from the same list the Jinja2 page uses; unknown manifest keys are ignored.
+     */
+    static List<String> provenanceLines(JsonNode manifest, String resultsDir) {
+        List<String> lines = new ArrayList<>();
+        JsonNode prov = manifest == null ? null : manifest.get("provenance");
+        if (prov != null && prov.isObject()) {
+            for (String key : PROVENANCE_KEYS) {
+                JsonNode value = prov.get(key);
+                if (value == null || value.isNull() || value.isMissingNode()) {
+                    continue;
+                }
+                lines.add(key + ": " + (value.isContainer()
+                        ? Fmt.json(value) : Fmt.textOr(value, "")));
+            }
+        }
+        if (manifest != null && manifest.hasNonNull("usable_context")) {
+            JsonNode usableContext = manifest.get("usable_context");
+            lines.add("usable_context: " + (usableContext.isNumber()
+                    ? Fmt.count(usableContext.longValue()) : Fmt.textOr(usableContext, "–")));
+        }
+        if (resultsDir != null && !resultsDir.isBlank()) {
+            lines.add("results: " + resultsDir);
+        }
+        return lines;
     }
 
     private static H4 sectionTitle(String title) {
         H4 header = new H4(title);
         header.getStyle().set("margin", "16px 0 4px 0");
         return header;
-    }
-
-    private static String textOr(JsonNode node, String fallback) {
-        return node.isMissingNode() || node.isNull() ? fallback : node.asText();
     }
 
     private static Long longOrNull(JsonNode node) {
