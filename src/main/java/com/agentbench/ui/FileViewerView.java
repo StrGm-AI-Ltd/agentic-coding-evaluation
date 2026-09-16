@@ -1,5 +1,6 @@
 package com.agentbench.ui;
 
+import com.vaadin.flow.component.dependency.CssImport;
 import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.H3;
@@ -20,6 +21,7 @@ import java.util.List;
  * JSON pretty-printed, everything else verbatim.
  */
 @Route(value = "file-view")
+@CssImport("./styles/md-viewer.css")
 public class FileViewerView extends VerticalLayout implements BeforeEnterObserver {
 
     private final ServiceClient client;
@@ -75,11 +77,24 @@ public class FileViewerView extends VerticalLayout implements BeforeEnterObserve
             spacer.getStyle().set("flex", "0 0 8px");
             add(spacer);
 
-            Div contentDiv = Panels.mono(format(content));
+            Div contentDiv;
+            if (isMarkdown(path)) {
+                contentDiv = new Div();
+                contentDiv.setClassName("md-body");
+                contentDiv.add(new com.vaadin.flow.component.Html(
+                        "<div class=\"md-body\">" + Markdown.toHtml(content) + "</div>"));
+            } else {
+                contentDiv = Panels.mono(format(content));
+            }
             contentDiv.getStyle().set("flex-grow", "1").set("overflow", "auto");
             add(contentDiv);
             expand(contentDiv);
         }
+    }
+
+    /** Markdown files get the rendered treatment; everything else the mono block. */
+    static boolean isMarkdown(String path) {
+        return path != null && path.toLowerCase(java.util.Locale.ROOT).endsWith(".md");
     }
 
     /**

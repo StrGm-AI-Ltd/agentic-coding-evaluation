@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -67,5 +68,18 @@ class FileViewerViewTest {
         assertEquals("he-1", FileViewerView.queryParam(location, "run"));
         assertEquals("packs/T1.json", FileViewerView.queryParam(location, "path"));
         assertNull(FileViewerView.queryParam(location, "missing"));
+    }
+
+    @Test
+    void isMarkdown_dispatchMatrix() {
+        assertTrue(FileViewerView.isMarkdown("PARALLEL_PLAN.md"));
+        assertTrue(FileViewerView.isMarkdown("sub/CODE-REVIEW.md"));
+        assertTrue(FileViewerView.isMarkdown("x.MD"), "case-insensitive suffix");
+        assertFalse(FileViewerView.isMarkdown("oracle.json"));
+        assertFalse(FileViewerView.isMarkdown("interactions.jsonl"));
+        assertFalse(FileViewerView.isMarkdown("p2_implementation.log"));
+        assertFalse(FileViewerView.isMarkdown("readme.markdown"));
+        assertFalse(FileViewerView.isMarkdown(null));
+        assertFalse(FileViewerView.isMarkdown(""));
     }
 }
