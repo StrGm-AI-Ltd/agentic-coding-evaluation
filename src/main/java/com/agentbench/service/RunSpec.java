@@ -7,12 +7,14 @@ import java.util.*;
  *  record stored on the job. */
 public record RunSpec(String task, String model, String harness, String mode, String planSource, Integer taskWall, Integer taskTokens,
                       Integer implWall, Integer implTokens, String parallel, boolean systemRules, boolean selfReview,
-                      boolean trajectoryReview, String reviewerModel, boolean handoffNotes, boolean manageDocker, String runId) {
+                      boolean trajectoryReview, String reviewerModel, boolean handoffNotes, boolean manageDocker,
+                      Integer contextWindow, String runId) {
 
     public static final String RUN_ID = "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$";
 
     public RunSpec {
         taskWall = nonNeg(taskWall); taskTokens = nonNeg(taskTokens); implWall = nonNeg(implWall); implTokens = nonNeg(implTokens);
+        contextWindow = nonNeg(contextWindow);
         if (runId != null && !runId.matches(RUN_ID)) throw new IllegalArgumentException("invalid run id: " + runId);
         if (mode != null && !List.of("monolithic", "orchestrated").contains(mode))
             throw new IllegalArgumentException("mode must be monolithic or orchestrated");
@@ -42,6 +44,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (reviewerModel != null) args.add("--reviewer-model=" + reviewerModel);
         if (handoffNotes) args.add("--handoff-notes");
         if (manageDocker) args.add("--manage-docker");
+        // a pinned window: the run uses it as-is and skips step 0 (the probe exists to MEASURE one)
+        if (contextWindow != null) args.add("--context-window=" + contextWindow);
         return args;
     }
 

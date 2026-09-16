@@ -30,14 +30,28 @@ public class ImporterService {
                 && oracle.get("weighted_score_pct") != null;
         Map<String, Object> contention = manifest.get("contention") instanceof Map<?, ?> cm ? (Map<String, Object>) cm : Map.of();
         Map<String, Object> leaderboard = metrics.get("leaderboard") instanceof Map<?, ?> lb ? (Map<String, Object>) lb : Map.of();
+        // the named columns, the placeholders and the varargs below are one list: wall_sec/completion_tokens
+        // are passed positionally and must be named too. A re-import/rescore refreshes EVERY column the
+        // insert sets (importer.py builds `updates` from the whole row); job_id is the one exception —
+        // importAll passes null and must not orphan the run from the job that produced it.
         jdbc.update("""
                 INSERT INTO runs (run_id, results_dir, job_id, task, mode, model, harness, schema_version, poolable,
                     functional_score_pct, functional_points_got, functional_denominator, weighted_score_pct, points_got,
-                    denominator, partial_score_pct, valid, validity_reasons, contended, key_hash, manifest, oracle, metrics)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb)
-                ON CONFLICT (run_id) DO UPDATE SET results_dir = EXCLUDED.results_dir, poolable = EXCLUDED.poolable,
-                    functional_score_pct = EXCLUDED.functional_score_pct, weighted_score_pct = EXCLUDED.weighted_score_pct,
-                    valid = EXCLUDED.valid, imported_at = now()""",
+                    denominator, partial_score_pct, valid, validity_reasons, contended, key_hash, wall_sec,
+                    completion_tokens, manifest, oracle, metrics)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?::jsonb,?::jsonb,?::jsonb)
+                ON CONFLICT (run_id) DO UPDATE SET results_dir = EXCLUDED.results_dir,
+                    job_id = COALESCE(EXCLUDED.job_id, runs.job_id), task = EXCLUDED.task, mode = EXCLUDED.mode,
+                    model = EXCLUDED.model, harness = EXCLUDED.harness, schema_version = EXCLUDED.schema_version,
+                    poolable = EXCLUDED.poolable, functional_score_pct = EXCLUDED.functional_score_pct,
+                    functional_points_got = EXCLUDED.functional_points_got,
+                    functional_denominator = EXCLUDED.functional_denominator,
+                    weighted_score_pct = EXCLUDED.weighted_score_pct, points_got = EXCLUDED.points_got,
+                    denominator = EXCLUDED.denominator, partial_score_pct = EXCLUDED.partial_score_pct,
+                    valid = EXCLUDED.valid, validity_reasons = EXCLUDED.validity_reasons,
+                    contended = EXCLUDED.contended, key_hash = EXCLUDED.key_hash, wall_sec = EXCLUDED.wall_sec,
+                    completion_tokens = EXCLUDED.completion_tokens, manifest = EXCLUDED.manifest,
+                    oracle = EXCLUDED.oracle, metrics = EXCLUDED.metrics, imported_at = now()""",
                 runDir.getFileName().toString(), runDir.toAbsolutePath().toString(), jobId,
                 oracle.get("task"), manifest.getOrDefault("mode", "monolithic"), prov.get("model"), prov.get("harness"),
                 oracle.get("schema_version"), poolable,

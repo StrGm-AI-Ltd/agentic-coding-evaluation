@@ -35,10 +35,12 @@ public class WorkerService {
 
     private final ExperimentsService experiments;
     private final Preflight preflight;
+    private final TreatmentPin pin;
 
     public WorkerService(JobQueue queue, RunBench runBench, ImporterService importer, ExperimentsService experiments,
-                         Preflight preflight, BenchProperties props) {
-        this.queue = queue; this.runBench = runBench; this.importer = importer; this.experiments = experiments; this.preflight = preflight; this.props = props;
+                         Preflight preflight, TreatmentPin pin, BenchProperties props) {
+        this.queue = queue; this.runBench = runBench; this.importer = importer; this.experiments = experiments;
+        this.preflight = preflight; this.pin = pin; this.props = props;
         reconcile();
     }
 
@@ -62,12 +64,20 @@ public class WorkerService {
     private java.nio.channels.FileChannel runLock;
     private volatile boolean cancelCurrent;
 
-    /** port of worker.py guard(): the run lock (waiting_lock), the dirty harness tree (blocked),
-     *  and preflight for the model THIS job will request - all before the budget is spent */
-    private String guard(JobQueue.Job job) {
+    /** port of worker.py guard(): the treatment pin (blocked), the run lock (waiting_lock), and
+     *  preflight for the model THIS job will request - all before the budget is spent */
+    String guard(JobQueue.Job job) {
+        // the treatment pin: the build that enqueued this job must be the build about to run it, or
+        // the arms of an experiment straddle a redeploy and stop being comparable
+        if (job.pinnedRunnerSha() != null && !job.pinnedRunnerSha().equals(pin.current()))
+            return "treatment: job was enqueued against build " + job.pinnedRunnerSha() + ", this build is "
+                    + pin.current() + "; the service was rebuilt while the job was queued and its results would not be "
+                    + "comparable with the arms already run. Redeploy that build, or requeue the job from this one";
         try {
             if (runLock == null) {
-                java.nio.file.Path lockPath = java.nio.file.Path.of(System.getProperty("user.home"), ".cache/agentbench-jls/run.lock");
+                // the SAME lock file the Python service uses: "one benchmark run at a time" is an invariant
+                // over the shared model server at :9191, so both services must contend for one lock
+                java.nio.file.Path lockPath = java.nio.file.Path.of(System.getProperty("user.home"), ".cache/agentbench/run.lock");
                 java.nio.file.Files.createDirectories(lockPath.getParent());
                 runLock = java.nio.channels.FileChannel.open(lockPath,
                         java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE);
@@ -91,7 +101,9 @@ public class WorkerService {
         }
         String refusal = guard(job);
         if (refusal != null) {   // waiting_lock/blocked: the job stays, it is retried when the cause clears
-            queue.setStatus(job.id(), refusal.startsWith("preflight") || refusal.startsWith("run.lock") && false ? "blocked" : "waiting_lock", refusal);
+            // blocked = a cause the job cannot outwait (claim() only re-picks queued/waiting_lock rows):
+            // a fatal preflight and a treatment mismatch both need an operator. The lock clears on its own.
+            queue.setStatus(job.id(), refusal.startsWith("preflight") || refusal.startsWith("treatment") ? "blocked" : "waiting_lock", refusal);
             return;
         }
         busy.set(true);
@@ -121,8 +133,11 @@ public class WorkerService {
                 String planSource = flag(job.argv(), "--plan-source") != null ? flag(job.argv(), "--plan-source") : "agent";
                 if (flag(job.argv(), "--task-wall") != null) cfg.put("task_wall_sec", Integer.parseInt(flag(job.argv(), "--task-wall")));
                 if (flag(job.argv(), "--task-tokens") != null) cfg.put("task_tokens", Long.parseLong(flag(job.argv(), "--task-tokens")));
+                // a pinned --context-window IS the window: it skips step 0, whose whole job is to measure one
+                String window = flag(job.argv(), "--context-window");
+                if (window != null) cfg.put("context_window", Integer.parseInt(window));
                 // the context probe (step 0) is the default for direct runs; queue runs opt in via AB_JLS_CONTEXT_PROBE
-                cfg.put("context_probe", Boolean.parseBoolean(System.getenv().getOrDefault("AB_JLS_CONTEXT_PROBE", "true")));   // Python default: the probe runs
+                cfg.put("context_probe", window == null && Boolean.parseBoolean(System.getenv().getOrDefault("AB_JLS_CONTEXT_PROBE", "true")));   // Python default: the probe runs
                 cfg.put("context_probe_fresh", job.argv().contains("--context-probe-fresh"));
                 if (flag(job.argv(), "--parallel") != null) {
                     if ("auto".equals(flag(job.argv(), "--parallel"))) cfg.put("parallel_auto", true);

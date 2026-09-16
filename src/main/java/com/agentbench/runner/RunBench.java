@@ -140,7 +140,9 @@ public class RunBench {
             }
             cfg.put("_decode_curve", decodeCurve);
         } else {
-            int window = props.contextWindow() == null ? 65536 : props.contextWindow();
+            // the job's own pinned window (queue runs, per arm) wins over the operator's global one
+            int window = cfg.get("context_window") instanceof Number n ? n.intValue()
+                    : props.contextWindow() == null ? 65536 : props.contextWindow();
             derived = Map.of("usable_context", window, "pack_scale", Math.max(0.25, Math.min(1.0, window / 65536.0)),
                     "max_output_tokens", Math.min(props.maxOutputTokens(), (int) (window * 0.125)),
                     "compaction_trigger_tokens", (int) (window * 0.43), "task_tokens", (int) (window * 1.25 / 1000) * 1000,

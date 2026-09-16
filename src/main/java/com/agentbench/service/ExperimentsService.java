@@ -20,10 +20,12 @@ public class ExperimentsService {
     private final JdbcTemplate jdbc;
     private final JobQueue queue;
     private final BenchProperties props;
+    private final org.springframework.transaction.support.TransactionTemplate tx;
     private final com.agentbench.metrics.StatsService stats = new com.agentbench.metrics.StatsService();
 
-    public ExperimentsService(JdbcTemplate jdbc, JobQueue queue, BenchProperties props) {
-        this.jdbc = jdbc; this.queue = queue; this.props = props;
+    public ExperimentsService(JdbcTemplate jdbc, JobQueue queue, BenchProperties props,
+                              org.springframework.transaction.support.TransactionTemplate tx) {
+        this.jdbc = jdbc; this.queue = queue; this.props = props; this.tx = tx;
     }
 
     public static String shortName(String model) {
@@ -48,23 +50,26 @@ public class ExperimentsService {
                 List<String> arms = params.get("arms") instanceof List<?> l ? (List<String>) l : List.of("orch", "mono");
                 int n = taskCount();   // the monolithic impl budget = N x task budget from the reference plan (matched, P-1)
                 String parallel = params.get("parallel") == null ? "3" : str(params.get("parallel"));
+                Integer window = contextWindow(params, model);
                 for (int i = 1; i <= k; i++)
                     for (String arm : arms)
                         specs.add(new ArmSpec(arm, i, new RunSpec(RUNG, model, null, "orchestrated".equals(armMode(arm)) ? "orchestrated" : "monolithic",
                                 "reference", wall, tokens, arm.contains("mono") ? wall * n : null, arm.contains("mono") ? tokens * n : null,
-                                "par".equals(arm) ? parallel : null, "mono+rules".equals(arm), false, false, null, false, true,
+                                "par".equals(arm) ? parallel : null, "mono+rules".equals(arm), false, false, null, false, true, window,
                                 "he-" + tag + "-" + shortName(model) + "-" + arm.replace("+", "") + "-r" + i)));
             }
             case "model_ab" -> {
                 String a = str(params.get("model_a")), b = str(params.get("model_b"));
                 int wall = num(params.getOrDefault("task_wall", 3600));
+                // per arm: A and B can be different-sized models, so the window fallback must resolve per model
+                Integer windowA = contextWindow(params, a), windowB = contextWindow(params, b);
                 for (int i = 1; i <= k; i++) {
                     // the arm suffix keeps A and B distinct; model-ab.sh always reviews both sides (self + trajectory)
                     specs.add(new ArmSpec("A", i, new RunSpec(RUNG, a, null, "orchestrated", "reference", wall, null, null, null, null, false,
-                            true, true, str(params.get("reviewer_model")), false, true,
+                            true, true, str(params.get("reviewer_model")), false, true, windowA,
                             "ab-" + tag + "-" + shortName(a) + "-a-r" + i)));
                     specs.add(new ArmSpec("B", i, new RunSpec(RUNG, b, null, "orchestrated", "reference", wall, null, null, null, null, false,
-                            true, true, str(params.get("reviewer_model")), false, true,
+                            true, true, str(params.get("reviewer_model")), false, true, windowB,
                             "ab-" + tag + "-" + shortName(b) + "-b-r" + i)));
                 }
             }
@@ -72,11 +77,12 @@ public class ExperimentsService {
                 String model = str(params.get("model"));
                 int wall = num(params.getOrDefault("task_wall", 3600));
                 String mode = params.get("mode") == null ? "orchestrated" : str(params.get("mode"));
+                Integer window = contextWindow(params, model);
                 for (int i = 1; i <= k; i++)
                     for (String agent : List.of("ref", "pi"))   // --harness=ref|pi: the flag the comparison is ABOUT
                         specs.add(new ArmSpec(agent, i, new RunSpec(RUNG, model, agent, mode, "reference",
                                 "orchestrated".equals(mode) ? wall : null, null, "monolithic".equals(mode) ? wall * taskCount() : null,
-                                "monolithic".equals(mode) ? 60000 * taskCount() : null, null, false, false, false, null, false, true,
+                                "monolithic".equals(mode) ? 60000 * taskCount() : null, null, false, false, false, null, false, true, window,
                                 "aa-" + tag + "-" + shortName(model) + "-" + agent + "-r" + i)));
             }
             default -> throw new IllegalArgumentException("unknown template " + template + "; known: harness_effect, model_ab, agent_ab");
@@ -84,6 +90,26 @@ public class ExperimentsService {
         Set<String> ids = new HashSet<>();
         specs.forEach(s -> { if (!ids.add(s.spec().runId())) throw new IllegalArgumentException("duplicate run id " + s.spec().runId()); });
         return specs;
+    }
+
+    /** the window THIS arm's model runs with. An explicit params.context_window always wins; otherwise,
+     *  if the model server currently serves `model`, its max_model_len (the model's spec ceiling, not a
+     *  promise this machine's memory sustains it) is pinned so the run skips the step-0 probe. Unset when
+     *  neither resolves, leaving the probe to measure the real, memory-safe window itself. Resolved per
+     *  model, never once per experiment: model_ab's two arms can be different-sized models. */
+    Integer contextWindow(Map<String, Object> params, String model) {
+        if (params.get("context_window") != null) return num(params.get("context_window"));
+        return localModelSpecs().get(model);
+    }
+
+    /** id -> max_model_len for whatever the model server currently serves — the same /v1/models query
+     *  Preflight's "target model served" check makes. Best-effort: an unreachable server means an empty
+     *  map (the probe owns the window), never a crash. */
+    Map<String, Integer> localModelSpecs() {
+        Map<String, Integer> out = new LinkedHashMap<>();
+        new com.agentbench.runner.ContextProbe().models(props.endpoint(), props.apiKey() == null ? "" : props.apiKey())
+                .forEach((id, m) -> { if (m.hasNonNull("max_model_len")) out.put(id, m.get("max_model_len").asInt()); });
+        return out;
     }
 
     static String armMode(String arm) { return arm.startsWith("mono") ? "monolithic" : "orchestrated"; }
@@ -99,18 +125,23 @@ public class ExperimentsService {
     static String str(Object o) { return o == null ? null : String.valueOf(o); }
     static int num(Object o) { return o instanceof Number n ? n.intValue() : Integer.parseInt(String.valueOf(o)); }
 
+    /** the experiment row and its arms are one unit: an arm that fails to enqueue (a colliding run id,
+     *  a results dir already on disk) must not leave an experiment behind that can never finish, so the
+     *  whole sequence runs in one transaction and rolls back together. */
     public Map<String, Object> enqueue(String name, String template, Map<String, Object> params, int k, String resultsDir, String runnerSha, String oracleSha) {
         List<ArmSpec> specs = plan(template, params, k);
-        Map<String, Object> experiment = jdbc.queryForMap(
-                "INSERT INTO experiments (name, tag, template, params, k, pinned_runner_sha, pinned_oracle_sha) VALUES (?,?,?,?,?::jsonb,?,?) RETURNING *",
-                name, defaultTag(), template, toJson(params), k, runnerSha, oracleSha);
-        long id = ((Number) experiment.get("id")).longValue();
-        List<Object> jobs = new ArrayList<>();
-        for (ArmSpec s : specs)
-            jobs.add(queue.enqueue(s.spec(), 0, resultsDir, runnerSha, oracleSha, id, s.arm(), s.repeat()));
-        Map<String, Object> out = new LinkedHashMap<>(experiment);
-        out.put("jobs", jobs);
-        return out;
+        return tx.execute(status -> {
+            Map<String, Object> experiment = jdbc.queryForMap(
+                    "INSERT INTO experiments (name, tag, template, params, k, pinned_runner_sha, pinned_oracle_sha) VALUES (?,?,?,?,?::jsonb,?,?) RETURNING *",
+                    name, defaultTag(), template, toJson(params), k, runnerSha, oracleSha);
+            long id = ((Number) experiment.get("id")).longValue();
+            List<Object> jobs = new ArrayList<>();
+            for (ArmSpec s : specs)
+                jobs.add(queue.enqueue(s.spec(), 0, resultsDir, runnerSha, oracleSha, id, s.arm(), s.repeat()));
+            Map<String, Object> out = new LinkedHashMap<>(experiment);
+            out.put("jobs", jobs);
+            return out;
+        });
     }
 
     /** port of finalize_if_done: when every job of the experiment is terminal, compute the

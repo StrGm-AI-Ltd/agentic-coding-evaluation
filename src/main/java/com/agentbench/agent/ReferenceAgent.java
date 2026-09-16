@@ -195,7 +195,13 @@ public class ReferenceAgent {
     }
 
     /** port of chat_retry: 4 attempts with backoff on transient (5xx/connection) errors; 4xx are
-     *  final; the proxy's 429 budget refusal (detected by its message) ends the session */
+     *  final; the proxy's 429 budget refusal ends the session.
+     *
+     *  LangChain4j 1.1.0 classifies for us: its ExceptionMapper turns the HTTP status into a typed
+     *  exception (HttpException carries statusCode(); 5xx -> InternalServerException, 401/403 ->
+     *  AuthenticationException, 404 -> ModelNotFoundException, 408 -> TimeoutException, 429 ->
+     *  RateLimitException, other 4xx -> InvalidRequestException) under RetriableException /
+     *  NonRetriableException. Status codes, not substrings, decide here. */
     static ChatResponse chatWithRetry(ChatModel model, ChatRequest req, long deadline) {
         RuntimeException last = null;
         long delay = 2000;
@@ -203,14 +209,43 @@ public class ReferenceAgent {
             try { return model.chat(req); }
             catch (RuntimeException e) {
                 last = e;
-                String msg = String.valueOf(e);
-                if (msg.contains("budget exhausted")) throw new BudgetExhausted(e);
-                if (msg.matches("(?s).*40[0134].*") || msg.contains("413") || msg.contains("422")) throw new TransientError(e);   // final client errors
+                if (isBudgetRefusal(e)) throw new BudgetExhausted(e);
+                Integer status = httpStatus(e);
+                boolean clientError = status != null ? status >= 400 && status < 500 && status != 429
+                        : hasCause(e, dev.langchain4j.exception.NonRetriableException.class);
+                if (clientError) throw new TransientError(e);   // final client errors
                 try { Thread.sleep(Math.min(delay, Math.max(100, deadline - System.currentTimeMillis()))); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
                 delay = (long) (delay * 2.5);
             }
         }
         throw new TransientError(last);
+    }
+
+    /** the recording proxy's own 429: it is the phase budget's verdict, not a rate limit, and it ends
+     *  the session. The proxy is ours, so the marker is its exact literal (RecordingProxy's error body)
+     *  — there is no status code that separates it from a real 429, and LangChain4j hands the body on
+     *  only as the exception message. */
+    static final String BUDGET_REFUSAL = "agentbench: phase output-token budget exhausted";
+
+    static boolean isBudgetRefusal(Throwable e) {
+        Integer status = httpStatus(e);
+        if (status != null && status != 429) return false;
+        for (Throwable t = e; t != null && t != t.getCause(); t = t.getCause())
+            if (t.getMessage() != null && t.getMessage().contains(BUDGET_REFUSAL)) return true;
+        return false;
+    }
+
+    /** the HTTP status LangChain4j saw, when it kept one (HttpException anywhere in the cause chain) */
+    static Integer httpStatus(Throwable e) {
+        for (Throwable t = e; t != null && t != t.getCause(); t = t.getCause())
+            if (t instanceof dev.langchain4j.exception.HttpException h) return h.statusCode();
+        return null;
+    }
+
+    static boolean hasCause(Throwable e, Class<? extends Throwable> type) {
+        for (Throwable t = e; t != null && t != t.getCause(); t = t.getCause())
+            if (type.isInstance(t)) return true;
+        return false;
     }
 
     /** the oMLX key for the proxy; an EXTERNAL reviewer's provider key from its env var (run_bench Agent.run) */
@@ -220,8 +255,8 @@ public class ReferenceAgent {
                 case "https://api.openai.com/v1" -> "OPENAI_API_KEY";
                 case "https://openrouter.ai/api/v1" -> "OPENROUTER_API_KEY";
                 case "https://api.anthropic.com/v1" -> "ANTHROPIC_API_KEY";
-                case String u && u.contains("generativelanguage") -> "GEMINI_API_KEY";
-                case String u && u.contains("nebius") -> "NEBIUS_API_KEY";
+                case String u when u.contains("generativelanguage") -> "GEMINI_API_KEY";
+                case String u when u.contains("nebius") -> "NEBIUS_API_KEY";
                 default -> "";
             };
             if (!provider.isEmpty() && extraEnv.containsKey(provider)) return extraEnv.get(provider);

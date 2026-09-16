@@ -25,11 +25,13 @@ public class BenchController {
     private final BenchProperties props;
 
     private final Preflight preflight;
+    private final TreatmentPin pin;
 
     public BenchController(JdbcTemplate jdbc, JobQueue queue, ImporterService importer, ExperimentsService experiments,
-                           StatsService stats, WorkerService worker, BenchProperties props, Preflight preflight) {
+                           StatsService stats, WorkerService worker, BenchProperties props, Preflight preflight,
+                           TreatmentPin pin) {
         this.jdbc = jdbc; this.queue = queue; this.importer = importer; this.experiments = experiments;
-        this.stats = stats; this.worker = worker; this.props = props; this.preflight = preflight;
+        this.stats = stats; this.worker = worker; this.props = props; this.preflight = preflight; this.pin = pin;
     }
 
     @GetMapping("/api/preflight")
@@ -98,8 +100,10 @@ public class BenchController {
                 Boolean.parseBoolean(String.valueOf(spec.getOrDefault("trajectory_review", "false"))),
                 str(spec.get("reviewer_model")),
                 Boolean.parseBoolean(String.valueOf(spec.getOrDefault("handoff_notes", "false"))),
-                Boolean.parseBoolean(String.valueOf(spec.getOrDefault("manage_docker", "true"))), str(spec.get("run_id")));
-        return queue.enqueue(rs, priority, props.resultsDir(), null, null, null, null, null);
+                Boolean.parseBoolean(String.valueOf(spec.getOrDefault("manage_docker", "true"))),
+                spec.get("context_window") instanceof Number n ? n.intValue() : intOf(spec.get("context_window")),
+                str(spec.get("run_id")));
+        return queue.enqueue(rs, priority, props.resultsDir(), pin.current(), pin.current(), null, null, null);
     }
 
     @PostMapping("/api/jobs/{id}/cancel") public Map<String, Object> cancel(@PathVariable long id) { return queue.cancel(id); }
@@ -120,7 +124,7 @@ public class BenchController {
         if (k < 1 || k > 20) throw new IllegalArgumentException("k must be 1..20");
         @SuppressWarnings("unchecked") Map<String, Object> params = (Map<String, Object>) body.getOrDefault("params", Map.of());
         return experiments.enqueue((String) body.getOrDefault("name", template + " " + ExperimentsService.defaultTag()),
-                template, params, k, props.resultsDir(), null, null);
+                template, params, k, props.resultsDir(), pin.current(), pin.current());
     }
 
     @GetMapping("/api/experiments/{id}")
