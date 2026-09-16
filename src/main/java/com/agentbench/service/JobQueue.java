@@ -8,7 +8,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.*;
 
-/** Port of service/queue.py: the DB-backed run queue. Claim uses FOR UPDATE SKIP LOCKED with the
+/** Port of service/queue.py: the DB-backed run queue. Claim uses FOR UPDATE with the
  *  same priority order (priority DESC, then FIFO); a run id can never be queued twice or collide
  *  with an existing results dir; cancel lets a RUNNING job finish via its cancel flag; requeue
  *  keeps failed/cancelled/blocked jobs re-runnable. */

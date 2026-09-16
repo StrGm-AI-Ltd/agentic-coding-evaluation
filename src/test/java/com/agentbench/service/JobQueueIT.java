@@ -4,11 +4,16 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.SimpleDriverDataSource;
+import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 
 import java.nio.file.Files;
 import java.sql.Connection;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -81,19 +86,79 @@ class JobQueueIT {
         assertThrows(IllegalArgumentException.class, () -> q.enqueue(spec("low-1"), 0, results, "r", "o", null, null, null));   // never twice
     }
 
+    /** The real contention SKIP LOCKED exists for: claimer A holds an UNCOMMITTED claim on the top
+     *  candidate row (its own connection, autocommit off, so the row lock is still held) while
+     *  claimer B claims on a second connection at the same time. B must neither block nor steal A's
+     *  row: it skips to the next candidate. Remove SKIP LOCKED and B blocks on A's lock instead —
+     *  the bounded wait below then times out and this test fails. */
     @Test
     void skipLockedLetsTwoClaimersNotFight() throws Exception {
         JdbcTemplate db = jdbc();
         if (db == null) return;
         applySchema(db);
-        JobQueue a = new JobQueue(db), b = new JobQueue(db);
         String results = Files.createTempDirectory("results").toString();
-        a.enqueue(spec("only-1"), 0, results, "r", "o", null, null, null);
-        assertEquals("only-1", a.claim().runId());
-        assertNull(b.claim());                                        // the row is locked: the second claimer sees nothing
+        new JobQueue(db).enqueue(spec("race-1"), 5, results, "r", "o", null, null, null);   // priority DESC: the top candidate
+        new JobQueue(db).enqueue(spec("race-2"), 0, results, "r", "o", null, null, null);
+
+        SingleConnectionDataSource holder = connection(false);        // A: claims and keeps the transaction open
+        SingleConnectionDataSource other = connection(true);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            JobQueue.Job a = new JobQueue(new JdbcTemplate(holder)).claim();
+            assertEquals("race-1", a.runId());                        // A holds an uncommitted row lock on race-1
+
+            JobQueue b = new JobQueue(new JdbcTemplate(other));
+            Future<JobQueue.Job> claimed = pool.submit(b::claim);
+            JobQueue.Job second = claimed.get(15, TimeUnit.SECONDS);   // would time out without SKIP LOCKED
+            assertNotNull(second, "the second claimer must skip the locked row, not come back empty");
+            assertEquals("race-2", second.runId());                    // never A's row, and not a wait for it
+
+            Future<JobQueue.Job> nothingLeft = pool.submit(new JobQueue(new JdbcTemplate(other))::claim);
+            assertNull(nothingLeft.get(15, TimeUnit.SECONDS));         // the only other candidate is A's locked row
+        } finally {
+            pool.shutdownNow();
+            holder.getConnection().commit();
+            holder.destroy();
+            other.destroy();
+        }
+        assertEquals("running", new JobQueue(db).get(1L).get("status"));
+    }
+
+    /** two claimers racing the SAME single candidate: exactly one wins, the other gets nothing */
+    @Test
+    void twoClaimersRacingOneRowProduceOneWinner() throws Exception {
+        JdbcTemplate db = jdbc();
+        if (db == null) return;
+        applySchema(db);
+        String results = Files.createTempDirectory("results").toString();
+        new JobQueue(db).enqueue(spec("only-1"), 0, results, "r", "o", null, null, null);
+
+        SingleConnectionDataSource holder = connection(false), other = connection(true);
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            JobQueue.Job winner = new JobQueue(new JdbcTemplate(holder)).claim();
+            assertEquals("only-1", winner.runId());
+            Future<JobQueue.Job> loser = pool.submit(new JobQueue(new JdbcTemplate(other))::claim);
+            assertNull(loser.get(15, TimeUnit.SECONDS), "the row is locked: the second claimer skips it, it does not wait");
+        } finally {
+            pool.shutdownNow();
+            holder.getConnection().commit();
+            holder.destroy();
+            other.destroy();
+        }
+    }
+
+    /** a connection of its own, so two claimers can genuinely overlap (one DataSource = one Connection) */
+    private SingleConnectionDataSource connection(boolean autoCommit) {
+        SingleConnectionDataSource ds = new SingleConnectionDataSource();
+        ds.setDriverClassName(org.postgresql.Driver.class.getName());
+        ds.setUrl(System.getenv().getOrDefault("AB_JLS_TEST_DSN", "jdbc:postgresql://localhost/agentbench_jls_test"));
+        ds.setSuppressClose(true);
+        ds.setAutoCommit(autoCommit);
+        return ds;
     }
 
     private static RunSpec spec(String runId) {
-        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", 3600, null, null, null, null, false, false, false, null, false, true, runId);
+        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", 3600, null, null, null, null, false, false, false, null, false, true, null, runId);
     }
 }
