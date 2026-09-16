@@ -12,6 +12,7 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.data.renderer.ComponentRenderer;
 import com.vaadin.flow.router.Route;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.function.Supplier;
 
@@ -38,9 +39,11 @@ public class JobsView extends VerticalLayout {
 
         grid.addColumn(Api.Job::id).setHeader("#").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
         grid.addColumn(new ComponentRenderer<>(job -> Links.runToJobLink(job.run_id(), job.id())))
-                .setHeader("run").setAutoWidth(true);
+                .setHeader("run").setAutoWidth(true)
+                .setSortable(true).setComparator(Comparator.comparing(Api.Job::run_id));
         grid.addColumn(Api.Job::kind).setHeader("kind").setAutoWidth(true);
-        grid.addColumn(new ComponentRenderer<>(this::statusCell)).setHeader("status").setAutoWidth(true);
+        grid.addColumn(new ComponentRenderer<>(this::statusCell)).setHeader("status").setAutoWidth(true)
+                .setSortable(true).setComparator(Comparator.comparing(Api.Job::status));
         grid.addColumn(Api.Job::priority).setHeader("priority").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true);
         grid.addColumn(job -> job.arm() == null ? "–"

@@ -14,6 +14,7 @@ import com.vaadin.flow.component.select.Select;
 import com.vaadin.flow.data.renderer.ComponentRenderer;
 import com.vaadin.flow.router.Route;
 
+import java.util.Comparator;
 import java.util.List;
 
 /** Runs list with server-side filters — the UI twin of GET /api/runs. */
@@ -71,19 +72,32 @@ public class RunsView extends VerticalLayout {
         error.getStyle().set("color", "var(--lumo-error-color)");
 
         grid.addColumn(new ComponentRenderer<>(run -> Links.runLink(run.run_id())))
-                .setHeader("run").setAutoWidth(true).setFlexGrow(0);
+                .setHeader("run").setAutoWidth(true).setFlexGrow(0)
+                .setSortable(true).setComparator(Comparator.comparing(Api.Run::run_id));
         grid.addColumn(Api.Run::task).setHeader("task").setAutoWidth(true);
         grid.addColumn(Api.Run::model).setHeader("model").setAutoWidth(true);
         grid.addColumn(Api.Run::mode).setHeader("mode").setAutoWidth(true);
         grid.addColumn(functionalCell()).setHeader("functional %").setTextAlign(ColumnTextAlign.END)
-                .setAutoWidth(true);
+                .setAutoWidth(true)
+                .setSortable(true)
+                .setComparator(Comparator.comparing(Api.Run::functional_score_pct,
+                        Comparator.nullsLast(Comparator.naturalOrder())));
         grid.addColumn(this::compositeCell).setHeader("composite %").setTextAlign(ColumnTextAlign.END)
-                .setAutoWidth(true);
-        grid.addColumn(new ComponentRenderer<>(this::validBadge)).setHeader("valid").setAutoWidth(true);
+                .setAutoWidth(true)
+                .setComparator(Comparator.comparing(RunsView::effectiveScore,
+                        Comparator.nullsLast(Comparator.naturalOrder())));
+        grid.addColumn(new ComponentRenderer<>(this::validBadge)).setHeader("valid").setAutoWidth(true)
+                .setSortable(true)
+                .setComparator(Comparator.comparing(Api.Run::valid,
+                        Comparator.nullsLast(Comparator.naturalOrder())));
         grid.addColumn(r -> Fmt.duration(r.wall_sec())).setHeader("wall").setTextAlign(ColumnTextAlign.END)
-                .setAutoWidth(true);
+                .setAutoWidth(true)
+                .setComparator(Comparator.comparing(Api.Run::wall_sec,
+                        Comparator.nullsLast(Comparator.naturalOrder())));
         grid.addColumn(r -> Fmt.count(r.completion_tokens())).setHeader("tokens").setTextAlign(ColumnTextAlign.END)
-                .setAutoWidth(true);
+                .setAutoWidth(true)
+                .setComparator(Comparator.comparing(Api.Run::completion_tokens,
+                        Comparator.nullsLast(Comparator.naturalOrder())));
         grid.addColumn(r -> Fmt.when(r.started())).setHeader("started").setAutoWidth(true)
                 .setComparator(Fmt.comparingTime(Api.Run::started));
         grid.addItemClickListener(e -> e.getSource().getUI()
@@ -127,6 +141,11 @@ public class RunsView extends VerticalLayout {
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    /** The sortable value behind the composite % cell: weighted when present, else partial. */
+    static Double effectiveScore(Api.Run run) {
+        return run.weighted_score_pct() != null ? run.weighted_score_pct() : run.partial_score_pct();
     }
 
     private void notifyError(String text) {

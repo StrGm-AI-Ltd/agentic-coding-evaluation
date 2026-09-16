@@ -22,6 +22,7 @@ import org.springframework.web.client.RestClientResponseException;
 import tools.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /** Run detail — the UI twin of GET /api/runs/{id}: scores, badges, checks, plan tasks,
@@ -185,7 +186,8 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         grid.addColumn(c -> Fmt.num(c.weight())).setHeader("weight").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true);
         grid.addColumn(new ComponentRenderer<>(c -> Badges.status(c.status())))
-                .setHeader("status").setAutoWidth(true);
+                .setHeader("status").setAutoWidth(true)
+                .setSortable(true).setComparator(Comparator.comparing(Api.Check::status));
         grid.addColumn(Api.Check::description).setHeader("check").setAutoWidth(true);
         grid.addColumn(Api.Check::detail).setHeader("detail").setFlexGrow(1);
         grid.setItems(checks == null ? List.of() : checks);

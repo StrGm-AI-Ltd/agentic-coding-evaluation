@@ -14,6 +14,7 @@ import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /** Experiment detail — the UI twin of GET /api/experiments/{id}: params and its arm × repeat jobs. */
@@ -80,9 +81,11 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         grid.addColumn(job -> job.repeat() == null ? "–" : "r" + job.repeat())
                 .setHeader("repeat").setAutoWidth(true);
         grid.addColumn(new ComponentRenderer<>(job -> Links.runLink(job.run_id())))
-                .setHeader("run").setAutoWidth(true);
+                .setHeader("run").setAutoWidth(true)
+                .setSortable(true).setComparator(Comparator.comparing(Api.ExperimentJob::run_id));
         grid.addColumn(new ComponentRenderer<>(job -> Badges.status(job.status())))
-                .setHeader("status").setAutoWidth(true);
+                .setHeader("status").setAutoWidth(true)
+                .setSortable(true).setComparator(Comparator.comparing(Api.ExperimentJob::status));
         grid.addColumn(Api.ExperimentJob::result_line).setHeader("result").setFlexGrow(1);
         grid.setItems(jobs);
         grid.setAllRowsVisible(true);

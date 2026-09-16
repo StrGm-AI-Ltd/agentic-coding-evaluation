@@ -22,6 +22,13 @@ final class ApiFixtures {
         return run(runId, true);
     }
 
+    /** The same minimal run with weighted/partial scores set for the composite-sort helper. */
+    static Api.Run withScores(Api.Run base, Double weighted, Double partial) {
+        return new Api.Run(base.run_id(), null, null, null, null, null, null, null, true,
+                null, null, null, null, weighted, null, null, partial, null, null, null,
+                null, null, null, null, null, null, null, null);
+    }
+
     static RestClientResponseException http(int code) {
         return new RestClientResponseException("boom", code, "status", new HttpHeaders(),
                 "{}".getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);

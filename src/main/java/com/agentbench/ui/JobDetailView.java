@@ -20,6 +20,7 @@ import com.vaadin.flow.shared.Registration;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -242,13 +243,21 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         Grid<JobLiveState.RequestRow> requests = new Grid<>(JobLiveState.RequestRow.class, false);
         requests.addColumn(JobLiveState.RequestRow::ts).setHeader("ts").setAutoWidth(true)
                 .setComparator(Fmt.comparingTime(JobLiveState.RequestRow::ts));
-        requests.addColumn(r -> r.status() == null ? "–" : r.status()).setHeader("status").setAutoWidth(true);
+        requests.addColumn(r -> r.status() == null ? "–" : r.status()).setHeader("status").setAutoWidth(true)
+                .setComparator(Comparator.comparing(JobLiveState.RequestRow::status,
+                        Comparator.nullsLast(Comparator.naturalOrder())));
         requests.addColumn(r -> Fmt.num(r.latencySec())).setHeader("latency").setTextAlign(ColumnTextAlign.END)
-                .setAutoWidth(true);
+                .setAutoWidth(true)
+                .setComparator(Comparator.comparing(JobLiveState.RequestRow::latencySec,
+                        Comparator.nullsLast(Comparator.naturalOrder())));
         requests.addColumn(r -> Fmt.num(r.ttftSec())).setHeader("ttft").setTextAlign(ColumnTextAlign.END)
-                .setAutoWidth(true);
+                .setAutoWidth(true)
+                .setComparator(Comparator.comparing(JobLiveState.RequestRow::ttftSec,
+                        Comparator.nullsLast(Comparator.naturalOrder())));
         requests.addColumn(r -> Fmt.count(r.tokens())).setHeader("tokens").setTextAlign(ColumnTextAlign.END)
-                .setAutoWidth(true);
+                .setAutoWidth(true)
+                .setComparator(Comparator.comparing(JobLiveState.RequestRow::tokens,
+                        Comparator.nullsLast(Comparator.naturalOrder())));
         requests.addColumn(r -> r.clientAborted() ? "yes" : "").setHeader("aborted").setAutoWidth(true);
         requests.setAllRowsVisible(true);
         return requests;

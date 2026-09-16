@@ -9,6 +9,7 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.data.renderer.ComponentRenderer;
 import com.vaadin.flow.router.Route;
 
+import java.util.Comparator;
 import java.util.List;
 
 /** Experiments list — the UI twin of GET /api/experiments. */
@@ -28,7 +29,8 @@ public class ExperimentsView extends VerticalLayout {
         grid.addColumn(Api.Experiment::template).setHeader("template").setAutoWidth(true);
         grid.addColumn(exp -> "k=" + exp.k()).setHeader("k").setAutoWidth(true);
         grid.addColumn(new ComponentRenderer<>(exp -> Badges.status(exp.status())))
-                .setHeader("status").setAutoWidth(true);
+                .setHeader("status").setAutoWidth(true)
+                .setSortable(true).setComparator(Comparator.comparing(Api.Experiment::status));
         grid.addColumn(exp -> Fmt.when(exp.created_at())).setHeader("created").setAutoWidth(true)
                 .setComparator(Fmt.comparingTime(Api.Experiment::created_at));
         grid.addItemClickListener(e -> e.getSource().getUI()
