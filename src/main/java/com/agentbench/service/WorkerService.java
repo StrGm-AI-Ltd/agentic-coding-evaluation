@@ -144,8 +144,18 @@ public class WorkerService {
                     else cfg.put("parallel", Integer.parseInt(flag(job.argv(), "--parallel")));
                 }
                 cfg.put("manage_docker", job.argv().contains("--manage-docker"));
-                cfg.put("review", Map.of("enabled", job.argv().contains("--self-review"), "model", flag(job.argv(), "--reviewer-model"), "blind", job.argv().contains("--review-blind")));
-                cfg.put("trajectory_review", Map.of("enabled", job.argv().contains("--trajectory-review"), "model", flag(job.argv(), "--trajectory-reviewer-model")));
+                // Map.of() rejects a null value outright - "model" IS null whenever review is enabled
+                // without an explicit --reviewer-model (self-review alone still needs a reviewer picked
+                // downstream, but that is RunBench's decision to make, not a reason to crash the worker)
+                Map<String, Object> review = new LinkedHashMap<>();
+                review.put("enabled", job.argv().contains("--self-review"));
+                review.put("model", flag(job.argv(), "--reviewer-model"));
+                review.put("blind", job.argv().contains("--review-blind"));
+                cfg.put("review", review);
+                Map<String, Object> trajectoryReview = new LinkedHashMap<>();
+                trajectoryReview.put("enabled", job.argv().contains("--trajectory-review"));
+                trajectoryReview.put("model", flag(job.argv(), "--trajectory-reviewer-model"));
+                cfg.put("trajectory_review", trajectoryReview);
                 cfg.put("_cancel", (java.util.function.BooleanSupplier) () -> cancelCurrent);
                 runBench.runOnce(cfg, job.runId(), flag(job.argv(), "--task") == null ? "L7_full_platform" : flag(job.argv(), "--task"), mode, planSource, repoRoot);
                 queue.finish(job.id(), "succeeded", 0, resultLine(Path.of(props.resultsDir(), job.runId())));

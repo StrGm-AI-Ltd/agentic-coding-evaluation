@@ -9,8 +9,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /** Unit tests for WorkerService.guard()'s three refusal paths (port of worker.py guard()): the
@@ -80,6 +82,41 @@ class WorkerServiceTest {
         } finally {
             holder.close();
         }
+    }
+
+    /** The real bug behind job #1/#8 failing with a bare "java.lang.NullPointerException": the cfg's
+     *  "review"/"trajectory_review" entries were built with Map.of(...), which throws on ANY null
+     *  value - and "model" IS null whenever --self-review/--trajectory-review is set without an
+     *  explicit --reviewer-model/--trajectory-reviewer-model (exactly what model_ab produces when no
+     *  reviewer model is picked in the form). Drives the real poll() end-to-end with a job shaped
+     *  exactly like the ones that crashed, and asserts it finishes "succeeded", not "failed". */
+    @Test
+    void reviewFlagsWithoutAnExplicitReviewerModelDoNotCrashTheWorker() throws Exception {
+        Path tmpHome = Files.createTempDirectory("fake-home");
+        Path resultsDir = Files.createTempDirectory("results");
+        JobQueue queue = mock(JobQueue.class);
+        when(queue.list()).thenReturn(List.of());   // reconcile() runs in the constructor
+        TreatmentPin pin = mock(TreatmentPin.class);
+        when(pin.current()).thenReturn("build-abc123");
+        Preflight preflight = mock(Preflight.class);
+        when(preflight.check(any())).thenReturn(new Preflight.Report(List.of(), false));
+        BenchProperties props = mock(BenchProperties.class);
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(Files.createTempDirectory("ws").toString());
+        when(props.model()).thenReturn("m");
+
+        JobQueue.Job job = new JobQueue.Job(1L, null, "A", 1, "run", "run-1",
+                List.of("--task=L3p_point_in_time", "--model=m", "--mode=orchestrated", "--self-review", "--trajectory-review"),
+                "queued", null, 0, null, null, false, null, null, "build-abc123", "build-abc123");
+        when(queue.claim()).thenReturn(job);
+        when(queue.get(1L)).thenReturn(Map.of("cancel_requested", false));
+
+        WorkerService ws = new WorkerService(queue, mock(RunBench.class), mock(ImporterService.class),
+                mock(ExperimentsService.class), preflight, pin, props);
+        withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
+
+        verify(queue, timeout(3000)).finish(eq(1L), eq("succeeded"), eq(0), anyString());
+        verify(queue, never()).finish(eq(1L), eq("failed"), anyInt(), anyString());
     }
 
     @Test
