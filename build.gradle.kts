@@ -19,7 +19,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
     implementation("dev.langchain4j:langchain4j")
     implementation("dev.langchain4j:langchain4j-open-ai")
-    runtimeOnly("org.postgresql:postgresql")
+    implementation("org.postgresql:postgresql")   // PGobjectJsonSerializer needs org.postgresql.util.PGobject at compile time
     testImplementation("org.postgresql:postgresql")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testRuntimeOnly("com.h2database:h2")
