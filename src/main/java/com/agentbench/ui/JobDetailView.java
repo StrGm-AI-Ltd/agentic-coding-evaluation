@@ -1,28 +1,32 @@
 package com.agentbench.ui;
 
+import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
+import com.vaadin.flow.component.grid.ColumnTextAlign;
+import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.H1;
 import com.vaadin.flow.component.html.H3;
+import com.vaadin.flow.component.html.H4;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
-import com.vaadin.flow.component.UI;
-import com.vaadin.flow.shared.Registration;
-import org.springframework.web.client.RestClientResponseException;
 import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
+import com.vaadin.flow.shared.Registration;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Job detail — the UI twin of the SSE live page: status, argv, result line, actions,
- * refreshed by UI polling of GET /api/jobs/{id} while the job is not terminal.
- * The fetch happens once per navigation (V-2); the attach listener only arms polling.
+ * Job detail — the Vaadin twin of the Jinja2 SSE live page. Two transports, like the
+ * original: a 2 s poll of GET /api/jobs/{id} drives status/actions, and the same
+ * /jobs/{id}/events SSE stream the old page's EventSource used feeds the live panel
+ * (steps, sessions, request stats, log tail) through @Push.
  */
 @Route(value = "jobs/:jobId", layout = MainLayout.class)
 public class JobDetailView extends VerticalLayout implements BeforeEnterObserver {
@@ -31,7 +35,10 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     private long jobId = -1;
     private String lastStatus;
     private Boolean runImported; // one probe per navigation (plus on terminal transition), cached across polls
-    private Registration pollRegistration;
+    private transient Registration pollRegistration;
+    private transient Thread sseThread;
+    private volatile boolean sseStopped;
+    private final JobLiveState live = new JobLiveState();
 
     public JobDetailView(ServiceClient client) {
         this.client = client;
@@ -45,6 +52,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             UI ui = event.getUI();
             pollRegistration = ui.addPollListener(e -> poll());
             ui.setPollInterval(JobStatuses.isTerminal(status()) ? -1 : 2000);
+            if (jobId >= 0 && !JobStatuses.isTerminal(status())) {
+                startSse(ui);
+            }
         });
         addDetachListener(event -> {
             if (pollRegistration != null) {
@@ -52,6 +62,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 pollRegistration = null;
             }
             event.getUI().setPollInterval(-1);
+            stopSse();
         });
     }
 
@@ -76,6 +87,49 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         }
     }
 
+    /** The SSE loop: streams until the job ends; a dropped connection retries a few times. */
+    private void startSse(UI ui) {
+        if (sseThread != null && sseThread.isAlive()) {
+            return;
+        }
+        sseStopped = false;
+        sseThread = new Thread(() -> {
+            int attempts = 0;
+            while (!sseStopped && attempts <= 3) {
+                try {
+                    client.streamJobEvents(jobId, event -> {
+                        if (sseStopped) {
+                            throw new IllegalStateException("view detached");
+                        }
+                        live.apply(event);
+                        ui.access(this::render); // @Push flushes it instantly
+                    });
+                    return; // the server ends the stream when the job is terminal
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } catch (Exception e) {
+                    if (sseStopped) {
+                        return;
+                    }
+                    attempts += 1;
+                    try {
+                        Thread.sleep(2000);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+            }
+        }, "job-" + jobId + "-live");
+        sseThread.setDaemon(true);
+        sseThread.start();
+    }
+
+    private void stopSse() {
+        sseStopped = true; // the consumer aborts on the next delivered event (~2 s)
+    }
+
     private void render() {
         removeAll();
         if (jobId < 0) {
@@ -86,6 +140,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         try {
             job = client.job(jobId);
         } catch (Exception e) {
+            stopSse();
             add(new H3("Job #" + jobId), Panels.error(client.errorText(e)));
             return;
         }
@@ -95,7 +150,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     private void render(Api.Job job) {
         String previousStatus = lastStatus;
         lastStatus = job.status();
-        getUI().ifPresent(ui -> ui.setPollInterval(JobStatuses.isTerminal(job.status()) ? -1 : 2000));
+        boolean terminal = JobStatuses.isTerminal(job.status());
+        getUI().ifPresent(ui -> {
+            ui.setPollInterval(terminal ? -1 : 2000);
+            if (terminal) {
+                stopSse();
+            }
+        });
         if (job.run_id() != null && shouldProbeRun(runImported, previousStatus, job.status())) {
             runImported = isRunImported(client, job.run_id());
         }
@@ -124,7 +185,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         if (job.blocked_reason() != null) {
             add(Panels.warn(job.blocked_reason()));
         }
-        if (job.cancel_requested() && !JobStatuses.isTerminal(job.status())) {
+        if (job.cancel_requested() && !terminal) {
             add(new Span("Cancel requested; the runner will stop at the next step boundary."));
         }
 
@@ -133,11 +194,68 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             add(Panels.mono("python3 runner/run_bench.py " + String.join(" ", job.argv())));
         }
 
-        if (job.result_line() != null && !job.result_line().isBlank()) {
-            add(new Span("Result"));
-            add(Panels.mono(job.result_line()));
+        addLiveSection(job);
+        addActions(job);
+    }
+
+    /** The live panel, as in the Jinja page: steps, sessions, requests, log tail. */
+    private void addLiveSection(Api.Job job) {
+        boolean terminal = JobStatuses.isTerminal(job.status());
+
+        H4 liveTitle = new H4("Live");
+        liveTitle.getStyle().set("margin", "16px 0 4px 0");
+        add(liveTitle);
+
+        if (terminal) {
+            add(new Span("This job has finished; nothing more to stream."));
+            if (job.result_line() != null && !job.result_line().isBlank()) {
+                add(Panels.mono(job.result_line()));
+            }
+            return;
         }
 
+        Span step = new Span("current step: " + (live.currentStep() == null ? "–" : live.currentStep()));
+        step.getStyle().set("font-weight", "600");
+        add(step);
+        add(kvLine("sessions", live.sessions().isEmpty() ? "–" : String.join(", ", live.sessions())));
+        add(kvLine("requests", live.requestCount() == 0 ? "–"
+                : live.requestCount() + (live.lastTokens() == null ? "" : " · last completion tokens "
+                + Fmt.count(live.lastTokens()))));
+
+        List<JobLiveState.RequestRow> recent = live.recentRequests();
+        if (!recent.isEmpty()) {
+            Grid<JobLiveState.RequestRow> requests = new Grid<>(JobLiveState.RequestRow.class, false);
+            requests.addColumn(JobLiveState.RequestRow::ts).setHeader("ts").setAutoWidth(true);
+            requests.addColumn(r -> r.status() == null ? "–" : r.status()).setHeader("status").setAutoWidth(true);
+            requests.addColumn(r -> Fmt.num(r.latencySec())).setHeader("latency").setTextAlign(ColumnTextAlign.END)
+                    .setAutoWidth(true);
+            requests.addColumn(r -> Fmt.num(r.ttftSec())).setHeader("ttft").setTextAlign(ColumnTextAlign.END)
+                    .setAutoWidth(true);
+            requests.addColumn(r -> Fmt.count(r.tokens())).setHeader("tokens").setTextAlign(ColumnTextAlign.END)
+                    .setAutoWidth(true);
+            requests.addColumn(r -> r.clientAborted() ? "yes" : "").setHeader("aborted").setAutoWidth(true);
+            requests.setItems(recent);
+            requests.setAllRowsVisible(true);
+            add(requests);
+        }
+
+        String tail = live.logTail() != null ? live.logTail()
+                : (job.result_line() == null ? null : job.result_line());
+        if (tail != null && !tail.isBlank()) {
+            add(kvLine("log tail", ""));
+            add(Panels.mono(tail));
+        }
+    }
+
+    private static Span kvLine(String key, String value) {
+        Span span = new Span();
+        Span keySpan = new Span(key + ": ");
+        keySpan.getStyle().set("color", "var(--lumo-secondary-text-color)");
+        span.add(keySpan, new Span(value));
+        return span;
+    }
+
+    private void addActions(Api.Job job) {
         HorizontalLayout actions = new HorizontalLayout();
         actions.setPadding(false);
         actions.setSpacing(true);

@@ -15,9 +15,13 @@ import java.io.ObjectInputStream;
 import java.io.Serializable;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 /**
  * Thin typed client for agentbench-trading-service's JSON API. Blocking calls are
@@ -36,12 +40,16 @@ public class ServiceClient implements Serializable {
     private final ServiceProperties properties;
     private final String baseUrl;
     private transient RestClient http;
+    private transient HttpClient sseClient;
 
     /** Production constructor: Boot's auto-configured RestClient.Builder is injected. */
     public ServiceClient(ServiceProperties properties, RestClient.Builder builder) {
         this.properties = properties;
         this.baseUrl = properties.baseUrl();
         this.http = build(properties, builder);
+        this.sseClient = HttpClient.newBuilder() // no read timeout: SSE is long-lived
+                .connectTimeout(properties.connectTimeout())
+                .build();
     }
 
     private static RestClient build(ServiceProperties properties, RestClient.Builder builder) {
@@ -59,6 +67,9 @@ public class ServiceClient implements Serializable {
     private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
         in.defaultReadObject();
         http = build(properties, RestClient.builder());
+        sseClient = HttpClient.newBuilder()
+                .connectTimeout(properties.connectTimeout())
+                .build();
     }
 
     public String baseUrl() {
@@ -195,6 +206,30 @@ public class ServiceClient implements Serializable {
     static String encodeSegment(String segment) {
         return java.net.URLEncoder.encode(segment, java.nio.charset.StandardCharsets.UTF_8)
                 .replace("+", "%20");
+    }
+
+    /**
+     * Blocking consumption of the service's SSE stream (/jobs/{id}/events — the endpoint
+     * the Jinja page's EventSource uses). Each parsed event is handed to {@code onEvent};
+     * returns when the server ends the stream (terminal job). Throwing from {@code onEvent}
+     * aborts the connection — that is the page's detach path.
+     */
+    public void streamJobEvents(long jobId, Consumer<SseEvent> onEvent) throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + "/jobs/" + jobId + "/events"))
+                .header("Accept", "text/event-stream")
+                .GET()
+                .build();
+        HttpResponse<Stream<String>> response = sseClient.send(request, HttpResponse.BodyHandlers.ofLines());
+        try (Stream<String> lines = response.body()) {
+            SseParser parser = new SseParser();
+            lines.forEach(line -> {
+                SseEvent event = parser.accept(line);
+                if (event != null) {
+                    onEvent.accept(event); // a RuntimeException here aborts the stream/connection
+                }
+            });
+        }
     }
 
     /** Human-readable text for anything the client throws. */

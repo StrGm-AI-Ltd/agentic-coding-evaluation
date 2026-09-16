@@ -56,7 +56,7 @@ Port layout (collisions matter on the benchmark machine): `8800` UI · `8765` se
 | `/compare` | A/B group picker, metric + pooling options, stats.py output | `POST /api/compare` |
 | `/jobs` | queue table (blocked jobs actionable: cancel/requeue, blocked reason tooltip), raise priority | `GET /api/jobs`, `POST /api/jobs/{id}/…`, `PATCH /api/jobs/{id}` |
 | `/jobs/new` | new job form: every RunSpec flag (task, model picker, harness, mode, budgets, parallel, reviewers, docker flags) + priority | `POST /api/jobs` |
-| `/jobs/:id` | job detail, live status/result via 2 s UI polling while non-terminal | `GET /api/jobs/{id}` |
+| `/jobs/:id` | job detail with a live panel — current step, sessions, request stats (latency/TTFT/tokens), log tail — fed by the same SSE stream the service UI uses, plus 2 s status polling | `GET /api/jobs/{id}`, `GET /jobs/{id}/events` (SSE) |
 | `/experiments`, `/experiments/:id` | experiments and their arm × repeat jobs | `GET /api/experiments[/{id}]` |
 | `/experiments/new` | new experiment form: harness_effect / model_ab / agent_ab templates with per-template params, reviewer pickers | `POST /api/experiments` |
 | `/preflight` | positive-control preflight state, run + auto-refresh | `GET/POST /api/preflight` |
@@ -68,8 +68,11 @@ standalone `/file-view` route — JSON pretty-printed, **JSONL rendered one pret
 line** (all-or-nothing: a broken line keeps the file verbatim), everything else verbatim,
 with a raw link back to the service. Binary files link straight out to the service.
 
-The original SSE live page is approximated with Vaadin UI polling of the job endpoint
-(same 2 s cadence). Task and model pickers suggest values seen in imported runs plus free
+The job page mirrors the original's two transports: a 2 s poll of `/api/jobs/{id}` drives
+status and actions, and the same `/jobs/{id}/events` SSE stream the Jinja page's EventSource
+uses feeds the live panel server-side — parsed events accumulate in `JobLiveState` and flush
+to the browser through @Push (no client-side JavaScript). One difference: the SSE stream
+carries step ids but not the plan's task titles, so the panel shows ids only. Task and model pickers suggest values seen in imported runs plus free
 text (the service does not expose its rung ladder or oMLX model list over JSON; the server
 re-validates everything). Remaining service-only surface: the SSE log tail stream.
 

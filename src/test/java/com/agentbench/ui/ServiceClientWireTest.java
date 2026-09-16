@@ -102,6 +102,20 @@ class ServiceClientWireTest {
                 case "GET /api/runs/bad422" -> respond(exchange, 422, """
                         {"detail":[{"loc":["body","spec","harness"],"msg":"Input should be 'ref' or 'pi'"}]}""");
                 case "GET /api/runs/missing" -> respond(exchange, 404, "{\"detail\":\"run missing is not imported\"}");
+                case "GET /jobs/30/events" -> respond(exchange, 200, """
+                        event: step_started
+                        data: {"type": "step_started", "step": "T1", "continuation": false, "source": "packs"}
+
+                        event: session_started
+                        data: {"session_id": "755478fc-aaaa-bbbb-cccc-1a5b10584e41", "reasoning_effort": "high"}
+
+                        event: request
+                        data: {"type": "request", "seq": 1, "ts": "t1", "status": 200, "latency_sec": 1.5, "ttft_sec": 0.5, "budget_spent_completion_tokens": 557, "client_aborted": false}
+
+                        event: status
+                        data: {"status": "succeeded", "pid": 99, "result_line": "all done"}
+
+                        """);
                 case "GET /runs/r1/files/slow" -> {
                     try {
                         Thread.sleep(3000);
@@ -381,5 +395,30 @@ class ServiceClientWireTest {
         assertThrows(ResourceAccessException.class, () -> client.runFileText("r1", "slow"));
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
         assertTrue(elapsedMs < 2500, "must fail within the 1s read timeout, took " + elapsedMs + "ms");
+    }
+
+    /** The live panel's transport: the SSE stream the Jinja page's EventSource uses. */
+    @Test
+    void streamJobEvents_deliversParsedEventsUntilStreamEnd() throws Exception {
+        List<SseEvent> received = new java.util.ArrayList<>();
+        client.streamJobEvents(30, received::add); // returns when the stub stream ends
+        assertEquals(4, received.size());
+        assertEquals("step_started", received.get(0).type());
+        assertEquals("T1", received.get(0).data().path("step").asText());
+        assertEquals("session_started", received.get(1).type());
+        assertEquals("request", received.get(2).type());
+        assertEquals(557, received.get(2).data().path("budget_spent_completion_tokens").intValue());
+        assertEquals("status", received.get(3).type());
+        assertEquals("all done", received.get(3).data().path("result_line").asText());
+    }
+
+    @Test
+    void streamJobEvents_throwingFromTheConsumerAbortsTheConnection() {
+        List<SseEvent> seen = new java.util.ArrayList<>();
+        assertThrows(RuntimeException.class, () -> client.streamJobEvents(30, event -> {
+            seen.add(event);
+            throw new IllegalStateException("view detached");
+        }));
+        assertEquals(1, seen.size(), "the abort happens on the first delivered event");
     }
 }

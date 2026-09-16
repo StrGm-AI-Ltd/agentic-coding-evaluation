@@ -1,14 +1,20 @@
 package com.agentbench.ui;
 
+import com.vaadin.flow.component.page.AppShellConfigurator;
+import com.vaadin.flow.component.page.Push;
+import com.vaadin.flow.shared.communication.PushMode;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
-import com.vaadin.flow.component.dependency.StyleSheet;
-import com.vaadin.flow.component.page.AppShellConfigurator;
 
+/**
+ * The Spring Boot application class doubles as Vaadin's app shell (vaadin-spring),
+ * so it implements AppShellConfigurator directly and carries @Push — server push
+ * flushes the job page's SSE events to the browser instantly.
+ */
+@Push(PushMode.AUTOMATIC)
 @SpringBootApplication
 @ConfigurationPropertiesScan
-@StyleSheet("styles.css")
 public class AgentBenchUiApplication implements AppShellConfigurator {
 
     public static void main(String[] args) {
