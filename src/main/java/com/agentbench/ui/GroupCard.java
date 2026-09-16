@@ -1,13 +1,13 @@
 package com.agentbench.ui;
 
-import com.vaadin.flow.component.html.H3;
+import com.vaadin.flow.component.badge.Badge;
+import com.vaadin.flow.component.details.Details;
 import com.vaadin.flow.component.html.H4;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.Component;
 
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -70,7 +70,7 @@ public class GroupCard extends VerticalLayout {
                                 String theme = Boolean.TRUE.equals(stat.pass_k()) ? Badges.SUCCESS
                                         : (stat.pass_rate() != null && stat.pass_rate() > 0) ? Badges.WARNING
                                         : Badges.ERROR;
-                                com.vaadin.flow.component.badge.Badge chip = Badges.text(entry.getKey(), theme);
+                                Badge chip = Badges.text(entry.getKey(), theme);
                                 chip.getElement().setAttribute("title",
                                         entry.getKey() + ": pass rate " + stat.pass_rate());
                                 chips.add(chip);
@@ -85,13 +85,12 @@ public class GroupCard extends VerticalLayout {
         runs.setSpacing(true);
         runs.getStyle().set("flex-wrap", "wrap");
         for (String runId : group.run_ids()) {
-            runs.add(RunsView.runLink(runId));
+            runs.add(Links.runLink(runId));
         }
         add(runs);
 
         Component printed = Panels.mono(group.printed());
-        com.vaadin.flow.component.details.Details details =
-                new com.vaadin.flow.component.details.Details("stats.py output", printed);
+        Details details = new Details("stats.py output", printed);
         add(details);
     }
 

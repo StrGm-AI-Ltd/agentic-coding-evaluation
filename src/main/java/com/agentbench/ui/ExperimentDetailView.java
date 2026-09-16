@@ -20,7 +20,7 @@ import java.util.List;
 @Route(value = "experiments/:experimentId", layout = MainLayout.class)
 public class ExperimentDetailView extends VerticalLayout implements BeforeEnterObserver {
 
-    private final transient ServiceClient client;
+    private final ServiceClient client;
     private long experimentId = -1;
 
     public ExperimentDetailView(ServiceClient client) {
@@ -32,7 +32,7 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
     public void beforeEnter(BeforeEnterEvent event) {
         String raw = event.getRouteParameters().get("experimentId").orElse(null);
         try {
-            experimentId = Long.parseLong(raw);
+            experimentId = raw == null ? -1 : Long.parseLong(raw);
         } catch (NumberFormatException e) {
             experimentId = -1;
         }
@@ -79,7 +79,7 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         grid.addColumn(job -> job.arm() == null ? "–" : job.arm()).setHeader("arm").setAutoWidth(true);
         grid.addColumn(job -> job.repeat() == null ? "–" : "r" + job.repeat())
                 .setHeader("repeat").setAutoWidth(true);
-        grid.addColumn(new ComponentRenderer<>(job -> RunsView.runLink(job.run_id())))
+        grid.addColumn(new ComponentRenderer<>(job -> Links.runLink(job.run_id())))
                 .setHeader("run").setAutoWidth(true);
         grid.addColumn(new ComponentRenderer<>(job -> Badges.status(job.status())))
                 .setHeader("status").setAutoWidth(true);

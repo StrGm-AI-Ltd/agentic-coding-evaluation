@@ -3,6 +3,7 @@ package com.agentbench.ui;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.combobox.MultiSelectComboBox;
+import com.vaadin.flow.component.details.Details;
 import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.notification.Notification;
@@ -14,11 +15,11 @@ import com.vaadin.flow.router.Route;
 import java.util.ArrayList;
 import java.util.List;
 
-/** A/B comparison — the UI twin of POST /api/compare. */
+/** A/B comparison — the UI twin of POST /api/compare (poolable runs only, like the service). */
 @Route(value = "compare", layout = MainLayout.class)
 public class CompareView extends VerticalLayout {
 
-    private final transient ServiceClient client;
+    private final ServiceClient client;
 
     private final MultiSelectComboBox<String> groupA = new MultiSelectComboBox<>("Group A run ids");
     private final MultiSelectComboBox<String> groupB = new MultiSelectComboBox<>("Group B run ids");
@@ -59,13 +60,18 @@ public class CompareView extends VerticalLayout {
     private void loadRunIds() {
         try {
             List<Api.Run> runs = client.runs(null, null, null, null, null);
-            List<String> ids = runs.stream().map(Api.Run::run_id).sorted().toList();
+            List<String> ids = poolableRunIds(runs);
             groupA.setItems(ids);
             groupB.setItems(ids);
         } catch (Exception e) {
             result.removeAll();
             result.add(Panels.error(client.errorText(e)));
         }
+    }
+
+    /** Only poolable runs can be compared (stats.py pools them; the rest 404 — V-5). */
+    static List<String> poolableRunIds(List<Api.Run> runs) {
+        return runs.stream().filter(Api.Run::poolable).map(Api.Run::run_id).sorted().distinct().toList();
     }
 
     private void compare() {
@@ -82,15 +88,11 @@ public class CompareView extends VerticalLayout {
             Api.CompareResponse response = client.compare(request);
             if (response.refused() != null) {
                 result.add(Panels.warn("stats.py refused: " + response.refused()));
-                result.add(new com.vaadin.flow.component.details.Details("stats.py output",
-                        Panels.mono(response.printed())));
+                result.add(new Details("stats.py output", Panels.mono(response.printed())));
                 return;
             }
-            result.add(new Span("result " + response.result()));
-            result.add(new com.vaadin.flow.component.details.Details("stats.py output",
-                    Panels.mono(response.printed())));
-            result.add(new com.vaadin.flow.component.details.Details("result JSON",
-                    Panels.mono(Fmt.json(response.result()))));
+            result.add(new Details("stats.py output", Panels.mono(response.printed())));
+            result.add(new Details("result JSON", Panels.mono(Fmt.json(response.result()))));
         } catch (Exception e) {
             result.add(Panels.error(client.errorText(e)));
         }

@@ -1,8 +1,11 @@
 package com.agentbench.ui;
 
 import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.springframework.web.client.RestClient;
 
+import java.time.Duration;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -10,12 +13,18 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Wire-mapping tests against a live agentbench-trading-service on 127.0.0.1:8765.
- * They are skipped (not failed) when the service is not running.
+ * Live wire-mapping tests against a running agentbench-trading-service. Tagged "live" and
+ * run by the separate testLive Gradle task; the default test task stays deterministic.
+ * The base URL can be overridden with -Dagentbench.service.base-url=…
  */
+@Tag("live")
 class ServiceClientMappingTest {
 
-    private final ServiceClient client = new ServiceClient(new ServiceProperties("http://127.0.0.1:8765"));
+    private final ServiceClient client = new ServiceClient(
+            new ServiceProperties(
+                    System.getProperty("agentbench.service.base-url", "http://127.0.0.1:8765"),
+                    Duration.ofSeconds(2), Duration.ofSeconds(15)),
+            RestClient.builder());
 
     private List<Api.Run> runsOrSkip() {
         try {

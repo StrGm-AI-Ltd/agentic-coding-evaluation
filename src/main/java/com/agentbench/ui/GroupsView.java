@@ -12,7 +12,7 @@ import java.util.List;
 @Route(value = "groups", layout = MainLayout.class)
 public class GroupsView extends VerticalLayout {
 
-    private final transient ServiceClient client;
+    private final ServiceClient client;
 
     public GroupsView(ServiceClient client) {
         this.client = client;

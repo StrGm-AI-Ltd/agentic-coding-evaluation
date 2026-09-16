@@ -13,16 +13,14 @@ import com.vaadin.flow.data.renderer.ComponentRenderer;
 import com.vaadin.flow.router.Route;
 
 import java.util.List;
-import java.util.Set;
+import java.util.function.Supplier;
 
-/** Queue view — the UI twin of GET /api/jobs with cancel / requeue / priority actions. */
+/** Queue view — the UI twin of GET /api/jobs with cancel / requeue / priority actions
+ *  (blocked jobs are actionable, like in the service UI). */
 @Route(value = "jobs", layout = MainLayout.class)
 public class JobsView extends VerticalLayout {
 
-    private static final Set<String> ACTIVE = Set.of("queued", "waiting_lock", "running");
-    private static final Set<String> TERMINAL = Set.of("succeeded", "failed", "cancelled");
-
-    private final transient ServiceClient client;
+    private final ServiceClient client;
 
     private final Grid<Api.Job> grid = new Grid<>(Api.Job.class, false);
     private final Span error = new Span();
@@ -39,11 +37,10 @@ public class JobsView extends VerticalLayout {
         error.getStyle().set("color", "var(--lumo-error-color)");
 
         grid.addColumn(Api.Job::id).setHeader("#").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
-        grid.addColumn(new ComponentRenderer<>(job -> RunsView.runLink(job.run_id())))
+        grid.addColumn(new ComponentRenderer<>(job -> Links.runLink(job.run_id())))
                 .setHeader("run").setAutoWidth(true);
         grid.addColumn(Api.Job::kind).setHeader("kind").setAutoWidth(true);
-        grid.addColumn(new ComponentRenderer<>(job -> Badges.status(job.status())))
-                .setHeader("status").setAutoWidth(true);
+        grid.addColumn(new ComponentRenderer<>(this::statusCell)).setHeader("status").setAutoWidth(true);
         grid.addColumn(Api.Job::priority).setHeader("priority").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true);
         grid.addColumn(job -> job.arm() == null ? "–"
@@ -59,15 +56,24 @@ public class JobsView extends VerticalLayout {
         addAttachListener(e -> load());
     }
 
+    /** Status badge with the blocked reason surfaced as a tooltip (V-1). */
+    private com.vaadin.flow.component.badge.Badge statusCell(Api.Job job) {
+        com.vaadin.flow.component.badge.Badge badge = Badges.status(job.status());
+        if ("blocked".equals(job.status()) && job.blocked_reason() != null) {
+            badge.getElement().setAttribute("title", job.blocked_reason());
+        }
+        return badge;
+    }
+
     private HorizontalLayout actions(Api.Job job) {
         HorizontalLayout layout = new HorizontalLayout();
         layout.setPadding(false);
         layout.setSpacing(true);
 
-        if (ACTIVE.contains(job.status()) && !job.cancel_requested()) {
+        if (JobStatuses.canCancel(job.status(), job.cancel_requested())) {
             layout.add(new Button("Cancel", e -> act(() -> client.cancel(job.id()), job)));
         }
-        if (TERMINAL.contains(job.status())) {
+        if (JobStatuses.canRequeue(job.status())) {
             layout.add(new Button("Requeue", e -> act(() -> client.requeue(job.id()), job)));
         }
         layout.add(new Button(VaadinIcon.ARROW_UP.create(),
@@ -75,7 +81,7 @@ public class JobsView extends VerticalLayout {
         return layout;
     }
 
-    private void act(java.util.function.Supplier<Api.Job> action, Api.Job job) {
+    private void act(Supplier<Api.Job> action, Api.Job job) {
         try {
             Api.Job updated = action.get();
             Notification.show("job #" + job.id() + " → " + updated.status(),
@@ -98,7 +104,8 @@ public class JobsView extends VerticalLayout {
         }
         grid.setItems(jobs);
         long runningNow = jobs.stream().filter(j -> "running".equals(j.status())).count();
+        long blocked = jobs.stream().filter(j -> "blocked".equals(j.status())).count();
         running.setText(jobs.size() + " jobs · " + runningNow + " running"
-                + (jobs.stream().anyMatch(j -> "blocked".equals(j.status())) ? " · some blocked" : ""));
+                + (blocked > 0 ? " · " + blocked + " blocked" : ""));
     }
 }

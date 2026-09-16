@@ -14,7 +14,8 @@ import com.vaadin.flow.router.Route;
 @Route(value = "preflight", layout = MainLayout.class)
 public class PreflightView extends VerticalLayout {
 
-    private final transient ServiceClient client;
+    private final ServiceClient client;
+    private String startError;
     private Registration pollRegistration;
 
     public PreflightView(ServiceClient client) {
@@ -22,6 +23,10 @@ public class PreflightView extends VerticalLayout {
         setPadding(true);
 
         addAttachListener(event -> {
+            if (pollRegistration != null) { // V-7: a defensive guard against double attach
+                pollRegistration.remove();
+                pollRegistration = null;
+            }
             pollRegistration = event.getUI().addPollListener(e -> render());
             render();
         });
@@ -40,14 +45,19 @@ public class PreflightView extends VerticalLayout {
         Button start = new Button("Run preflight", e -> {
             try {
                 client.startPreflight();
-            } catch (Exception ignored) {
-                // the fetch below surfaces the current state / error
+                startError = null;
+            } catch (Exception ex) {
+                startError = client.errorText(ex); // C-10: never swallow the start failure silently
             }
             render();
         });
 
         add(new H2("Preflight"));
         add(new Span("Runs a real gradle test on the positive control in the agent's environment before any run."));
+
+        if (startError != null) {
+            add(Panels.warn("Starting the preflight failed: " + startError));
+        }
 
         Api.PreflightState state;
         try {

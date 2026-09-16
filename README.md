@@ -36,8 +36,11 @@ with duplicate `conventionErrorViewResolver` beans, so keep them aligned.
 3. Open <http://127.0.0.1:8800>
 
 Port layout (collisions matter on the benchmark machine): `8800` UI · `8765` service ·
-`8080` benchmark oracle · `9191` oMLX. The service base URL is configured in
-`src/main/resources/application.yml` (`agentbench.service.base-url`).
+`8080` benchmark oracle · `9191` oMLX. Configured in `src/main/resources/application.yml`:
+
+- `agentbench.service.base-url` — where the FastAPI service lives
+- `agentbench.service.connect-timeout` / `read-timeout` — bounded HTTP budgets (default 2 s / 15 s)
+  so a stuck service can never hang the UI thread indefinitely
 
 > `gradle.properties` pins `org.gradle.java.home` to the Homebrew JDK 21 on this machine
 > (the default `java` is 11). Remove that line on other machines and let the Java 21
@@ -48,10 +51,10 @@ Port layout (collisions matter on the benchmark machine): `8800` UI · `8765` se
 | Route | What | Backed by |
 |---|---|---|
 | `/runs` | run list with task/model/mode/valid/poolable filters, "Rescan results/" | `GET /api/runs`, `POST /api/import` |
-| `/runs/:id` | scores, validity badges, per-check table, re-score for un-poolable runs | `GET /api/runs/{id}`, `POST /api/runs/{id}/rescore` |
+| `/runs/:id` | scores, validity badges, per-check table, plan tasks, per-step scores, provenance, re-score for un-poolable runs, embedded file browser | `GET /api/runs/{id}`, `POST /api/runs/{id}/rescore`, `GET /runs/{id}/files/{path}` |
 | `/groups` | leaderboard: ranked (k ≥ 5) and indicative cards, mean ± 90 % CI, pass-k chips | `GET /api/groups` |
 | `/compare` | A/B group picker, metric + pooling options, stats.py output | `POST /api/compare` |
-| `/jobs` | queue table, cancel / requeue / raise priority | `GET /api/jobs`, `POST /api/jobs/{id}/…`, `PATCH /api/jobs/{id}` |
+| `/jobs` | queue table (blocked jobs actionable: cancel/requeue, blocked reason tooltip), raise priority | `GET /api/jobs`, `POST /api/jobs/{id}/…`, `PATCH /api/jobs/{id}` |
 | `/jobs/new` | new job form: every RunSpec flag (task, model picker, harness, mode, budgets, parallel, reviewers, docker flags) + priority | `POST /api/jobs` |
 | `/jobs/:id` | job detail, live status/result via 2 s UI polling while non-terminal | `GET /api/jobs/{id}` |
 | `/experiments`, `/experiments/:id` | experiments and their arm × repeat jobs | `GET /api/experiments[/{id}]` |
@@ -71,6 +74,14 @@ re-validates everything). Remaining service-only surface: the SSE log tail strea
 ## Build & test
 
 ```sh
-./gradlew build   # compiles + Vaadin production frontend bundle
-./gradlew test    # wire-mapping tests; SKIPPED (not failed) if the service is down
+./gradlew build      # compiles + Vaadin production frontend bundle
+./gradlew test       # 64 deterministic, service-independent tests (unit + stub-server wire tests)
+./gradlew testLive   # 3 live wire-mapping tests against the running service (skipped if it is down,
+                     # override with -Dagentbench.service.base-url=…)
 ```
+
+The default `test` task is fully offline: the wire tier runs against an in-process stub HTTP
+server (com.sun.net.httpserver, no extra dependencies), covering every endpoint, both POST body
+shapes (`/api/jobs`, `/api/experiments`), the 422/404 error paths and the read-timeout budget.
+View-level logic (job spec/experiment param normalization, status→action mapping, file listing,
+path guards, badge/format rules) is extracted into pure classes and unit-tested directly.

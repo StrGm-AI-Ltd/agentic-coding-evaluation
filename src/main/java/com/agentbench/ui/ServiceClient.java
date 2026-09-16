@@ -1,34 +1,63 @@
 package com.agentbench.ui;
 
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
+import tools.jackson.databind.JsonNode;
 
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.Serializable;
+import java.net.URI;
+import java.net.http.HttpClient;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 /**
- * Thin typed client for agentbench-trading-service's JSON API.
- * Blocking calls are fine here: it is a local, single-operator service.
+ * Thin typed client for agentbench-trading-service's JSON API. Blocking calls are
+ * fine here: it is a local, single-operator service — but they are always bounded
+ * by the configured connect/read timeouts (S-1), never unbounded.
+ *
+ * Serializable (V-3): the wire handle is transient and rebuilt on deserialization
+ * from the properties, so a Vaadin UI session can be persisted and restored without
+ * leaving views holding a dead/null client.
  */
 @Component
-public class ServiceClient {
+public class ServiceClient implements Serializable {
 
-    private static final ObjectMapper JSON = JsonMapper.builder().build();
+    private static final long serialVersionUID = 1L;
 
-    private final RestClient http;
+    private final ServiceProperties properties;
     private final String baseUrl;
+    private transient RestClient http;
 
-    public ServiceClient(ServiceProperties properties) {
+    /** Production constructor: Boot's auto-configured RestClient.Builder is injected. */
+    public ServiceClient(ServiceProperties properties, RestClient.Builder builder) {
+        this.properties = properties;
         this.baseUrl = properties.baseUrl();
-        this.http = RestClient.builder().baseUrl(baseUrl).build();
+        this.http = build(properties, builder);
+    }
+
+    private static RestClient build(ServiceProperties properties, RestClient.Builder builder) {
+        HttpClient jdk = HttpClient.newBuilder()
+                .connectTimeout(properties.connectTimeout())
+                .build();
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(jdk);
+        factory.setReadTimeout(properties.readTimeout());
+        return builder.clone() // never mutate the injected prototype (mock/test seam stays intact)
+                .baseUrl(properties.baseUrl())
+                .requestFactory(factory)
+                .build();
+    }
+
+    private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
+        in.defaultReadObject();
+        http = build(properties, RestClient.builder());
     }
 
     public String baseUrl() {
@@ -140,33 +169,53 @@ public class ServiceClient {
 
     /**
      * GET /runs/{runId}/files/{path} — raw file content from the run's results dir.
-     * Paths come from our own listing of safe names (no encoding needed for [A-Za-z0-9._/-]).
+     * Each path segment is URL-encoded (J-1), so spaces, %, and non-ASCII are safe.
      */
     public String runFileText(String runId, String relativePath) {
         if (relativePath.matches(".*[?#].*") || relativePath.contains("..")) {
             throw new IllegalArgumentException("unsafe file path: " + relativePath);
         }
-        return http.get().uri("/runs/" + runId + "/files/" + relativePath).retrieve().body(String.class);
+        URI uri = URI.create(baseUrl + "/runs/" + encodeSegment(runId) + "/files/"
+                + encodePath(relativePath));
+        return http.get().uri(uri).retrieve().body(String.class);
+    }
+
+    static String encodePath(String relativePath) {
+        StringBuilder sb = new StringBuilder();
+        for (String segment : relativePath.split("/")) {
+            if (sb.length() > 0) {
+                sb.append('/');
+            }
+            sb.append(encodeSegment(segment));
+        }
+        return sb.toString();
+    }
+
+    private static String encodeSegment(String segment) {
+        return java.net.URLEncoder.encode(segment, java.nio.charset.StandardCharsets.UTF_8)
+                .replace("+", "%20");
     }
 
     /** Human-readable text for anything the client throws. */
     public String errorText(Exception e) {
         if (e instanceof RestClientResponseException responseException) {
             try {
-                tools.jackson.databind.JsonNode body = JSON.readTree(responseException.getResponseBodyAsString());
+                JsonNode body = Json.MAPPER.readTree(responseException.getResponseBodyAsString());
                 if (body.has("detail")) {
-                    tools.jackson.databind.JsonNode detail = body.get("detail");
+                    JsonNode detail = body.get("detail");
                     if (detail.isTextual()) {
                         return detail.asText();
                     }
-                    if (detail.isArray()) { // pydantic validation errors
+                    if (detail.isArray()) { // pydantic validation errors; the field name is the LAST loc segment
                         StringBuilder sb = new StringBuilder();
-                        for (tools.jackson.databind.JsonNode err : detail) {
+                        for (JsonNode err : detail) {
                             if (sb.length() > 0) {
                                 sb.append("\n");
                             }
-                            sb.append(err.path("loc").path(1).asText(err.path("loc").asText("?")))
-                                    .append(": ").append(err.path("msg").asText("invalid"));
+                            JsonNode loc = err.path("loc");
+                            String field = loc.isArray() && !loc.isEmpty()
+                                    ? loc.get(loc.size() - 1).asText("?") : "?";
+                            sb.append(field).append(": ").append(err.path("msg").asText("invalid"));
                         }
                         return sb.toString();
                     }

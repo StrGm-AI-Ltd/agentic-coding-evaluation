@@ -5,6 +5,7 @@ import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.H1;
 import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.Span;
+import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.UI;
@@ -16,20 +17,18 @@ import com.vaadin.flow.router.RouterLink;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 
 /**
  * Job detail — the UI twin of the SSE live page: status, argv, result line, actions,
  * refreshed by UI polling of GET /api/jobs/{id} while the job is not terminal.
+ * The fetch happens once per navigation (V-2); the attach listener only arms polling.
  */
 @Route(value = "jobs/:jobId", layout = MainLayout.class)
 public class JobDetailView extends VerticalLayout implements BeforeEnterObserver {
 
-    private static final Set<String> TERMINAL = Set.of("succeeded", "failed", "cancelled");
-    private static final Set<String> ACTIVE = Set.of("queued", "waiting_lock", "running");
-
-    private final transient ServiceClient client;
+    private final ServiceClient client;
     private long jobId = -1;
+    private String lastStatus;
     private Registration pollRegistration;
 
     public JobDetailView(ServiceClient client) {
@@ -37,9 +36,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         setPadding(true);
 
         addAttachListener(event -> {
+            if (pollRegistration != null) { // V-7: a defensive guard against double attach
+                pollRegistration.remove();
+                pollRegistration = null;
+            }
             UI ui = event.getUI();
             pollRegistration = ui.addPollListener(e -> poll());
-            startPollingIfActive(ui);
+            ui.setPollInterval(JobStatuses.isTerminal(status()) ? -1 : 2000);
         });
         addDetachListener(event -> {
             if (pollRegistration != null) {
@@ -50,11 +53,15 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         });
     }
 
+    private String status() {
+        return lastStatus == null ? "" : lastStatus;
+    }
+
     @Override
     public void beforeEnter(BeforeEnterEvent event) {
         String raw = event.getRouteParameters().get("jobId").orElse(null);
         try {
-            jobId = Long.parseLong(raw);
+            jobId = raw == null ? -1 : Long.parseLong(raw);
         } catch (NumberFormatException e) {
             jobId = -1;
         }
@@ -62,20 +69,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     private void poll() {
-        if (jobId < 0) {
-            return;
-        }
-        render();
-    }
-
-    private void startPollingIfActive(UI ui) {
-        try {
-            Api.Job job = client.job(jobId);
-            if (job != null && !TERMINAL.contains(job.status())) {
-                ui.setPollInterval(2000);
-            }
-        } catch (Exception ignored) {
-            // the error is surfaced by render()
+        if (jobId >= 0) {
+            render();
         }
     }
 
@@ -96,7 +91,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     private void render(Api.Job job) {
-        getUI().ifPresent(ui -> ui.setPollInterval(TERMINAL.contains(job.status()) ? -1 : 2000));
+        lastStatus = job.status();
+        getUI().ifPresent(ui -> ui.setPollInterval(JobStatuses.isTerminal(job.status()) ? -1 : 2000));
 
         add(new RouterLink("← Queue", JobsView.class));
 
@@ -122,7 +118,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         if (job.blocked_reason() != null) {
             add(Panels.warn(job.blocked_reason()));
         }
-        if (job.cancel_requested() && ACTIVE.contains(job.status())) {
+        if (job.cancel_requested() && !JobStatuses.isTerminal(job.status())) {
             add(new Span("Cancel requested; the runner will stop at the next step boundary."));
         }
 
@@ -140,25 +136,23 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         actions.setPadding(false);
         actions.setSpacing(true);
         actions.getStyle().set("margin-top", "8px");
-        if (ACTIVE.contains(job.status()) && !job.cancel_requested()) {
+        if (JobStatuses.canCancel(job.status(), job.cancel_requested())) {
             actions.add(new Button("Cancel", e -> {
                 try {
                     client.cancel(job.id());
                     render();
                 } catch (Exception ex) {
-                    com.vaadin.flow.component.notification.Notification.show(client.errorText(ex), 6000,
-                            com.vaadin.flow.component.notification.Notification.Position.BOTTOM_END);
+                    Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
                 }
             }));
         }
-        if (TERMINAL.contains(job.status())) {
+        if (JobStatuses.canRequeue(job.status())) {
             actions.add(new Button("Requeue", e -> {
                 try {
                     client.requeue(job.id());
                     render();
                 } catch (Exception ex) {
-                    com.vaadin.flow.component.notification.Notification.show(client.errorText(ex), 6000,
-                            com.vaadin.flow.component.notification.Notification.Position.BOTTOM_END);
+                    Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
                 }
             }));
         }

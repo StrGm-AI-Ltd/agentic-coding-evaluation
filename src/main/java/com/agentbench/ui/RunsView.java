@@ -13,16 +13,14 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.select.Select;
 import com.vaadin.flow.data.renderer.ComponentRenderer;
 import com.vaadin.flow.router.Route;
-import com.vaadin.flow.router.RouterLink;
 
 import java.util.List;
-import java.util.Objects;
 
 /** Runs list with server-side filters — the UI twin of GET /api/runs. */
 @Route(value = "runs", layout = MainLayout.class)
 public class RunsView extends VerticalLayout {
 
-    private final transient ServiceClient client;
+    private final ServiceClient client;
 
     private final Grid<Api.Run> grid = new Grid<>(Api.Run.class, false);
     private final ComboBox<String> task = new ComboBox<>("task");
@@ -72,7 +70,7 @@ public class RunsView extends VerticalLayout {
 
         error.getStyle().set("color", "var(--lumo-error-color)");
 
-        grid.addColumn(new ComponentRenderer<>(run -> runLink(run.run_id())))
+        grid.addColumn(new ComponentRenderer<>(run -> Links.runLink(run.run_id())))
                 .setHeader("run").setAutoWidth(true).setFlexGrow(0);
         grid.addColumn(Api.Run::task).setHeader("task").setAutoWidth(true);
         grid.addColumn(Api.Run::model).setHeader("model").setAutoWidth(true);
@@ -81,7 +79,8 @@ public class RunsView extends VerticalLayout {
                 .setAutoWidth(true);
         grid.addColumn(this::compositeCell).setHeader("composite %").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true);
-        grid.addColumn(new ComponentRenderer<>(this::validBadge)).setHeader("valid").setAutoWidth(true);        grid.addColumn(r -> Fmt.duration(r.wall_sec())).setHeader("wall").setTextAlign(ColumnTextAlign.END)
+        grid.addColumn(new ComponentRenderer<>(this::validBadge)).setHeader("valid").setAutoWidth(true);
+        grid.addColumn(r -> Fmt.duration(r.wall_sec())).setHeader("wall").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true);
         grid.addColumn(r -> Fmt.count(r.completion_tokens())).setHeader("tokens").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true);
@@ -108,35 +107,25 @@ public class RunsView extends VerticalLayout {
             return;
         }
 
+        // V-6: suggestions always come from the full unfiltered list (like the service's
+        // filter_options), never from the current filtered result set.
         if (!optionsLoaded) {
-            task.setItems(distinct(runs, Api.Run::task));
-            model.setItems(distinct(runs, Api.Run::model));
-            mode.setItems(distinct(runs, Api.Run::mode));
+            List<Api.Run> all = noFiltersSet() ? runs : client.runs(null, null, null, null, null);
+            task.setItems(Links.distinctRuns(all, Api.Run::task));
+            model.setItems(Links.distinctRuns(all, Api.Run::model));
+            mode.setItems(Links.distinctRuns(all, Api.Run::mode));
             optionsLoaded = true;
         }
         grid.setItems(runs);
     }
 
-    static RouterLink runLink(String runId) {
-        RouterLink link = new RouterLink();
-        link.add(runId);
-        link.setRoute(RunDetailView.class, new com.vaadin.flow.router.RouteParameters("runId", runId));
-        return link;
+    private boolean noFiltersSet() {
+        return isBlank(task.getValue()) && isBlank(model.getValue()) && isBlank(mode.getValue())
+                && isBlank(valid.getValue()) && isBlank(poolable.getValue());
     }
 
-    static RouterLink jobLink(String jobId) {
-        RouterLink link = new RouterLink();
-        link.add(jobId);
-        link.setRoute(JobDetailView.class, new com.vaadin.flow.router.RouteParameters("jobId", jobId));
-        return link;
-    }
-
-    static RouterLink experimentLink(Long experimentId) {
-        RouterLink link = new RouterLink();
-        link.add(String.valueOf(experimentId));
-        link.setRoute(ExperimentDetailView.class,
-                new com.vaadin.flow.router.RouteParameters("experimentId", String.valueOf(experimentId)));
-        return link;
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private void notifyError(String text) {
@@ -156,10 +145,6 @@ public class RunsView extends VerticalLayout {
             return Badges.text("unknown", Badges.CONTRAST);
         }
         return run.valid() ? Badges.text("valid", Badges.SUCCESS) : Badges.text("INVALID", Badges.ERROR);
-    }
-
-    static List<String> distinct(List<Api.Run> runs, java.util.function.Function<Api.Run, String> getter) {
-        return runs.stream().map(getter).filter(Objects::nonNull).distinct().sorted().toList();
     }
 
     private static ComponentRenderer<Span, Api.Run> functionalCell() {

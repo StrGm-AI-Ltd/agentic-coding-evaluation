@@ -18,15 +18,21 @@ import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
+import tools.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
 import java.util.List;
 
-/** Run detail — the UI twin of GET /api/runs/{id}: scores, badges, checks, re-score. */
+/** Run detail — the UI twin of GET /api/runs/{id}: scores, badges, checks, plan tasks,
+ * per-step scores, provenance, re-score, and the embedded file browser. */
 @Route(value = "runs/:runId", layout = MainLayout.class)
 public class RunDetailView extends VerticalLayout implements BeforeEnterObserver {
 
-    private final transient ServiceClient client;
+    private static final List<String> PROVENANCE_KEYS = List.of(
+            "model", "quantization", "harness", "harness_version", "harness_sha",
+            "oracle_sha", "omlx_version", "java_version");
+
+    private final ServiceClient client;
     private String runId;
 
     public RunDetailView(ServiceClient client) {
@@ -106,18 +112,9 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         add(scores);
 
         if (Boolean.FALSE.equals(run.valid()) && run.validity_reasons() != null && !run.validity_reasons().isEmpty()) {
-            UnorderedList reasons = new UnorderedList();
-            run.validity_reasons().forEach(reason -> reasons.add(new ListItem(reason)));
-            VerticalLayout callout = new VerticalLayout(new Span("recorded, never ranked"), reasons);
-            callout.setPadding(false);
-            callout.setSpacing(false);
-            callout.getStyle()
-                    .set("border-left", "4px solid var(--lumo-error-color)")
-                    .set("background", "var(--lumo-error-color-10pct)")
-                    .set("padding", "8px 12px")
-                    .set("border-radius", "4px")
-                    .set("margin", "6px 0");
-            add(callout);
+            List<ListItem> reasons = run.validity_reasons().stream().map(ListItem::new).toList();
+            add(Panels.callout("var(--lumo-error-color)", "var(--lumo-error-color-10pct)",
+                    new Span("recorded, never ranked"), new UnorderedList(reasons.toArray(new ListItem[0]))));
         }
         if (Boolean.TRUE.equals(run.contended()) && run.manifest() != null) {
             String contention = run.manifest().has("contention")
@@ -140,22 +137,10 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
             add(new Span("Re-scoring with the current oracle makes this run poolable (needs its workspace.bundle)."));
         }
 
-        H4 checksTitle = new H4("Checks");
-        checksTitle.getStyle().set("margin", "16px 0 4px 0");
-        add(checksTitle);
-
-        Grid<Api.Check> checks = new Grid<>(Api.Check.class, false);
-        checks.addColumn(Api.Check::check_id).setHeader("id").setAutoWidth(true);
-        checks.addColumn(Api.Check::category).setHeader("category").setAutoWidth(true);
-        checks.addColumn(c -> Fmt.num(c.weight())).setHeader("weight").setTextAlign(ColumnTextAlign.END)
-                .setAutoWidth(true);
-        checks.addColumn(new ComponentRenderer<>(c -> Badges.status(c.status())))
-                .setHeader("status").setAutoWidth(true);
-        checks.addColumn(Api.Check::description).setHeader("check").setAutoWidth(true);
-        checks.addColumn(Api.Check::detail).setHeader("detail").setFlexGrow(1);
-        checks.setItems(run.checks() == null ? List.of() : run.checks());
-        checks.setAllRowsVisible(true);
-        add(checks);
+        addChecks(run.checks());
+        addPlanTasks(run.metrics());
+        addStepScores(run.metrics());
+        addProvenance(run);
 
         Anchor servicePage = new Anchor(client.baseUrl() + "/runs/" + runId, "open in the service UI");
         servicePage.getElement().setAttribute("target", "_blank");
@@ -164,6 +149,142 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         add(servicePage);
 
         add(new FilesBrowser(client, runId, run.results_dir()));
+    }
+
+    private void addChecks(List<Api.Check> checks) {
+        add(sectionTitle("Checks"));
+        Grid<Api.Check> grid = new Grid<>(Api.Check.class, false);
+        grid.addColumn(Api.Check::check_id).setHeader("id").setAutoWidth(true);
+        grid.addColumn(Api.Check::category).setHeader("category").setAutoWidth(true);
+        grid.addColumn(c -> Fmt.num(c.weight())).setHeader("weight").setTextAlign(ColumnTextAlign.END)
+                .setAutoWidth(true);
+        grid.addColumn(new ComponentRenderer<>(c -> Badges.status(c.status())))
+                .setHeader("status").setAutoWidth(true);
+        grid.addColumn(Api.Check::description).setHeader("check").setAutoWidth(true);
+        grid.addColumn(Api.Check::detail).setHeader("detail").setFlexGrow(1);
+        grid.setItems(checks == null ? List.of() : checks);
+        grid.setAllRowsVisible(true);
+        add(grid);
+    }
+
+    private record PerTaskRow(String tid, String reported, String doneVerified, Long requests,
+            Long tokens, Long maxPrompt, Double wall, String filesChanged, String overBudget) {
+    }
+
+    /** The metrics.per_task table from the Jinja2 run page (V-4). */
+    private void addPlanTasks(JsonNode metrics) {
+        JsonNode perTask = metrics == null ? null : metrics.get("per_task");
+        if (perTask == null || !perTask.isObject() || perTask.isEmpty()) {
+            return;
+        }
+        add(sectionTitle("Plan tasks"));
+        List<PerTaskRow> rows = new ArrayList<>();
+        perTask.propertyNames().stream().sorted().forEach(tid -> {
+            JsonNode t = perTask.get(tid);
+            rows.add(new PerTaskRow(
+                    tid,
+                    textOr(t.path("reported"), "–"),
+                    textOr(t.path("done_verified"), "–"),
+                    longOrNull(t.path("requests")),
+                    longOrNull(t.path("completion_tokens")),
+                    longOrNull(t.path("max_prompt")),
+                    doubleOrNull(t.path("task_wall_sec")),
+                    t.has("files_changed") ? String.valueOf(t.get("files_changed").asInt(-1)) : "–",
+                    t.path("over_budget").asBoolean(false) ? "yes" : ""));
+        });
+        Grid<PerTaskRow> grid = new Grid<>(PerTaskRow.class, false);
+        grid.addColumn(PerTaskRow::tid).setHeader("task").setAutoWidth(true);
+        grid.addColumn(PerTaskRow::reported).setHeader("reported").setAutoWidth(true);
+        grid.addColumn(PerTaskRow::doneVerified).setHeader("verified").setAutoWidth(true);
+        grid.addColumn(r -> Fmt.count(r.requests())).setHeader("requests").setTextAlign(ColumnTextAlign.END)
+                .setAutoWidth(true);
+        grid.addColumn(r -> Fmt.count(r.tokens())).setHeader("out tokens").setTextAlign(ColumnTextAlign.END)
+                .setAutoWidth(true);
+        grid.addColumn(r -> Fmt.count(r.maxPrompt())).setHeader("max prompt").setTextAlign(ColumnTextAlign.END)
+                .setAutoWidth(true);
+        grid.addColumn(r -> Fmt.duration(r.wall())).setHeader("wall").setTextAlign(ColumnTextAlign.END)
+                .setAutoWidth(true);
+        grid.addColumn(PerTaskRow::filesChanged).setHeader("files changed").setTextAlign(ColumnTextAlign.END)
+                .setAutoWidth(true);
+        grid.addColumn(PerTaskRow::overBudget).setHeader("over budget").setAutoWidth(true);
+        grid.setItems(rows);
+        grid.setAllRowsVisible(true);
+        add(grid);
+    }
+
+    private record StepRow(String sid, Double scorePct, boolean measured) {
+    }
+
+    /** The metrics.steps table from the Jinja2 run page (V-4). */
+    private void addStepScores(JsonNode metrics) {
+        JsonNode steps = metrics == null ? null : metrics.get("steps");
+        if (steps == null || !steps.isObject() || steps.isEmpty()) {
+            return;
+        }
+        add(sectionTitle("Per-step scores"));
+        List<StepRow> rows = new ArrayList<>();
+        steps.propertyNames().stream().sorted().forEach(sid -> {
+            JsonNode s = steps.get(sid);
+            rows.add(new StepRow(sid, doubleOrNull(s.path("score_pct")), s.path("measured").asBoolean(true)));
+        });
+        Grid<StepRow> grid = new Grid<>(StepRow.class, false);
+        grid.addColumn(StepRow::sid).setHeader("step").setAutoWidth(true);
+        grid.addColumn(r -> Fmt.pct(r.scorePct())).setHeader("score %").setTextAlign(ColumnTextAlign.END)
+                .setAutoWidth(true);
+        grid.addColumn(r -> r.measured() ? "" : "not measured").setHeader("").setAutoWidth(true);
+        grid.setItems(rows);
+        grid.setAllRowsVisible(true);
+        add(grid);
+    }
+
+    /** The provenance block from the Jinja2 run page (V-4). */
+    private void addProvenance(Api.Run run) {
+        add(sectionTitle("Provenance"));
+        VerticalLayout provenance = new VerticalLayout();
+        provenance.setPadding(false);
+        provenance.setSpacing(false);
+        JsonNode prov = run.manifest() == null ? null : run.manifest().get("provenance");
+        for (String key : PROVENANCE_KEYS) {
+            JsonNode value = prov == null ? null : prov.get(key);
+            if (value != null && !value.isNull()) {
+                Span line = new Span(key + ": ");
+                line.add(code(value.asText()));
+                provenance.add(line);
+            }
+        }
+        if (run.manifest() != null && run.manifest().has("usable_context")) {
+            Span line = new Span("usable_context: ");
+            line.add(code(Fmt.count(run.manifest().get("usable_context").asLong())));
+            provenance.add(line);
+        }
+        Span results = new Span("results: ");
+        results.add(code(run.results_dir()));
+        provenance.add(results);
+        add(provenance);
+    }
+
+    private static Span code(String text) {
+        Span span = new Span(text);
+        span.getStyle().set("font-family", "ui-monospace, 'SF Mono', Menlo, monospace").set("font-size", "12px");
+        return span;
+    }
+
+    private static H4 sectionTitle(String title) {
+        H4 header = new H4(title);
+        header.getStyle().set("margin", "16px 0 4px 0");
+        return header;
+    }
+
+    private static String textOr(JsonNode node, String fallback) {
+        return node.isMissingNode() || node.isNull() ? fallback : node.asText();
+    }
+
+    private static Long longOrNull(JsonNode node) {
+        return node.isNumber() ? node.longValue() : null;
+    }
+
+    private static Double doubleOrNull(JsonNode node) {
+        return node.isNumber() ? node.doubleValue() : null;
     }
 
     private String metaLine(Api.Run run) {

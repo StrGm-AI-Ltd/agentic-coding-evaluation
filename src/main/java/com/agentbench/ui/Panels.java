@@ -16,6 +16,19 @@ public final class Panels {
         return panel(text, "var(--lumo-warning-color)", "var(--lumo-warning-color-10pct)");
     }
 
+    /** A callout container (same chrome as warn/error) holding arbitrary children (C-5). */
+    public static Div callout(String edgeColor, String backgroundColor, com.vaadin.flow.component.Component... children) {
+        Div div = new Div();
+        div.add(children);
+        div.getStyle()
+                .set("border-left", "4px solid " + edgeColor)
+                .set("background", backgroundColor)
+                .set("padding", "8px 12px")
+                .set("border-radius", "4px")
+                .set("margin", "6px 0");
+        return div;
+    }
+
     private static Div panel(String text, String edge, String background) {
         Div div = new Div();
         div.setText(text);

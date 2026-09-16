@@ -4,14 +4,11 @@ import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.html.H2;
-import com.vaadin.flow.component.html.H4;
 import com.vaadin.flow.component.notification.Notification;
-import com.vaadin.flow.component.orderedlayout.FlexComponent;
-import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.select.Select;
-import com.vaadin.flow.component.textfield.NumberField;
 import com.vaadin.flow.component.textfield.IntegerField;
+import com.vaadin.flow.component.textfield.NumberField;
 import com.vaadin.flow.component.textfield.TextField;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
@@ -26,17 +23,18 @@ import java.util.Map;
 /**
  * New experiment form — the Vaadin twin of /experiments/new in the service UI.
  * Templates: harness_effect (orch vs mono arms), model_ab (model A vs B),
- * agent_ab (reference agent vs Pi). Submits POST /api/experiments.
+ * agent_ab (reference agent vs Pi). Params are normalized by ExperimentParams
+ * (unit-tested) and submitted to POST /api/experiments.
  */
 @Route(value = "experiments/new", layout = MainLayout.class)
 public class ExperimentNewView extends VerticalLayout {
 
-    /** The curated reviewer-model ids from experiments.py REVIEWER_MODELS, as provider/id. */
+    /** The curated reviewer-model ids from experiments.py REVIEWER_MODELS, as provider/id (C-8). */
     private static final List<String> REVIEWER_SUGGESTIONS = List.of(
             "anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "anthropic/claude-haiku-4-5-20251001",
             "anthropic/claude-fable-5-1", "openai/gpt-5", "nebius/Nemotron-3-Ultra-550b-a55b");
 
-    private final transient ServiceClient client;
+    private final ServiceClient client;
 
     private final TextField name = new TextField("name");
     private final Select<String> template = new Select<>();
@@ -49,12 +47,11 @@ public class ExperimentNewView extends VerticalLayout {
     private final ComboBox<String> modelA = modelPicker("model_a");
     private final ComboBox<String> modelB = modelPicker("model_b");
     private final ComboBox<String> reviewerModel = modelPicker("reviewer_model");
-    private final NumberField reviewWeight = new NumberField("review_weight");
+    private final NumberField reviewWeight = weightField("review_weight");
     private final Checkbox reviewBlind = new Checkbox("review_blind (hide PROGRESS claims from the code reviewer)");
     private final ComboBox<String> trajectoryReviewerModel = modelPicker("trajectory_reviewer_model");
-    private final NumberField trajectoryWeight = new NumberField("trajectory_weight");
+    private final NumberField trajectoryWeight = weightField("trajectory_weight");
     private final Select<String> trajectoryUse = new Select<>();
-    private final Checkbox trajectoryReview = new Checkbox("trajectory_review");
     private final Checkbox orch = new Checkbox("orch — orchestrated");
     private final Checkbox mono = new Checkbox("mono — monolithic");
     private final Checkbox monoRules = new Checkbox("mono+rules — monolithic with prompt-only rules");
@@ -68,6 +65,13 @@ public class ExperimentNewView extends VerticalLayout {
     private final VerticalLayout harnessEffectSection = new VerticalLayout();
     private final VerticalLayout modelAbSection = new VerticalLayout();
     private final VerticalLayout agentAbSection = new VerticalLayout();
+
+    private static NumberField weightField(String label) {
+        NumberField field = new NumberField(label);
+        field.setMin(0);
+        field.setMax(1);
+        return field;
+    }
 
     public ExperimentNewView(ServiceClient client) {
         this.client = client;
@@ -90,10 +94,6 @@ public class ExperimentNewView extends VerticalLayout {
         parallel.setValue(3);
         parallel.setMin(2);
         parallel.setMax(20);
-        reviewWeight.setMin(0);
-        reviewWeight.setMax(1);
-        trajectoryWeight.setMin(0);
-        trajectoryWeight.setMax(1);
         agentMode.setLabel("mode");
         agentMode.setItems("orchestrated", "monolithic");
         agentMode.setValue("orchestrated");
@@ -104,7 +104,10 @@ public class ExperimentNewView extends VerticalLayout {
         }
         agentA.setValue("ref");
         agentB.setValue("pi");
-        configureUseSelect();
+        trajectoryUse.setLabel("trajectory_use");
+        trajectoryUse.setItems("", "calibration", "direct");
+        trajectoryUse.setValue("");
+        trajectoryUse.setItemLabelGenerator(value -> value.isEmpty() ? "—" : value);
 
         orch.setValue(true);
         mono.setValue(true);
@@ -114,28 +117,28 @@ public class ExperimentNewView extends VerticalLayout {
         errors.setPadding(false);
         add(errors);
 
-        add(section("Experiment",
-                row(name, template, k),
-                row(taskWall, taskTokens, contextWindow, noContextProbe)));
+        add(Forms.section("Experiment",
+                Forms.row(name, template, k),
+                Forms.row(taskWall, taskTokens, contextWindow, noContextProbe)));
 
         harnessEffectSection.setPadding(false);
         harnessEffectSection.setSpacing(false);
-        harnessEffectSection.add(section("Arms (harness_effect)",
-                row(model, orch, mono, monoRules, par),
-                row(parallel)));
+        harnessEffectSection.add(Forms.section("Arms (harness_effect)",
+                Forms.row(model, orch, mono, monoRules, par),
+                Forms.row(parallel)));
         modelAbSection.setPadding(false);
         modelAbSection.setSpacing(false);
-        modelAbSection.add(section("Models (model_ab)",
-                row(modelA, modelB)));
+        modelAbSection.add(Forms.section("Models (model_ab)",
+                Forms.row(modelA, modelB)));
         agentAbSection.setPadding(false);
         agentAbSection.setSpacing(false);
-        agentAbSection.add(section("Agents (agent_ab)",
-                row(model, agentMode, agentA, agentB)));
+        agentAbSection.add(Forms.section("Agents (agent_ab)",
+                Forms.row(model, agentMode, agentA, agentB)));
         add(harnessEffectSection, modelAbSection, agentAbSection);
 
-        add(section("Reviewers (all templates)",
-                row(reviewerModel, reviewWeight, reviewBlind, trajectoryReview),
-                row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse)));
+        add(Forms.section("Reviewers (all templates)",
+                Forms.row(reviewerModel, reviewWeight, reviewBlind),
+                Forms.row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse)));
 
         updateVisibility();
         template.addValueChangeListener(e -> updateVisibility());
@@ -146,13 +149,6 @@ public class ExperimentNewView extends VerticalLayout {
         add(submit);
 
         addAttachListener(e -> loadSuggestions());
-    }
-
-    private void configureUseSelect() {
-        trajectoryUse.setLabel("trajectory_use");
-        trajectoryUse.setItems("", "calibration", "direct");
-        trajectoryUse.setValue("");
-        trajectoryUse.setItemLabelGenerator(value -> value.isEmpty() ? "—" : value);
     }
 
     private static String templateLabel(String template) {
@@ -184,7 +180,7 @@ public class ExperimentNewView extends VerticalLayout {
     private void loadSuggestions() {
         try {
             List<Api.Run> runs = client.runs(null, null, null, null, null);
-            List<String> models = RunsView.distinct(runs, Api.Run::model);
+            List<String> models = Links.distinctRuns(runs, Api.Run::model);
             model.setItems(models);
             modelA.setItems(models);
             modelB.setItems(models);
@@ -195,68 +191,52 @@ public class ExperimentNewView extends VerticalLayout {
         }
     }
 
-    private void submit() {
-        errors.removeAll();
-        Map<String, Object> params = new LinkedHashMap<>();
-        String currentTemplate = template.getValue();
-
-        String requiredModel;
-        if ("model_ab".equals(currentTemplate)) {
-            requiredModel = modelA.getValue() != null && !modelA.getValue().isBlank()
-                    && modelB.getValue() != null && !modelB.getValue().isBlank() ? modelA.getValue() : "";
-        } else {
-            requiredModel = model.getValue();
-        }
-        if (requiredModel == null || requiredModel.isBlank()) {
-            errors.add(Panels.error("a model is required for every template"));
-            return;
-        }
-
-        params.put("task_wall", taskWall.getValue() == null ? 3600 : taskWall.getValue());
-        Object tokens = taskTokens.getValue();
-        params.put("task_tokens", tokens != null && tokens.toString().matches("\\d+") && !tokens.toString().isBlank()
-                ? Integer.valueOf(tokens.toString()) : "auto");
-        if (contextWindow.getValue() != null) {
-            params.put("context_window", contextWindow.getValue());
-        }
-        params.put("no_context_probe", noContextProbe.getValue());
-        params.put("reviewer_model", blankToNull(reviewerModel.getValue()));
-        if (reviewWeight.getValue() != null) {
-            params.put("review_weight", reviewWeight.getValue());
-        }
-        params.put("review_blind", reviewBlind.getValue());
-        params.put("trajectory_reviewer_model", blankToNull(trajectoryReviewerModel.getValue()));
-        if (trajectoryWeight.getValue() != null) {
-            params.put("trajectory_weight", trajectoryWeight.getValue());
-        }
-        if (!trajectoryUse.getValue().isEmpty()) {
-            params.put("trajectory_use", trajectoryUse.getValue());
-        }
-
+    /** Raw field values by param key, normalized by ExperimentParams.build (unit-tested). */
+    private Map<String, Object> rawValues(String currentTemplate) {
+        Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("task_wall", taskWall.getValue());
+        raw.put("task_tokens", taskTokens.getValue());
+        raw.put("context_window", contextWindow.getValue());
+        raw.put("no_context_probe", noContextProbe.getValue());
+        raw.put("reviewer_model", reviewerModel.getValue());
+        raw.put("review_weight", reviewWeight.getValue());
+        raw.put("review_blind", reviewBlind.getValue());
+        raw.put("trajectory_reviewer_model", trajectoryReviewerModel.getValue());
+        raw.put("trajectory_weight", trajectoryWeight.getValue());
+        raw.put("trajectory_use", trajectoryUse.getValue());
         switch (currentTemplate) {
             case "harness_effect" -> {
-                params.put("model", model.getValue());
+                raw.put("model", model.getValue());
                 List<String> arms = new ArrayList<>();
                 if (orch.getValue()) arms.add("orch");
                 if (mono.getValue()) arms.add("mono");
                 if (monoRules.getValue()) arms.add("mono+rules");
                 if (par.getValue()) arms.add("par");
-                if (arms.isEmpty()) {
-                    errors.add(Panels.error("pick at least one arm"));
-                    return;
-                }
-                params.put("arms", arms);
-                params.put("parallel", parallel.getValue() == null ? 3 : parallel.getValue());
+                raw.put("arms", arms);
+                raw.put("parallel", parallel.getValue());
             }
             case "model_ab" -> {
-                params.put("model_a", modelA.getValue());
-                params.put("model_b", modelB.getValue());
+                raw.put("model_a", modelA.getValue());
+                raw.put("model_b", modelB.getValue());
             }
             default -> {
-                params.put("model", model.getValue());
-                params.put("mode", agentMode.getValue());
-                params.put("agents", List.of(agentA.getValue(), agentB.getValue()));
+                raw.put("model", model.getValue());
+                raw.put("mode", agentMode.getValue());
+                raw.put("agents", List.of(agentA.getValue(), agentB.getValue()));
             }
+        }
+        return raw;
+    }
+
+    private void submit() {
+        errors.removeAll();
+        String currentTemplate = template.getValue();
+        Map<String, Object> params;
+        try {
+            params = ExperimentParams.build(currentTemplate, rawValues(currentTemplate));
+        } catch (IllegalArgumentException e) {
+            errors.add(Panels.error(e.getMessage()));
+            return;
         }
 
         String experimentName = name.getValue() == null || name.getValue().isBlank()
@@ -273,29 +253,5 @@ public class ExperimentNewView extends VerticalLayout {
         } catch (Exception e) {
             errors.add(Panels.error(client.errorText(e)));
         }
-    }
-
-    private static String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value;
-    }
-
-    private VerticalLayout section(String title, HorizontalLayout... rows) {
-        H4 header = new H4(title);
-        header.getStyle().set("margin", "16px 0 4px 0");
-        VerticalLayout sectionLayout = new VerticalLayout(header);
-        sectionLayout.setPadding(false);
-        sectionLayout.setSpacing(false);
-        for (HorizontalLayout row : rows) {
-            sectionLayout.add(row);
-        }
-        return sectionLayout;
-    }
-
-    private static HorizontalLayout row(com.vaadin.flow.component.Component... fields) {
-        HorizontalLayout layout = new HorizontalLayout(fields);
-        layout.getStyle().set("flex-wrap", "wrap");
-        layout.setDefaultVerticalComponentAlignment(FlexComponent.Alignment.END);
-        layout.setSpacing(true);
-        return layout;
     }
 }

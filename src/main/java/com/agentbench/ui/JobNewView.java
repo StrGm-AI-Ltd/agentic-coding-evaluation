@@ -4,9 +4,7 @@ import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.html.H2;
-import com.vaadin.flow.component.html.H4;
 import com.vaadin.flow.component.notification.Notification;
-import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.select.Select;
@@ -22,12 +20,13 @@ import java.util.Map;
 
 /**
  * New job form — the Vaadin twin of /jobs/new in the service UI: every RunSpec flag
- * (queue.py) that run_bench.py accepts, plus queue priority. Submits POST /api/jobs.
+ * (queue.py) that run_bench.py accepts, plus queue priority. Field values are
+ * normalized by JobSpecs (unit-tested) and submitted to POST /api/jobs.
  */
 @Route(value = "jobs/new", layout = MainLayout.class)
 public class JobNewView extends VerticalLayout {
 
-    private final transient ServiceClient client;
+    private final ServiceClient client;
 
     private final ComboBox<String> task = new ComboBox<>("task");
     private final ComboBox<String> model = new ComboBox<>("model");
@@ -115,18 +114,18 @@ public class JobNewView extends VerticalLayout {
         errors.setPadding(false);
         add(errors);
 
-        add(section("Run",
-                row(task, runIdField, harness, mode, planSource),
-                row(reasoning, phases, parallel, parallelPlan, parallelWeight)));
-        add(section("Budgets",
-                row(taskWall, taskTokens, implWall, implTokens, planTokens, wallBudget, contextWindow)));
-        add(section("Reviewers",
-                row(reviewerModel, reviewWeight, reviewBlind),
-                row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse, trajectoryReview)));
-        add(section("Model & flags",
-                row(model, handoffNotes, systemRules, selfReview),
-                row(javaHome, config, noContextProbe, contextProbeFresh, keepWorkspace),
-                row(manageDocker, skipDocker, priority)));
+        add(Forms.section("Run",
+                Forms.row(task, runIdField, harness, mode, planSource),
+                Forms.row(reasoning, phases, parallel, parallelPlan, parallelWeight)));
+        add(Forms.section("Budgets",
+                Forms.row(taskWall, taskTokens, implWall, implTokens, planTokens, wallBudget, contextWindow)));
+        add(Forms.section("Reviewers",
+                Forms.row(reviewerModel, reviewWeight, reviewBlind),
+                Forms.row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse, trajectoryReview)));
+        add(Forms.section("Model & flags",
+                Forms.row(model, handoffNotes, systemRules, selfReview),
+                Forms.row(javaHome, config, noContextProbe, contextProbeFresh, keepWorkspace),
+                Forms.row(manageDocker, skipDocker, priority)));
 
         Button submit = new Button("Enqueue job", e -> submit());
         submit.getStyle().set("margin-top", "12px");
@@ -135,86 +134,71 @@ public class JobNewView extends VerticalLayout {
         addAttachListener(e -> loadSuggestions());
     }
 
-    private static Select<String> configureSelect(Select<String> select, String... options) {
+    private static void configureSelect(Select<String> select, String... options) {
         select.setItems(options);
         select.setValue(options[0]);
         select.setItemLabelGenerator(value -> value.isEmpty() ? "—" : value);
-        return select;
-    }
-
-    private VerticalLayout section(String title, HorizontalLayout... rows) {
-        H4 header = new H4(title);
-        header.getStyle().set("margin", "16px 0 4px 0");
-        VerticalLayout sectionLayout = new VerticalLayout(header);
-        sectionLayout.setPadding(false);
-        sectionLayout.setSpacing(false);
-        for (HorizontalLayout row : rows) {
-            sectionLayout.add(row);
-        }
-        return sectionLayout;
-    }
-
-    private static HorizontalLayout row(com.vaadin.flow.component.Component... fields) {
-        HorizontalLayout layout = new HorizontalLayout(fields);
-        layout.getStyle().set("flex-wrap", "wrap");
-        layout.setDefaultVerticalComponentAlignment(FlexComponent.Alignment.END);
-        layout.setSpacing(true);
-        return layout;
     }
 
     private void loadSuggestions() {
         try {
             List<Api.Run> runs = client.runs(null, null, null, null, null);
-            task.setItems(RunsView.distinct(runs, Api.Run::task));
-            model.setItems(RunsView.distinct(runs, Api.Run::model));
+            task.setItems(Links.distinctRuns(runs, Api.Run::task));
+            model.setItems(Links.distinctRuns(runs, Api.Run::model));
         } catch (Exception ignored) {
             // suggestions are optional; the server still validates
         }
     }
 
+    /** Collects the raw field values by RunSpec key, exactly as the server's own form does. */
+    private Map<String, Object> rawValues() {
+        Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("model", model.getValue());
+        raw.put("harness", harness.getValue());
+        raw.put("mode", mode.getValue());
+        raw.put("plan_source", planSource.getValue());
+        raw.put("reasoning", reasoning.getValue());
+        raw.put("phases", phases.getValue());
+        raw.put("task_wall", taskWall.getValue());
+        raw.put("task_tokens", taskTokens.getValue());
+        raw.put("impl_wall", implWall.getValue());
+        raw.put("impl_tokens", implTokens.getValue());
+        raw.put("plan_tokens", planTokens.getValue());
+        raw.put("context_window", contextWindow.getValue());
+        raw.put("parallel", parallel.getValue());
+        raw.put("parallel_plan", parallelPlan.getValue());
+        raw.put("parallel_weight", parallelWeight.getValue());
+        raw.put("reviewer_model", reviewerModel.getValue());
+        raw.put("review_weight", reviewWeight.getValue());
+        raw.put("trajectory_reviewer_model", trajectoryReviewerModel.getValue());
+        raw.put("trajectory_weight", trajectoryWeight.getValue());
+        raw.put("trajectory_use", trajectoryUse.getValue());
+        raw.put("java_home", javaHome.getValue());
+        raw.put("config", config.getValue());
+        raw.put("wall_budget", wallBudget.getValue());
+        raw.put("run_id", runIdField.getValue());
+        raw.put("handoff_notes", handoffNotes.getValue());
+        raw.put("system_rules", systemRules.getValue());
+        raw.put("self_review", selfReview.getValue());
+        raw.put("review_blind", reviewBlind.getValue());
+        raw.put("trajectory_review", trajectoryReview.getValue());
+        raw.put("no_context_probe", noContextProbe.getValue());
+        raw.put("context_probe_fresh", contextProbeFresh.getValue());
+        raw.put("keep_workspace", keepWorkspace.getValue());
+        raw.put("manage_docker", manageDocker.getValue());
+        raw.put("skip_docker", skipDocker.getValue());
+        return raw;
+    }
+
     private void submit() {
         errors.removeAll();
-        if (task.getValue() == null || task.getValue().isBlank()) {
-            errors.add(Panels.error("task is required (a rung from tasks/ladder.json)"));
+        Map<String, Object> spec;
+        try {
+            spec = JobSpecs.build(task.getValue(), rawValues());
+        } catch (IllegalArgumentException e) {
+            errors.add(Panels.error(e.getMessage()));
             return;
         }
-        Map<String, Object> spec = new LinkedHashMap<>();
-        spec.put("task", task.getValue());
-        put(spec, "model", model.getValue());
-        put(spec, "harness", harness.getValue());
-        put(spec, "mode", mode.getValue());
-        put(spec, "plan_source", planSource.getValue());
-        put(spec, "reasoning", reasoning.getValue());
-        put(spec, "phases", phases.getValue());
-        put(spec, "task_wall", taskWall.getValue());
-        put(spec, "task_tokens", taskTokens.getValue());
-        put(spec, "impl_wall", implWall.getValue());
-        put(spec, "impl_tokens", implTokens.getValue());
-        put(spec, "plan_tokens", planTokens.getValue());
-        put(spec, "context_window", contextWindow.getValue());
-        put(spec, "parallel", parallel.getValue());
-        put(spec, "parallel_plan", parallelPlan.getValue());
-        put(spec, "parallel_weight", parallelWeight.getValue());
-        put(spec, "reviewer_model", reviewerModel.getValue());
-        put(spec, "review_weight", reviewWeight.getValue());
-        put(spec, "trajectory_reviewer_model", trajectoryReviewerModel.getValue());
-        put(spec, "trajectory_weight", trajectoryWeight.getValue());
-        put(spec, "trajectory_use", trajectoryUse.getValue());
-        put(spec, "java_home", javaHome.getValue());
-        put(spec, "config", config.getValue());
-        put(spec, "wall_budget", wallBudget.getValue());
-        put(spec, "run_id", runIdField.getValue());
-        spec.put("handoff_notes", handoffNotes.getValue());
-        spec.put("system_rules", systemRules.getValue());
-        spec.put("self_review", selfReview.getValue());
-        spec.put("review_blind", reviewBlind.getValue());
-        spec.put("trajectory_review", trajectoryReview.getValue());
-        spec.put("no_context_probe", noContextProbe.getValue());
-        spec.put("context_probe_fresh", contextProbeFresh.getValue());
-        spec.put("keep_workspace", keepWorkspace.getValue());
-        spec.put("manage_docker", manageDocker.getValue());
-        spec.put("skip_docker", skipDocker.getValue());
-
         try {
             Api.Job job = client.enqueueJob(spec, priority.getValue() == null ? 0 : priority.getValue());
             Notification.show("Queued job #" + job.id() + " for " + job.run_id(),
@@ -222,12 +206,6 @@ public class JobNewView extends VerticalLayout {
             getUI().ifPresent(ui -> ui.navigate("jobs"));
         } catch (Exception e) {
             errors.add(Panels.error(client.errorText(e)));
-        }
-    }
-
-    private static void put(Map<String, Object> spec, String key, Object value) {
-        if (value != null && (!(value instanceof String text) || !text.isBlank())) {
-            spec.put(key, value);
         }
     }
 }

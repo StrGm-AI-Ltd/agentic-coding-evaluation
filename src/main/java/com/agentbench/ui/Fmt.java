@@ -1,19 +1,17 @@
 package com.agentbench.ui;
 
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
+
+import java.util.Locale;
 
 /** Small formatting helpers mirroring the Jinja2 macros in the original UI (_macros.html). */
 public final class Fmt {
-
-    private static final ObjectMapper JSON = JsonMapper.builder().build();
 
     private Fmt() {
     }
 
     public static String pct(Double value) {
-        return value == null ? "–" : String.format("%.1f", value);
+        return value == null ? "–" : String.format(Locale.ROOT, "%.1f", value);
     }
 
     public static String points(Integer got, Integer denominator) {
@@ -25,11 +23,11 @@ public final class Fmt {
             return "–";
         }
         long total = seconds.longValue();
-        return (total / 3600) + "h" + String.format("%02d", (total % 3600) / 60) + "m";
+        return (total / 3600) + "h" + String.format(Locale.ROOT, "%02d", (total % 3600) / 60) + "m";
     }
 
     public static String count(Long value) {
-        return value == null ? "–" : String.format("%,d", value);
+        return value == null ? "–" : String.format(Locale.ROOT, "%,d", value);
     }
 
     /** Compact "2026-09-15 23:57" from whatever string timestamp the service sent. */
@@ -53,7 +51,7 @@ public final class Fmt {
             return "–";
         }
         try {
-            return JSON.writerWithDefaultPrettyPrinter().writeValueAsString(node);
+            return Json.MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(node);
         } catch (Exception e) {
             return node.toString();
         }

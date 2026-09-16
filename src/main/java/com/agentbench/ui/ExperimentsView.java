@@ -15,7 +15,7 @@ import java.util.List;
 @Route(value = "experiments", layout = MainLayout.class)
 public class ExperimentsView extends VerticalLayout {
 
-    private final transient ServiceClient client;
+    private final ServiceClient client;
 
     public ExperimentsView(ServiceClient client) {
         this.client = client;

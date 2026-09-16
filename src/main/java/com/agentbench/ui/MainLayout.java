@@ -50,4 +50,9 @@ public class MainLayout extends AppLayout implements BeforeEnterObserver {
             tabs.setSelectedTab(tab);
         }
     }
+
+    /** Test seam: whether this nav knows a tab for the given route target. */
+    boolean hasTabFor(Class<?> view) {
+        return tabsByView.containsKey(view);
+    }
 }
