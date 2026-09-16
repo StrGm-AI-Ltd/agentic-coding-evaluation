@@ -176,6 +176,7 @@ class ServiceClientWireTest {
         if ("GET /api/experiments/7".equals(method + " " + uri)) return EXPERIMENT_JSON;
         if (uri.equals("/api/experiments")) return experimentListJson();
         if (uri.equals("/api/preflight")) return PREFLIGHT_JSON;
+        if (uri.equals("/api/models")) return "[\"Qwen3.6-27B-graft\",\"Qwen3.8-27B-graft\"]";
         throw new IllegalStateException("unexpected " + method + " " + uri);
     }
 
@@ -363,6 +364,12 @@ class ServiceClientWireTest {
         assertEquals(7, detail.id());
         assertEquals(2, detail.jobs().size());
         assertEquals("mono", detail.jobs().get(1).arm());
+    }
+
+    @Test
+    void models_mapsTheModelServerList() {
+        assertEquals(List.of("Qwen3.6-27B-graft", "Qwen3.8-27B-graft"), client.models());
+        assertEquals("GET /api/models", last().method() + " " + last().uri());
     }
 
     @Test

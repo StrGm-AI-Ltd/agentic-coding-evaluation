@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 /**
  * New experiment form — the Vaadin twin of /experiments/new in the service UI.
@@ -204,6 +205,18 @@ public class ExperimentNewView extends VerticalLayout {
             trajectoryReviewerModel.setItems(reviewerSuggestions());
         } catch (Exception ignored) {
             // suggestions are optional; the server still validates
+        }
+        try {
+            // the model server's own list, merged in on top of past-run models (GET /api/models) -
+            // a cold backend with zero run history still gets a useful picker, not an empty one
+            List<String> live = client.models();
+            List<String> merged = Stream.concat(model.getGenericDataView().getItems(), live.stream())
+                    .distinct().sorted().toList();
+            model.setItems(merged);
+            modelA.setItems(merged);
+            modelB.setItems(merged);
+        } catch (Exception ignored) {
+            // the model server may be unreachable; past-run suggestions (if any) still stand
         }
     }
 

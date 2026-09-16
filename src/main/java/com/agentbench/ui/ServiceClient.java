@@ -98,6 +98,13 @@ public class ServiceClient implements Serializable {
         return http.post().uri("/api/runs/{id}/rescore", runId).retrieve().body(Api.Job.class);
     }
 
+    /** Whatever the model server currently serves, per GET /api/models — an empty list (not an
+     *  error) when the model server is unreachable, the same fallback the endpoint itself uses. */
+    public List<String> models() {
+        return http.get().uri("/api/models").retrieve().body(new ParameterizedTypeReference<List<String>>() {
+        });
+    }
+
     public Api.GroupResponse groups() {
         return http.get().uri("/api/groups").retrieve().body(Api.GroupResponse.class);
     }
