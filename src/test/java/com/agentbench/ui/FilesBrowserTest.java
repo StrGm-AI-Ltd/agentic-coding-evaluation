@@ -62,18 +62,16 @@ class FilesBrowserTest {
         assertTrue(FilesBrowser.isText("dir/f.json"));
     }
 
+    /** The new-tab "view" link: segment-encoded run and path, slashes preserved in the path. */
     @Test
-    void truncateCapsOversizedContent() {
-        String big = "x".repeat(FilesBrowser.MAX_DISPLAY_CHARS + 5);
-        String truncated = FilesBrowser.truncateForDisplay(big);
-        String expected = "x".repeat(FilesBrowser.MAX_DISPLAY_CHARS)
-                + "\n\n… truncated at " + FilesBrowser.MAX_DISPLAY_CHARS
-                + " chars — the full file is at the service link";
-        assertEquals(expected, truncated);
-    }
-
-    @Test
-    void smallContentUnchanged() {
-        assertEquals("small", FilesBrowser.truncateForDisplay("small"));
+    void viewRoute_encodesRunAndPathSegments() {
+        assertEquals("file-view?run=r1&path=packs/T1.json",
+                FilesBrowser.viewRoute("r1", "packs/T1.json"));
+        assertEquals("file-view?run=r1&path=a%20b.txt",
+                FilesBrowser.viewRoute("r1", "a b.txt"), "spaces become %20");
+        assertEquals("file-view?run=r1&path=100%25.json",
+                FilesBrowser.viewRoute("r1", "100%.json"), "percent is escaped");
+        assertEquals("file-view?run=he-1&path=t%C3%A9.json",
+                FilesBrowser.viewRoute("he-1", "té.json"), "non-ASCII is escaped");
     }
 }

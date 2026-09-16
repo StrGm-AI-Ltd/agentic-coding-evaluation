@@ -19,19 +19,16 @@ import java.util.stream.Stream;
 /**
  * Run file browser — the Vaadin twin of the Jinja2 run page's file section:
  * lists the run's results dir (top level + one subdir level, excluding workspace/,
- * mirroring run_files() in the service's api.py), and fetches text file content
- * through the service's /runs/{id}/files/{path}. Binary or oversized files link out.
+ * mirroring run_files() in the service's api.py). Text files open formatted in
+ * a new tab at the file-view route; binary files link out to the service.
  */
 public class FilesBrowser extends VerticalLayout {
-
-    static final int MAX_DISPLAY_CHARS = 400_000;
 
     private static final Set<String> TEXT_SUFFIXES =
             Set.of(".md", ".log", ".json", ".jsonl", ".txt", ".yaml", ".yml");
 
     private final ServiceClient client;
     private final String runId;
-    private final Div content = new Div();
 
     public FilesBrowser(ServiceClient client, String runId, String resultsDir) {
         this.client = client;
@@ -58,44 +55,21 @@ public class FilesBrowser extends VerticalLayout {
         grid.setAllRowsVisible(true);
         grid.setMaxHeight("300px");
         add(grid);
-
-        content.getStyle().set("margin-top", "8px");
-        add(content);
     }
 
     private Component fileLink(String name) {
-        String href = client.baseUrl() + "/runs/" + runId + "/files/" + name;
-        Anchor anchor = new Anchor(href, isText(name) ? "view" : "open");
+        Anchor anchor = isText(name)
+                ? new Anchor(viewRoute(runId, name), "view")   // opens the formatted viewer
+                : new Anchor(client.baseUrl() + "/runs/" + runId + "/files/" + name, "open");
         anchor.getElement().setAttribute("target", "_blank");
         anchor.getElement().setAttribute("rel", "noopener");
-        if (isText(name)) {
-            anchor.getElement().addEventListener("click", e -> show(name))
-                    .addEventData("event.preventDefault()");
-        }
         return anchor;
     }
 
-    void show(String name) {
-        content.removeAll();
-        String text;
-        try {
-            text = client.runFileText(runId, name);
-        } catch (Exception e) {
-            content.add(Panels.error(client.errorText(e)));
-            return;
-        }
-        Div header = new Div(name);
-        header.getStyle().set("font-weight", "600").set("margin-top", "8px");
-        content.add(header, Panels.mono(truncateForDisplay(text)));
-    }
-
-    /** Caps inline file display; the full file is always one service link away. */
-    static String truncateForDisplay(String text) {
-        if (text.length() <= MAX_DISPLAY_CHARS) {
-            return text;
-        }
-        return text.substring(0, MAX_DISPLAY_CHARS)
-                + "\n\n… truncated at " + MAX_DISPLAY_CHARS + " chars — the full file is at the service link";
+    /** New-tab viewer URL; the path is segment-encoded so spaces and non-ASCII survive. */
+    static String viewRoute(String runId, String path) {
+        return "file-view?run=" + ServiceClient.encodeSegment(runId)
+                + "&path=" + ServiceClient.encodePath(path);
     }
 
     static boolean isText(String name) {

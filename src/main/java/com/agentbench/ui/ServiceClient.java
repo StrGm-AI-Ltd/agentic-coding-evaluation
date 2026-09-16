@@ -192,7 +192,7 @@ public class ServiceClient implements Serializable {
         return sb.toString();
     }
 
-    private static String encodeSegment(String segment) {
+    static String encodeSegment(String segment) {
         return java.net.URLEncoder.encode(segment, java.nio.charset.StandardCharsets.UTF_8)
                 .replace("+", "%20");
     }

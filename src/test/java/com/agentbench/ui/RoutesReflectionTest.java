@@ -35,7 +35,12 @@ class RoutesReflectionTest {
             java.util.Map.entry("experiments", ExperimentsView.class),
             java.util.Map.entry("experiments/:experimentId", ExperimentDetailView.class),
             java.util.Map.entry("experiments/new", ExperimentNewView.class),
-            java.util.Map.entry("preflight", PreflightView.class));
+            java.util.Map.entry("preflight", PreflightView.class),
+            java.util.Map.entry("file-view", FileViewerView.class));
+
+    /** Routes that deliberately render standalone, without the app layout. */
+    private static final java.util.Set<Class<?>> STANDALONE =
+            java.util.Set.of(FileViewerView.class);
 
     private static Set<Class<?>> scanRouteClasses() throws ClassNotFoundException {
         ClassPathScanningCandidateComponentProvider scanner =
@@ -53,7 +58,9 @@ class RoutesReflectionTest {
         Map<String, Class<?>> found = new HashMap<>();
         for (Class<?> view : scanRouteClasses()) {
             Route route = view.getAnnotation(Route.class);
-            assertEquals(MainLayout.class, route.layout(), view + " must use MainLayout");
+            Class<? extends com.vaadin.flow.router.RouterLayout> expectedLayout =
+                    STANDALONE.contains(view) ? com.vaadin.flow.component.UI.class : MainLayout.class;
+            assertEquals(expectedLayout, route.layout(), view + " layout mismatch");
             found.put(route.value(), view);
         }
         assertEquals(EXPECTED, found, "the registered route set must match the expected set exactly");

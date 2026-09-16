@@ -62,9 +62,10 @@ Port layout (collisions matter on the benchmark machine): `8800` UI · `8765` se
 | `/preflight` | positive-control preflight state, run + auto-refresh | `GET/POST /api/preflight` |
 
 The run page embeds a **file browser**: it lists the run's `results_dir` (top level + one
-subdir level, excluding `workspace/`, mirroring the service's `run_files()`) and views text files
-(`.md .log .json .jsonl .txt .yaml .yml`) inline through `GET /runs/{id}/files/{path}`;
-binary files link out to the service.
+subdir level, excluding `workspace/`, mirroring the service's `run_files()`). Text files
+(`.md .log .json .jsonl .txt .yaml .yml`) open via the "view" link in a **new tab** at the
+standalone `/file-view` route — JSON files pretty-printed, everything else verbatim, with a
+raw link back to the service. Binary files link straight out to the service.
 
 The original SSE live page is approximated with Vaadin UI polling of the job endpoint
 (same 2 s cadence). Task and model pickers suggest values seen in imported runs plus free
