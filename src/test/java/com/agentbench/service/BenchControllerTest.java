@@ -102,6 +102,24 @@ class BenchControllerTest {
     }
 
     @Test
+    void jobByIdReturnsTheJob() throws Exception {
+        when(queue.get(1L)).thenReturn(Map.of("id", 1L, "run_id", "run-1", "status", "queued"));
+
+        mvc.perform(get("/api/jobs/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.run_id").value("run-1"))
+                .andExpect(jsonPath("$.status").value("queued"));
+    }
+
+    @Test
+    void jobByIdMapsTheMissingJobTo404() throws Exception {
+        // JobQueue.get() already throws this for a missing row; the endpoint was simply never wired
+        when(queue.get(99L)).thenThrow(new org.springframework.dao.EmptyResultDataAccessException(1));
+
+        mvc.perform(get("/api/jobs/99")).andExpect(status().isNotFound());
+    }
+
+    @Test
     void illegalArgumentExceptionMapsTo400WithDetailBody() throws Exception {
         // RunSpec's own validation throws before queue.enqueue() is ever called
         mvc.perform(post("/api/jobs").contentType(MediaType.APPLICATION_JSON)

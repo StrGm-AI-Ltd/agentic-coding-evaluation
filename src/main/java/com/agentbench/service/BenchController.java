@@ -95,6 +95,12 @@ public class BenchController {
     @GetMapping("/api/jobs")
     public List<Map<String, Object>> jobs() { return queue.list(); }
 
+    /** Was never wired up despite JobQueue.get() already existing and already 404ing correctly
+     *  (EmptyResultDataAccessException, mapped by ApiExceptionHandler) - the Vaadin UI's job detail
+     *  page (GET /api/jobs/{id}) had nothing to call. */
+    @GetMapping("/api/jobs/{id}")
+    public Map<String, Object> job(@PathVariable long id) { return queue.get(id); }
+
     @PostMapping("/api/jobs")
     public Map<String, Object> enqueue(@RequestBody Map<String, Object> body) {
         Map<String, Object> spec = (Map<String, Object>) body.get("spec");

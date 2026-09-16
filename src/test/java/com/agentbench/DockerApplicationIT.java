@@ -1,5 +1,6 @@
 package com.agentbench;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -78,5 +79,34 @@ class DockerApplicationIT {
                 HttpRequest.newBuilder(URI.create(base + "/api/jobs")).GET().build(), HttpResponse.BodyHandlers.ofString());
         assertEquals(200, jobs.statusCode());
         assertEquals("[]", jobs.body());   // a fresh container, empty queue - real Postgres round-trip, not a stub
+    }
+
+    /** Covers a real gap: GET /api/jobs/{id} was never wired up at all (a plain 404, not even
+     *  through ApiExceptionHandler) even though JobQueue.get() and the Vaadin UI's job-detail page
+     *  both already existed - http://localhost:8800/jobs/1 rendered an error panel. Round-trips a
+     *  real job through the real containerized API and a real Postgres, not a mock. */
+    @Test
+    void aJobCanBeEnqueuedThenFetchedById() throws Exception {
+        String base = "http://" + app.getHost() + ":" + app.getMappedPort(8765);
+        HttpClient http = HttpClient.newHttpClient();
+        ObjectMapper json = new ObjectMapper();
+
+        String requestBody = """
+                {"spec": {"task": "L3p_point_in_time", "model": "m", "mode": "monolithic",
+                           "plan_source": "agent", "task_wall": 3600, "run_id": "it-jobs-detail-1"}}""";
+        HttpResponse<String> created = http.send(
+                HttpRequest.newBuilder(URI.create(base + "/api/jobs")).header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(requestBody)).build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, created.statusCode(), created.body());
+        long id = json.readTree(created.body()).get("id").asLong();
+
+        HttpResponse<String> fetched = http.send(
+                HttpRequest.newBuilder(URI.create(base + "/api/jobs/" + id)).GET().build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, fetched.statusCode(), fetched.body());   // was 404 before the fix
+        assertEquals("it-jobs-detail-1", json.readTree(fetched.body()).get("run_id").asText());
+
+        HttpResponse<String> missing = http.send(
+                HttpRequest.newBuilder(URI.create(base + "/api/jobs/999999")).GET().build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(404, missing.statusCode());
     }
 }
