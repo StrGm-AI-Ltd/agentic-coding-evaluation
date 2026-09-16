@@ -37,7 +37,7 @@ public class JobsView extends VerticalLayout {
         error.getStyle().set("color", "var(--lumo-error-color)");
 
         grid.addColumn(Api.Job::id).setHeader("#").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
-        grid.addColumn(new ComponentRenderer<>(job -> Links.runLink(job.run_id())))
+        grid.addColumn(new ComponentRenderer<>(job -> Links.runToJobLink(job.run_id(), job.id())))
                 .setHeader("run").setAutoWidth(true);
         grid.addColumn(Api.Job::kind).setHeader("kind").setAutoWidth(true);
         grid.addColumn(new ComponentRenderer<>(this::statusCell)).setHeader("status").setAutoWidth(true);

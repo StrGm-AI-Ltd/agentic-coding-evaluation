@@ -18,6 +18,7 @@ import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
+import org.springframework.web.client.RestClientResponseException;
 import tools.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
@@ -56,7 +57,11 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         try {
             run = client.run(runId);
         } catch (Exception e) {
-            add(new H3("Run " + runId), Panels.error(client.errorText(e)));
+            if (isNotImported(e)) {
+                addNotImportedPanel();
+            } else {
+                add(new H3("Run " + runId), Panels.error(client.errorText(e)));
+            }
             return;
         }
         render(run);
@@ -149,6 +154,27 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         add(servicePage);
 
         add(new FilesBrowser(client, runId, run.results_dir()));
+    }
+
+    /** A 404 on the run id — the job has not produced a scored, imported result yet. */
+    static boolean isNotImported(Exception e) {
+        return e instanceof RestClientResponseException responseException
+                && responseException.getStatusCode().value() == 404;
+    }
+
+    /** The self-service path: not-imported is expected, not an error — offer the rescan. */
+    private void addNotImportedPanel() {
+        add(new H3("Run " + runId));
+        add(Panels.warn("This run is not imported yet. A run appears here once its job finishes "
+                + "with a scored result (oracle.json on disk); cancelled or unfinished runs never import."));
+        add(new Button("Rescan results/", e -> {
+            try {
+                client.importAll();
+                render();
+            } catch (Exception ex) {
+                Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
+            }
+        }));
     }
 
     private void addChecks(List<Api.Check> checks) {

@@ -10,6 +10,7 @@ import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.shared.Registration;
+import org.springframework.web.client.RestClientResponseException;
 import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.Route;
@@ -29,6 +30,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     private final ServiceClient client;
     private long jobId = -1;
     private String lastStatus;
+    private Boolean runImported; // one probe per navigation (plus on terminal transition), cached across polls
     private Registration pollRegistration;
 
     public JobDetailView(ServiceClient client) {
@@ -91,8 +93,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     private void render(Api.Job job) {
+        boolean wasTerminal = JobStatuses.isTerminal(status());
         lastStatus = job.status();
         getUI().ifPresent(ui -> ui.setPollInterval(JobStatuses.isTerminal(job.status()) ? -1 : 2000));
+        if (job.run_id() != null
+                && (runImported == null || (JobStatuses.isTerminal(job.status()) && !wasTerminal))) {
+            runImported = isRunImported(job.run_id());
+        }
 
         add(new RouterLink("← Queue", JobsView.class));
 
@@ -156,9 +163,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 }
             }));
         }
-        if (job.run_id() != null) {
+        if (job.run_id() != null && Boolean.TRUE.equals(runImported)) {
             actions.add(new Button("Open run detail", e ->
                     getUI().ifPresent(ui -> ui.navigate("runs/" + job.run_id()))));
+        } else if (job.run_id() != null) {
+            Span hint = new Span("run not imported yet — it appears here once the job finishes and is scored");
+            hint.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em");
+            actions.add(hint);
         }
         if (job.stdout_path() != null) {
             Anchor rawLog = new Anchor(client.baseUrl() + "/jobs/" + job.id() + "/log", "raw log");
@@ -167,6 +178,18 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             actions.add(rawLog);
         }
         add(actions);
+    }
+
+    /** The runs table only holds imported runs: 404 means the job has not produced a scored result yet. */
+    private boolean isRunImported(String runId) {
+        try {
+            client.run(runId);
+            return true;
+        } catch (RestClientResponseException e) {
+            return e.getStatusCode().value() != 404;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private String metaLine(Api.Job job) {
