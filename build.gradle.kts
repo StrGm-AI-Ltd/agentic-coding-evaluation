@@ -20,7 +20,10 @@ dependencies {
     implementation("dev.langchain4j:langchain4j")
     implementation("dev.langchain4j:langchain4j-open-ai")
     implementation("org.postgresql:postgresql")   // PGobjectJsonSerializer needs org.postgresql.util.PGobject at compile time
-    testImplementation(platform("org.testcontainers:testcontainers-bom:1.21.3"))
+    // 2.x negotiates the Docker API version properly instead of probing with a hardcoded old one -
+    // 1.x's hardcoded 1.32 probe fails outright against Docker 29+, which raised its floor to 1.44
+    // (testcontainers/testcontainers-java#11210, #11212, #11360)
+    testImplementation(platform("org.testcontainers:testcontainers-bom:2.0.5"))
     testImplementation("org.postgresql:postgresql")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.testcontainers:junit-jupiter")
