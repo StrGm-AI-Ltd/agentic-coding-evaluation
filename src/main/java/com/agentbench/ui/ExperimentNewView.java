@@ -29,10 +29,6 @@ import java.util.Map;
 @Route(value = "experiments/new", layout = MainLayout.class)
 public class ExperimentNewView extends VerticalLayout {
 
-    /** The curated reviewer-model ids from experiments.py REVIEWER_MODELS, as provider/id (C-8). */
-    private static final List<String> REVIEWER_SUGGESTIONS = List.of(
-            "anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "anthropic/claude-haiku-4-5-20251001",
-            "anthropic/claude-fable-5-1", "openai/gpt-5", "nebius/Nemotron-3-Ultra-550b-a55b");
 
     private final ServiceClient client;
 
@@ -154,6 +150,17 @@ public class ExperimentNewView extends VerticalLayout {
         addAttachListener(e -> loadSuggestions());
     }
 
+    /**
+     * The curated reviewer ids from experiments.py REVIEWER_MODELS, as provider/id.
+     * Nebius ids are org-prefixed (verified against the real API — bare ids 404).
+     */
+    static List<String> reviewerSuggestions() {
+        return List.of(
+                "anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "anthropic/claude-haiku-4-5-20251001",
+                "anthropic/claude-fable-5-1", "openai/gpt-5",
+                "nebius/nvidia/Nemotron-3-Ultra-550b-a55b", "nebius/zai-org/GLM-5.3");
+    }
+
     private static String templateLabel(String template) {
         return switch (template) {
             case "model_ab" -> "model_ab — model A vs model B, same harness/budgets";
@@ -166,7 +173,7 @@ public class ExperimentNewView extends VerticalLayout {
         ComboBox<String> picker = new ComboBox<>(label);
         picker.setAllowCustomValue(true);
         if (label.startsWith("reviewer") || label.startsWith("trajectory")) {
-            picker.setPlaceholder("provider/model — " + REVIEWER_SUGGESTIONS.get(0) + "…");
+            picker.setPlaceholder("provider/model — " + reviewerSuggestions().get(0) + "…");
         } else {
             picker.setPlaceholder("local model id, or pick a seen model");
         }
@@ -193,8 +200,8 @@ public class ExperimentNewView extends VerticalLayout {
             model.setItems(models);
             modelA.setItems(models);
             modelB.setItems(models);
-            reviewerModel.setItems(REVIEWER_SUGGESTIONS);
-            trajectoryReviewerModel.setItems(REVIEWER_SUGGESTIONS);
+            reviewerModel.setItems(reviewerSuggestions());
+            trajectoryReviewerModel.setItems(reviewerSuggestions());
         } catch (Exception ignored) {
             // suggestions are optional; the server still validates
         }

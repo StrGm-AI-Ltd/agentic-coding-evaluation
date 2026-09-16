@@ -145,6 +145,8 @@ public class JobNewView extends VerticalLayout {
             List<Api.Run> runs = client.runs(null, null, null, null, null);
             task.setItems(Links.distinctRuns(runs, Api.Run::task));
             model.setItems(Links.distinctRuns(runs, Api.Run::model));
+            reviewerModel.setItems(ExperimentNewView.reviewerSuggestions());
+            trajectoryReviewerModel.setItems(ExperimentNewView.reviewerSuggestions());
         } catch (Exception ignored) {
             // suggestions are optional; the server still validates
         }
