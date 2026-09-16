@@ -11,6 +11,9 @@ import com.vaadin.flow.router.Location;
 import com.vaadin.flow.router.Route;
 import tools.jackson.databind.JsonNode;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Standalone file viewer (no app layout) opened by the file browser's "view" links
  * in a new tab: fetches the run file through the service and renders it full-page —
@@ -79,17 +82,51 @@ public class FileViewerView extends VerticalLayout implements BeforeEnterObserve
         }
     }
 
-    /** JSON files render pretty-printed; anything that does not parse renders verbatim. */
+    /**
+     * JSON files render pretty-printed; JSONL files render one pretty record per line
+     * (all-or-nothing — one non-JSON line keeps the whole file verbatim); everything
+     * else renders verbatim.
+     */
     static String format(String content) {
-        try {
-            JsonNode node = Json.MAPPER.readTree(content);
-            if (node == null || node.isMissingNode()) { // Jackson 3: empty input yields no node
-                return content;
+        JsonNode whole = readOrNull(content);
+        if (whole != null) {
+            return pretty(whole);
+        }
+        List<JsonNode> records = new ArrayList<>();
+        for (String line : content.lines().toList()) {
+            if (line.isBlank()) {
+                continue;
             }
-            return Json.MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(node);
-        } catch (Exception e) {
+            JsonNode record = readOrNull(line);
+            if (record == null) {
+                return content; // a non-blank line is not JSON: not a JSONL file
+            }
+            records.add(record);
+        }
+        if (records.isEmpty()) {
             return content;
         }
+        StringBuilder formatted = new StringBuilder();
+        for (JsonNode record : records) {
+            if (formatted.length() > 0) {
+                formatted.append('\n');
+            }
+            formatted.append(pretty(record));
+        }
+        return formatted.toString();
+    }
+
+    private static JsonNode readOrNull(String text) {
+        try {
+            JsonNode node = Json.MAPPER.readTree(text);
+            return node == null || node.isMissingNode() ? null : node; // Jackson 3: empty input yields no node
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String pretty(JsonNode node) {
+        return Json.MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(node);
     }
 
     /** First value of a query parameter, null when absent. */

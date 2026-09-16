@@ -30,10 +30,34 @@ class FileViewerViewTest {
     }
 
     @Test
-    void format_jsonlStaysVerbatim() {
-        String jsonl = "{\"a\":1}\n{\"a\":2}\n";
-        assertEquals(jsonl, FileViewerView.format(jsonl),
-                "multi-record JSONL does not parse as one value, so it renders as-is");
+    void format_jsonlPrettyPrintsEachRecord() {
+        String formatted = FileViewerView.format("{\"a\":1}\n{\"a\":2}");
+        assertEquals("""
+                {
+                  "a" : 1
+                }
+                {
+                  "a" : 2
+                }""", formatted);
+    }
+
+    @Test
+    void format_jsonlIgnoresBlankLinesAndTrailingNewline() {
+        String formatted = FileViewerView.format("{\"a\":1}\n\n{\"a\":2}\n\n");
+        assertEquals("""
+                {
+                  "a" : 1
+                }
+                {
+                  "a" : 2
+                }""", formatted, "blank lines separate records but add none of their own");
+    }
+
+    /** All-or-nothing: one broken (e.g. truncated mid-write) line keeps the whole file verbatim. */
+    @Test
+    void format_jsonlWithBrokenLineStaysVerbatim() {
+        String jsonl = "{\"a\":1}\nnot json\n{\"a\":2}";
+        assertEquals(jsonl, FileViewerView.format(jsonl));
     }
 
     @Test
