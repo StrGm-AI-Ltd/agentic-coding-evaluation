@@ -2,7 +2,11 @@ package com.agentbench.ui;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FmtTest {
 
@@ -76,5 +80,36 @@ class FmtTest {
         assertEquals("–", Fmt.textOr(Json.MAPPER.readTree("null"), "–"));
         assertEquals("–", Fmt.textOr(tools.jackson.databind.node.JsonNodeFactory.instance.missingNode(), "–"));
         assertEquals("–", Fmt.textOr(null, "–"));
+    }
+
+    /** The service emits three timestamp shapes — all must sort chronologically. */
+    @Test
+    void parseTime_handlesTheServiceFormats() {
+        assertEquals(java.time.OffsetDateTime.parse("2026-09-16T00:09:04.439132+01:00"),
+                Fmt.parseTime("2026-09-16T00:09:04.439132+01:00"), "jobs/experiments: ISO with offset");
+        assertEquals(java.time.OffsetDateTime.parse("2026-09-15T23:57:00Z"),
+                Fmt.parseTime("2026-09-15T23:57:00Z"), "ISO Z");
+        assertEquals(java.time.OffsetDateTime.parse("2026-09-15T03:02:30Z"),
+                Fmt.parseTime("2026-09-15 03:02:30"), "runs: SQL-style naive, treated as UTC");
+        assertNull(Fmt.parseTime(null));
+        assertNull(Fmt.parseTime("  "));
+        assertNull(Fmt.parseTime("not a time"));
+    }
+
+    @Test
+    void comparingTime_sortsChronologicallyAcrossFormatsWithNullsLast() {
+        record Row(String t) {
+        }
+        List<Row> rows = java.util.List.of(
+                new Row(null),
+                new Row("2026-09-15 03:02:30"),       // 03:02Z — naive SQL style
+                new Row("2026-09-14T23:00:00+01:00"),   // 22:00Z — the earliest despite the later local hour
+                new Row("2026-09-15T02:00:00Z"));      // 02:00Z
+        List<String> sorted = rows.stream().sorted(Fmt.comparingTime(Row::t)).map(Row::t).toList();
+        assertEquals(java.util.Arrays.asList(
+                "2026-09-14T23:00:00+01:00",
+                "2026-09-15T02:00:00Z",
+                "2026-09-15 03:02:30",
+                null), sorted);
     }
 }

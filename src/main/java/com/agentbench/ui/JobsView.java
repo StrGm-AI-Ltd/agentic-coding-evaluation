@@ -46,7 +46,8 @@ public class JobsView extends VerticalLayout {
         grid.addColumn(job -> job.arm() == null ? "–"
                 : job.arm() + " r" + (job.repeat() == null ? "?" : job.repeat()))
                 .setHeader("arm").setAutoWidth(true);
-        grid.addColumn(job -> Fmt.when(job.started_at())).setHeader("started").setAutoWidth(true);
+        grid.addColumn(job -> Fmt.when(job.started_at())).setHeader("started").setAutoWidth(true)
+                .setComparator(Fmt.comparingTime(Api.Job::started_at));
         grid.addColumn(new ComponentRenderer<>(this::actions)).setHeader("actions").setFlexGrow(1);
 
         add(new H2("Queue"), new HorizontalLayout(refresh, newJob, running, error), grid);

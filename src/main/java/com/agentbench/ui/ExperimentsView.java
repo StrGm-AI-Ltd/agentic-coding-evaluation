@@ -29,7 +29,8 @@ public class ExperimentsView extends VerticalLayout {
         grid.addColumn(exp -> "k=" + exp.k()).setHeader("k").setAutoWidth(true);
         grid.addColumn(new ComponentRenderer<>(exp -> Badges.status(exp.status())))
                 .setHeader("status").setAutoWidth(true);
-        grid.addColumn(exp -> Fmt.when(exp.created_at())).setHeader("created").setAutoWidth(true);
+        grid.addColumn(exp -> Fmt.when(exp.created_at())).setHeader("created").setAutoWidth(true)
+                .setComparator(Fmt.comparingTime(Api.Experiment::created_at));
         grid.addItemClickListener(e -> e.getSource().getUI()
                 .ifPresent(ui -> ui.navigate("experiments/" + e.getItem().id())));
 

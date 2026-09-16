@@ -39,6 +39,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     private transient Thread sseThread;
     private volatile boolean sseStopped;
     private final JobLiveState live = new JobLiveState();
+    /** Built once so the user's column sorting survives the 2 s live re-renders. */
+    private final Grid<JobLiveState.RequestRow> requestsGrid = buildRequestsGrid();
 
     public JobDetailView(ServiceClient client) {
         this.client = client;
@@ -224,19 +226,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
         List<JobLiveState.RequestRow> recent = live.recentRequests();
         if (!recent.isEmpty()) {
-            Grid<JobLiveState.RequestRow> requests = new Grid<>(JobLiveState.RequestRow.class, false);
-            requests.addColumn(JobLiveState.RequestRow::ts).setHeader("ts").setAutoWidth(true);
-            requests.addColumn(r -> r.status() == null ? "–" : r.status()).setHeader("status").setAutoWidth(true);
-            requests.addColumn(r -> Fmt.num(r.latencySec())).setHeader("latency").setTextAlign(ColumnTextAlign.END)
-                    .setAutoWidth(true);
-            requests.addColumn(r -> Fmt.num(r.ttftSec())).setHeader("ttft").setTextAlign(ColumnTextAlign.END)
-                    .setAutoWidth(true);
-            requests.addColumn(r -> Fmt.count(r.tokens())).setHeader("tokens").setTextAlign(ColumnTextAlign.END)
-                    .setAutoWidth(true);
-            requests.addColumn(r -> r.clientAborted() ? "yes" : "").setHeader("aborted").setAutoWidth(true);
-            requests.setItems(recent);
-            requests.setAllRowsVisible(true);
-            add(requests);
+            requestsGrid.setItems(recent);
+            add(requestsGrid);
         }
 
         String tail = live.logTail() != null ? live.logTail()
@@ -245,6 +236,22 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             add(kvLine("log tail", ""));
             add(Panels.mono(tail));
         }
+    }
+
+    private static Grid<JobLiveState.RequestRow> buildRequestsGrid() {
+        Grid<JobLiveState.RequestRow> requests = new Grid<>(JobLiveState.RequestRow.class, false);
+        requests.addColumn(JobLiveState.RequestRow::ts).setHeader("ts").setAutoWidth(true)
+                .setComparator(Fmt.comparingTime(JobLiveState.RequestRow::ts));
+        requests.addColumn(r -> r.status() == null ? "–" : r.status()).setHeader("status").setAutoWidth(true);
+        requests.addColumn(r -> Fmt.num(r.latencySec())).setHeader("latency").setTextAlign(ColumnTextAlign.END)
+                .setAutoWidth(true);
+        requests.addColumn(r -> Fmt.num(r.ttftSec())).setHeader("ttft").setTextAlign(ColumnTextAlign.END)
+                .setAutoWidth(true);
+        requests.addColumn(r -> Fmt.count(r.tokens())).setHeader("tokens").setTextAlign(ColumnTextAlign.END)
+                .setAutoWidth(true);
+        requests.addColumn(r -> r.clientAborted() ? "yes" : "").setHeader("aborted").setAutoWidth(true);
+        requests.setAllRowsVisible(true);
+        return requests;
     }
 
     private static Span kvLine(String key, String value) {

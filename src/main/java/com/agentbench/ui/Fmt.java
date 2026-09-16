@@ -2,7 +2,12 @@ package com.agentbench.ui;
 
 import tools.jackson.databind.JsonNode;
 
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.Comparator;
 import java.util.Locale;
+import java.util.function.Function;
 
 /** Small formatting helpers mirroring the Jinja2 macros in the original UI (_macros.html). */
 public final class Fmt {
@@ -67,5 +72,33 @@ public final class Fmt {
             return fallback;
         }
         return node.isTextual() ? node.asText() : node.toString();
+    }
+
+    /**
+     * Parses the service's timestamp shapes — ISO with offset ("2026-09-16T00:09:04.439132+01:00",
+     * "…Z"), SQL-style ("2026-09-15 03:02:30[.frac][+off]", naive treated as UTC) — for sorting;
+     * null/blank/unparseable yield null.
+     */
+    public static OffsetDateTime parseTime(String timestamp) {
+        if (timestamp == null || timestamp.isBlank()) {
+            return null;
+        }
+        String t = timestamp.trim().replace(' ', 'T').replaceAll("([+-]\\d{2})$", "$1:00");
+        try {
+            return OffsetDateTime.parse(t);
+        } catch (Exception ignored) {
+            // fall through to the naive form
+        }
+        try {
+            return LocalDateTime.parse(t).atOffset(ZoneOffset.UTC);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    /** Sort comparator for a timestamp column: chronological across the service's formats, absent last. */
+    public static <T> Comparator<T> comparingTime(Function<T, String> timeGetter) {
+        return Comparator.comparing(timeGetter.andThen(Fmt::parseTime),
+                Comparator.nullsLast(Comparator.naturalOrder()));
     }
 }

@@ -84,7 +84,8 @@ public class RunsView extends VerticalLayout {
                 .setAutoWidth(true);
         grid.addColumn(r -> Fmt.count(r.completion_tokens())).setHeader("tokens").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true);
-        grid.addColumn(r -> Fmt.when(r.started())).setHeader("started").setAutoWidth(true);
+        grid.addColumn(r -> Fmt.when(r.started())).setHeader("started").setAutoWidth(true)
+                .setComparator(Fmt.comparingTime(Api.Run::started));
         grid.addItemClickListener(e -> e.getSource().getUI()
                 .ifPresent(ui -> ui.navigate("runs/" + e.getItem().run_id())));
 
