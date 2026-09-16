@@ -111,6 +111,37 @@ class OracleChecksTest {
     }
 
     @Test
+    void sqlCaseWhenElseFormIsNoLongerAFalseNegativeForM4() throws Exception {
+        // the sign is carried via ELSE (BUY branch positive, ELSE negative), not an explicit SELL
+        // branch with a minus sign - this is the false negative the SQL_PIT fix closes
+        Path ws = Files.createTempDirectory("ws");
+        Files.createDirectories(ws.resolve("src/main/java/app"));
+        Files.writeString(ws.resolve("src/main/java/app/HoldingRepository.java"), """
+                package app;
+                import org.springframework.data.jpa.repository.Query;
+                public interface HoldingRepository {
+                    @Query(value = "SELECT SUM(CASE WHEN side = 'BUY' THEN qty ELSE -qty END) FROM trades", nativeQuery = true)
+                    java.math.BigDecimal netQty();
+                }
+                """);
+        assertEquals(CheckStatus.PASS, runMoney(ws).get(CheckId.M4).status());
+
+        // a look-alike that must stay undetected: two aliased SUM()s cannot be told apart from source
+        // without false-positives, so buys-minus-sells via separate SUMs is deliberately not credited here
+        Path lookAlike = Files.createTempDirectory("ws2");
+        Files.createDirectories(lookAlike.resolve("src/main/java/app"));
+        Files.writeString(lookAlike.resolve("src/main/java/app/HoldingRepository.java"), """
+                package app;
+                import org.springframework.data.jpa.repository.Query;
+                public interface HoldingRepository {
+                    @Query(value = "SELECT SUM(b.qty) - SUM(s.qty) FROM trades b, trades s", nativeQuery = true)
+                    java.math.BigDecimal netQty();
+                }
+                """);
+        assertEquals(CheckStatus.NOT_ATTEMPTED, runMoney(lookAlike).get(CheckId.M4).status());
+    }
+
+    @Test
     void noSourcesMeansNotAttemptedNotFail() throws Exception {
         Map<CheckId, CheckResult> r = runMoney(Files.createTempDirectory("empty"));
         for (CheckId c : List.of(CheckId.M1, CheckId.M2, CheckId.M3, CheckId.M4))

@@ -25,7 +25,13 @@ public final class MoneySafetyChecks {
     static final Pattern PIT_PARAM = Pattern.compile("(?:\\b(?:public|private|protected|static|final|suspend|override|fun)\\b[^;{}=]*?\\s|^\\s*fun\\s+)(\\w+)\\s*\\([^)]*\\b(?:Instant|OffsetDateTime|ZonedDateTime|LocalDateTime)\\b[^)]*\\)", Pattern.MULTILINE);
     static final Pattern SUBTRACTS = Pattern.compile("(\\.subtract\\(|-=|\\.negate\\(\\)|\\* ?-1|\\bminus\\b|\\bsign(um)?\\b|-\\s*\\w*(qty|quantity|amount)\\b|" +
             "\\bSELL\\b[^;]{0,80}?(-|subtract|negate)|CASE\\s+WHEN[^;]*SELL[^;]*-)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
-    static final Pattern SQL_PIT = Pattern.compile("CASE\\s+WHEN[^;]*SELL[^;]*(-\\s*\\w*(qty|quantity)|\\* ?-1)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+    // credits a signed CASE on the sell side, or the sign carried via ELSE (BUY branch positive, ELSE negative) -
+    // the ELSE form was a false negative until this fix; kept conservative: a buys-minus-sells of two aliased
+    // SUM()s cannot be told apart from source without false-positives, so it deliberately stays undetected here
+    static final Pattern SQL_PIT = Pattern.compile(
+            "CASE\\s+WHEN[^;]*(SELL|SOLD)[^;]*(-\\s*\\w*(qty|quantity)|\\* ?-1)"
+                    + "|CASE\\s+WHEN[^;]*(BUY|BOUGHT)[^;]*ELSE\\s*-\\s*\\w*(qty|quantity)",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
     public static List<CheckResult> run(Path ws) {
         List<Path> java = sources(ws, ".java", ".kt"), sql = sources(ws, ".sql");

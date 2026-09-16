@@ -47,7 +47,8 @@ public final class Packs {
             - Cap noisy commands: `... 2>&1 | tail -40` or `| grep -iE "error|fail|exception" | head -30`. No `ls -R`, no `find` without `-maxdepth`.
             - Gradle: `./gradlew <task> -q --console=plain 2>&1 | grep -E "^e: |error:|FAILED|BUILD|tests completed" | head -40`; compile first, run one test class, full build last. Read only the failing `<failure>` from `build/test-results/test/*.xml`.
             - Java compiler errors are `path:line: error:`; Kotlin's are `e: path:line:col`.
-            - Money: `BigDecimal` only, explicit scale + `RoundingMode`, compare with `compareTo`. Spring: slice tests over `@SpringBootTest` where a DB is not needed.
+            - Money: `BigDecimal` only, explicit scale + `RoundingMode`, compare with `compareTo`.
+            - Spring: slice tests over `@SpringBootTest` where a DB is not needed; for a full HTTP integration test use `@SpringBootTest(webEnvironment=RANDOM_PORT)` with an injected `TestRestTemplate` (already on the test classpath via `spring-boot-starter-test`) or a plain `RestTemplate` to `http://localhost:${port}` - do NOT remove `spring-boot-starter-test` or its autoconfigure.
             - Do not re-run a command whose output you already have; do not `cat` a file you just wrote.""";
 
     private static String HYGIENE = HYGIENE_TEMPLATE.replace("{window}", "65");
@@ -283,7 +284,10 @@ public final class Packs {
 
     // ---- the instruction texts (verbatim ports)
     public static String taskInstruction(String id) {
-        return "Implement task " + id + " only. Do not start other tasks. Write tests that prove its acceptance criterion and run them. "
+        return "Implement task " + id + " only. Do not start other tasks. Write tests that prove its acceptance criterion and run them; "
+                + "your tests must use DISCRIMINATING inputs - non-default values a hardcoded or ignored-input implementation would get "
+                + "wrong (e.g., POST a non-USD currency and assert THAT currency echoes back, not the default; assert a non-zero, "
+                + "non-default quantity round-trips) - happy-path defaults prove nothing. "
                 + "Stop when they pass OR when your budget is nearly spent (see the Budget section: check `date` between steps). "
                 + "Before you stop, append exactly one line to docs/PROGRESS.md: `" + id + " | done | <how verified>` when the acceptance "
                 + "criterion holds, `" + id + " | partial | <what works, what remains>` when it does not yet, or `" + id + " | blocked | <why>`.";
@@ -304,14 +308,19 @@ public final class Packs {
     public static final String DOCKER_NOTE = "## Docker\n- Docker Desktop is available ON DEMAND: it is down until your first `docker` command, which starts it and waits "
             + "for the daemon (up to 2 minutes; `docker compose` works). It is stopped again after 10 minutes without a docker command and "
             + "when this session ends, so do the container work (`docker compose build`, `docker compose up`, a smoke request, `docker compose down`) "
-            + "in one stretch, and do not leave containers running.";
+            + "in one stretch, and do not leave containers running.\n"
+            + "- If a `docker` command does not succeed within ~60s the daemon is unavailable on this host (it competes with the model for "
+            + "memory): do NOT keep retrying, run `open -a Docker`, or spawn your own backend - write the Dockerfile/compose.yml from your "
+            + "own knowledge, verify behaviour against the provided SPRING_DATASOURCE_*/H2 datasource, and rely on the grader (it builds "
+            + "and runs the containers on a clean checkout after your session).";
     public static String budgetSection(String taskId, String startLocal, String deadlineLocal, int minutes) {
         return "## Budget for " + taskId + "\n- Started " + startLocal + ", hard deadline **" + deadlineLocal + "** (local time, " + minutes
                 + " min). The harness stops the session at the deadline.\n- Run `date` between steps. When fewer than 5 minutes remain, stop coding and write the docs/PROGRESS.md status line described in the instruction.";
     }
     public static final String INTEGRATION_INSTRUCTION = "Run the complete test suite of every service from the repository root and fix every failure. Check that "
             + "docker-compose.yml, the Dockerfiles and the healthchecks are consistent with the code and that `docker compose build` "
-            + "and `docker compose up` work (Docker starts on demand - see the Docker section; the grader will run `docker compose build` on a clean "
+            + "and `docker compose up` work when Docker is available (it starts on demand but may not boot on this host - see the Docker "
+            + "section's ~60s fallback and do not get stuck retrying; the grader will run `docker compose build` on a clean "
             + "checkout WITHOUT build outputs, so every image must build the application inside the image - a Dockerfile that COPYs a "
             + "host-built jar fails). Stop when everything is green OR when your budget is nearly spent (see the Budget section; "
             + "check `date`). Before you stop, append exactly one line to docs/PROGRESS.md: `INTEGRATION | done | <evidence>` "
