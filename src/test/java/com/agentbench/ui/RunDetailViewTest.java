@@ -7,6 +7,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The run page's not-imported gate: only a real 404 opens the self-service panel. */
@@ -79,5 +80,35 @@ class RunDetailViewTest {
         List<String> lines = RunDetailView.provenanceLines(
                 Json.MAPPER.readTree("{\"provenance\": \"bogus\", \"usable_context\": \"big\"}"), null);
         assertEquals(List.of("usable_context: big"), lines);
+    }
+
+    /** The 2026-09-16 empty-run-page question, pinned: the panel explains the run's own job. */
+    @Test
+    void jobForRun_findsTheRunsJobRow() {
+        List<Api.Job> jobs = List.of(
+                ApiFixtures.job(36, "cancelled", null),
+                ApiFixtures.job(37, "running", null));
+        assertEquals(37L, RunDetailView.jobForRun(jobs, "r-37").id());
+        assertNull(RunDetailView.jobForRun(jobs, "no-such-run"));
+    }
+
+    @Test
+    void notImportedKind_matrix() {
+        assertEquals(RunDetailView.NotImportedKind.IN_FLIGHT,
+                RunDetailView.notImportedKind(ApiFixtures.job(37, "running", null)),
+                "an in-flight run routes to the live job page");
+        assertEquals(RunDetailView.NotImportedKind.IN_FLIGHT,
+                RunDetailView.notImportedKind(ApiFixtures.job(37, "queued", null)));
+        assertEquals(RunDetailView.NotImportedKind.BLOCKED,
+                RunDetailView.notImportedKind(ApiFixtures.job(37, "blocked", "dirty tree")),
+                "a blocked job needs a requeue, not a wait");
+        assertEquals(RunDetailView.NotImportedKind.ENDED_WITHOUT_SCORE,
+                RunDetailView.notImportedKind(ApiFixtures.job(36, "cancelled", null)));
+        assertEquals(RunDetailView.NotImportedKind.ENDED_WITHOUT_SCORE,
+                RunDetailView.notImportedKind(ApiFixtures.job(36, "failed", null)));
+        assertEquals(RunDetailView.NotImportedKind.ENDED_WITHOUT_SCORE,
+                RunDetailView.notImportedKind(ApiFixtures.job(36, "succeeded", null)),
+                "succeeded but unimported — the rare rescan case");
+        assertEquals(RunDetailView.NotImportedKind.UNKNOWN, RunDetailView.notImportedKind(null));
     }
 }

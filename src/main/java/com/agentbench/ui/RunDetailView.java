@@ -163,19 +163,75 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
                 && responseException.getStatusCode().value() == 404;
     }
 
-    /** The self-service path: not-imported is expected, not an error — offer the rescan. */
+    /** What the not-imported panel should say, from the run's own job row. */
+    enum NotImportedKind {
+        IN_FLIGHT, ENDED_WITHOUT_SCORE, BLOCKED, UNKNOWN
+    }
+
+    static NotImportedKind notImportedKind(Api.Job job) {
+        if (job == null) {
+            return NotImportedKind.UNKNOWN;
+        }
+        if ("blocked".equals(job.status())) {
+            return NotImportedKind.BLOCKED;
+        }
+        return JobStatuses.isTerminal(job.status()) ? NotImportedKind.ENDED_WITHOUT_SCORE
+                : NotImportedKind.IN_FLIGHT;
+    }
+
+    /** The run's job row (the runs table has none until import). */
+    static Api.Job jobForRun(List<Api.Job> jobs, String runId) {
+        return jobs.stream().filter(job -> runId.equals(job.run_id())).findFirst().orElse(null);
+    }
+
+    /**
+     * The self-service path: not-imported is expected while a run is in flight, so the
+     * panel routes to the job's live page instead of leaving a dead end.
+     */
     private void addNotImportedPanel() {
         add(new H3("Run " + runId));
-        add(Panels.warn("This run is not imported yet. A run appears here once its job finishes "
-                + "with a scored result (oracle.json on disk); cancelled or unfinished runs never import."));
-        add(new Button("Rescan results/", e -> {
-            try {
-                client.importAll();
-                render();
-            } catch (Exception ex) {
-                Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
+
+        Api.Job job = null;
+        try {
+            job = jobForRun(client.jobs(), runId);
+        } catch (Exception ignored) {
+            // the panel falls back to the generic rescan path
+        }
+        final Api.Job runJob = job;
+
+        switch (notImportedKind(runJob)) {
+            case IN_FLIGHT -> {
+                add(Panels.warn("This run is still in progress — its results appear here automatically "
+                        + "when the job finishes with a score. The job's live details (steps, sessions, "
+                        + "requests, log tail) are on its job page."));
+                add(new Button("Open the job's live page",
+                        e -> getUI().ifPresent(ui -> ui.navigate("jobs/" + runJob.id()))));
             }
-        }));
+            case BLOCKED -> {
+                add(Panels.warn("This run's job is blocked — requeue it from the queue page; the "
+                        + "run appears here once it finishes with a score."));
+                add(new Button("Open the job",
+                        e -> getUI().ifPresent(ui -> ui.navigate("jobs/" + runJob.id()))));
+            }
+            case ENDED_WITHOUT_SCORE -> {
+                add(Panels.warn("This run's job ended without a scored result — such runs are "
+                        + "never imported."));
+                add(new Button("Open the job",
+                        e -> getUI().ifPresent(ui -> ui.navigate("jobs/" + runJob.id()))));
+            }
+            default -> {
+                add(Panels.warn("This run is not imported yet. A run appears here once its job finishes "
+                        + "with a scored result (oracle.json on disk); cancelled or unfinished runs never import."));
+                add(new Button("Rescan results/", e -> {
+                    try {
+                        client.importAll();
+                        render();
+                    } catch (Exception ex) {
+                        Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
+                    }
+                }));
+            }
+        }
     }
 
     private void addChecks(List<Api.Check> checks) {
