@@ -132,7 +132,7 @@ public class ExperimentsService {
         List<ArmSpec> specs = plan(template, params, k);
         return tx.execute(status -> {
             Map<String, Object> experiment = jdbc.queryForMap(
-                    "INSERT INTO experiments (name, tag, template, params, k, pinned_runner_sha, pinned_oracle_sha) VALUES (?,?,?,?,?::jsonb,?,?) RETURNING *",
+                    "INSERT INTO experiments (name, tag, template, params, k, pinned_runner_sha, pinned_oracle_sha) VALUES (?,?,?,?::jsonb,?,?,?) RETURNING *",
                     name, defaultTag(), template, toJson(params), k, runnerSha, oracleSha);
             long id = ((Number) experiment.get("id")).longValue();
             List<Object> jobs = new ArrayList<>();
