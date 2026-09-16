@@ -40,6 +40,15 @@ public class BenchController {
         return Map.of("checks", r.checks(), "blocked", r.blocked(), "verdict", r.blocked() ? "BLOCKED" : "runnable");
     }
 
+    /** Whatever the model server currently serves, sorted - the picker source neither this API nor
+     *  the Python one's ever exposed; the HTML UI only had it because it renders server-side. Best
+     *  effort: an unreachable server means an empty list, not a 500 (same fallback as the queue's own
+     *  context-window resolution, which shares this data). */
+    @GetMapping("/api/models")
+    public List<String> models() {
+        return experiments.localModelSpecs().keySet().stream().sorted().toList();
+    }
+
     @GetMapping("/api/runs")
     public List<Map<String, Object>> runs(@RequestParam(required = false) String task, @RequestParam(required = false) String model,
                                           @RequestParam(required = false, defaultValue = "") String valid) {

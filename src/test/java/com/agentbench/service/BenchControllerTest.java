@@ -85,6 +85,23 @@ class BenchControllerTest {
     }
 
     @Test
+    void modelsListsWhateverTheModelServerCurrentlyServesSorted() throws Exception {
+        when(experiments.localModelSpecs()).thenReturn(Map.of("Qwen3.6-27B-graft", 65536, "Qwen3.8-27B-graft", 131072));
+
+        mvc.perform(get("/api/models"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0]").value("Qwen3.6-27B-graft"))   // sorted, not insertion order
+                .andExpect(jsonPath("$[1]").value("Qwen3.8-27B-graft"));
+    }
+
+    @Test
+    void modelsIsAnEmptyListNotA500WhenTheModelServerIsUnreachable() throws Exception {
+        when(experiments.localModelSpecs()).thenReturn(Map.of());
+
+        mvc.perform(get("/api/models")).andExpect(status().isOk()).andExpect(jsonPath("$").isEmpty());
+    }
+
+    @Test
     void illegalArgumentExceptionMapsTo400WithDetailBody() throws Exception {
         // RunSpec's own validation throws before queue.enqueue() is ever called
         mvc.perform(post("/api/jobs").contentType(MediaType.APPLICATION_JSON)
