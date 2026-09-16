@@ -102,8 +102,8 @@ public final class Api {
     public record CompareResponse(JsonNode result, String printed, String refused) {
     }
 
-    /** POST /api/import. */
-    public record ImportResult(int imported, int skipped) {
+    /** POST /api/import — run-id lists, not counts (importer.import_all returns lists). */
+    public record ImportResult(List<String> imported, List<String> skipped) {
     }
 
     /** One queue job — GET /api/jobs, /api/jobs/{id}, and the job-mutating endpoints. */

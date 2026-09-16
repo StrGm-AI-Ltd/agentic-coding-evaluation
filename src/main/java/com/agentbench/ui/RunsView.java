@@ -52,8 +52,8 @@ public class RunsView extends VerticalLayout {
         Button rescan = new Button("Rescan results/", VaadinIcon.UPLOAD.create(), e -> {
             try {
                 Api.ImportResult result = client.importAll();
-                Notification.show("Imported " + result.imported() + " new runs, skipped "
-                        + result.skipped(), 4000, Notification.Position.BOTTOM_END);
+                Notification.show("Imported " + result.imported().size() + " new runs, skipped "
+                        + result.skipped().size(), 4000, Notification.Position.BOTTOM_END);
                 optionsLoaded = false;
                 load();
             } catch (Exception ex) {

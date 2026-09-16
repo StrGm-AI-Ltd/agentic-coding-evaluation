@@ -146,7 +146,10 @@ class ServiceClientWireTest {
                     ? "{\"result\":null,\"printed\":\"refuse\",\"refused\":\"k < 5\"}"
                     : "{\"result\":{\"p\":0.4},\"printed\":\"Mann-Whitney\",\"refused\":null}";
         }
-        if ("POST /api/import".equals(method + " " + uri)) return "{\"imported\":2,\"skipped\":1}";
+        if ("POST /api/import".equals(method + " " + uri)) {
+            // the REAL shape: importer.import_all returns run-id lists, not counts
+            return "{\"imported\":[\"r1\",\"r3\"],\"skipped\":[\"r2\"]}";
+        }
         if ("POST /api/experiments".equals(method + " " + uri)) return EXPERIMENT_JSON;
         if ("GET /api/experiments/7".equals(method + " " + uri)) return EXPERIMENT_JSON;
         if (uri.equals("/api/experiments")) return experimentListJson();
@@ -312,11 +315,12 @@ class ServiceClientWireTest {
     }
 
     @Test
-    void importAll_mapsImportedSkipped() {
+    void importAll_mapsRunIdListsNotCounts() {
         Api.ImportResult result = client.importAll();
         assertEquals("POST /api/import", last().method() + " " + last().uri());
-        assertEquals(2, result.imported());
-        assertEquals(1, result.skipped());
+        assertEquals(List.of("r1", "r3"), result.imported(),
+                "importer.import_all returns the run-id lists, not counts — the 2026-09-16 rescan bug");
+        assertEquals(List.of("r2"), result.skipped());
     }
 
     @Test

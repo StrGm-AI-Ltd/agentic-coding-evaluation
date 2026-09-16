@@ -6,6 +6,7 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import tools.jackson.databind.JsonNode;
 
@@ -228,6 +229,18 @@ public class ServiceClient implements Serializable {
         if (e instanceof ResourceAccessException) {
             return "Cannot reach agentbench-service at " + baseUrl
                     + " — is it running? (cd agentbench-trading-service/service && uv run agentbench-service)";
+        }
+        if (e instanceof RestClientException restClientException) {
+            // a failed conversion carries the interesting text in its cause chain
+            // (e.g. "Error while extracting response … — JsonMappingException: …"), not the wrapper
+            StringBuilder text = new StringBuilder(restClientException.getMessage() != null
+                    ? restClientException.getMessage() : restClientException.toString());
+            Throwable cause = restClientException.getCause();
+            while (cause != null) {
+                text.append(" — ").append(cause.getMessage() != null ? cause.getMessage() : cause.toString());
+                cause = cause.getCause();
+            }
+            return text.toString();
         }
         return e.getMessage() != null ? e.getMessage() : e.toString();
     }

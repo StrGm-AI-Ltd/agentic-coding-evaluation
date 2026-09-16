@@ -72,6 +72,20 @@ class ServiceClientErrorTextTest {
         assertTrue(text.contains("uv run agentbench-service"), "should name the start command");
     }
 
+    /** A failed response conversion hides the real cause in the exception chain; surface it. */
+    @Test
+    void decodingFailureSurfacesRootCauseChain() {
+        org.springframework.web.client.RestClientException e =
+                new org.springframework.web.client.RestClientException(
+                        "Error while extracting response for type [com.agentbench.ui.Api$ImportResult] "
+                                + "and content type [application/json]",
+                        new RuntimeException("Unexpected token (STRING), expected VALUE_INT"));
+        String text = CLIENT.errorText(e);
+        assertTrue(text.contains("Error while extracting response"), "the wrapper message stays visible");
+        assertTrue(text.contains("Unexpected token (STRING), expected VALUE_INT"),
+                "the root cause is appended so the operator can diagnose the wire mismatch");
+    }
+
     @Test
     void genericExceptionUsesMessage() {
         assertEquals("boom", CLIENT.errorText(new IllegalStateException("boom")));
