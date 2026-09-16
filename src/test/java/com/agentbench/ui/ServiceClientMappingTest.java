@@ -4,13 +4,16 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.time.Duration;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Live wire-mapping tests against a running agentbench-trading-service. Tagged "live" and
@@ -61,6 +64,34 @@ class ServiceClientMappingTest {
         }
         assertNotNull(run.manifest());
         assertNotNull(run.oracle());
+    }
+
+    @Test
+    void queueJobsMayBeUnimportedRuns404NotImported() {
+        List<Api.Job> jobs;
+        try {
+            jobs = client.jobs();
+        } catch (Exception e) {
+            Assumptions.assumeTrue(false, "agentbench-service not running: " + e.getMessage());
+            return;
+        }
+        Api.Job unimported = null;
+        for (Api.Job job : jobs) {
+            try {
+                client.run(job.run_id());
+            } catch (Exception e) {
+                unimported = job;
+                break;
+            }
+        }
+        Assumptions.assumeTrue(unimported != null,
+                "no unimported queue job present right now (the 2026-09-16 dead-end bug needs one)");
+        final Api.Job job = unimported;
+        RestClientResponseException e = assertThrows(RestClientResponseException.class,
+                () -> client.run(job.run_id()));
+        assertEquals(404, e.getStatusCode().value());
+        assertTrue(client.errorText(e).endsWith("is not imported"),
+                "the exact message the queue rows hit");
     }
 
     @Test

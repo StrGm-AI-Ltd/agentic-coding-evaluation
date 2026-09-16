@@ -93,12 +93,11 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     private void render(Api.Job job) {
-        boolean wasTerminal = JobStatuses.isTerminal(status());
+        String previousStatus = lastStatus;
         lastStatus = job.status();
         getUI().ifPresent(ui -> ui.setPollInterval(JobStatuses.isTerminal(job.status()) ? -1 : 2000));
-        if (job.run_id() != null
-                && (runImported == null || (JobStatuses.isTerminal(job.status()) && !wasTerminal))) {
-            runImported = isRunImported(job.run_id());
+        if (job.run_id() != null && shouldProbeRun(runImported, previousStatus, job.status())) {
+            runImported = isRunImported(client, job.run_id());
         }
 
         add(new RouterLink("← Queue", JobsView.class));
@@ -181,7 +180,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     /** The runs table only holds imported runs: 404 means the job has not produced a scored result yet. */
-    private boolean isRunImported(String runId) {
+    static boolean isRunImported(ServiceClient client, String runId) {
         try {
             client.run(runId);
             return true;
@@ -190,6 +189,17 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /**
+     * Probe once per navigation, and again on the transition into a terminal state —
+     * a job that just finished may have had its run imported by the worker.
+     */
+    static boolean shouldProbeRun(Boolean probed, String previousStatus, String currentStatus) {
+        if (probed == null) {
+            return true;
+        }
+        return JobStatuses.isTerminal(currentStatus) && !JobStatuses.isTerminal(previousStatus == null ? "" : previousStatus);
     }
 
     private String metaLine(Api.Job job) {
