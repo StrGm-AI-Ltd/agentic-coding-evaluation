@@ -166,7 +166,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             actions.add(new Button("Open run detail", e ->
                     getUI().ifPresent(ui -> ui.navigate("runs/" + job.run_id()))));
         } else if (job.run_id() != null) {
-            Span hint = new Span("run not imported yet — it appears here once the job finishes and is scored");
+            Span hint = new Span(runNotImportedHint(job.status()));
             hint.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em");
             actions.add(hint);
         }
@@ -177,6 +177,24 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             actions.add(rawLog);
         }
         add(actions);
+    }
+
+    /**
+     * Why there is no run link, in the job's own terms: in progress, ended without
+     * a score, or (rarely) succeeded but failed to import.
+     */
+    static String runNotImportedHint(String status) {
+        return switch (status == null ? "" : status) {
+            case "queued", "waiting_lock", "running", "blocked" ->
+                    "the run is still in progress — its results appear here automatically "
+                    + "when the job finishes with a score";
+            case "failed", "cancelled" ->
+                    "this job ended without a scored result — such runs are never imported";
+            case "succeeded" ->
+                    "the job succeeded but its results were not imported — a Rescan (Runs page) "
+                    + "may pick them up";
+            default -> "the run is not imported yet";
+        };
     }
 
     /** The runs table only holds imported runs: 404 means the job has not produced a scored result yet. */

@@ -3,6 +3,7 @@ package com.agentbench.ui;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.ResourceAccessException;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -36,6 +37,30 @@ class JobDetailViewTest {
         when(client.run("down")).thenThrow(new ResourceAccessException("down"));
         assertFalse(JobDetailView.isRunImported(client, "down"),
                 "network trouble: do not offer a link we could not verify");
+    }
+
+    /** The 2026-09-16 confusing-hint fix: the message explains the job's own state. */
+    @Test
+    void notImportedHint_isStateAware() {
+        assertEquals("the run is still in progress — its results appear here automatically "
+                        + "when the job finishes with a score",
+                JobDetailView.runNotImportedHint("running"));
+        assertEquals(JobDetailView.runNotImportedHint("running"),
+                JobDetailView.runNotImportedHint("queued"));
+        assertEquals(JobDetailView.runNotImportedHint("running"),
+                JobDetailView.runNotImportedHint("waiting_lock"));
+        assertEquals(JobDetailView.runNotImportedHint("running"),
+                JobDetailView.runNotImportedHint("blocked"));
+
+        assertEquals("this job ended without a scored result — such runs are never imported",
+                JobDetailView.runNotImportedHint("cancelled"));
+        assertEquals(JobDetailView.runNotImportedHint("cancelled"),
+                JobDetailView.runNotImportedHint("failed"));
+
+        assertTrue(JobDetailView.runNotImportedHint("succeeded")
+                .startsWith("the job succeeded but its results were not imported"));
+        assertEquals("the run is not imported yet", JobDetailView.runNotImportedHint(null));
+        assertEquals("the run is not imported yet", JobDetailView.runNotImportedHint("whatever"));
     }
 
     @Test
