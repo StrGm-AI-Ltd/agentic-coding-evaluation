@@ -90,7 +90,7 @@ public class BenchController {
     }
 
     @PostMapping("/api/import")
-    public Map<String, Integer> importAll() throws Exception { return importer.importAll(Path.of(props.resultsDir())); }
+    public Map<String, List<String>> importAll() throws Exception { return importer.importAll(Path.of(props.resultsDir())); }
 
     @GetMapping("/api/jobs")
     public List<Map<String, Object>> jobs() { return queue.list(); }

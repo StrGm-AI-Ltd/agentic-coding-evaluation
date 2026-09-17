@@ -102,6 +102,20 @@ class BenchControllerTest {
     }
 
     @Test
+    void importAllServesRunIdListsAsJsonArraysNotCounts() throws Exception {
+        // the actual bug reported: the Vaadin UI's Api.ImportResult expects List<String>, and this
+        // endpoint used to serve {"imported": 2, "skipped": 1} - a JSON parse error on the UI side
+        when(props.resultsDir()).thenReturn("/tmp/results");
+        when(importer.importAll(any())).thenReturn(Map.of("imported", List.of("run-a", "run-b"), "skipped", List.of("run-c")));
+
+        mvc.perform(post("/api/import"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.imported").isArray())
+                .andExpect(jsonPath("$.imported[0]").value("run-a"))
+                .andExpect(jsonPath("$.skipped[0]").value("run-c"));
+    }
+
+    @Test
     void jobByIdReturnsTheJob() throws Exception {
         when(queue.get(1L)).thenReturn(Map.of("id", 1L, "run_id", "run-1", "status", "queued"));
 

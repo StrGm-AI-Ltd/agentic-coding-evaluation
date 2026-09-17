@@ -72,13 +72,16 @@ public class ImporterService {
         return oracle;
     }
 
-    public Map<String, Integer> importAll(Path resultsDir) throws Exception {
-        int imported = 0, skipped = 0;
+    /** run-id lists, not counts - the Vaadin UI's Api.ImportResult (ported from the Python service's
+     *  own importer.import_all contract) deserializes "imported"/"skipped" as List&lt;String&gt;. */
+    public Map<String, List<String>> importAll(Path resultsDir) throws Exception {
+        List<String> imported = new ArrayList<>(), skipped = new ArrayList<>();
         try (DirectoryStream<Path> s = Files.newDirectoryStream(resultsDir)) {
             for (Path p : s) {
                 if (!Files.isDirectory(p) || p.getFileName().toString().startsWith("_")) continue;
-                if (Files.isRegularFile(p.resolve("oracle.json"))) { importRun(p, null); imported++; }
-                else skipped++;
+                String runId = p.getFileName().toString();
+                if (Files.isRegularFile(p.resolve("oracle.json"))) { importRun(p, null); imported.add(runId); }
+                else skipped.add(runId);
             }
         }
         return Map.of("imported", imported, "skipped", skipped);

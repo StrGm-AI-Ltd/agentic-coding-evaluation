@@ -8,6 +8,7 @@ import org.springframework.jdbc.datasource.SimpleDriverDataSource;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -112,5 +113,28 @@ class ImporterServiceTest {
         // check_results was replaced too, not accumulated
         assertEquals(1, db.queryForObject("SELECT count(*) FROM check_results WHERE run_id = ?", Integer.class, dir.getFileName().toString()));
         assertEquals("fail", db.queryForObject("SELECT status FROM check_results WHERE run_id = ?", String.class, dir.getFileName().toString()));
+    }
+
+    /** The Vaadin UI's Api.ImportResult(List<String> imported, List<String> skipped) - ported from
+     *  the Python service's own importer.import_all contract, run-id lists, not counts - failed to
+     *  deserialize the jls response with a JSON parse error ("Cannot deserialize ArrayList<String>
+     *  from Integer") because importAll() here returned {"imported": N, "skipped": M} instead. */
+    @Test
+    void importAllReturnsRunIdListsNotCounts() throws Exception {
+        JdbcTemplate db = jdbc();
+        if (db == null) return;
+        Path resultsDir = Files.createTempDirectory("results");
+        Path scored = resultsDir.resolve("run-scored");
+        Files.createDirectories(scored);
+        write(scored, "oracle.json", """
+                {"task": "L3p_point_in_time", "schema_version": 3, "weighted_score_pct": 80.0,
+                 "functional_score_pct": 90.0, "functional_points_got": 9, "functional_denominator": 10,
+                 "points_got": 8, "denominator": 10, "partial_score_pct": 75.0, "results": []}""");
+        Files.createDirectories(resultsDir.resolve("run-unscored"));   // no oracle.json: not yet finished
+
+        Map<String, List<String>> result = new ImporterService(db).importAll(resultsDir);
+
+        assertEquals(List.of("run-scored"), result.get("imported"));
+        assertEquals(List.of("run-unscored"), result.get("skipped"));
     }
 }

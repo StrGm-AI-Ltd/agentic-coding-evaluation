@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Test;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
@@ -39,6 +41,19 @@ class RunBenchTest {
         try (InputStream in = runBench().promptResource("no-such-task")) {
             assertNotNull(in, "tasks/PROMPT.md (the generic default) must be vendored as a resource");
         }
+    }
+
+    /** Job #26's failure, hidden behind #14's until that one was fixed: Files.copy's TARGET
+     *  directory (ws/task) must exist too, not just its parent (ws) -
+     *  Files.createDirectories(ws.resolve("task").getParent()) created only ws. */
+    @Test
+    void setUpTaskPromptCreatesTheTaskDirectoryItselfNotJustItsParent() throws Exception {
+        Path ws = Files.createTempDirectory("ws");   // a bare, empty workspace dir - nothing pre-created under it
+
+        String text = runBench().setUpTaskPrompt(ws, "L3p_point_in_time");
+
+        assertTrue(Files.isRegularFile(ws.resolve("task/PROMPT.md")), "task/PROMPT.md must exist under the workspace");
+        assertFalse(text.isBlank());
     }
 
     @Test

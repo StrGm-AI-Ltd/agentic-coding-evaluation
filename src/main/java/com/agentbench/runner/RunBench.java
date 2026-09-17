@@ -11,6 +11,7 @@ import com.agentbench.plan.PlanTask;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.*;
 import java.time.Instant;
@@ -109,6 +110,16 @@ public class RunBench {
         return perTask != null ? perTask : getClass().getResourceAsStream("/tasks/PROMPT.md");
     }
 
+    /** Copies the task's prompt into ws/task/PROMPT.md - every later phase reads task/PROMPT.md
+     *  relative to the workspace - and returns its text. ws/task must be created directly: its
+     *  PARENT (ws) existing is not enough for the file to be writable into it. */
+    String setUpTaskPrompt(Path ws, String task) throws IOException {
+        Files.createDirectories(ws.resolve("task"));
+        Path taskPrompt = ws.resolve("task/PROMPT.md");
+        try (InputStream promptSrc = promptResource(task)) { Files.copy(promptSrc, taskPrompt, StandardCopyOption.REPLACE_EXISTING); }
+        return Files.readString(taskPrompt);
+    }
+
     @SuppressWarnings("unchecked")
     public Map<String, Object> runOnce(Map<String, Object> cfg, String runId, String task, String mode, String planSource) throws Exception {
         Path resultsDir = Path.of((String) cfg.getOrDefault("results_root", props.resultsDir()));
@@ -116,13 +127,8 @@ public class RunBench {
         Files.createDirectories(rd);
         Path wsRoot = Path.of((String) cfg.getOrDefault("workspace_root", props.workspaceRoot())).resolve(runId);
         Path ws = wsRoot.resolve("workspace"), home = wsRoot.resolve("home");
-        Files.createDirectories(ws.resolve("task").getParent());
         Files.createDirectories(home.resolve(".pi/agent"));
-        // the task-specific prompt first (matches run_bench.py: tasks/<task>/PROMPT.md before the
-        // generic fallback) - every task must get ITS OWN prompt, not whichever one happened to load
-        Path taskPrompt = ws.resolve("task/PROMPT.md");
-        try (InputStream promptSrc = promptResource(task)) { Files.copy(promptSrc, taskPrompt, StandardCopyOption.REPLACE_EXISTING); }
-        String promptText = Files.readString(taskPrompt);
+        String promptText = setUpTaskPrompt(ws, task);
         cfg.put("java_home", props.javaHome() == null || props.javaHome().isBlank()
                 ? DockerService.sh(20, "/usr/libexec/java_home", "-v", String.valueOf(cfg.getOrDefault("java_major", 21))).out().strip() : props.javaHome());
 
