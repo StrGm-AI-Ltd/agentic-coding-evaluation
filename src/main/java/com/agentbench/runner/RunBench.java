@@ -11,6 +11,7 @@ import com.agentbench.plan.PlanTask;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
+import java.io.InputStream;
 import java.nio.file.*;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -100,6 +101,14 @@ public class RunBench {
         List<Map<String, Object>> finish() { if (cur != null) poll(0); return windows; }
     }
 
+    /** the task's own prompt (tasks/&lt;task&gt;/PROMPT.md, vendored as a resource) when it exists,
+     *  else the generic default (tasks/PROMPT.md, the port of the Python original's top-level
+     *  task/PROMPT.md) - port of run_bench.py's own tp-then-fallback lookup. */
+    InputStream promptResource(String task) {
+        InputStream perTask = getClass().getResourceAsStream("/tasks/" + task + "/PROMPT.md");
+        return perTask != null ? perTask : getClass().getResourceAsStream("/tasks/PROMPT.md");
+    }
+
     @SuppressWarnings("unchecked")
     public Map<String, Object> runOnce(Map<String, Object> cfg, String runId, String task, String mode, String planSource, Path repoRoot) throws Exception {
         Path resultsDir = Path.of((String) cfg.getOrDefault("results_root", props.resultsDir()));
@@ -109,8 +118,11 @@ public class RunBench {
         Path ws = wsRoot.resolve("workspace"), home = wsRoot.resolve("home");
         Files.createDirectories(ws.resolve("task").getParent());
         Files.createDirectories(home.resolve(".pi/agent"));
-        Files.copy(repoRoot.resolve("task/PROMPT.md"), ws.resolve("task/PROMPT.md"), StandardCopyOption.REPLACE_EXISTING);
-        String promptText = Files.readString(ws.resolve("task/PROMPT.md"));
+        // the task-specific prompt first (matches run_bench.py: tasks/<task>/PROMPT.md before the
+        // generic fallback) - every task must get ITS OWN prompt, not whichever one happened to load
+        Path taskPrompt = ws.resolve("task/PROMPT.md");
+        try (InputStream promptSrc = promptResource(task)) { Files.copy(promptSrc, taskPrompt, StandardCopyOption.REPLACE_EXISTING); }
+        String promptText = Files.readString(taskPrompt);
         cfg.put("java_home", props.javaHome() == null || props.javaHome().isBlank()
                 ? DockerService.sh(20, "/usr/libexec/java_home", "-v", String.valueOf(cfg.getOrDefault("java_major", 21))).out().strip() : props.javaHome());
 
@@ -419,9 +431,12 @@ public class RunBench {
         if ("reference".equals(planSource)) {
             Path ref = rd.resolve("IMPLEMENTATION_PLAN.md");
             if (!Files.isRegularFile(ref)) {
-                Path src = Path.of((String) cfg.getOrDefault("repo_root", ".")).resolve("task/REFERENCE_PLAN.md");
-                if (Files.isRegularFile(src)) Files.copy(src, ref, StandardCopyOption.REPLACE_EXISTING);
-                else Files.writeString(ref, Files.readString(ws.resolve("task/PROMPT.md")));   // fallback: the prompt as the plan source
+                // tasks/<task>/REFERENCE_PLAN.md (vendored as a resource) when the task has one - only
+                // L3p_point_in_time does today - else the prompt itself stands in for the plan
+                try (InputStream refSrc = getClass().getResourceAsStream("/tasks/" + task + "/REFERENCE_PLAN.md")) {
+                    if (refSrc != null) Files.copy(refSrc, ref, StandardCopyOption.REPLACE_EXISTING);
+                    else Files.writeString(ref, Files.readString(ws.resolve("task/PROMPT.md")));
+                }
             }
             Files.createDirectories(ws.resolve("docs"));
             Files.copy(ref, ws.resolve("docs/IMPLEMENTATION_PLAN.md"), StandardCopyOption.REPLACE_EXISTING);
