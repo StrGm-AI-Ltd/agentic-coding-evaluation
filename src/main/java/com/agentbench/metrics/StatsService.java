@@ -18,7 +18,8 @@ public final class StatsService {
 
     public record RunSummary(String dir, String task, String model, String mode, Double functional, Double score,
                              Double partial, Double agentResult, boolean valid, List<String> reasons, boolean contended, boolean poolable,
-                             int implWall, int implTokens, Map<String, Object> key, List<String> statusOrder) {}
+                             int implWall, int implTokens, Map<String, Object> key, List<String> statusOrder,
+                             Map<String, String> checkStatus) {}
 
     public static final List<String> KEY_FIELDS = List.of("task", "step", "registry", "run_oracle", "contract", "task_prompt",
             "mode", "parallel", "plan_source", "handoff_notes", "system_rules", "length_policy", "budgets_wall", "budgets_tokens",
@@ -53,6 +54,8 @@ public final class StatsService {
         }
         boolean poolable = o.path("schema_version").asInt(-1) == com.agentbench.config.BenchProperties.RESULT_SCHEMA
                 && !o.path("weighted_score_pct").isNull() && o.path("weighted_score_pct") != null && o.has("weighted_score_pct");
+        Map<String, String> checkStatus = new LinkedHashMap<>();
+        for (JsonNode r : o.path("results")) checkStatus.put(r.path("id").asText(), r.path("status").asText());
         return new RunSummary(runDir.toString(), o.path("task").asText(),
                 m.path("provenance").path("model").asText(null), m.path("mode").asText("monolithic"),
                 o.path("functional_score_pct").isMissingNode() || o.path("functional_score_pct").isNull() ? null : o.path("functional_score_pct").asDouble(),
@@ -64,7 +67,7 @@ public final class StatsService {
                 poolable && m.path("validity").path("valid").asBoolean(true),
                 m.path("budgets").path("implementation_wall_sec").asInt(0),
                 m.path("budgets").path("implementation_tokens").asInt(0), key,
-                o.path("results").findValuesAsText("id"));
+                o.path("results").findValuesAsText("id"), checkStatus);
     }
 
     /** port of filter_runs: refuse to pool non-comparable runs, name the culprit */
@@ -130,6 +133,43 @@ public final class StatsService {
             if (!allowMismatch) throw new IllegalArgumentException("harness-effect comparison refused: " + msg + " are not matched (pass allow-budget-mismatch to compare anyway, confounded)");
             System.out.println("  WARNING: " + msg + " are NOT matched; the harness effect is confounded with budget");
         } else System.out.println("  matched budgets: " + msg);
+    }
+
+    /** port of summarize(): k, mean scores with bootstrap 90% CI, and the pass^k matrix (# = passes
+     *  in every run, + = flaky, . = never - here as pass_rate/pass_k, not the printed glyphs). Callers
+     *  must pass already-comparable runs (filterRuns, or a DB group by key_hash which guarantees it). */
+    public Map<String, Object> summarize(List<RunSummary> runs) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("k", runs.size());
+        if (runs.isEmpty()) return out;
+        out.put("task", runs.get(0).task());
+        for (var metric : List.of(Map.entry("functional", (java.util.function.Function<RunSummary, Double>) RunSummary::functional),
+                Map.entry("composite", (java.util.function.Function<RunSummary, Double>) RunSummary::score),
+                Map.entry("partial", (java.util.function.Function<RunSummary, Double>) RunSummary::partial),
+                Map.entry("agent_result", (java.util.function.Function<RunSummary, Double>) RunSummary::agentResult))) {
+            List<Double> xs = runs.stream().map(metric.getValue()).filter(Objects::nonNull).toList();
+            if (xs.isEmpty()) continue;
+            double[] ci = bootCi(xs, 4000, 0.10, 0);
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("mean", round1(xs.stream().mapToDouble(Double::doubleValue).sum() / xs.size()));
+            entry.put("ci90", List.of(ci[0], ci[1]));
+            entry.put("n", xs.size());
+            out.put(metric.getKey(), entry);
+        }
+        Set<String> ids = new TreeSet<>();
+        runs.forEach(r -> ids.addAll(r.checkStatus().keySet()));
+        Map<String, Object> matrix = new LinkedHashMap<>();
+        for (String id : ids) {
+            List<String> col = runs.stream().map(r -> r.checkStatus().get(id)).toList();
+            long passes = col.stream().filter(s -> "PASS".equals(s)).count();
+            Map<String, Object> cell = new LinkedHashMap<>();
+            cell.put("pass_rate", Math.round(100.0 * passes / col.size()) / 100.0);
+            cell.put("pass_k", passes == col.size());
+            cell.put("col", col);
+            matrix.put(id, cell);
+        }
+        out.put("matrix", matrix);
+        return out;
     }
 
     /** the compare verdict: diff, CI, one-sided p, and the minimum-detectable-difference warning */

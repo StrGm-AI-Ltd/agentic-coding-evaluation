@@ -34,6 +34,11 @@ class StatsServiceTest {
     }
 
     private StatsService.RunSummary run(String model, String mode, String registry, int wall, int tokens, double functional, boolean valid) {
+        return run(model, mode, registry, wall, tokens, functional, valid, Map.of());
+    }
+
+    private StatsService.RunSummary run(String model, String mode, String registry, int wall, int tokens, double functional, boolean valid,
+                                        Map<String, String> checkStatus) {
         return new StatsService.RunSummary("results/x", "L7_full_platform", model, mode, functional, functional, null, null, valid,
                 List.of(), false, true, wall, tokens,
                 java.util.Map.ofEntries(
@@ -42,7 +47,7 @@ class StatsServiceTest {
                         java.util.Map.entry("task_prompt", "p1"), java.util.Map.entry("mode", mode),
                         java.util.Map.entry("plan_source", "agent"), java.util.Map.entry("harness_version", "jls-ref-1.0"),
                         java.util.Map.entry("budgets_wall", String.valueOf(wall)), java.util.Map.entry("budgets_tokens", String.valueOf(tokens)),
-                        java.util.Map.entry("sampler", "s1"), java.util.Map.entry("system_prompt_sha", "sp1")), List.of());
+                        java.util.Map.entry("sampler", "s1"), java.util.Map.entry("system_prompt_sha", "sp1")), List.of(), checkStatus);
     }
 
     @Test
@@ -68,6 +73,42 @@ class StatsServiceTest {
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> StatsService.requireMatchedBudgets(a, c, false));
         assertTrue(e.getMessage().contains("not matched"));
         assertDoesNotThrow(() -> StatsService.requireMatchedBudgets(a, c, true));       // explicitly confounded
+    }
+
+    /** The /api/groups leaderboard's core math: k, mean/CI90/n per metric, and the pass^k matrix -
+     *  # (passes every run) vs + (flaky) vs never, here as pass_rate/pass_k/col. */
+    @Test
+    void summarizeComputesKMeanCiAndThePassKMatrix() {
+        List<StatsService.RunSummary> runs = List.of(
+                run("m", "monolithic", "r1", 100, 1000, 80.0, true, Map.of("F1", "PASS", "F2", "PASS", "B1", "FAIL")),
+                run("m", "monolithic", "r1", 100, 1000, 90.0, true, Map.of("F1", "PASS", "F2", "FAIL", "B1", "FAIL")),
+                run("m", "monolithic", "r1", 100, 1000, 70.0, true, Map.of("F1", "PASS", "F2", "PASS", "B1", "FAIL")));
+
+        Map<String, Object> out = stats.summarize(runs);
+
+        assertEquals(3, out.get("k"));
+        assertEquals("L7_full_platform", out.get("task"));
+        @SuppressWarnings("unchecked") Map<String, Object> functional = (Map<String, Object>) out.get("functional");
+        assertEquals(80.0, ((Number) functional.get("mean")).doubleValue());
+        assertEquals(3, functional.get("n"));
+        @SuppressWarnings("unchecked") List<Double> ci = (List<Double>) functional.get("ci90");
+        assertTrue(ci.get(0) <= 80.0 && ci.get(1) >= 80.0, "the CI must bracket the mean: " + ci);
+
+        @SuppressWarnings("unchecked") Map<String, Object> matrix = (Map<String, Object>) out.get("matrix");
+        @SuppressWarnings("unchecked") Map<String, Object> f1 = (Map<String, Object>) matrix.get("F1");
+        assertEquals(true, f1.get("pass_k"), "F1 passed in all 3 runs");
+        assertEquals(1.0, ((Number) f1.get("pass_rate")).doubleValue());
+        @SuppressWarnings("unchecked") Map<String, Object> f2 = (Map<String, Object>) matrix.get("F2");
+        assertEquals(false, f2.get("pass_k"), "F2 is flaky: passed 2 of 3");
+        assertEquals(0.67, ((Number) f2.get("pass_rate")).doubleValue());
+        @SuppressWarnings("unchecked") Map<String, Object> b1 = (Map<String, Object>) matrix.get("B1");
+        assertEquals(false, b1.get("pass_k"));
+        assertEquals(0.0, ((Number) b1.get("pass_rate")).doubleValue(), "never passed");
+    }
+
+    @Test
+    void summarizeOfZeroRunsIsKZeroNotAnException() {
+        assertEquals(0, stats.summarize(List.of()).get("k"));
     }
 
     @Test

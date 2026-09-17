@@ -202,6 +202,52 @@ public class BenchController {
         };
     }
 
+    /** port of list_groups(): poolable runs grouped by (task, model, key_hash), each summarized
+     *  fresh from its own results files - matches the Python original and this service's own "the
+     *  files are the source of truth" invariant, not the DB's already-cached scores. A leaderboard
+     *  entry needs k >= 5 comparable, valid runs; smaller groups are indicative and never ranked. */
+    @GetMapping("/api/groups")
+    public Map<String, Object> groups() throws Exception {
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT run_id, task, model, mode, key_hash, results_dir FROM runs WHERE poolable ORDER BY run_id");
+        Map<List<Object>, List<Map<String, Object>>> byKey = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows)
+            byKey.computeIfAbsent(List.of(row.get("task"), row.get("model"), row.get("key_hash")), k -> new ArrayList<>()).add(row);
+
+        List<Map<String, Object>> ranked = new ArrayList<>(), indicative = new ArrayList<>();
+        for (var entry : byKey.entrySet()) {
+            List<Map<String, Object>> groupRows = entry.getValue();
+            Map<String, Object> group = new LinkedHashMap<>();
+            group.put("task", entry.getKey().get(0));
+            group.put("model", entry.getKey().get(1));
+            group.put("key_hash", entry.getKey().get(2));
+            group.put("mode", groupRows.get(0).get("mode"));
+            group.put("run_ids", groupRows.stream().map(r -> r.get("run_id")).toList());
+            group.put("summary", Map.of("k", 0));
+            group.put("printed", "");
+            group.put("refused", null);
+            try {
+                List<StatsService.RunSummary> summaries = new ArrayList<>();
+                for (Map<String, Object> r : groupRows) summaries.add(stats.load(Path.of((String) r.get("results_dir"))));
+                summaries = stats.filterRuns(summaries, false, false, group.get("task") + "/" + group.get("model"));
+                group.put("summary", stats.summarize(summaries));
+            } catch (Exception e) {
+                group.put("refused", e.getMessage());
+            }
+            Object kValue = ((Map<?, ?>) group.get("summary")).get("k");
+            int k = kValue instanceof Number n ? n.intValue() : 0;
+            (k >= 5 ? ranked : indicative).add(group);
+        }
+        ranked.sort(Comparator.comparingDouble(BenchController::functionalMean).reversed());
+        return Map.of("ranked", ranked, "indicative", indicative);
+    }
+
+    private static double functionalMean(Map<String, Object> group) {
+        if (!(group.get("summary") instanceof Map<?, ?> summary)) return 0;
+        if (!(summary.get("functional") instanceof Map<?, ?> functional)) return 0;
+        return functional.get("mean") instanceof Number n ? n.doubleValue() : 0;
+    }
+
     /** port of the jobs SSE endpoint: live progress from the files the run writes, plus job status */
     @GetMapping("/api/jobs/{id}/events")
     public SseEmitter events(@PathVariable long id) {

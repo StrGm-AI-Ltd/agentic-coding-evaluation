@@ -477,6 +477,7 @@ public class RunBench {
         manifest.put("plan", Map.of("source", planSource, "sha", planSha,
                 "tasks", tasks.stream().map(t -> Map.of("id", t.id, "title", t.title == null ? "" : t.title, "deps", t.deps == null ? List.of() : t.deps, "checks", t.checks == null ? List.of() : t.checks)).toList()));
         String stable = Packs.stablePack(promptText, tasks);
+        Files.createDirectories(rd.resolve("packs"));   // orchestrated-only: monolithic mode never writes here
         Files.writeString(rd.resolve("packs/stable.md"), stable);
         Map<String, String[]> snapshots = new LinkedHashMap<>();
         Map<String, Object> wave = new LinkedHashMap<>();   // wave bookkeeping

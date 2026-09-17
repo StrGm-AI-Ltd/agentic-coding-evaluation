@@ -29,6 +29,7 @@ import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -229,19 +230,24 @@ class DockerApplicationIT {
         assertEquals(200, status.statusCode());
     }
 
-    /** GET /api/groups (the leaderboard: poolable runs grouped by key_hash+model, k, bootstrap CI,
-     *  pass^k matrix) is NOT a bug to fix here - it was never implemented at all. BenchController has
-     *  no mapping for it and no grouping/summary logic exists anywhere in this service, even though
-     *  the Vaadin UI's ServiceClient.groups() already calls it. StatsService.bootCi()/filterRuns()
-     *  give the statistical primitives; the grouping query, the pass^k matrix and the ranked/
-     *  indicative split are a real, separate feature to build, not something to slip in while writing
-     *  tests. This test documents the gap precisely instead of silently skipping it. */
+    /** GET /api/groups (the leaderboard), now implemented: groups poolable runs by (task, model,
+     *  key_hash) and summarizes each fresh from its own results files. The single run rescanned
+     *  above is real but k=1 (< 5), so it must land in "indicative", never "ranked" - the same rule
+     *  the Python original enforces ("indicative, not a leaderboard entry" below k=5). */
     @Test
     @Order(6)
-    void groupsIsConfirmedNotYetImplemented() throws Exception {
+    void groupsPlacesASingleImportedRunInIndicativeNeverRanked() throws Exception {
         HttpResponse<String> groups = get("/api/groups");
-        assertEquals(404, groups.statusCode(), "if this starts failing, /api/groups now exists - "
-                + "replace this test with real coverage of it: " + groups.body());
+        assertEquals(200, groups.statusCode(), groups.body());
+        JsonNode body = json.readTree(groups.body());
+        assertTrue(body.has("ranked") && body.has("indicative"), groups.body());
+
+        boolean foundInIndicative = false;
+        for (JsonNode g : body.get("indicative"))
+            if (contains(g.get("run_ids"), "it-rescan-run-1")) { foundInIndicative = true; assertEquals(1, g.get("summary").get("k").asInt()); }
+        for (JsonNode g : body.get("ranked"))
+            assertFalse(contains(g.get("run_ids"), "it-rescan-run-1"), "k=1 must never be ranked: " + g);
+        assertTrue(foundInIndicative, "the rescanned run must appear in indicative: " + groups.body());
     }
 
     /** Regression check for the Dockerfile fix: git is a FATAL preflight check (Preflight.java) -
@@ -263,15 +269,27 @@ class DockerApplicationIT {
     /** The deepest test in the suite, and the one that actually answers "does starting a new
      *  experiment work": creates a real harness_effect experiment against whatever model oMLX
      *  currently serves (discovered live, not hardcoded), then polls the resulting job through the
-     *  real worker. Every job this session debugged (#1, #8, #14, #26) failed within MILLISECONDS of
-     *  being claimed, from a code defect - not from running out of budget. So the bar this test holds
-     *  the system to is exactly that failure mode: the job must survive real worker execution long
-     *  enough to reach "running" and make real progress (the step-0 context probe alone requires a
-     *  live round trip to the model server), never flipping to "failed". Skips gracefully when no
-     *  oMLX API key was available to the container - everything else in this suite does not need one. */
+     *  real worker. Every job this session debugged (#1, #8, #14, #26, #38) failed within
+     *  MILLISECONDS of being claimed, from a code defect - not from running out of budget. So the
+     *  bar this test holds the system to is exactly that failure mode: the job must survive real
+     *  worker execution long enough to reach "running" and make real progress (the step-0 context
+     *  probe alone requires a live round trip to the model server), never flipping to "failed".
+     *
+     *  Deliberately ORCHESTRATED, not monolithic: they are different code paths in RunBench (only
+     *  orchestrated writes packs/), and an earlier version of this test that only covered mono missed
+     *  a real bug (job #40: orchestrated's packs/ directory was never created). Does not ALSO cover
+     *  mono in the same run: cancelling a job that has reached "running" only sets cancel_requested
+     *  (JobQueue.cancel - status stays "running" until the job cooperatively notices and unwinds) and
+     *  nothing in RunBench/WorkerService ever reads that flag back - `grep -rn "_cancel"` finds
+     *  exactly one hit, the write site. Cancelling a genuinely running job is a confirmed real no-op
+     *  today, not a test-timing issue; a second sequential arm would need it to free the single-worker
+     *  slot within this test's bounded time. Flagged separately, not fixed here.
+     *
+     *  Skips gracefully when no oMLX API key was available to the container - everything else in this
+     *  suite does not need one. */
     @Test
     @Order(8)
-    void startingANewExperimentActuallyRunsAJobThatDoesNotFailImmediately() throws Exception {
+    void startingANewOrchestratedExperimentActuallyRunsAJobThatDoesNotFailImmediately() throws Exception {
         Assumptions.assumeTrue(modelServerConfigured, "no OMLX_API_KEY in the environment - skipping the real-model-server test");
         List<String> models = List.of(json.readTree(get("/api/models").body()).elements().next().asText());
         Assumptions.assumeTrue(!models.isEmpty(), "the model server reported no models");
@@ -279,12 +297,17 @@ class DockerApplicationIT {
 
         String experimentBody = String.format("""
                 {"template": "harness_effect", "name": "it-verify-experiment", "k": 1,
-                 "params": {"model": "%s", "arms": ["mono"], "task_wall": 600}}""", model);
+                 "params": {"model": "%s", "arms": ["orch"], "task_wall": 600}}""", model);
         HttpResponse<String> created = post("/api/experiments", experimentBody);
         assertEquals(200, created.statusCode(), created.body());
-        JsonNode experiment = json.readTree(created.body());
-        long jobId = experiment.get("jobs").get(0).get("id").asLong();
+        JsonNode jobs = json.readTree(created.body()).get("jobs");
+        assertEquals(1, jobs.size(), created.body());
+        long jobId = jobs.get(0).get("id").asLong();
 
+        assertJobReachesRunningWithoutFailing(jobId, "orch");
+    }
+
+    private void assertJobReachesRunningWithoutFailing(long jobId, String arm) throws Exception {
         Instant deadline = Instant.now().plusSeconds(90);
         String lastStatus = "queued";
         boolean sawRunning = false;
@@ -292,20 +315,20 @@ class DockerApplicationIT {
             JsonNode job = json.readTree(get("/api/jobs/" + jobId).body());
             lastStatus = job.get("status").asText();
             if ("failed".equals(lastStatus))
-                fail("job " + jobId + " failed instead of running - exactly the bug class this session kept fixing (#1/#8/#14/#26). "
-                        + "result_line: " + job.path("result_line").asText());
+                fail("job " + jobId + " (arm " + arm + ") failed instead of running - exactly the bug class this session kept "
+                        + "fixing (#1/#8/#14/#26/#38/#40). result_line: " + job.path("result_line").asText());
             if ("running".equals(lastStatus)) { sawRunning = true; break; }
             if ("blocked".equals(lastStatus))
-                fail("job " + jobId + " was blocked by guard(): " + job.path("blocked_reason").asText());
+                fail("job " + jobId + " (arm " + arm + ") was blocked by guard(): " + job.path("blocked_reason").asText());
             Thread.sleep(2000);
         }
-        assertTrue(sawRunning, "job " + jobId + " never reached 'running' within 90s (last status: " + lastStatus
-                + ") - the worker's scheduled poll may not have fired in time, or preflight is refusing model '" + model + "'");
+        assertTrue(sawRunning, "job " + jobId + " (arm " + arm + ") never reached 'running' within 90s (last status: " + lastStatus + ")");
 
         // give it real time on the model server, then confirm it is STILL not failed - the step-0
-        // context probe and the first real agent turn both require actual LLM round trips to land
+        // context probe and the first real agent turn both require actual LLM round trips to land,
+        // and (orch only) the stable/task packs must actually get written to disk
         Thread.sleep(15000);
         String statusAfterRealWork = json.readTree(get("/api/jobs/" + jobId).body()).get("status").asText();
-        assertNotEquals("failed", statusAfterRealWork, "job " + jobId + " failed after starting real work");
+        assertNotEquals("failed", statusAfterRealWork, "job " + jobId + " (arm " + arm + ") failed after starting real work");
     }
 }

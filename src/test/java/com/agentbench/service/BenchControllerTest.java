@@ -159,4 +159,50 @@ class BenchControllerTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.detail").value("job 7 is already succeeded"));
     }
+
+    private static Map<String, Object> runRow(String task, String model, String keyHash, String runId) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("run_id", runId); row.put("task", task); row.put("model", model);
+        row.put("mode", "monolithic"); row.put("key_hash", keyHash); row.put("results_dir", "/results/" + runId);
+        return row;
+    }
+
+    /** /api/groups' own orchestration - grouping DB rows by (task, model, key_hash), the k>=5
+     *  ranked/indicative split, and sorting ranked by functional mean descending - independent of
+     *  the math inside StatsService.summarize() (covered by StatsServiceTest). stats is a full mock
+     *  here: summarize()'s return drives the branching exactly as the real one would from real k. */
+    @Test
+    void groupsSplitsRankedFromIndicativeByKAndSortsRankedByFunctionalMeanDescending() throws Exception {
+        List<Map<String, Object>> rows = new java.util.ArrayList<>();
+        for (int i = 1; i <= 5; i++) rows.add(runRow("L3p_point_in_time", "low-scorer", "keyA", "runA" + i));
+        for (int i = 1; i <= 2; i++) rows.add(runRow("L3p_point_in_time", "too-few", "keyB", "runB" + i));
+        for (int i = 1; i <= 5; i++) rows.add(runRow("L3p_point_in_time", "high-scorer", "keyC", "runC" + i));
+        when(jdbc.queryForList("SELECT run_id, task, model, mode, key_hash, results_dir FROM runs WHERE poolable ORDER BY run_id"))
+                .thenReturn(rows);
+        // stats.load(path) tags each summary with the model its results_dir belongs to, so the
+        // summarize() stub below can tell the three groups apart without inspecting real files
+        when(stats.load(any())).thenAnswer(inv -> {
+            String dir = inv.getArgument(0).toString();
+            String model = dir.contains("runA") ? "low-scorer" : dir.contains("runB") ? "too-few" : "high-scorer";
+            return new StatsService.RunSummary(dir, "L3p_point_in_time", model, "monolithic", null, null, null, null,
+                    true, List.of(), false, true, 0, 0, Map.of(), List.of(), Map.of());
+        });
+        when(stats.filterRuns(any(), eq(false), eq(false), any())).thenAnswer(inv -> inv.getArgument(0));
+        when(stats.summarize(any())).thenAnswer(inv -> {
+            @SuppressWarnings("unchecked") List<StatsService.RunSummary> runs = (List<StatsService.RunSummary>) inv.getArgument(0);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("k", runs.size());
+            double mean = switch (runs.get(0).model()) { case "low-scorer" -> 40.0; case "high-scorer" -> 90.0; default -> 10.0; };
+            out.put("functional", Map.of("mean", mean));
+            return out;
+        });
+
+        mvc.perform(get("/api/groups"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ranked.length()").value(2))                    // keyA and keyC: k=5
+                .andExpect(jsonPath("$.indicative.length()").value(1))                // keyB: k=2, never ranked
+                .andExpect(jsonPath("$.indicative[0].key_hash").value("keyB"))
+                .andExpect(jsonPath("$.ranked[0].key_hash").value("keyC"))            // 90.0 mean sorts before 40.0
+                .andExpect(jsonPath("$.ranked[1].key_hash").value("keyA"));
+    }
 }
