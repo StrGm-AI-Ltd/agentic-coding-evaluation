@@ -128,7 +128,6 @@ public class WorkerService {
                 cfg.put("workspace_root", props.workspaceRoot());
                 cfg.put("model", job.argv().stream().filter(a -> a.startsWith("--model=")).map(a -> a.substring(8)).findFirst().orElse(props.model()));
                 cfg.put("system_base_url", null);
-                Path repoRoot = Path.of(props.resultsDir()).toAbsolutePath().getParent();
                 String mode = flag(job.argv(), "--mode") != null ? flag(job.argv(), "--mode") : "monolithic";
                 String planSource = flag(job.argv(), "--plan-source") != null ? flag(job.argv(), "--plan-source") : "agent";
                 if (flag(job.argv(), "--task-wall") != null) cfg.put("task_wall_sec", Integer.parseInt(flag(job.argv(), "--task-wall")));
@@ -157,7 +156,7 @@ public class WorkerService {
                 trajectoryReview.put("model", flag(job.argv(), "--trajectory-reviewer-model"));
                 cfg.put("trajectory_review", trajectoryReview);
                 cfg.put("_cancel", (java.util.function.BooleanSupplier) () -> cancelCurrent);
-                runBench.runOnce(cfg, job.runId(), flag(job.argv(), "--task") == null ? "L7_full_platform" : flag(job.argv(), "--task"), mode, planSource, repoRoot);
+                runBench.runOnce(cfg, job.runId(), flag(job.argv(), "--task") == null ? "L7_full_platform" : flag(job.argv(), "--task"), mode, planSource);
                 queue.finish(job.id(), "succeeded", 0, resultLine(Path.of(props.resultsDir(), job.runId())));
                 importer.importRun(Path.of(props.resultsDir(), job.runId()), job.kind().equals("run") ? job.id() : null);
                 if (job.experimentId() != null) experiments.finalizeIfDone(job.experimentId());   // the missing call site

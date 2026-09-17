@@ -110,7 +110,7 @@ public class RunBench {
     }
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> runOnce(Map<String, Object> cfg, String runId, String task, String mode, String planSource, Path repoRoot) throws Exception {
+    public Map<String, Object> runOnce(Map<String, Object> cfg, String runId, String task, String mode, String planSource) throws Exception {
         Path resultsDir = Path.of((String) cfg.getOrDefault("results_root", props.resultsDir()));
         Path rd = resultsDir.resolve(runId);
         Files.createDirectories(rd);
