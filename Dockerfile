@@ -14,6 +14,10 @@ RUN ./gradlew bootJar --no-daemon -x test
 RUN find build/libs -maxdepth 1 -name "*.jar" ! -name "*-plain.jar" -exec cp {} /src/app.jar \;
 
 FROM eclipse-temurin:21-jre
+# git is a FATAL preflight check (Preflight.java): a deployed container without it can never pass
+# guard() and would refuse every job forever - this is not test-only scaffolding, a real deployment
+# needs this to do its actual job
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /src/app.jar app.jar
 EXPOSE 8765

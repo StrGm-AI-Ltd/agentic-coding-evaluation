@@ -161,10 +161,17 @@ public class RunBench {
             // the job's own pinned window (queue runs, per arm) wins over the operator's global one
             int window = cfg.get("context_window") instanceof Number n ? n.intValue()
                     : props.contextWindow() == null ? 65536 : props.contextWindow();
-            derived = Map.of("usable_context", window, "pack_scale", Math.max(0.25, Math.min(1.0, window / 65536.0)),
-                    "max_output_tokens", Math.min(props.maxOutputTokens(), (int) (window * 0.125)),
-                    "compaction_trigger_tokens", (int) (window * 0.43), "task_tokens", (int) (window * 1.25 / 1000) * 1000,
-                    "min_decode_tps", null, "max_parallel", 1);
+            // Map.of() rejects a null value outright - min_decode_tps IS null here: skipping the probe
+            // (step 0's whole job is measuring it) means there is no measured decode throughput
+            Map<String, Object> derivedNoProbe = new LinkedHashMap<>();
+            derivedNoProbe.put("usable_context", window);
+            derivedNoProbe.put("pack_scale", Math.max(0.25, Math.min(1.0, window / 65536.0)));
+            derivedNoProbe.put("max_output_tokens", Math.min(props.maxOutputTokens(), (int) (window * 0.125)));
+            derivedNoProbe.put("compaction_trigger_tokens", (int) (window * 0.43));
+            derivedNoProbe.put("task_tokens", (int) (window * 1.25 / 1000) * 1000);
+            derivedNoProbe.put("min_decode_tps", null);
+            derivedNoProbe.put("max_parallel", 1);
+            derived = derivedNoProbe;
             Packs.setWindow(window);
             Packs.setScale((Double) derived.get("pack_scale"), Map.of());
             cfg.put("usable_context", window);
