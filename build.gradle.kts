@@ -31,13 +31,12 @@ dependencies {
     testImplementation("org.testcontainers:postgresql")
 }
 
-tasks.withType<Test> {
-    // the agent's bash tool runs zsh; keep the environment minimal in tests as the harness does
-    environment("CI", "1")
-}
-
 tasks.named<Test>("test") {
     useJUnitPlatform { excludeTags("docker") }   // dockerTest below runs these instead - building an image is slow
+    // the agent's bash tool runs zsh; keep the environment minimal in tests as the harness does. Scoped to
+    // this task only: withType<Test> would also leak CI=1 into dockerTest and any future Test task, and
+    // libraries that branch on CI (e.g. testcontainers pull/reuse logic) would change behaviour unexpectedly.
+    environment("CI", "1")
 }
 
 tasks.register<Test>("dockerTest") {

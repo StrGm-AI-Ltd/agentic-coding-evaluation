@@ -21,3 +21,10 @@ Verified no test actually uses H2: the only occurrence is a string literal in Pl
 in H2" sample data); every DB test hits real Postgres via jdbc:postgresql (local instance or
 AB_JLS_TEST_DSN). A silently-active H2 fallback would mask misconfiguration, so it is removed.
 Tests: `./gradlew test` green.
+
+## 4. build.gradle.kts — CI=1 leaked to every Test task [maintainability/medium]
+tasks.withType<Test> { environment("CI", "1") } also applied the variable to dockerTest (and any
+future Test task); anything branching on CI (testcontainers pull/reuse logic, CI-gated flags) changed
+behaviour there silently. Fix: the environment call now lives on tasks.named<Test>("test") only — the
+task the agent harness actually runs - with a comment explaining the intent and the blast radius.
+Tests: `./gradlew test` green.
