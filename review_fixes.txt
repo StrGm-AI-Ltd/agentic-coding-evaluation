@@ -55,3 +55,11 @@ resolved script path. Installed as /usr/local/bin/docker -> /opt/agentbench/dock
 comparisons fail, "real" pointed at the shim itself, and it polled a dead end for 180s.
 Fix: resolve the candidate binary with :A (cand="$d/docker"; ${cand:A}) before comparing to ${0:A}.
 Verified: zsh -n clean; functional test with PATH = [symlinked-shim, real-docker] resolved the real CLI.
+
+## 9. docker_shim.sh — no inter-process coordination for start-and-wait [performance/medium]
+N parallel docker invocations each spawned `open -a Docker` and ran an independent 180 s poll loop.
+Fix: mkdir-based atomic lock (/tmp/agentbench-docker-shim.lock, override via AB_DOCKER_SHIM_LOCK;
+macOS has no flock(1)) — the first process logs #start and launches Docker Desktop, the rest log
+#wait and simply poll the daemon; the lock is removed before exec (exit traps don't survive exec)
+and via trap on the start-holder's abnormal exit.
+Verified: zsh -n clean; lock dir not left behind; `./gradlew test` green.
