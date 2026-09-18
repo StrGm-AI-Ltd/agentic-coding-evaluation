@@ -1,0 +1,365 @@
+─── build.gradle.kts:17-17 ───
+[maintainability · medium] Spring Boot version is pinned independently in two places:
+`id("org.springframework.boot") version "3.5.5"` (line 3) and
+`platform("org.springframework.boot:spring-boot-dependencies:3.5.5")` (line 17). A future upgrade
+that touches only one will silently produce a mismatched plugin/dependency pairing. Consider
+extracting a single top-level `val springBootVersion = "3.5.5"` and referencing it in both
+declarations, or (if the plugin version already aligns) relying on the plugin's built-in BOM
+alignment to avoid the explicit platform entirely.
+
+
+
+─── build.gradle.kts:27-27 ───
+[maintainability · low] This `testImplementation("org.postgresql:postgresql")` is redundant: the
+`implementation` source set is already visible to the test compile and runtime classpaths in Gradle
+(test source set extends main), so the driver is already on the test classpath via
+`implementation("org.postgresql:postgresql")` on line 26. Removing this line avoids a duplicate
+coordinate that can confuse dependency resolution or hide a version pin.
+
+
+
+─── build.gradle.kts:31-31 ───
+[maintainability · low] H2 is declared as `testRuntimeOnly` alongside Testcontainers PostgreSQL for
+integration tests. If no test actually needs H2 (e.g., a lightweight unit test that spins up an
+in-memory DB), this is dead weight that can mask misconfiguration — a test that accidentally hits H2
+instead of the containerised PG will still "pass" but won't validate real PG behaviour. If H2 is
+genuinely unused, remove it. If it is used, consider adding a brief comment explaining which tests
+rely on it so a future refactor doesn't silently break them.
+
+
+
+─── build.gradle.kts:34-37 ───
+[maintainability · medium] `tasks.withType<Test>` applies `CI=1` to *every* Test task in the project
+(including the newly registered `dockerTest`). The comment explains the intent for the agent's
+bash/zsh tool, but the blast radius is broader than intended: any library or application code that
+branches on the `CI` environment variable (e.g., Spring Boot Actuator, testcontainers'
+parallel-container logic, or CI-gated feature flags) will silently change behaviour in the docker
+test as well. Consider scoping the environment variable to the specific task(s) that need it, e.g.
+`tasks.named<Test>("test") { environment("CI", "1") }`.
+
+
+
+─── gradle.properties:1-1 ───
+[maintainability · high] This hardcodes an absolute, machine-specific Homebrew path to a JDK. If
+committed to the shared repo, every other developer or CI runner that doesn't have OpenJDK 21 at
+exactly this path will get a build failure. On non-macOS machines the path won't exist at all.
+
+Recommendation: Remove this line from the committed `gradle.properties` and instead set it in the
+developer's local `~/.gradle/gradle.properties` (which is typically git-ignored). If the project
+truly requires JDK 21, consider using `org.gradle.java.installations.auto-detect=true` or
+configuring the toolchain in `build.gradle` instead of pinning an absolute path.
+
+
+
+─── gradle/wrapper/gradle-wrapper.properties:5-5 ───
+[maintainability · medium] Setting `retries=0` means a single transient network glitch during the
+Gradle distribution download (a ~200MB+ file) will hard-fail the entire build with no second chance.
+This is a common source of flaky CI builds. Most projects set this to `1` or `2` to survive
+intermittent network hiccups, especially in shared/remote build agents. Consider `retries=2` paired
+with the existing `retryBackOffMs=500`.
+
+- retries=0
++ retries=2
+
+
+─── src/main/resources/docker_shim.sh:20-26 ───
+[bug · high] No failure handling after the poll loop. If all 90 iterations complete without Docker
+becoming ready (e.g. Docker Desktop not installed, app crashed, or insufficient memory), `i` remains
+90, the log misleadingly records `#ready 180s`, and the script falls through to `exec "$real" "$@"`
+which will emit a generic `Cannot connect to the Docker daemon` error. The caller gets no clear
+diagnostic that the shim attempted (and failed) to start Docker Desktop. Consider checking `"$real"
+info` one final time after the loop and, on failure, emitting an explicit error like `"agentbench
+docker shim: Docker Desktop did not become ready within 180s"` to stderr and exiting non-zero.
+
+    for i in {1..90}; do
+      "$real" info >/dev/null 2>&1 && break
+      /bin/sleep 2
+    done
++   if "$real" info >/dev/null 2>&1; then
+-   print -r -- "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ) $$ #ready $((i*2))s" >> "$log" 2>/dev/null
++     print -r -- "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ) $$ #ready $((i*2))s" >> "$log" 2>/dev/null
++   else
++     print -r -- "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ) $$ #failed after $((i*2))s" >> "$log" 2>/dev/null
++     echo "agentbench docker shim: Docker Desktop did not become ready within $((i*2))s" >&2
++     exit 1
++   fi
+  fi
+  exec "$real" "$@"
+
+
+─── src/main/resources/docker_shim.sh:11-12 ───
+[bug · high] Self-exclusion via symlink resolution is fragile. `me` is `${0:A:h}` (the resolved
+*directory* of the script) and the guard compares `${d:A} == $me` and `${d:A}/docker != ${0:A}`. If
+the shim is installed at e.g. `/usr/local/bin/docker` as a symlink to
+`/opt/agentbench/docker_shim.sh`, then for PATH entry `/usr/local/bin`: `${d:A}` = `/usr/local/bin`
+≠ `$me` = `/opt/agentbench`, so the directory check does not skip it. The inner check then compares
+`/usr/local/bin/docker` (the symlink) against `${0:A}` = `/opt/agentbench/docker_shim.sh` (the
+resolved target)—these differ, so the shim sets `real` to *itself*. The `AB_DOCKER_SHIM` guard
+prevents infinite recursion, but every subsequent `"$real" info` call spawns a child that
+immediately exits 127, so the shim spends 180 s polling a dead end and the user gets a confusing
+"recursion" error even when a real `docker` binary exists in a later PATH entry.
+
+Fix: resolve the candidate with `${d/docker:A}` (or `realpath`) before comparing to `${0:A}`, so a
+symlink pointing at this script is correctly identified.
+
+-   [[ -z "$d" || "${d:A}" == "$me" ]] && continue          # compare resolved paths: /var/... vs /private/var/... on macOS
+-   if [[ -x "$d/docker" && "${d:A}/docker" != "${0:A}" ]]; then real="$d/docker"; break; fi
++   [[ -z "$d" || "${d:A}" == "$me" ]] && continue
++   if [[ -x "$d/docker" && "${d/docker:A}" != "${0:A}" ]]; then real="$d/docker"; break; fi
+
+
+─── src/main/resources/docker_shim.sh:19-23 ───
+[performance · medium] Concurrent invocations each independently spawn `open -a Docker` and run a
+full 90×2 s poll loop with no inter-process coordination (e.g. a lock file or `flock`). In a
+parallel build scenario (N simultaneous `docker build` calls), this produces N redundant poll loops
+and N `open -a Docker` calls, creating unnecessary system load. Consider using a lock (e.g. `flock`
+on a pidfile, or a named semaphore) so that only the first process performs the start-and-wait
+sequence while others simply wait for the daemon.
+
+
+
+─── src/main/resources/docker_shim.sh:7-7 ───
+[bug · medium] The recursion guard triggers on *any* non-empty value of `AB_DOCKER_SHIM`, not a
+value specifically set by this shim. If a parent harness, CI step, or unrelated tool happens to
+export `AB_DOCKER_SHIM` (even set to `0` or any other string), this shim will silently refuse to run
+with a misleading "recursion (no real docker CLI found)" message. Consider checking for the exact
+sentinel value that this script exports (e.g. `[[ "${AB_DOCKER_SHIM:-}" == "1" ]]`) or using a more
+unique token (e.g. a PID-scoped or timestamped value) to avoid false positives.
+
+- if [[ -n "${AB_DOCKER_SHIM:-}" ]]; then echo "agentbench docker shim: recursion (no real docker CLI found)" >&2; exit 127; fi   # never call ourselves
++ if [[ "${AB_DOCKER_SHIM:-}" == "1" ]]; then echo "agentbench docker shim: recursion (no real docker CLI found)" >&2; exit 127; fi   # never call ourselves
+
+
+─── src/main/resources/docker_shim.sh:24-24 ───
+[maintainability · low] The log line records `#ready $((i*2))s` unconditionally after the loop, even
+when the loop exhausted all 90 iterations without the daemon becoming ready. If the daemon was ready
+on the very first check (iteration 1, before any sleep), the reported time is "2 s" though the
+actual elapsed time is ~0 s (the `sleep` is skipped on `break`). Minor, but the elapsed-time
+calculation does not match reality in both boundary cases. Track wall-clock time (e.g. `SECONDS` or
+`date +%s`) instead of `i*2` for accuracy.
+
+
+
+─── src/main/resources/schema.sql:24-25 ───
+[performance · critical] No index on `jobs(status, priority, id)` — the hot claim() path (`SELECT id
+FROM jobs WHERE status IN ('queued','waiting_lock') ORDER BY priority DESC, id LIMIT 1 FOR UPDATE
+SKIP LOCKED`) will full-scan the entire table on every worker claim. As completed/cancelled jobs
+accumulate, this degrades to O(n) per claim. Add at minimum:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs (status, priority DESC, id);
+```
+
+
+
+─── src/main/resources/schema.sql:18-18 ───
+[performance · high] No index on `jobs.experiment_id`. `ExperimentsService` queries `SELECT ... FROM
+jobs WHERE experiment_id = ? ORDER BY repeat, arm` on every experiment detail view. Without an
+index, this is a sequential scan. Add:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_jobs_experiment ON jobs (experiment_id, repeat, arm);
+```
+
+
+
+─── src/main/resources/schema.sql:22-22 ───
+[other · critical] `jobs.run_id` is `text NOT NULL` but has no UNIQUE constraint. The application
+enforces uniqueness via a `SELECT count(*)` check before insert (JobQueue.enqueue line 32), but this
+is a TOCTOU race: two concurrent enqueues with the same run_id can both pass the check and insert
+duplicates. Add a UNIQUE constraint at the DB level to eliminate the race and make the app-level
+check a pure convenience:
+
+```sql
+UNIQUE (kind, run_id)
+```
+
+
+
+─── src/main/resources/schema.sql:72-72 ───
+[other · high] No composite UNIQUE on `(run_id, check_id)`. The importer does `DELETE FROM
+check_results WHERE run_id = ?` then re-inserts each check row, but this relies on an implicit
+single-transaction assumption. A UNIQUE constraint would (a) prevent silent duplicates if the
+delete-insert pattern is ever split, and (b) allow an `ON CONFLICT` upsert for true idempotent
+re-import. Also add an index on `run_id` since every lookup filters on it:
+
+```sql
+UNIQUE (run_id, check_id)
+```
+
+
+
+─── src/main/resources/schema.sql:75-75 ───
+[maintainability · medium] `check_results.status` has no CHECK constraint, unlike every other status
+column in the schema (experiments.status, jobs.status). This allows arbitrary text values and makes
+the set of valid states opaque. If the valid set is `{pass, fail, skip, ...}`, constrain it here for
+data integrity and self-documentation.
+
+
+
+─── src/main/resources/schema.sql:44-44 ───
+[maintainability · medium] All three FKs (`jobs.experiment_id`, `runs.job_id`,
+`check_results.run_id`) default to `NO ACTION` on DELETE. Deleting an experiment will fail if jobs
+reference it; deleting a run will fail if check_results reference it. This makes cleanup impossible
+without manual orphaning. Consider `ON DELETE CASCADE` on `check_results.run_id` and `runs.job_id`,
+and at minimum document the intended lifecycle or use `ON DELETE SET NULL` where the FK is nullable.
+
+
+
+─── src/main/resources/schema.sql:1-1 ───
+[maintainability · medium] The header comment states the file must be idempotent ("an importer
+re-run must upsert, never fail"), but `CREATE TABLE IF NOT EXISTS` only guards initial table
+creation. No indexes, constraints, or ALTER statements are present, so a partially-migrated or
+evolved schema cannot be healed by re-running this file. If this is the only schema artifact, add
+`CREATE INDEX IF NOT EXISTS` statements (and any needed `ALTER TABLE ... ADD CONSTRAINT IF NOT
+EXISTS`) so the file is genuinely idempotent end-to-end.
+
+
+
+─── .gitignore:6-6 ───
+[maintainability · medium] The file ignores `.idea/` (indicating IntelliJ usage), but IntelliJ also
+generates `*.iml` module files at the project root and in each module directory. These are **not**
+inside `.idea/`, so they won't be covered by the existing pattern. Consider adding `*.iml` to
+prevent accidentally committing environment-specific module metadata that may contain absolute
+paths.
+
+  .idea/
++ *.iml
++ local.properties
+
+
+─── .gitignore:7-7 ───
+[maintainability · low] Consider adding `local.properties` to the ignore list. If this project
+includes an Android module (or any module that generates a `local.properties` file with
+machine-specific absolute paths such as `sdk.dir=...`), committing it would leak developer
+environment details to all team members. This is a common omission when only `.idea/` is covered.
+
+  .DS_Store
++ local.properties
+
+
+─── .dockerignore:1-4 ───
+[security · medium] **Missing exclusion for credential/env files (security risk).**
+
+The Docker build context is sent to the Docker daemon in its entirety. If a developer ever adds a
+`.env`, `.env.local`, or similar file with API keys / DB credentials to the project root, it will be
+uploaded to the daemon with no barrier. Adding a wildcard exclusion such as `.env*` is a cheap,
+standard safeguard that prevents accidental secret leakage into the daemon or into image layers.
+
+  .git
+  .gradle
+  build
+  *.log
++ .env*
++ *.jks
++ *.keystore
+
+
+─── .dockerignore:1-4 ───
+[maintainability · low] `gradle.properties` is deliberately **not** copied by the Dockerfile (see
+the comment on line 6 of `Dockerfile`), yet it is still included in the build context sent to the
+daemon because it isn't listed here. Adding it to `.dockerignore` makes the ignore rules consistent
+with the Dockerfile's stated intent and avoids uploading a host-specific `org.gradle.java.home`
+value that would only cause confusion if someone accidentally `COPY`s it.
+
+  .git
+  .gradle
+  build
+  *.log
++ gradle.properties
+
+
+─── .dockerignore:1-4 ───
+[maintainability · low] **Missing exclusions for IDE metadata.**
+
+When a developer opens the project in IntelliJ IDEA (the de-facto standard for Gradle/Kotlin
+projects), the IDE creates `.idea/` (project config, run configurations that may contain local paths
+or credentials), `*.iml` module files, and an `out/` directory. None of these are excluded here, so
+they get uploaded to the Docker daemon on every `docker build`, bloating the context and potentially
+leaking local machine paths or IDE-configured tokens. Standard additions for a Gradle project:
+
+  .git
+  .gradle
+  build
+  *.log
++ .idea
++ *.iml
++ out
++ .env*
+
+
+
+──────── Project Summary ────────
+
+### Top Issues
+
+1. **Schema lacks indexes on hot query paths and critical constraints** (`src/main/resources/schema.sql`)
+   The `jobs(status, priority, id)` index is absent, so every worker `claim()` performs a full table scan. A second missing index on `jobs.experiment_id` serial-scans on each experiment detail view. Additionally, `jobs.run_id` has no `UNIQUE` constraint, leaving a TOCTOU race (two concurrent enqueues both pass the `SELECT count(*)` guard and insert duplicates). At scale this is both a performance and a correctness defect.
+
+2. **`gradle.properties` hardcodes a machine-specific JDK path** (`gradle.properties`)
+   An absolute Homebrew path to OpenJDK 21 is committed. Any developer or CI runner without that exact path gets an immediate build failure. This blocks all other contributors until fixed.
+
+3. **Docker shim silently falls through on failure and has no concurrency guard** (`src/main/resources/docker_shim.sh`)
+   If all 90 poll iterations expire (Docker Desktop absent, app crash, OOM), the script *unconditionally* `exec`s the real `docker` binary, producing a confusing downstream error instead of a clear diagnostic. Separately, N parallel `docker build` invocations each spawn an independent `open -a Docker` + 180 s poll loop with no `flock`, multiplying wasted resources.
+
+4. **Duplicate Spring Boot version pins** (`build.gradle.kts`)
+   The plugin version and the BOM `platform(...)` are declared independently at `3.5.5`. A partial upgrade changes one but not the other, silently producing a mismatched classpath with no build error.
+
+5. **`.dockerignore` omits credential and IDE files** (`.dockerignore`)
+   No exclusion for `.env`, `.env.local`, or `*.env.*`. If a developer adds a credentials file to the project root, the entire context (including secrets) is uploaded to the Docker daemon and baked into the image layer. IDE artifacts (`.idea/`, `*.iml`) are also included unnecessarily.
+
+6. **All foreign keys default to `NO ACTION` on DELETE** (`src/main/resources/schema.sql`)
+   Deleting an experiment fails if any job references it; deleting a run fails if check_results exist. The schema makes normal cleanup impossible without manual orphaning or manual `DELETE` of children first.
+
+7. **Recursion guard is over-broad** (`src/main/resources/docker_shim.sh`)
+   The shim refuses to run if `AB_DOCKER_SHIM` is set to *any* non-empty value, including `0` or values set by unrelated parent tooling. This silently disables the shim in CI or wrapper scripts that happen to export the variable for a different purpose.
+
+8. **`CI=1` env var leaks to all Test tasks** (`build.gradle.kts`)
+   `tasks.withType<Test> { environment("CI", "1") }` applies the variable to every test task in the project, not just the intended `dockerTest`. Any library code that branches on `CI` will see it in unit tests, integration tests, and Spock/JUnit runs alike.
+
+9. **Gradle wrapper download has `retries=0`** (`gradle/wrapper/gradle-wrapper.properties`)
+   A single transient network blip during the ~200 MB distribution download hard-fails the build. One character change (`1` or `2`) eliminates a common flaky-CI source.
+
+10. **Schema file claims idempotency but cannot handle schema evolution** (`src/main/resources/schema.sql`)
+    The header states re-runs must upsert and never fail, yet only `CREATE TABLE IF NOT EXISTS` is used. No `CREATE INDEX IF NOT EXISTS`, no constraint migrations, no `ALTER` guards—so adding a new index or column in a later release will crash the importer on re-run.
+
+---
+
+### Module Hotspots
+
+| Path | Comment count | Dominant theme |
+|---|---|---|
+| `src/main/resources/schema.sql` | 8 | Missing indexes, missing UNIQUE/CHECK constraints, FK actions, idempotency gap |
+| `src/main/resources/docker_shim.sh` | 5 | No error handling, fragile symlink logic, no concurrency coordination, over-broad guard, misleading logs |
+| `build.gradle.kts` + `gradle.properties` + `gradle-wrapper.properties` | 6 | Duplicate pins, dead deps, over-broad env, hardcoded paths, zero retries |
+| `.gitignore` + `.dockerignore` | 5 | Missing hygiene exclusions (IDE files, env files, secrets) |
+
+The two heaviest hotspots—`schema.sql` and `docker_shim.sh`—account for 13 of the 23 comments and represent the files most likely to cause production incidents.
+
+---
+
+### Cross-Cutting Concerns
+
+- **Missing defensive failure handling / silent fallthrough.** `docker_shim.sh` skips the daemon without an error if the poll loop expires; `schema.sql` claims idempotent upserts but has no mechanism to handle partial migrations; `build.gradle.kts` pins two version strings that can silently diverge. In each case the *happy path* works but the *failure path* is either absent or misleading.
+
+- **Concurrency safety gaps.** The DB has a `SELECT count(*)` TOCTOU race on `run_id`; the shell shim has no inter-process lock for parallel invocations; the `CI=1` env var has uncontrolled blast radius. Three different files independently assume single-threaded or single-process execution where that assumption doesn't hold.
+
+- **Machine-specific / environment-specific values committed to shared files.** Hardcoded Homebrew JDK path (`gradle.properties`), missing `*.iml` and `local.properties` in `.gitignore`, missing `.env` in `.dockerignore`. The repo has no clear boundary between "shared config" and "local developer config."
+
+- **Redundant or dead declarations.** `testImplementation("org.postgresql:postgresql")` is redundant because `implementation` already extends to the test classpath; H2 as `testRuntimeOnly` appears to serve no active test. These add cognitive noise and can mask classpath misconfiguration.
+
+---
+
+### Quick Wins
+
+| Fix | Effort | File(s) |
+|---|---|---|
+| Replace hardcoded JDK path with `org.gradle.java.installations.paths` or delete the line (let toolchain auto-detect) | 1 line | `gradle.properties` |
+| Add `*.iml`, `local.properties` to `.gitignore`; add `.env`, `.env.*`, `.idea/`, `*.iml` to `.dockerignore` | ~5 lines | `.gitignore`, `.dockerignore` |
+| Change `retries=0` → `retries=2` | 1 line | `gradle/wrapper/gradle-wrapper.properties` |
+| Add the two missing indexes (`jobs(status, priority, id)`, `jobs(experiment_id)`) as `CREATE INDEX IF NOT EXISTS` | 2 lines | `src/main/resources/schema.sql` |
+| Scope `CI=1` to the specific `dockerTest` task instead of `withType<Test>` | 3-line change | `build.gradle.kts` |
+| Remove the redundant `testImplementation("org.postgresql:postgresql")` and the unused H2 `testRuntimeOnly` | 2 deletions | `build.gradle.kts` |
+| In the shim, `exit 1` with a clear message when the poll loop exhausts; wrap the `open -a Docker` + poll in a `flock`-guarded section | ~10 lines | `src/main/resources/docker_shim.sh` |
+
+The first five items are each a single-line or few-line change that unblocks every other developer and eliminates the most common flaky-build / silent-failure vectors.

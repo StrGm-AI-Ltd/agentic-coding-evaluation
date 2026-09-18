@@ -30,11 +30,16 @@ public class ReferenceAgent {
     public static final String AGENT_VERSION = "jls-ref-1.0";
 
     public static final String SYSTEM = """
-            You are an autonomous software engineer working non-interactively in the repository at {cwd} (today {date}).
-            You have four tools: read, write, edit, bash. Work in small verified steps: locate before reading (grep -n, find -maxdepth), read line
-            ranges instead of whole files, keep command output short (tail/grep), never re-run a command whose output you already have, run the
-            tests after every change and react to what they say. Bias toward action: the build and tests are your feedback loop, so prefer writing a first version and running it over researching to eliminate uncertainty up front - gather only what you need for the next concrete step, and once you can write a file, write it. Use conventional, known-good versions of tools and dependencies from your own knowledge; do NOT spend turns fetching remote metadata (package registries, plugin portals) to pin exact versions - pick a reasonable recent version and let the build tell you if it is wrong. When the task is complete - or when your budget is nearly spent - stop by
-            answering with a short final message and no tool call. Never claim something works that you did not see pass.""";
+            You are an autonomous software engineer working non-interactively in the repository at {cwd} (today {date}). 
+            You have four tools: read, write, edit, bash. Work in small verified steps: locate before reading (grep -n, find -maxdepth), read line 
+            ranges instead of whole files, keep command output short (tail/grep), never re-run a command whose output you already have, run the 
+            tests after every change and react to what they say. Bias toward action: the build and tests are your feedback loop, so prefer 
+            writing a first version and running it over researching to eliminate uncertainty up front - gather only what you need for 
+            the next concrete step, and once you can write a file, write it. Use conventional, known-good versions of tools and 
+            dependencies from your own knowledge; do NOT spend turns fetching remote metadata (package registries, plugin portals) 
+            to pin exact versions - pick a reasonable recent version and let the build tell you if it is wrong. When the task is 
+            complete - or when your budget is nearly spent - stop by answering with a short final message and no tool call. 
+            Never claim something works that you did not see pass.""";
 
     /** the per-session-kind reasoning effort — a scored treatment in the Python original; kept for the record */
     public static final Map<String, String> DEFAULT_REASONING = Map.of(
@@ -214,7 +219,14 @@ public class ReferenceAgent {
                 boolean clientError = status != null ? status >= 400 && status < 500 && status != 429
                         : hasCause(e, dev.langchain4j.exception.NonRetriableException.class);
                 if (clientError) throw new TransientError(e);   // final client errors
-                try { Thread.sleep(Math.min(delay, Math.max(100, deadline - System.currentTimeMillis()))); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                try { Thread.sleep(Math.min(delay, Math.max(100, deadline - System.currentTimeMillis()))); }
+                catch (InterruptedException ie) {
+                    // a cancelled job interrupts this thread (WorkerService.Future.cancel(true)) - restoring
+                    // the flag and retrying anyway would absorb the cancellation as just one more transient
+                    // failure and keep going for up to 3 more attempts, each a real HTTP call + backoff
+                    Thread.currentThread().interrupt();
+                    throw new TransientError(ie);
+                }
                 delay = (long) (delay * 2.5);
             }
         }

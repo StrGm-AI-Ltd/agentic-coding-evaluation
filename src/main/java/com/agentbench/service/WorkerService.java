@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Port of service/worker.py: runs queued benchmark jobs ONE AT A TIME (two would share the model
@@ -63,6 +64,7 @@ public class WorkerService {
 
     private java.nio.channels.FileChannel runLock;
     private volatile boolean cancelCurrent;
+    private volatile Future<?> currentJobFuture;
 
     /** port of worker.py guard(): the treatment pin (blocked), the run lock (waiting_lock), and
      *  preflight for the model THIS job will request - all before the budget is spent */
@@ -112,6 +114,9 @@ public class WorkerService {
             while (busy.get() && !cancelCurrent) {
                 if (Boolean.TRUE.equals(queue.get(job.id()).get("cancel_requested"))) {
                     cancelCurrent = true;
+                    // interrupt the worker thread: a blocking model-server call or Thread.sleep must
+                    // unwind NOW, not wait out the rest of the run's budget for the flag to be noticed
+                    if (currentJobFuture != null) currentJobFuture.cancel(true);
                     return;
                 }
                 try { Thread.sleep(2000); } catch (InterruptedException e) { return; }
@@ -119,7 +124,7 @@ public class WorkerService {
         }, "cancel-watch-" + job.id());
         cancelWatch.setDaemon(true);
         cancelWatch.start();
-        runner.submit(() -> {
+        currentJobFuture = runner.submit(() -> {
             try {
                 queue.started(job.id(), (int) ProcessHandle.current().pid(), null);
                 log.info("job {}: started {} ({})", job.id(), job.runId(), job.argv());
@@ -155,7 +160,6 @@ public class WorkerService {
                 trajectoryReview.put("enabled", job.argv().contains("--trajectory-review"));
                 trajectoryReview.put("model", flag(job.argv(), "--trajectory-reviewer-model"));
                 cfg.put("trajectory_review", trajectoryReview);
-                cfg.put("_cancel", (java.util.function.BooleanSupplier) () -> cancelCurrent);
                 runBench.runOnce(cfg, job.runId(), flag(job.argv(), "--task") == null ? "L7_full_platform" : flag(job.argv(), "--task"), mode, planSource);
                 queue.finish(job.id(), "succeeded", 0, resultLine(Path.of(props.resultsDir(), job.runId())));
                 importer.importRun(Path.of(props.resultsDir(), job.runId()), job.kind().equals("run") ? job.id() : null);
