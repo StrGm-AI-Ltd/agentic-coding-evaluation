@@ -19,6 +19,7 @@ done
 if [[ -z "$real" ]]; then echo "agentbench docker shim: no docker CLI found on PATH" >&2; exit 127; fi
 print -r -- "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ) $$ $*" >> "$log" 2>/dev/null
 if ! "$real" info >/dev/null 2>&1; then
+  t0=$EPOCHSECONDS   # wall clock: the ready/failed log below reports real elapsed time, not i*2
   # A lock so N parallel `docker` calls don't each spawn `open -a Docker` and run their own 180 s poll
   # loop: the first process does the start+wait, the rest just wait for the daemon. mkdir is atomic and
   # macOS has no flock(1). The lock is removed before exec because exit traps don't survive exec.
@@ -35,11 +36,11 @@ if ! "$real" info >/dev/null 2>&1; then
     /bin/sleep 2
   done
   if "$real" info >/dev/null 2>&1; then
-    print -r -- "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ) $$ #ready $((i*2))s" >> "$log" 2>/dev/null
+    print -r -- "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ) $$ #ready $((EPOCHSECONDS - t0))s" >> "$log" 2>/dev/null
     rmdir "$lock" 2>/dev/null
   else
-    print -r -- "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ) $$ #failed after $((i*2))s" >> "$log" 2>/dev/null
-    echo "agentbench docker shim: Docker Desktop did not become ready within $((i*2))s (no install? out of memory?)" >&2
+    print -r -- "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ) $$ #failed after $((EPOCHSECONDS - t0))s" >> "$log" 2>/dev/null
+    echo "agentbench docker shim: Docker Desktop did not become ready within $((EPOCHSECONDS - t0))s (no install? out of memory?)" >&2
     exit 1
   fi
 fi

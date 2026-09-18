@@ -69,3 +69,9 @@ A parent harness/CI exporting AB_DOCKER_SHIM for its own purpose (even =0) made 
 run with a misleading recursion error. Fix: the guard now matches the exact sentinel "1" that this
 script exports.
 Verified: zsh -n clean; `./gradlew test` green.
+
+## 11. docker_shim.sh — ready log reported i*2 instead of real elapsed time [maintainability/low]
+#ready logged $((i*2))s unconditionally: "2s" when the daemon was ready on iteration 1 (~0s actual),
+and "180s" even when that was a miscount. Fix: t0=$EPOCHSECONDS at the top of the wait block; the
+ready/failed lines report EPOCHSECONDS - t0 (zsh wall clock).
+Verified: zsh -n clean; `./gradlew test` green.
