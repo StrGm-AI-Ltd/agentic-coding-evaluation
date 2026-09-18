@@ -92,5 +92,16 @@ CREATE TABLE IF NOT EXISTS check_results (
     category   text NOT NULL,
     weight     integer NOT NULL,
     status     text NOT NULL,
-    detail     jsonb
+    detail     jsonb,
+    -- the importer does DELETE-by-run then re-insert; the composite unique makes re-import idempotent
+    -- by construction and rules out silent duplicates if that pattern is ever split
+    CONSTRAINT uq_check_results_run_check UNIQUE (run_id, check_id)
 );
+
+-- every lookup on check_results filters by run_id
+CREATE INDEX IF NOT EXISTS idx_check_results_run ON check_results (run_id);
+
+-- heal for DBs created before uq_check_results_run_check (same pattern as above: PG has no
+-- ADD CONSTRAINT IF NOT EXISTS; the live agentbench DB was verified duplicate-free - 383 rows,
+-- 383 distinct (run_id, check_id))
+CREATE UNIQUE INDEX IF NOT EXISTS uq_check_results_run_check ON check_results (run_id, check_id);

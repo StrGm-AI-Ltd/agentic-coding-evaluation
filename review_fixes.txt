@@ -108,3 +108,11 @@ so the heal is CREATE UNIQUE INDEX IF NOT EXISTS with the constraint's index nam
 same uniqueness; skipped on fresh DBs). Live agentbench DB checked first: 76 jobs, all pairs
 distinct, no NULLs. The app-level count(*) check stays as a friendly fast path.
 Verified: psql dry run + `./gradlew test` green.
+
+## 15. schema.sql — check_results had no UNIQUE (run_id, check_id) and no run_id index [other/high]
+The importer's DELETE-by-run then re-insert relied on single-transaction luck; the composite unique
+makes re-import idempotent by construction and rules out silent duplicates if the pattern is ever
+split. Every lookup also filters on run_id, so idx_check_results_run was added, and a
+CREATE UNIQUE INDEX IF NOT EXISTS heal covers pre-existing DBs (PG has no ADD CONSTRAINT IF NOT
+EXISTS; the live agentbench DB was verified duplicate-free: 383 rows = 383 distinct pairs).
+Verified: psql re-run clean; `./gradlew test` green (ImporterServiceTest re-imports twice).
