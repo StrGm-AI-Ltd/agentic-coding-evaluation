@@ -1,0 +1,11 @@
+# review.txt fix log (agentbench-trading-service-jls)
+
+## 1. build.gradle.kts — Spring Boot version pinned in two independent places [maintainability/medium]
+Root cause: `id("org.springframework.boot") version "3.5.5"` and `platform("...spring-boot-dependencies:3.5.5")`
+were two unrelated literals; a partial upgrade of one silently desyncs the classpath.
+Fix: introduced a Gradle version catalog (gradle/libs.versions.toml) with a single `springBoot` version
+entry; both the plugin (`alias(libs.plugins.springBoot)`) and the BOM import
+(`spring-boot-dependencies:${libs.versions.springBoot.get()}`) now resolve from that one entry.
+Note: the BOM import had to stay — the Spring Boot plugin does NOT manage the unversioned
+org.postgresql driver (verified: resolution fails without it).
+Tests: full `./gradlew test` green.

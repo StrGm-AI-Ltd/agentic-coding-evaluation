@@ -1,6 +1,8 @@
 plugins {
     java
-    id("org.springframework.boot") version "3.5.5"
+    // Spring Boot version is pinned once in gradle/libraries.toml and referenced here - the BOM import
+    // below resolves the same entry, so the plugin and dependency management can never desync.
+    alias(libs.plugins.springBoot)
 }
 
 group = "com.agentbench"
@@ -14,7 +16,7 @@ repositories { mavenCentral() }
 
 dependencies {
     implementation(platform("dev.langchain4j:langchain4j-bom:1.1.0"))
-    implementation(platform("org.springframework.boot:spring-boot-dependencies:3.5.5"))
+    implementation(platform("org.springframework.boot:spring-boot-dependencies:${libs.versions.springBoot.get()}"))
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
     implementation("dev.langchain4j:langchain4j")
