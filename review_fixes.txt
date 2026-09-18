@@ -15,3 +15,9 @@ The test source set extends main, so the driver was already on the test classpat
 Fix: removed the duplicate coordinate. Tests (`JobQueueIT`, `ExperimentsServiceTest`,
 `ImporterServiceTest` — all construct org.postgresql.Driver directly) still resolve it from
 implementation; full `./gradlew test` green.
+
+## 3. build.gradle.kts — unused H2 testRuntimeOnly dependency [maintainability/low]
+Verified no test actually uses H2: the only occurrence is a string literal in PlanParserTest ("tables exist
+in H2" sample data); every DB test hits real Postgres via jdbc:postgresql (local instance or
+AB_JLS_TEST_DSN). A silently-active H2 fallback would mask misconfiguration, so it is removed.
+Tests: `./gradlew test` green.

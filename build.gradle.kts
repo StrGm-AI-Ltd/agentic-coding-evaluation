@@ -29,7 +29,6 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.testcontainers:postgresql")
-    testRuntimeOnly("com.h2database:h2")
 }
 
 tasks.withType<Test> {
