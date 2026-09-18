@@ -28,3 +28,16 @@ future Test task); anything branching on CI (testcontainers pull/reuse logic, CI
 behaviour there silently. Fix: the environment call now lives on tasks.named<Test>("test") only — the
 task the agent harness actually runs - with a comment explaining the intent and the blast radius.
 Tests: `./gradlew test` green.
+
+## 5. gradle.properties — machine-specific JDK path committed [maintainability/high]
+org.gradle.java.home pointed at one developer's Homebrew OpenJDK 21; every other machine/CI would
+hard-fail. Fix: line removed from the repo. The build also has a Java 21 toolchain declaration, so
+machines with any JDK 21 (on PATH / auto-detectable) work out of the box. For this machine - where
+the shell's default java is 11 - the same pin now lives in the developer-local
+~/.gradle/gradle.properties instead, so local builds are unchanged.
+Tests: `./gradlew test` green (with the user-level pin in place).
+
+## 6. gradle-wrapper.properties — retries=0 on the distribution download [maintainability/medium]
+A single network blip during the ~200MB wrapper download hard-failed the build. Fix: retries=2
+(paired with the existing retryBackOffMs=500). Not a code path, so no test run needed; wrapper
+properties take effect on next distribution fetch.
