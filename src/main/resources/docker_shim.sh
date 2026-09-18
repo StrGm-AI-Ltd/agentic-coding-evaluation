@@ -21,6 +21,12 @@ if ! "$real" info >/dev/null 2>&1; then
     "$real" info >/dev/null 2>&1 && break
     /bin/sleep 2
   done
-  print -r -- "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ) $$ #ready $((i*2))s" >> "$log" 2>/dev/null
+  if "$real" info >/dev/null 2>&1; then
+    print -r -- "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ) $$ #ready $((i*2))s" >> "$log" 2>/dev/null
+  else
+    print -r -- "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ) $$ #failed after $((i*2))s" >> "$log" 2>/dev/null
+    echo "agentbench docker shim: Docker Desktop did not become ready within $((i*2))s (no install? out of memory?)" >&2
+    exit 1
+  fi
 fi
 exec "$real" "$@"

@@ -41,3 +41,10 @@ Tests: `./gradlew test` green (with the user-level pin in place).
 A single network blip during the ~200MB wrapper download hard-failed the build. Fix: retries=2
 (paired with the existing retryBackOffMs=500). Not a code path, so no test run needed; wrapper
 properties take effect on next distribution fetch.
+
+## 7. docker_shim.sh — silent fall-through when the daemon never comes up [bug/high]
+If all 90 poll iterations expired (Docker Desktop absent, app crash, OOM), the script unconditionally
+logged "#ready 180s" and exec'd the real CLI, which then failed with a generic "cannot connect to the
+Docker daemon" with no hint the shim tried. Fix: one final `docker info` check after the loop — on
+success log #ready, on failure log #failed and exit 1 with an explicit stderr diagnostic.
+Verified: `zsh -n` clean; `./gradlew test` green (shim is a harness resource, no unit test targets it).
