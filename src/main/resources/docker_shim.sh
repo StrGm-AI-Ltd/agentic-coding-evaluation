@@ -4,7 +4,7 @@
 # its VM competes with the model for memory and CPU while images build); every call is logged for the harness's
 # window record; then the real docker CLI runs with the same arguments.
 log=${AB_DOCKER_LOG:-/dev/null}; me=${0:A:h}
-if [[ -n "${AB_DOCKER_SHIM:-}" ]]; then echo "agentbench docker shim: recursion (no real docker CLI found)" >&2; exit 127; fi   # never call ourselves
+if [[ "${AB_DOCKER_SHIM:-}" == "1" ]]; then echo "agentbench docker shim: recursion (no real docker CLI found)" >&2; exit 127; fi   # never call ourselves - exact sentinel: an unrelated AB_DOCKER_SHIM=0/other value must not disable the shim
 export AB_DOCKER_SHIM=1
 real=""
 for d in ${(s.:.)PATH}; do

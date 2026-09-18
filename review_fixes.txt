@@ -63,3 +63,9 @@ macOS has no flock(1)) — the first process logs #start and launches Docker Des
 #wait and simply poll the daemon; the lock is removed before exec (exit traps don't survive exec)
 and via trap on the start-holder's abnormal exit.
 Verified: zsh -n clean; lock dir not left behind; `./gradlew test` green.
+
+## 10. docker_shim.sh — recursion guard triggered on ANY non-empty AB_DOCKER_SHIM [bug/medium]
+A parent harness/CI exporting AB_DOCKER_SHIM for its own purpose (even =0) made the shim refuse to
+run with a misleading recursion error. Fix: the guard now matches the exact sentinel "1" that this
+script exports.
+Verified: zsh -n clean; `./gradlew test` green.
