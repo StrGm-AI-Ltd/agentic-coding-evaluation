@@ -144,3 +144,10 @@ EXISTS indexes/constraints, drop-and-re-add FKs). The header documents the three
 forms and why PG's missing ADD CONSTRAINT IF NOT EXISTS forces the drop-re-add pattern (DO $$ would
 break ScriptUtils' ';' splitting used by the app and the ITs).
 Verified: psql double-apply clean (second run all NOTICE-skip); `./gradlew test` green.
+
+## 19. .gitignore — *.iml not covered [maintainability/medium]
+.idea/ is ignored but IntelliJ's module files (*.iml) live at the project root / per module, outside
+.idea/, and can contain absolute paths. Added *.iml.
+## 20. .gitignore — local.properties not covered [maintainability/low]
+Added local.properties so machine-specific absolute paths (sdk.dir etc.) are never committed.
+(No test impact; both recorded here, single hygiene commit.)
