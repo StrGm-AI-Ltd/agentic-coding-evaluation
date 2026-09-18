@@ -1,4 +1,12 @@
--- Port of service/migrations/001_init.sql. Idempotent: an importer re-run must upsert, never fail.
+-- Port of service/migrations/001_init.sql. Idempotent end-to-end: an importer re-run must upsert,
+-- never fail. Every statement is safe to re-run against an already-migrated DB (the app re-applies
+-- this file on every start, sql.init.mode: always):
+--   CREATE TABLE IF NOT EXISTS  - skips existing tables (their in-table constraints are fresh-DB only)
+--   CREATE [UNIQUE] INDEX IF NOT EXISTS - skips existing indexes
+--   ALTER TABLE ... DROP CONSTRAINT IF EXISTS, ADD CONSTRAINT - single-statement re-assert (PG has
+--     no ADD CONSTRAINT IF NOT EXISTS, and DO $$ blocks would break ScriptUtils' ';' splitting)
+-- Tables created before a constraint/index was added to this file are healed by the matching
+-- IF NOT EXISTS / drop-re-add statement, so an evolved schema needs no out-of-band migration.
 CREATE TABLE IF NOT EXISTS experiments (
     id                 bigserial PRIMARY KEY,
     name               text NOT NULL,

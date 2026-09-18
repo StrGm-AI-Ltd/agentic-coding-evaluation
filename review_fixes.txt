@@ -136,3 +136,11 @@ DBs (CREATE TABLE IF NOT EXISTS cannot retrofit FK actions) a single-statement d
 the PG auto-named _fkey constraints heals them idempotently across the per-startup re-run.
 Verified: psql round-trip - delete experiment keeps job with NULL experiment_id; delete job cascades
 to run and its check rows; `./gradlew test` green.
+
+## 18. schema.sql — header claimed idempotency the file could not deliver [maintainability/medium]
+Only CREATE TABLE IF NOT EXISTS existed: a partially-migrated DB could not be healed by re-running.
+Now every statement form in the file is re-run safe (created across review points 12-17: IF NOT
+EXISTS indexes/constraints, drop-and-re-add FKs). The header documents the three safe statement
+forms and why PG's missing ADD CONSTRAINT IF NOT EXISTS forces the drop-re-add pattern (DO $$ would
+break ScriptUtils' ';' splitting used by the app and the ITs).
+Verified: psql double-apply clean (second run all NOTICE-skip); `./gradlew test` green.
