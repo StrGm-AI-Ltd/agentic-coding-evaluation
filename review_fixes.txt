@@ -151,3 +151,14 @@ Verified: psql double-apply clean (second run all NOTICE-skip); `./gradlew test`
 ## 20. .gitignore — local.properties not covered [maintainability/low]
 Added local.properties so machine-specific absolute paths (sdk.dir etc.) are never committed.
 (No test impact; both recorded here, single hygiene commit.)
+
+## 21. .dockerignore — no exclusion for credential/env files [security/medium]
+The whole build context ships to the Docker daemon; a future .env with API keys would upload
+unbarred. Added .env*, plus *.jks / *.keystore key material.
+## 22. .dockerignore — gradle.properties shipped despite the Dockerfile not using it [maintainability/low]
+The Dockerfile deliberately does NOT copy gradle.properties (host-specific pin), yet it rode in the
+context. Added the exclusion so the ignore rules match the Dockerfile's stated intent.
+## 23. .dockerignore — IDE metadata bloated every build context [maintainability/low]
+Added .idea, *.iml and out so run configurations (which may hold local paths/tokens) and IDE build
+output never reach the daemon.
+(No test impact; all three recorded here, single hygiene commit.)
