@@ -9,3 +9,9 @@ entry; both the plugin (`alias(libs.plugins.springBoot)`) and the BOM import
 Note: the BOM import had to stay — the Spring Boot plugin does NOT manage the unversioned
 org.postgresql driver (verified: resolution fails without it).
 Tests: full `./gradlew test` green.
+
+## 2. build.gradle.kts — redundant testImplementation("org.postgresql:postgresql") [maintainability/low]
+The test source set extends main, so the driver was already on the test classpath via `implementation`.
+Fix: removed the duplicate coordinate. Tests (`JobQueueIT`, `ExperimentsServiceTest`,
+`ImporterServiceTest` — all construct org.postgresql.Driver directly) still resolve it from
+implementation; full `./gradlew test` green.

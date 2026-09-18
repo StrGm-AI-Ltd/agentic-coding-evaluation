@@ -26,7 +26,6 @@ dependencies {
     // 1.x's hardcoded 1.32 probe fails outright against Docker 29+, which raised its floor to 1.44
     // (testcontainers/testcontainers-java#11210, #11212, #11360)
     testImplementation(platform("org.testcontainers:testcontainers-bom:2.0.5"))
-    testImplementation("org.postgresql:postgresql")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.testcontainers:postgresql")
