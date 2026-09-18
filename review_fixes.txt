@@ -75,3 +75,10 @@ Verified: zsh -n clean; `./gradlew test` green.
 and "180s" even when that was a miscount. Fix: t0=$EPOCHSECONDS at the top of the wait block; the
 ready/failed lines report EPOCHSECONDS - t0 (zsh wall clock).
 Verified: zsh -n clean; `./gradlew test` green.
+
+## 12. schema.sql — no index on the hot claim() path [performance/critical]
+Every worker claim() runs SELECT ... WHERE status IN ('queued','waiting_lock') ORDER BY priority DESC,
+id LIMIT 1 FOR UPDATE SKIP LOCKED — a full table scan on a table that only grows. Added
+CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs (status, priority DESC, id) (IF NOT
+EXISTS because schema.sql re-runs on every app start, sql.init.mode: always).
+Verified: `./gradlew test` green (JobQueueIT/ExperimentsServiceTest apply the schema to a real PG).

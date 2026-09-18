@@ -37,6 +37,11 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at        timestamptz
 );
 
+-- Hot claim() path: SELECT ... WHERE status IN ('queued','waiting_lock') ORDER BY priority DESC, id
+-- ... LIMIT 1 FOR UPDATE SKIP LOCKED. Without this every worker claim full-scans the table, so as
+-- completed/cancelled jobs accumulate the claim degrades to O(n).
+CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs (status, priority DESC, id);
+
 
 CREATE TABLE IF NOT EXISTS runs (
     run_id                text PRIMARY KEY,
