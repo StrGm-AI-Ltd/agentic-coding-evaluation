@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS jobs (
 -- completed/cancelled jobs accumulate the claim degrades to O(n).
 CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs (status, priority DESC, id);
 
+-- Experiment detail view: SELECT ... FROM jobs WHERE experiment_id = ? ORDER BY repeat, arm.
+CREATE INDEX IF NOT EXISTS idx_jobs_experiment ON jobs (experiment_id, repeat, arm);
+
 
 CREATE TABLE IF NOT EXISTS runs (
     run_id                text PRIMARY KEY,

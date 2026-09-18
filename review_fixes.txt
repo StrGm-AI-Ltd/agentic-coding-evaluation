@@ -82,3 +82,9 @@ id LIMIT 1 FOR UPDATE SKIP LOCKED — a full table scan on a table that only gro
 CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs (status, priority DESC, id) (IF NOT
 EXISTS because schema.sql re-runs on every app start, sql.init.mode: always).
 Verified: `./gradlew test` green (JobQueueIT/ExperimentsServiceTest apply the schema to a real PG).
+
+## 13. schema.sql — no index on jobs.experiment_id [performance/high]
+ExperimentsService queries WHERE experiment_id = ? ORDER BY repeat, arm on every detail view -
+a sequential scan before. Added CREATE INDEX IF NOT EXISTS idx_jobs_experiment ON jobs
+(experiment_id, repeat, arm) which serves the filter and both sort keys.
+Verified: `./gradlew test` green.
