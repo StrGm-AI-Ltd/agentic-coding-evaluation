@@ -97,3 +97,14 @@ created before it (CREATE TABLE IF NOT EXISTS cannot retrofit; schema.sql re-run
 start). The live agentbench DB was checked: 76 jobs, all (kind, run_id) distinct, no NULL run_ids -
 the heal cannot fail there. The app-level count(*) check stays as a friendly fast path.
 Verified: `./gradlew test` green (JobQueueIT passes against real PG with the constraint).
+
+## 14. schema.sql — jobs.run_id had no UNIQUE constraint (TOCTOU race) [other/critical]
+JobQueue.enqueue guarded with SELECT count(*) before insert; two concurrent enqueues with the same
+run_id could both pass and insert duplicates. Added CONSTRAINT uq_jobs_kind_run_id UNIQUE (kind,
+run_id) to the table plus an idempotent heal for pre-existing DBs. Note: PostgreSQL has no
+`ALTER TABLE ... ADD CONSTRAINT IF NOT EXISTS` (verified on the local PG 16: syntax error), and a
+DO $$ ... $$ block would break ScriptUtils' `;` statement splitting used by the app and the tests -
+so the heal is CREATE UNIQUE INDEX IF NOT EXISTS with the constraint's index name (enforces the
+same uniqueness; skipped on fresh DBs). Live agentbench DB checked first: 76 jobs, all pairs
+distinct, no NULLs. The app-level count(*) check stays as a friendly fast path.
+Verified: psql dry run + `./gradlew test` green.

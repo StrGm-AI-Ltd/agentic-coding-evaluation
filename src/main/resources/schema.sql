@@ -48,10 +48,13 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs (status, priority DE
 -- Experiment detail view: SELECT ... FROM jobs WHERE experiment_id = ? ORDER BY repeat, arm.
 CREATE INDEX IF NOT EXISTS idx_jobs_experiment ON jobs (experiment_id, repeat, arm);
 
--- heal for DBs created before uq_jobs_kind_run_id existed (CREATE TABLE IF NOT EXISTS cannot add it);
--- the named constraint makes this a no-op once present. Verified: the live agentbench DB has no
--- violating rows, so the re-run on app start (sql.init.mode: always) cannot fail.
-ALTER TABLE jobs ADD CONSTRAINT IF NOT EXISTS uq_jobs_kind_run_id UNIQUE (kind, run_id);
+-- heal for DBs created before uq_jobs_kind_run_id existed (CREATE TABLE IF NOT EXISTS cannot add it;
+-- PG has no ALTER ... ADD CONSTRAINT IF NOT EXISTS, so a unique index of the same name - which
+-- enforces the identical uniqueness - is the idempotent form; it is skipped on fresh DBs where the
+-- table constraint's index already carries that name). Verified: the live agentbench DB (76 jobs)
+-- has all (kind, run_id) pairs distinct and no NULL run_ids, so the re-run on app start
+-- (sql.init.mode: always) cannot fail.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_kind_run_id ON jobs (kind, run_id);
 
 
 CREATE TABLE IF NOT EXISTS runs (
