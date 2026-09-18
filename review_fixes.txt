@@ -116,3 +116,13 @@ split. Every lookup also filters on run_id, so idx_check_results_run was added, 
 CREATE UNIQUE INDEX IF NOT EXISTS heal covers pre-existing DBs (PG has no ADD CONSTRAINT IF NOT
 EXISTS; the live agentbench DB was verified duplicate-free: 383 rows = 383 distinct pairs).
 Verified: psql re-run clean; `./gradlew test` green (ImporterServiceTest re-imports twice).
+
+## 16. schema.sql — check_results.status had no CHECK constraint [maintainability/medium]
+Every other status column is constrained; this one accepted arbitrary text. Added
+CONSTRAINT ck_check_results_status CHECK (upper(status) IN ('PASS','FAIL','NOT_ATTEMPTED','SKIPPED','INFRA'))
+- the CheckStatus enum's values; upper() accepts the lowercase values legacy rows and the tests carry
+(mirroring CheckStatus.parse). Deliberately no retro-fit heal for pre-existing DBs: PG has no
+ADD CONSTRAINT IF NOT EXISTS and a DO $$ block would break ScriptUtils' ';' splitting used by the
+app/tests; the live agentbench DB was verified to contain only valid values, so fresh-DB integrity
+is the practical fix.
+Verified: `./gradlew test` green.

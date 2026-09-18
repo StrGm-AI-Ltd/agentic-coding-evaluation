@@ -91,7 +91,10 @@ CREATE TABLE IF NOT EXISTS check_results (
     check_id   text NOT NULL,
     category   text NOT NULL,
     weight     integer NOT NULL,
-    status     text NOT NULL,
+    -- the CheckStatus enum (PASS/FAIL/NOT_ATTEMPTED/SKIPPED/INFRA); upper() accepts the lowercase
+    -- values legacy data (and the tests) carry, like CheckStatus.parse does
+    status     text NOT NULL
+               CONSTRAINT ck_check_results_status CHECK (upper(status) IN ('PASS', 'FAIL', 'NOT_ATTEMPTED', 'SKIPPED', 'INFRA')),
     detail     jsonb,
     -- the importer does DELETE-by-run then re-insert; the composite unique makes re-import idempotent
     -- by construction and rules out silent duplicates if that pattern is ever split
