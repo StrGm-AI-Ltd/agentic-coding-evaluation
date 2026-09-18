@@ -126,3 +126,13 @@ ADD CONSTRAINT IF NOT EXISTS and a DO $$ block would break ScriptUtils' ';' spli
 app/tests; the live agentbench DB was verified to contain only valid values, so fresh-DB integrity
 is the practical fix.
 Verified: `./gradlew test` green.
+
+## 17. schema.sql — all FKs were NO ACTION on DELETE [maintainability/medium]
+Deleting an experiment with live jobs, or a run with check rows, failed with foreign_key_violation;
+cleanup required manual orphaning. Fix: runs.job_id ON DELETE CASCADE, check_results.run_id ON
+DELETE CASCADE (check rows die with their run; the importer's DELETE-by-run becomes a belt-and-
+braces), jobs.experiment_id ON DELETE SET NULL (it is nullable - unpin, don't fail). For existing
+DBs (CREATE TABLE IF NOT EXISTS cannot retrofit FK actions) a single-statement drop-and-re-add of
+the PG auto-named _fkey constraints heals them idempotently across the per-startup re-run.
+Verified: psql round-trip - delete experiment keeps job with NULL experiment_id; delete job cascades
+to run and its check rows; `./gradlew test` green.
