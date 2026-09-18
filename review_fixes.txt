@@ -88,3 +88,12 @@ ExperimentsService queries WHERE experiment_id = ? ORDER BY repeat, arm on every
 a sequential scan before. Added CREATE INDEX IF NOT EXISTS idx_jobs_experiment ON jobs
 (experiment_id, repeat, arm) which serves the filter and both sort keys.
 Verified: `./gradlew test` green.
+
+## 14. schema.sql — jobs.run_id had no UNIQUE constraint (TOCTOU race) [other/critical]
+JobQueue.enqueue guards with SELECT count(*) before insert; two concurrent enqueues with the same
+run_id could both pass and insert duplicates. Added CONSTRAINT uq_jobs_kind_run_id UNIQUE (kind,
+run_id) to the table definition plus an ALTER TABLE ... ADD CONSTRAINT IF NOT EXISTS heal for DBs
+created before it (CREATE TABLE IF NOT EXISTS cannot retrofit; schema.sql re-runs on every app
+start). The live agentbench DB was checked: 76 jobs, all (kind, run_id) distinct, no NULL run_ids -
+the heal cannot fail there. The app-level count(*) check stays as a friendly fast path.
+Verified: `./gradlew test` green (JobQueueIT passes against real PG with the constraint).

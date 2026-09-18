@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     repeat             integer,
     kind               text NOT NULL CHECK (kind IN ('run', 'score_only')),
     run_id             text NOT NULL,
+    -- DB-level uniqueness: JobQueue.enqueue previously guarded with SELECT count(*) - a TOCTOU race
+    -- (two concurrent enqueues with the same run_id both passed and inserted duplicates).
+    CONSTRAINT uq_jobs_kind_run_id UNIQUE (kind, run_id),
     argv               jsonb NOT NULL,
     status             text NOT NULL DEFAULT 'queued'
                        CHECK (status IN ('queued', 'waiting_lock', 'running', 'succeeded', 'failed', 'cancelled', 'blocked')),
@@ -44,6 +47,11 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs (status, priority DE
 
 -- Experiment detail view: SELECT ... FROM jobs WHERE experiment_id = ? ORDER BY repeat, arm.
 CREATE INDEX IF NOT EXISTS idx_jobs_experiment ON jobs (experiment_id, repeat, arm);
+
+-- heal for DBs created before uq_jobs_kind_run_id existed (CREATE TABLE IF NOT EXISTS cannot add it);
+-- the named constraint makes this a no-op once present. Verified: the live agentbench DB has no
+-- violating rows, so the re-run on app start (sql.init.mode: always) cannot fail.
+ALTER TABLE jobs ADD CONSTRAINT IF NOT EXISTS uq_jobs_kind_run_id UNIQUE (kind, run_id);
 
 
 CREATE TABLE IF NOT EXISTS runs (
