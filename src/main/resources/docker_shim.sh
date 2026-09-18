@@ -9,7 +9,11 @@ export AB_DOCKER_SHIM=1
 real=""
 for d in ${(s.:.)PATH}; do
   [[ -z "$d" || "${d:A}" == "$me" ]] && continue          # compare resolved paths: /var/... vs /private/var/... on macOS
-  if [[ -x "$d/docker" && "${d:A}/docker" != "${0:A}" ]]; then real="$d/docker"; break; fi
+  cand="$d/docker"    # resolve the CANDIDATE, not just its directory: if the shim is installed as
+  # /usr/local/bin/docker -> /opt/agentbench/docker_shim.sh, the directory check above does not skip it
+  # (dirs differ), so compare the resolved binary, or "real" would point at the shim and it would poll
+  # a dead end for 180s.
+  [[ -x "$cand" && "${cand:A}" != "${0:A}" ]] && { real="$d/docker"; break; }
 done
 [[ -z "$real" ]] && for c in /usr/local/bin/docker /opt/homebrew/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker; do [[ -x "$c" ]] && { real="$c"; break; }; done
 if [[ -z "$real" ]]; then echo "agentbench docker shim: no docker CLI found on PATH" >&2; exit 127; fi

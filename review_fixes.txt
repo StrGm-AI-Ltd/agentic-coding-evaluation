@@ -48,3 +48,10 @@ logged "#ready 180s" and exec'd the real CLI, which then failed with a generic "
 Docker daemon" with no hint the shim tried. Fix: one final `docker info` check after the loop — on
 success log #ready, on failure log #failed and exit 1 with an explicit stderr diagnostic.
 Verified: `zsh -n` clean; `./gradlew test` green (shim is a harness resource, no unit test targets it).
+
+## 8. docker_shim.sh — fragile self-exclusion when the shim is installed as a symlink [bug/high]
+The guard compared the candidate's *directory* against the script dir, and the binary path against the
+resolved script path. Installed as /usr/local/bin/docker -> /opt/agentbench/docker_shim.sh, both
+comparisons fail, "real" pointed at the shim itself, and it polled a dead end for 180s.
+Fix: resolve the candidate binary with :A (cand="$d/docker"; ${cand:A}) before comparing to ${0:A}.
+Verified: zsh -n clean; functional test with PATH = [symlinked-shim, real-docker] resolved the real CLI.
