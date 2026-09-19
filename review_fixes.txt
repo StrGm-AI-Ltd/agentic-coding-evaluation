@@ -35,3 +35,12 @@ Tests: full `./gradlew test` green.
 caller guards with `old.isEmpty()`, but the package-private utility was unsafe if reused; added an
 explicit `if (sub.isEmpty()) return 0;` guard.
 Tests: full `./gradlew test` green.
+
+## 7. ReferenceAgent — a new ObjectMapper per tool call [performance/medium]
+ObjectMapper is thread-safe and built for reuse; with 400 turns x several calls, per-call
+construction allocated hundreds of instances. Hoisted to a `private static final MAPPER`.
+## 8. ReferenceAgent — turn-capped exit reported as success [bug/medium]
+When the while loop exited because turns hit 400, rc stayed 0 (success), misrepresenting a
+session cut short. After the loop: if rc is still 0 and turns >= MAX_TURNS, set rc = 1 and, if
+no finish reason exists, record finish = "turn_limit" (does not override the wall-deadline rc=124).
+Tests: full `./gradlew test` green after each change.
