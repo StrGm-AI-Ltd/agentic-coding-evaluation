@@ -125,7 +125,9 @@ public class BenchController {
     @PostMapping("/api/jobs/{id}/cancel") public Map<String, Object> cancel(@PathVariable long id) { return queue.cancel(id); }
     @PostMapping("/api/jobs/{id}/requeue") public Map<String, Object> requeue(@PathVariable long id) { return queue.requeue(id, props.resultsDir()); }
     @PostMapping("/api/jobs/{id}/priority") public Map<String, Object> priority(@PathVariable long id, @RequestBody Map<String, Object> body) {
-        queue.setPriority(id, (int) body.get("priority"));
+        // a missing or non-numeric priority would NPE/CCE into a 500 on the raw (int) cast
+        if (!(body.get("priority") instanceof Number n)) throw new IllegalArgumentException("'priority' must be a number");
+        queue.setPriority(id, n.intValue());
         return queue.get(id);
     }
 

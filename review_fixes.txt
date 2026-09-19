@@ -178,3 +178,8 @@ A null list NPE'd in the for-loop; an empty list crashed later on ra.get(0) (and
 covered by the inner catch). Early validation now throws IllegalArgumentException (mapped to a 400
 by ApiExceptionHandler).
 Tests: full `./gradlew test` green.
+
+## 41. BenchController.priority — `(int) body.get("priority")` [bug/medium]
+A missing key NPE'd on unboxing, a non-Number CCE'd - both 500s. Now an instanceof Number guard
+(400 via ApiExceptionHandler), matching enqueue's safe pattern.
+Tests: full `./gradlew test` green.
