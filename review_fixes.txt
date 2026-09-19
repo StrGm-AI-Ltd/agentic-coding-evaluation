@@ -331,3 +331,7 @@ first and analyzed exactly once (identical result in both cases).
 ## 33. see ## 32+33 - the dead public killTree was removed in that entry (same method).
 ## 48. Tailer - see ## 47's entry, which also records the (int)(size - start) overflow clamp.
 ## 62. see ## 63 - the ValidityTest weak-assertion fix (instanceof Boolean -> assert the value).
+
+## 28. RecordingProxyFactory.start - a failed proxy.start() leaked the half-started server [bug/medium]
+If start() threw after the HttpServer/thread-pool was attached, the proxy was abandoned to GC.
+The catch now calls proxy.stop() (safe: it no-ops when server == null) before rethrowing.
