@@ -34,8 +34,11 @@ public class RunOracle {
     /** full form: the runner's manifest carries the per-phase snapshot SHAs P3 diffs (05_phases.py) */
     @SuppressWarnings("unchecked")
     public Map<String, Object> score(Path ws, String task, String systemBaseUrl, Map<String, Object> manifest) throws Exception {
-        JsonNode ladder = json.readTree(getClass().getResourceAsStream("/tasks/ladder.json"));
+        var ladderStream = getClass().getResourceAsStream("/tasks/ladder.json");
+        if (ladderStream == null) throw new IllegalStateException("ladder.json resource not found on classpath");
+        JsonNode ladder = json.readTree(ladderStream);
         JsonNode rung = ladder.has(task) ? ladder.get(task) : ladder.get("L7_full_platform");
+        if (rung == null) throw new IllegalStateException("no ladder rung for task '" + task + "' and no L7_full_platform fallback");
         Set<CheckId> wanted = new LinkedHashSet<>();
         if (rung.get("checks").isTextual() && rung.get("checks").asText().equals("all"))
             wanted.addAll(EnumSet.allOf(CheckId.class));
