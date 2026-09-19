@@ -81,8 +81,14 @@ public class JobQueue {
         Map<String, Object> job = get(jobId);
         if (RunSpec.TERMINAL.contains(job.get("status")))
             throw new IllegalStateException("job " + jobId + " is already " + job.get("status"));
-        jdbc.update("UPDATE jobs SET cancel_requested = true, status = CASE WHEN status = 'running' THEN status ELSE 'cancelled' END, "
-                + "finished_at = CASE WHEN status = 'running' THEN finished_at ELSE now() END WHERE id = ?", jobId);
+        // status guard in the WHERE: a concurrent finish() between the get() above and this UPDATE
+        // would otherwise let the CASE write 'cancelled' over a fresh terminal status
+        int updated = jdbc.update("UPDATE jobs SET cancel_requested = true, "
+                + "status = CASE WHEN status = 'running' THEN status ELSE 'cancelled' END, "
+                + "finished_at = CASE WHEN status = 'running' THEN finished_at ELSE now() END "
+                + "WHERE id = ? AND status NOT IN ('succeeded','failed','cancelled')", jobId);
+        if (updated == 0)
+            throw new IllegalStateException("job " + jobId + " transitioned to a terminal state concurrently");
         return get(jobId);
     }
 
