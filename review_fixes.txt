@@ -224,3 +224,9 @@ drift protection was off with zero operator visibility. It now logs the cause at
 ## 50. TreatmentPin - Files.readAllBytes on the whole fat jar [performance/low]
 A 100-300MB one-time heap spike at startup; now streamed into the digest with a 1MiB buffer.
 Tests: full `./gradlew test` green.
+
+## 51. DockerApplicationIT - `List.of(elements().next().asText())` skip-guard was inert [test/medium]
+For an empty model array that produced List.of(null): isEmpty() was always false, the skip never
+fired, and String.format embedded the literal "null" as the model name. collectIntoList(String)
+now parses the array properly so the empty case skips via assumeTrue.
+Tests: DockerApplicationIT is docker-tagged (not in the `test` task); full `./gradlew test` green.

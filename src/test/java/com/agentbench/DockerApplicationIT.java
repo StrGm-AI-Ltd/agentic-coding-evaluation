@@ -291,7 +291,9 @@ class DockerApplicationIT {
     @Order(8)
     void startingANewOrchestratedExperimentActuallyRunsAJobThatDoesNotFailImmediately() throws Exception {
         Assumptions.assumeTrue(modelServerConfigured, "no OMLX_API_KEY in the environment - skipping the real-model-server test");
-        List<String> models = List.of(json.readTree(get("/api/models").body()).elements().next().asText());
+        // collectIntoList: elements().next() gave a single-element list containing null for an
+        // empty array, so the isEmpty() skip could never fire and the model became the literal "null"
+        List<String> models = json.readTree(get("/api/models").body()).collectIntoList(String.class);
         Assumptions.assumeTrue(!models.isEmpty(), "the model server reported no models");
         String model = models.get(0);
 
