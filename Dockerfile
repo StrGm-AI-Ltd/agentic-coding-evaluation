@@ -19,8 +19,11 @@ RUN chmod +x gradlew && ./gradlew --version \
     && ./gradlew --no-daemon compileJava
 COPY src ./src
 RUN ./gradlew bootJar --no-daemon -x test
-# bootJar's own jar, not the plain classes-only one the `jar` task also produces
-RUN find build/libs -maxdepth 1 -name "*.jar" ! -name "*-plain.jar" -exec cp {} /src/app.jar \;
+# exactly ONE boot jar is expected: if the filter ever matched more (a -sources/-javadoc jar, a new
+# sub-project), cp -exec would let the last-in-filesystem-order win and the image would be non-deterministic
+RUN sh -c 'jar=$(find build/libs -maxdepth 1 -name "*.jar" ! -name "*-plain.jar"); \
+    [ "$(echo "$jar" | wc -l)" -eq 1 ] || { echo "Expected exactly 1 boot jar, got: $jar"; exit 1; }; \
+    cp "$jar" /src/app.jar'
 
 FROM eclipse-temurin:21-jre
 # git is a FATAL preflight check (Preflight.java): a deployed container without it can never pass

@@ -312,3 +312,11 @@ COPY src preceded the only gradle invocation, so every source edit invalidated t
 also resolved dependencies. Added a pre-fetch layer (probe class + compileJava) between the
 build-file copy and the source copy; source-only changes now reuse the cached dependencies.
 Tests: no code change; full `./gradlew test` green.
+
+## 66. Dockerfile - the jar filter copied every match, last one silently won [maintainability/low]
+`find ... -exec cp` with multiple matches (a -sources/-javadoc jar, a new sub-project) would copy
+them in filesystem order and the last would become app.jar non-deterministically. Now the count is
+checked first and the build fails loudly if it is not exactly one.
+Tests: no code change; full `./gradlew test` green.
+
+── END OF ROUND 2: all 66 review findings addressed (1..66) ──
