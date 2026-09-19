@@ -104,6 +104,7 @@ public class BenchController {
     @PostMapping("/api/jobs")
     public Map<String, Object> enqueue(@RequestBody Map<String, Object> body) {
         Map<String, Object> spec = (Map<String, Object>) body.get("spec");
+        if (spec == null) throw new IllegalArgumentException("missing 'spec' in request body");   // a null spec would NPE on the very next line
         int priority = body.get("priority") instanceof Number n ? n.intValue() : 0;
         RunSpec rs = new RunSpec(str(spec.get("task")), str(spec.get("model")), str(spec.get("harness")), str(spec.get("mode")), str(spec.get("plan_source")),
                 spec.get("task_wall") instanceof Number n ? n.intValue() : intOf(spec.get("task_wall")),

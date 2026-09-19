@@ -167,3 +167,8 @@ Tests: full `./gradlew test` green after the changes (shared run for the same-fi
 `path.contains("/" + d + "/")` needs a leading slash, so build/Foo.java slipped through. Now path
 segments are tested for membership, matching BuildChecks.
 Tests: full `./gradlew test` green.
+
+## 39. BenchController.enqueue — 500 when the body has no "spec" [bug/high]
+spec null -> spec.get("task") NPE'd into a 500. Now an IllegalArgumentException, which
+ApiExceptionHandler maps to a 400.
+Tests: full `./gradlew test` green.
