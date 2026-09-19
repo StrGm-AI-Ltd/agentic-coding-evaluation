@@ -26,6 +26,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -171,8 +172,12 @@ class DockerApplicationIT {
         assertEquals(200, reprioritized.statusCode(), reprioritized.body());
         assertEquals(7, json.readTree(get("/api/jobs/" + id).body()).get("priority").asInt());
 
-        // cancel it again so it does not sit queued and racing the worker for the rest of the suite
-        post("/api/jobs/" + id + "/cancel");
+        // cancel it again so it does not sit queued and racing the worker for the rest of the suite;
+        // assert it STUCK - between /requeue and here the worker can claim the job, and cancelling a
+        // running job only sets an ignored flag, leaving a live experiment to consume the suite's budget
+        HttpResponse<String> finalCancel = post("/api/jobs/" + id + "/cancel");
+        assertEquals(200, finalCancel.statusCode(), finalCancel.body());
+        assertEquals("cancelled", json.readTree(get("/api/jobs/" + id).body()).get("status").asText());
     }
 
     /** The "Rescan results/" feature: copies a real, oracle.json-bearing results directory straight
@@ -291,9 +296,12 @@ class DockerApplicationIT {
     @Order(8)
     void startingANewOrchestratedExperimentActuallyRunsAJobThatDoesNotFailImmediately() throws Exception {
         Assumptions.assumeTrue(modelServerConfigured, "no OMLX_API_KEY in the environment - skipping the real-model-server test");
-        // collectIntoList: elements().next() gave a single-element list containing null for an
-        // empty array, so the isEmpty() skip could never fire and the model became the literal "null"
-        List<String> models = json.readTree(get("/api/models").body()).collectIntoList(String.class);
+        // the endpoint answers a JSON array; elements().next() gave a single-element list containing
+        // null for an empty array, so the isEmpty() skip could never fire and the model became "null"
+        JsonNode modelsNode = json.readTree(get("/api/models").body());
+        List<String> models = new ArrayList<>();
+        if (modelsNode != null && modelsNode.isArray())
+            for (JsonNode m : modelsNode) if (!m.isNull()) models.add(m.asText());
         Assumptions.assumeTrue(!models.isEmpty(), "the model server reported no models");
         String model = models.get(0);
 
@@ -320,6 +328,8 @@ class DockerApplicationIT {
                 fail("job " + jobId + " (arm " + arm + ") failed instead of running - exactly the bug class this session kept "
                         + "fixing (#1/#8/#14/#26/#38/#40). result_line: " + job.path("result_line").asText());
             if ("running".equals(lastStatus)) { sawRunning = true; break; }
+            // a 2s sample cadence can miss a fast claim->run->finish: accept a non-failed terminal state too
+            if (com.agentbench.service.RunSpec.TERMINAL.contains(lastStatus) && !"failed".equals(lastStatus)) { sawRunning = true; break; }
             if ("blocked".equals(lastStatus))
                 fail("job " + jobId + " (arm " + arm + ") was blocked by guard(): " + job.path("blocked_reason").asText());
             Thread.sleep(2000);
@@ -332,5 +342,9 @@ class DockerApplicationIT {
         Thread.sleep(15000);
         String statusAfterRealWork = json.readTree(get("/api/jobs/" + jobId).body()).get("status").asText();
         assertNotEquals("failed", statusAfterRealWork, "job " + jobId + " (arm " + arm + ") failed after starting real work");
+
+        // best-effort cleanup: a still-live job would otherwise keep spending model budget and the
+        // single worker slot while the rest of the suite runs (the container teardown is the backstop)
+        try { post("/api/jobs/" + jobId + "/cancel"); } catch (Exception ignore) {}
     }
 }

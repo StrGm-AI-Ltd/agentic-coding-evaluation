@@ -230,3 +230,14 @@ For an empty model array that produced List.of(null): isEmpty() was always false
 fired, and String.format embedded the literal "null" as the model name. collectIntoList(String)
 now parses the array properly so the empty case skips via assumeTrue.
 Tests: DockerApplicationIT is docker-tagged (not in the `test` task); full `./gradlew test` green.
+
+## 52. DockerApplicationIT - the final re-cancel was fire-and-forget [test/medium]
+No assertion, so the test passed even when the cancel did nothing; a job that raced into running
+would then burn the suite's worker slot and model budget. Now asserts 200 + status "cancelled".
+## 53. DockerApplicationIT - the 2s poll loop accepted only "running" [test/medium]
+A fast claim->run->finish could land between samples and fail the test on a correct run; a
+non-failed terminal state now also counts as success. Added a best-effort cancel after the
+last assertion so a live job does not fight the rest of the suite (container teardown remains
+the backstop).
+Tests: DockerApplicationIT is docker-tagged (not in the `test` task); full `./gradlew test` green
+and the file compiles.
