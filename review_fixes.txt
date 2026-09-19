@@ -289,3 +289,8 @@ Validity.validity() always puts a boolean for "valid", so `instanceof Boolean` p
 valid was false - the "10% <= maxErrorRate: fine" intent was never verified. Replaced with
 `assertTrue((Boolean) ... .get("valid"), ...)`.
 Tests: full `./gradlew test` green.
+
+## 63. ValidityTest - `instanceof Boolean` is a tautology; assert the VALUE [bug/high]
+`validity()` always puts a boolean, so `instanceof Boolean` passed even when valid=false - the
+"10% <= maxErrorRate: fine" intent was never actually verified. Now `assertTrue((Boolean) ... .get("valid"))`.
+Tests: full `./gradlew test` green.
