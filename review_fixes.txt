@@ -271,3 +271,9 @@ repeated local/CI runs stop accumulating in $TMPDIR.
 getResourceAsStream("/tasks/PROMPT.md") can be null; `generic.readAllBytes()` would then NPE with
 a confusing message. Added assertNotNull(generic, ...) before dereferencing.
 Tests: full `./gradlew test` green.
+
+## 59. TradingServiceTest.theAsOfBoundary... - the boundary instant was a timing guess [test/medium]
+A bare sleep(5) then now() could land on the buy's own millisecond on a loaded CI runner. Now the
+test reads the buy's real executedAt from the outcome and spins (sleep + re-read) until `between`
+is strictly after it, so the exclusive-boundary assertion is deterministic.
+Tests: full `./gradlew test` green (TradingServiceTest).

@@ -52,10 +52,14 @@ class TradingServiceTest {
     void theAsOfBoundaryIsExclusiveAndEchoed() throws InterruptedException {
         String a = account();
         svc.deposit(a, "1000.00");
-        svc.order(a, "TSLA", "BUY", "2", "250.00", null);
-        Thread.sleep(5);                                   // strictly after the buy's millisecond: the boundary is exclusive
-        String between = TradingService.now().toString();
-        Thread.sleep(5);
+        TradingService.OrderOutcome buy = svc.order(a, "TSLA", "BUY", "2", "250.00", null);
+        java.time.Instant buyAt = java.time.Instant.parse((String) buy.body().get("executedAt"));
+        // read the buy's real executedAt and spin until strictly after it: the exclusive boundary
+        // (and the assertion below) is only meaningful then; a bare sleep(5) could land on the
+        // same millisecond on a GC-starved CI runner
+        String between;
+        do { Thread.sleep(5); between = TradingService.now().toString(); }
+        while (!java.time.Instant.parse(between).isAfter(buyAt));
         svc.order(a, "TSLA", "SELL", "2", "250.00", null);
         var h = svc.holdings(a, java.time.Instant.parse(between));
         assertEquals("2", ((java.util.Map<?, ?>) h.get("holdings")).get("TSLA"));
