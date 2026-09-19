@@ -157,6 +157,9 @@ public class BenchController {
     @PostMapping("/api/compare")
     public ResponseEntity<?> compare(@RequestBody Map<String, Object> body) throws Exception {
         List<String> a = (List<String>) body.get("a"), b = (List<String>) body.get("b");
+        // validate BEFORE the loops: a null list NPEs in the for, an empty list later blows up on ra.get(0)
+        if (a == null || a.isEmpty() || b == null || b.isEmpty())
+            throw new IllegalArgumentException("a and b must be non-empty lists of run ids");
         String metric = String.valueOf(body.getOrDefault("metric", "functional"));
         boolean modelAb = Boolean.TRUE.equals(body.get("model_ab"));
         boolean allowPartial = Boolean.TRUE.equals(body.get("allow_partial"));

@@ -172,3 +172,9 @@ Tests: full `./gradlew test` green.
 spec null -> spec.get("task") NPE'd into a 500. Now an IllegalArgumentException, which
 ApiExceptionHandler maps to a 400.
 Tests: full `./gradlew test` green.
+
+## 40. BenchController.compare — null/empty a or b [bug/high]
+A null list NPE'd in the for-loop; an empty list crashed later on ra.get(0) (and neither was
+covered by the inner catch). Early validation now throws IllegalArgumentException (mapped to a 400
+by ApiExceptionHandler).
+Tests: full `./gradlew test` green.
