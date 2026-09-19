@@ -104,10 +104,13 @@ public final class Tailer {
         try {
             long size = Files.size(path);
             long start = offsets.getOrDefault(path.toString(), 0L);
+            if (size < start) offsets.put(path.toString(), 0L);   // truncated/rotated: restart from the top, else we'd never read again
             if (size <= start) return List.of();
             try (RandomAccessFile raf = new RandomAccessFile(path.toFile(), "r")) {
                 raf.seek(start);
-                byte[] data = new byte[(int) (size - start)];
+                long len = size - start;
+                if (len > Integer.MAX_VALUE) len = Integer.MAX_VALUE;   // clamp; the remainder is picked up on the next poll
+                byte[] data = new byte[(int) len];
                 int read = raf.read(data);
                 if (read <= 0) return List.of();
                 int lastNl = -1;

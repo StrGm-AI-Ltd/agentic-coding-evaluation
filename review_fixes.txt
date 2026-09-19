@@ -210,3 +210,10 @@ Files.list holds an open directory FD; with poll() in a 2-second loop each poll 
 heading for the process FD limit. Now try-with-resources (sorted()/toList() fully materialize
 inside the try).
 Tests: full `./gradlew test` green (TailerTest).
+
+## 47. Tailer.tailLines - truncation left a permanently stale offset [bug/medium]
+When the file shrank below the saved offset (rotation/truncation), `size <= start` returned
+empty forever. Now a size < start resets the offset to 0 so new content is tailed.
+(Also in this point's neighbourhood: the (int)(size - start) cast was clamped at Integer.MAX_VALUE
+so a >2GiB unread tail cannot NegativeArraySizeException; the remainder is read on the next poll.)
+Tests: full `./gradlew test` green (TailerTest).
