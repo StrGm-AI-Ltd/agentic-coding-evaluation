@@ -13,8 +13,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
     public static final String RUN_ID = "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$";
 
     public RunSpec {
-        taskWall = nonNeg(taskWall); taskTokens = nonNeg(taskTokens); implWall = nonNeg(implWall); implTokens = nonNeg(implTokens);
-        contextWindow = nonNeg(contextWindow);
+        taskWall = positive(taskWall); taskTokens = positive(taskTokens); implWall = positive(implWall); implTokens = positive(implTokens);
+        contextWindow = positive(contextWindow);
         if (runId != null && !runId.matches(RUN_ID)) throw new IllegalArgumentException("invalid run id: " + runId);
         if (mode != null && !List.of("monolithic", "orchestrated").contains(mode))
             throw new IllegalArgumentException("mode must be monolithic or orchestrated");
@@ -22,7 +22,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
             throw new IllegalArgumentException("plan_source must be agent or reference");
     }
 
-    private static Integer nonNeg(Integer v) { return v == null || v > 0 ? v : failPositive(v); }
+    private static Integer positive(Integer v) { return v == null || v > 0 ? v : failPositive(v); }
     private static Integer failPositive(Integer v) { throw new IllegalArgumentException("budgets must be positive: " + v); }
 
     public static final Set<String> TERMINAL = Set.of("succeeded", "failed", "cancelled");

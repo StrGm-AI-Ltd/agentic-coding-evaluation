@@ -199,3 +199,8 @@ non-terminal status and throws if 0 rows were updated.
 The UPDATE now requires status IN ('failed','cancelled','blocked'), so a concurrent cancel of a
 blocked job is not silently undone; 0 rows -> explicit error.
 Tests: full `./gradlew test` green (JobQueueIT passes with the guarded statements).
+
+## 45. RunSpec.nonNeg - misleading name [maintainability/low]
+The method enforces strict positivity (0 is rejected, "budgets must be positive") despite the
+"nonNeg" name. Renamed to positive().
+Tests: full `./gradlew test` green.
