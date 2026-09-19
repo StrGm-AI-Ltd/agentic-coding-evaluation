@@ -127,3 +127,8 @@ URLDecoder.decode(..., UTF_8).
 The executor is stored in a field and shutdownNow()'d in stop() instead of waiting out 60s
 keep-alives.
 Tests: full `./gradlew test` green after the changes (shared run for the same-file points).
+
+## 30. Reviews.changedSources — top-level skip dirs missed [maintainability/low]
+`path.contains("/" + d + "/")` requires a leading slash, so a changed file directly under a
+top-level skip dir (build/Foo.java) was wrongly reported as code, flipping modified_code/
+modified_paths. Switched to path-segment membership, matching BuildChecks.
