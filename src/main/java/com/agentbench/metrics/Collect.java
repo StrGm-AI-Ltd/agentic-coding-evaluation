@@ -104,7 +104,8 @@ public final class Collect {
         double fixTokens = waves.stream().mapToDouble(w -> num(w.get("fix_tokens"))).sum();
         double allTokens = ((List<?>) manifest.getOrDefault("tasks", List.of())).stream().mapToDouble(t -> num(((Map<String, Object>) t).get("token_budget"))).sum();
         double friction = 0.4 * (allTokens > 0 ? fixTokens / allTokens : 0);
-        return 0.3 * 100 + 0.3 * parallelism + 0.4 * (100 * (1 - friction)) - 0.3 * 100 + 0.3 * 100 - 0.3 * 100 + 30;   // = 30 + 0.3*par + 0.4*(100-friction*100)
+        // closed form of 0.3 x validity(=100, guaranteed by the valid check above) + 0.3 x parallelism + 0.4 x (100 x (1-friction))
+        return 30 + 0.3 * parallelism + 0.4 * (100 * (1 - friction));
     }
 
     /** per-step scores: definition/plan from their oracle checks, each task from its attributed

@@ -64,3 +64,10 @@ guard + LinkedHashMap, matching the null-safe access pattern used two lines up.
 If trajectory_review were absent/null while tr held a score, the raw cast NPE'd; for a non-Map it
 CCE'd. Now guarded with the same instanceof pattern (via tr) as the calibration-gap line.
 Tests: full `./gradlew test` green after each change.
+
+## 13. Collect.parallelTerm — opaque algebraic tautology [maintainability/medium]
+The four `0.3 * 100` terms cancel exactly, hiding the validity component that the javadoc promises
+and inviting a wrong simplification. Replaced with the explicit closed form
+`30 + 0.3 * parallelism + 0.4 * (100 * (1 - friction))` with a comment noting validity=100 is the
+constant 30. Identical value (validity is forced to 100 by the early-return above).
+Tests: full `./gradlew test` green.
