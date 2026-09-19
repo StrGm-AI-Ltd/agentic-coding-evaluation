@@ -108,7 +108,7 @@ public final class RunBenchSupport {
         return targets.stream().filter(ProcessHandle::isAlive).map(ProcessHandle::pid).toList();
     }
 
-    public static Optional<String> gradleHome() {
+    public static Optional<String> javaHome() {
         String jh = System.getenv("AB_JAVA_HOME");
         if (jh != null && Files.isRegularFile(Paths.get(jh, "bin/java"))) return Optional.of(jh);
         return Optional.empty();
