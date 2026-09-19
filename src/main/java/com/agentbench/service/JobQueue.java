@@ -98,8 +98,13 @@ public class JobQueue {
             throw new IllegalStateException("job " + jobId + " is " + job.get("status") + "; only failed, cancelled or blocked jobs can be requeued");
         if ("run".equals(job.get("kind")) && java.nio.file.Path.of(resultsDir, String.valueOf(job.get("run_id"))).toFile().exists())
             throw new IllegalStateException("results/" + job.get("run_id") + " exists and a re-run would mix its files. Move it aside first");
-        jdbc.update("UPDATE jobs SET status = 'queued', cancel_requested = false, blocked_reason = NULL, pid = NULL, "
-                + "exit_code = NULL, result_line = NULL, started_at = NULL, finished_at = NULL, enqueued_at = now() WHERE id = ?", jobId);
+        // status IN (...) in the WHERE makes the update atomic with the check above: a concurrent
+        // cancel of a blocked job must not be silently un-done by the flip back to 'queued'
+        int updated = jdbc.update("UPDATE jobs SET status = 'queued', cancel_requested = false, blocked_reason = NULL, pid = NULL, "
+                + "exit_code = NULL, result_line = NULL, started_at = NULL, finished_at = NULL, enqueued_at = now() "
+                + "WHERE id = ? AND status IN ('failed','cancelled','blocked')", jobId);
+        if (updated == 0)
+            throw new IllegalStateException("job " + jobId + " status changed concurrently; re-try the requeue");
         return get(jobId);
     }
 
