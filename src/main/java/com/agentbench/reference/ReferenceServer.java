@@ -7,8 +7,11 @@ import com.sun.net.httpserver.HttpServer;
 
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /** Port of oracle/reference_server.py's entrypoint: the reference trading server on a plain JDK
@@ -18,6 +21,7 @@ public final class ReferenceServer {
     private static final ObjectMapper JSON = new ObjectMapper();
     private final TradingService svc;
     private HttpServer server;
+    private ExecutorService executor;
 
     public ReferenceServer(TradingService svc) { this.svc = svc; }
     public ReferenceServer(java.util.Set<String> bugs) { this(new TradingService(bugs)); }
@@ -26,12 +30,16 @@ public final class ReferenceServer {
     public int start(int port) throws Exception {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", port == 0 ? 0 : port), 0);
         server.createContext("/", x -> { try { route(x); } catch (Exception e) { try { x.close(); } catch (Exception ignore) {} } });
-        server.setExecutor(Executors.newCachedThreadPool());
+        executor = Executors.newCachedThreadPool();   // cached: the pool is shut down explicitly in stop()
+        server.setExecutor(executor);
         server.start();
         return server.getAddress().getPort();
     }
 
-    public void stop() { if (server != null) server.stop(0); }
+    public void stop() {
+        if (server != null) server.stop(0);
+        if (executor != null) executor.shutdownNow();   // without this the pool waits out its 60s keep-alive before dying
+    }
 
     private void route(HttpExchange x) throws Exception {
         String p = x.getRequestURI().getPath();
