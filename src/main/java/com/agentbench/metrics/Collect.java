@@ -68,15 +68,22 @@ public final class Collect {
             e.put("calibration_gap", functional == null ? null : round1(Math.abs(s.doubleValue() - functional)));
             leaderboard.put("self_review", e);
         }
-        if (tr.get("score") instanceof Number s) leaderboard.put("trajectory_review", Map.of("score", s.doubleValue(),
-                "calibration_gap", manifest.get("trajectory_review") instanceof Map<?, ?> tm && tm.get("objective_index_pct") instanceof Number oi
-                        ? round1(Math.abs(s.doubleValue() - oi.doubleValue())) : null));
+        if (tr.get("score") instanceof Number s) {
+            // instanceof guard (not a bare cast): a non-Map trajectory_review degrades gracefully;
+            // LinkedHashMap because the calibration_gap may be null, which Map.of would reject
+            boolean hasObj = manifest.get("trajectory_review") instanceof Map<?, ?> tm && tm.get("objective_index_pct") instanceof Number oi;
+            Map<String, Object> e = new LinkedHashMap<>();
+            e.put("score", s.doubleValue());
+            e.put("calibration_gap", hasObj ? round1(Math.abs(s.doubleValue() - ((Number) ((Map<?, ?>) manifest.get("trajectory_review")).get("objective_index_pct")).doubleValue())) : null);
+            leaderboard.put("trajectory_review", e);
+        }
         if (pp.get("evaluation") instanceof Map<?, ?> ev) leaderboard.put("parallel_plan", Map.of("term", parallelTerm(manifest)));
         if (composite != null) {
             double base = composite * (1 - wc - wt - wp);
             double codeTerm = sr.get("score") instanceof Number s && functional != null
                     ? wc * (100 - Math.abs(s.doubleValue() - functional)) : 0;   // a missing/unparseable review scores 0 at full weight
-            double trajTerm = tr.get("score") instanceof Number s && ((Map<?, ?>) manifest.get("trajectory_review")).get("objective_index_pct") instanceof Number oi
+            // guard with instanceof (a raw cast would CCE on a non-Map, NPE on a missing key) before fetching
+            double trajTerm = tr.get("score") instanceof Number s && tr.get("objective_index_pct") instanceof Number oi
                     ? wt * (100 - Math.abs(s.doubleValue() - oi.doubleValue())) : 0;
             double parTerm = wp * parallelTerm(manifest);
             leaderboard.put("agent_result_pct", round1(base + codeTerm + trajTerm + parTerm));

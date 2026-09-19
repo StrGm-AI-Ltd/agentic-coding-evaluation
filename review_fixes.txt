@@ -55,3 +55,12 @@ Tests: full `./gradlew test` green.
 When the oracle reported no numeric functional_score_pct, the ternary yielded a null calibration_gap
 and `Map.of` threw NPE, crashing the whole collect. Replaced with a LinkedHashMap (null-tolerant).
 Tests: full `./gradlew test` green.
+
+## 11. Collect — `Map.of` NPE + unchecked cast in the trajectory_review block [bug/critical]
+Same class of bug as #10 (null calibration_gap kills Map.of) plus a bare unchecked cast on
+manifest.get("trajectory_review") that would CCE on a non-Map. Rewritten with the instanceof
+guard + LinkedHashMap, matching the null-safe access pattern used two lines up.
+## 12. Collect — trajTerm re-fetched via a bare unchecked cast [bug/medium]
+If trajectory_review were absent/null while tr held a score, the raw cast NPE'd; for a non-Map it
+CCE'd. Now guarded with the same instanceof pattern (via tr) as the calibration-gap line.
+Tests: full `./gradlew test` green after each change.
