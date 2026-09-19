@@ -113,3 +113,17 @@ The input fields stay public (RunBench reads deps/checks) but the class javadoc 
 NullNode is not a MissingNode, so the guard passed and asText() contributed the literal string
 "null". Added `!isNull()`, matching the content check two lines above.
 Tests: full `./gradlew test` green after each change.
+
+## 23. ReferenceServer — a malformed asOf slipped past the 400 catch [bug/high]
+Instant.parse throws DateTimeParseException (a RuntimeException, not IllegalArgumentException),
+so a bad asOf reached the outer lambda, which only closed the exchange - a connection reset, not
+a 400. parseAsOf() now converts it to IllegalArgumentException.
+## 24. ReferenceServer - unknown /accounts/{id}/X sub-resources left the client hanging [bug/high]
+With parts[2] != "holdings" neither branch called reply(); added a 404 fallback.
+## 25. ReferenceServer.param — value not URL-decoded [bug/medium]
+getQuery() is still percent-encoded, so asOf=2024-01-15T10%3A30%3A00Z failed Instant.parse. Now
+URLDecoder.decode(..., UTF_8).
+## 26. ReferenceServer.stop - the cached thread pool was never shut down [maintainability/low]
+The executor is stored in a field and shutdownNow()'d in stop() instead of waiting out 60s
+keep-alives.
+Tests: full `./gradlew test` green after the changes (shared run for the same-file points).
