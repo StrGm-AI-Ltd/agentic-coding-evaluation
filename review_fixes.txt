@@ -262,3 +262,12 @@ Tests: full `./gradlew test` green.
 Documented the intent: with an empty map a 1.0 scale is a mutating no-op that must simply not
 throw, rather than removing a deliberate "does not blow up" probe.
 Tests: full `./gradlew test` green.
+
+## 57. PacksTest / JournalFactsTest / RunBenchTest - temp files and dirs never deleted [maintainability/low]
+Each class now tracks the temp paths it creates in a Set and deletes them in an @AfterEach
+(Files.deleteIfExists for the files, a recursive walk for RunBenchTest's workspace dir), so
+repeated local/CI runs stop accumulating in $TMPDIR.
+## 61. RunBenchTest.everyLadderTask... - `generic` may be null [bug/medium]
+getResourceAsStream("/tasks/PROMPT.md") can be null; `generic.readAllBytes()` would then NPE with
+a confusing message. Added assertNotNull(generic, ...) before dereferencing.
+Tests: full `./gradlew test` green.

@@ -1,16 +1,32 @@
 package com.agentbench.pack;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /** The packs' reproducibility contract and the tolerant review/parallel-plan parsers. */
 class PacksTest {
+
+    // temp files accumulate in the OS temp dir across local/CI runs - track and delete them
+        private final Set<Path> temps = new HashSet<>();
+
+    private Path track(Path p) { temps.add(p); return p; }
+
+    @AfterEach
+    void cleanUp() throws IOException {
+        for (Path p : temps) Files.deleteIfExists(p);
+        temps.clear();
+    }
+
 
     @Test
     void capsScaleWithTheWindowAndTheContractNeverTruncates() {
@@ -53,7 +69,7 @@ class PacksTest {
 
     @Test
     void parseSelfReviewIsTolerantOfPercentageFractionsAndSeveritySynonyms() throws Exception {
-        Path f = Files.createTempFile("review", ".json");
+        Path f = track(Files.createTempFile("review", ".json"));
         Files.writeString(f, """
                 some prose before the JSON, because models do that
                 {"score": "85%", "confidence": 0.7, "categories": {"tests": 0.9},
@@ -72,7 +88,7 @@ class PacksTest {
 
     @Test
     void parseSelfReviewRejectsScorelessJson() throws Exception {
-        Path f = Files.createTempFile("review", ".json");
+        Path f = track(Files.createTempFile("review", ".json"));
         Files.writeString(f, "{\"confidence\": 0.5}");
         assertNull(Packs.parseSelfReview(f));
         assertNull(Packs.parseSelfReview(Path.of("/nonexistent")));
@@ -80,7 +96,7 @@ class PacksTest {
 
     @Test
     void parseTrajectoryReviewKeepsItsOwnFields() throws Exception {
-        Path f = Files.createTempFile("traj", ".json");
+        Path f = track(Files.createTempFile("traj", ".json"));
         Files.writeString(f, "{\"score\": 70, \"confidence\": 0.8, \"categories\": {\"efficiency\": 60}, \"findings\": [], \"wasted_turns_estimate\": 12, \"would_trust_unsupervised\": false}");
         Map<String, Object> parsed = Packs.parseTrajectoryReview(f);
         assertEquals(70.0, parsed.get("score"));
@@ -90,7 +106,7 @@ class PacksTest {
 
     @Test
     void parseParallelPlanNormalizesIdsAndAcceptsBareTaskWaves() throws Exception {
-        Path f = Files.createTempFile("pp", ".json");
+        Path f = track(Files.createTempFile("pp", ".json"));
         Files.writeString(f, """
                 noise before
                 {"waves": [["Task 1"], ["ST-02", "T4"], "T3"],
@@ -103,7 +119,7 @@ class PacksTest {
         assertEquals(List.of("orders/Orders.java"), ((Map<?, ?>) parsed.get("ownership")).get("T2"));   // a bare glob is a one-glob list
         assertEquals(List.of("settings.gradle"), parsed.get("shared_files"));
         assertNull(Packs.parseParallelPlan(Path.of("/nonexistent")));
-        Path bad = Files.createTempFile("pp-bad", ".json");
+        Path bad = track(Files.createTempFile("pp-bad", ".json"));
         Files.writeString(bad, "{\"ownership\": {}}");
         assertNull(Packs.parseParallelPlan(bad), "no waves -> no plan");
     }

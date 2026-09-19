@@ -3,12 +3,16 @@ package com.agentbench.runner;
 import com.agentbench.agent.ReferenceAgent;
 import com.agentbench.config.BenchProperties;
 import com.agentbench.oracle.RunOracle;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
@@ -20,6 +24,23 @@ import static org.mockito.Mockito.mock;
  *  tasks/&lt;task&gt;/PROMPT.md, first). Fixed by vendoring the prompts as classpath resources
  *  (matching how tasks/ladder.json already works) and preferring the task-specific one. */
 class RunBenchTest {
+
+    // the temp workspace dir(s) leak across runs - track and delete them recursively
+        private final Set<Path> temps = new HashSet<>();
+
+    private Path track(Path p) { temps.add(p); return p; }
+
+    @AfterEach
+    void cleanUp() throws IOException {
+        for (Path p : temps)
+            if (p != null && Files.exists(p)) {
+                try (var s = Files.walk(p)) {
+                    s.sorted(java.util.Comparator.reverseOrder()).forEach(x -> { try { Files.deleteIfExists(x); } catch (IOException ignore) {} });
+                }
+            }
+        temps.clear();
+    }
+
 
     private static RunBench runBench() {
         return new RunBench(mock(BenchProperties.class), mock(ReferenceAgent.class), mock(RecordingProxyFactory.class),
@@ -48,7 +69,7 @@ class RunBenchTest {
      *  Files.createDirectories(ws.resolve("task").getParent()) created only ws. */
     @Test
     void setUpTaskPromptCreatesTheTaskDirectoryItselfNotJustItsParent() throws Exception {
-        Path ws = Files.createTempDirectory("ws");   // a bare, empty workspace dir - nothing pre-created under it
+        Path ws = track(Files.createTempDirectory("ws"));   // a bare, empty workspace dir - nothing pre-created under it
 
         String text = runBench().setUpTaskPrompt(ws, "L3p_point_in_time");
 
@@ -66,6 +87,7 @@ class RunBenchTest {
             try (InputStream perTask = runBench().promptResource(task);
                  InputStream generic = RunBenchTest.class.getResourceAsStream("/tasks/PROMPT.md")) {
                 assertNotNull(perTask, task + " must resolve to a vendored prompt");
+                assertNotNull(generic, "the generic tasks/PROMPT.md must be vendored");   // a missing resource is a clear message, not an NPE
                 String taskText = new String(perTask.readAllBytes(), StandardCharsets.UTF_8);
                 String genericText = new String(generic.readAllBytes(), StandardCharsets.UTF_8);
                 assertNotEquals(genericText, taskText, task + " must not silently fall back to the generic prompt");
