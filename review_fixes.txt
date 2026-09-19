@@ -162,3 +162,8 @@ The same regex was re-parsed for every output line; hoisted to a static final ER
 ## 38. VerifyTask — DocumentBuilderFactory.newInstance() per XML file [performance/low]
 One factory (and per-file builder) is now created before the loop.
 Tests: full `./gradlew test` green after the changes (shared run for the same-file points).
+
+## 30. Reviews.changedSources — a changed file directly under a TOP-LEVEL skip dir was reported as code [maintainability/low]
+`path.contains("/" + d + "/")` needs a leading slash, so build/Foo.java slipped through. Now path
+segments are tested for membership, matching BuildChecks.
+Tests: full `./gradlew test` green.

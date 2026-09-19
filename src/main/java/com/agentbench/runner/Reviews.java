@@ -36,7 +36,10 @@ public class Reviews {
             if (l.isBlank()) continue;
             String path = l.length() > 3 ? l.substring(3).strip().replaceAll("^\"|\"$", "") : "";
             boolean excluded = Arrays.stream(excludePrefixes).anyMatch(path::startsWith);
-            if (excluded || com.agentbench.oracle.checks.BuildChecks.SKIP_DIRS.stream().anyMatch(d -> path.contains("/" + d + "/"))) continue;
+            // segment membership (like BuildChecks) instead of "/dir/": a file directly under a TOP-LEVEL
+            // skip dir (build/Foo.java) has no leading slash and would be wrongly reported as code
+            boolean skipDir = java.util.Arrays.stream(path.split("/")).anyMatch(com.agentbench.oracle.checks.BuildChecks.SKIP_DIRS::contains);
+            if (excluded || skipDir) continue;
             if (List.of(".jar", ".class", ".war").stream().anyMatch(path::endsWith)) continue;
             out.add(path);
         }
