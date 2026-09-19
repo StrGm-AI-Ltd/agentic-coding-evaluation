@@ -88,8 +88,13 @@ public class RunOracle {
         rep.put("docker_available", dockerOk);
         rep.put("scored_at", Instant.now().toString());
         DockerService.Sh digest = DockerService.sh(20, "docker", "image", "inspect", "--format", "{{index .RepoDigests 0}}", BUILD_IMAGE);
-        rep.put("provenance", Map.of("build_image", BUILD_IMAGE, "build_image_digest", digest.rc() == 0 ? digest.out().strip() : null,
-                "checks", wanted.stream().map(Enum::name).toList()));
+        // LinkedHashMap: a failed `docker image inspect` (image not pulled/pruned) leaves the digest
+        // null, and Map.of would NPE and kill the whole scoring run
+        var prov = new LinkedHashMap<String, Object>();
+        prov.put("build_image", BUILD_IMAGE);
+        prov.put("build_image_digest", digest.rc() == 0 ? digest.out().strip() : null);
+        prov.put("checks", wanted.stream().map(Enum::name).toList());
+        rep.put("provenance", prov);
         rep.put("results", records.stream().map(r -> Map.of(
                 "id", r.id().name(), "status", r.status().name(), "weight", r.id().weight, "detail", r.detail())).toList());
         return rep;
