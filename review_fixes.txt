@@ -251,3 +251,9 @@ Tests: DockerApplicationIT is docker-tagged; full `./gradlew test` green + compi
 ## 55. AgentToolsTest.compactionStubs... - unused `req` local [maintainability/low]
 The c1 request was declared but never added (the loop builds its own c0..c5). Removed.
 Tests: full `./gradlew test` green.
+
+## 56. AgentToolsTest.readIsRangedAndCapped - ineffective line-cap assertion [test/medium]
+`"line\nline"` can never appear (every line carries its "%5d: " number prefix), so the assertion
+passed even with no cap. Replaced with a check of the truncation indicator ("more lines" for the
+500-line file) plus a negative check that line 300 is beyond the 250-line cap.
+Tests: full `./gradlew test` green.

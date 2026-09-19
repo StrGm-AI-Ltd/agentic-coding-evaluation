@@ -39,7 +39,10 @@ class AgentToolsTest {
         Files.writeString(big, (String.join("", java.util.Collections.nCopies(500, "line\n"))));
         AgentTools.Outcome all = AgentTools.read(ws.toString(), Map.of("path", "big.txt"));
         assertFalse(all.isError());
-        assertFalse(all.output().contains("line\nline"), "the default read must cap the line count");   // capped at READ_MAX_LINES
+        // the read caps at READ_MAX_LINES (250) of the 500: the tail must announce the unread remainder -
+        // the old substring check could never match because every line carries its "%5d: " prefix
+        assertTrue(all.output().contains("more lines"), "the default read must cap the line count");   // capped at READ_MAX_LINES
+        assertFalse(all.output().contains("  300:"), "line 300 must be beyond the 250-line cap");
         AgentTools.Outcome range = AgentTools.read(ws.toString(), Map.of("path", "big.txt", "start_line", 3, "end_line", 5));
         assertTrue(range.output().contains("more lines"), range.output());   // the tail says how much was not read
         AgentTools.Outcome missing = AgentTools.read(ws.toString(), Map.of("path", "nope.txt"));
