@@ -53,7 +53,8 @@ public class RunOracle {
             catch (Exception e) { got.put(id, CheckResult.fail(id, "checker crashed: " + e)); }
         }
         // ---- the docker-gated scripts, as one gate (the Python oracle gates per script) ----
-        List<CheckId> gated = wanted.stream().filter(id -> !offline.contains(id) && id != CheckId.P1).toList();
+        // P1 needs no extra exclusion: it is in `offline` above, so !offline.contains(id) already filters it
+        List<CheckId> gated = wanted.stream().filter(id -> !offline.contains(id)).toList();
         boolean dockerOk = DockerService.sh(15, "docker", "info", "--format", "{{.ServerVersion}}").rc() == 0;
         if (dockerOk) {
             try {   // 03_build.py: the pinned container, the sidecar, the mutation
