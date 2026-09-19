@@ -28,6 +28,9 @@ import java.util.*;
 @Component
 public class ReferenceAgent {
     public static final String AGENT_VERSION = "jls-ref-1.0";
+    /** ObjectMapper is thread-safe and designed for reuse; constructing one per tool call (up to 400
+     * turns x several calls) would allocate hundreds of expensive serializer/deserializer instances. */
+    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
 
     public static final String SYSTEM = """
             You are an autonomous software engineer working non-interactively in the repository at {cwd} (today {date}). 
@@ -169,7 +172,7 @@ public class ReferenceAgent {
             }
             for (ToolExecutionRequest c : calls) {
                 Map<String, Object> args;
-                try { args = new com.fasterxml.jackson.databind.ObjectMapper().readValue(c.arguments(), Map.class); }
+                try { args = MAPPER.readValue(c.arguments(), Map.class); }
                 catch (Exception e) { args = Map.of(); }
                 AgentTools.Outcome out = executeTool(c.name(), args, cwd, env);
                 if (out.isError()) toolErrors++;
