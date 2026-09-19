@@ -10,7 +10,13 @@ WORKDIR /src
 # in-image build, provide it via a sibling gradle.properties copied here, not the host file.
 COPY gradlew settings.gradle.kts build.gradle.kts ./
 COPY gradle ./gradle
-RUN chmod +x gradlew && ./gradlew --version
+# pre-fetch ALL dependencies into this layer: a one-line source change invalidates only the src
+# layer below, never a full Maven Central re-download. The probe class is a dummy so compileJava
+# (and thus the whole dependency graph) resolves before the real sources arrive.
+RUN chmod +x gradlew && ./gradlew --version \
+    && mkdir -p src/main/java/com/agentbench \
+    && echo 'package com.agentbench; final class __probe{}' > src/main/java/com/agentbench/__probe.java \
+    && ./gradlew --no-daemon compileJava
 COPY src ./src
 RUN ./gradlew bootJar --no-daemon -x test
 # bootJar's own jar, not the plain classes-only one the `jar` task also produces

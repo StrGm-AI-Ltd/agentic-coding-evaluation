@@ -306,3 +306,9 @@ No USER directive. Added an unprivileged `appuser` (adduser --disabled-password)
 jar to it, and `USER appuser` before EXPOSE/ENTRYPOINT, so a compromise of the app cannot start
 with root's blast radius.
 Tests: no code change; full `./gradlew test` green.
+
+## 65. Dockerfile - a source change re-ran the dependency download [performance/medium]
+COPY src preceded the only gradle invocation, so every source edit invalidated the layer that
+also resolved dependencies. Added a pre-fetch layer (probe class + compileJava) between the
+build-file copy and the source copy; source-only changes now reuse the cached dependencies.
+Tests: no code change; full `./gradlew test` green.
