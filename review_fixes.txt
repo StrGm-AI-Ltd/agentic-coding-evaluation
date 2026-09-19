@@ -190,3 +190,12 @@ or stuck job held a thread forever. Now a bounded (16) daemon pool + a 30-minute
 a timed-out stream ends, the job itself keeps running, and the worker releases itself on the next
 send.
 Tests: full `./gradlew test` green.
+
+## 43. JobQueue.cancel - check-then-act race [bug/high]
+Between the get() and the UPDATE a concurrent finish() could reach a terminal state, and the
+CASE (filtering only on id) would write 'cancelled' over it. The UPDATE now requires a
+non-terminal status and throws if 0 rows were updated.
+## 44. JobQueue.requeue - same pattern [bug/medium]
+The UPDATE now requires status IN ('failed','cancelled','blocked'), so a concurrent cancel of a
+blocked job is not silently undone; 0 rows -> explicit error.
+Tests: full `./gradlew test` green (JobQueueIT passes with the guarded statements).
