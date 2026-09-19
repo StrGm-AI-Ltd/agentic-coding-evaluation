@@ -283,3 +283,9 @@ The chat() template already emits "status": 200 and the test's topExtra added "s
 producing a duplicate key (RFC 8259: members SHOULD be unique) that only last-wins parsers tolerate.
 chat() now takes an explicit status overload that replaces the template's 200; the 429 test uses it.
 Tests: full `./gradlew test` green (JournalFactsTest).
+
+## 62. ValidityTest - `instanceof Boolean` assertion was a tautology [bug/high]
+Validity.validity() always puts a boolean for "valid", so `instanceof Boolean` passed even when
+valid was false - the "10% <= maxErrorRate: fine" intent was never verified. Replaced with
+`assertTrue((Boolean) ... .get("valid"), ...)`.
+Tests: full `./gradlew test` green.
