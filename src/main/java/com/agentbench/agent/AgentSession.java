@@ -47,8 +47,8 @@ public final class AgentSession {
                 "cwd", cwd, "reasoning_effort", reasoningEffort == null ? "" : reasoningEffort, "ts", Instant.now().toString()));
     }
 
-    public void system(String text) throws IOException { message("system", text, null, null, null); }
-    public void user(String text) throws IOException { message("user", text, null, null, null); }
+    public void system(String text) throws IOException { message("system", text); }
+    public void user(String text) throws IOException { message("user", text); }
 
     public void assistant(String text, List<ToolExecutionRequest> calls, String finish, Map<String, Object> usage) throws IOException {
         List<Map<String, Object>> parts = new ArrayList<>();
@@ -89,7 +89,7 @@ public final class AgentSession {
                 "finish", finish == null ? "" : finish, "ts", Instant.now().toString()));
     }
 
-    private void message(String role, String text, Void a, Void b, Void c) throws IOException {
+    private void message(String role, String text) throws IOException {
         Map<String, Object> msg = new LinkedHashMap<>();
         msg.put("role", role);
         msg.put("content", List.of(Map.of("type", "text", "text", text)));
