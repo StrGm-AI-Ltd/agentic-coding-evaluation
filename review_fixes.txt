@@ -183,3 +183,10 @@ Tests: full `./gradlew test` green.
 A missing key NPE'd on unboxing, a non-Number CCE'd - both 500s. Now an instanceof Number guard
 (400 via ApiExceptionHandler), matching enqueue's safe pattern.
 Tests: full `./gradlew test` green.
+
+## 42. BenchController.events - unbounded raw threads per SSE client [performance/medium]
+Each connection spawned a non-daemon Thread with an SseEmitter(0L) (no timeout); a leaked client
+or stuck job held a thread forever. Now a bounded (16) daemon pool + a 30-minute emitter timeout;
+a timed-out stream ends, the job itself keeps running, and the worker releases itself on the next
+send.
+Tests: full `./gradlew test` green.

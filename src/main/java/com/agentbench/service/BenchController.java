@@ -254,12 +254,23 @@ public class BenchController {
         return functional.get("mean") instanceof Number n ? n.doubleValue() : 0;
     }
 
+    /** One bounded, daemon pool for ALL SSE connections: an unbounded raw Thread per client is a
+     *  DoS vector, and non-daemon threads block JVM shutdown. A timed-out emitter makes the loop's
+     *  next send throw, which releases its worker - the JOB keeps running, only the stream ends. */
+    private static final java.util.concurrent.ExecutorService SSE_EXECUTOR =
+            java.util.concurrent.Executors.newFixedThreadPool(16, r -> {
+                Thread t = new Thread(r, "job-events");
+                t.setDaemon(true);
+                return t;
+            });
+
     /** port of the jobs SSE endpoint: live progress from the files the run writes, plus job status */
     @GetMapping("/api/jobs/{id}/events")
     public SseEmitter events(@PathVariable long id) {
-        SseEmitter emitter = new SseEmitter(0L);
+        // 30-min idle timeout as a safety net; a healthy stream self-terminates on a terminal status
+        SseEmitter emitter = new SseEmitter(30 * 60 * 1000L);
         Tailer tailer = new Tailer();
-        new Thread(() -> {
+        SSE_EXECUTOR.submit(() -> {
             try {
                 while (true) {
                     Map<String, Object> job = queue.get(id);
@@ -270,7 +281,7 @@ public class BenchController {
                     Thread.sleep(2000);
                 }
             } catch (Exception e) { emitter.complete(); }
-        }, "job-events-" + id).start();
+        });
         return emitter;
     }
 
