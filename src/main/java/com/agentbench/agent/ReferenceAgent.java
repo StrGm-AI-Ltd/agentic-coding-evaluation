@@ -181,6 +181,8 @@ public class ReferenceAgent {
             }
             if (System.currentTimeMillis() >= deadline) { rc = 124; break; }   // wall budget: the harness kills the tree too
         }
+        // a turn-capped exit (rc still 0) means the model never stopped on its own: report a failure, not a success
+        if (rc == 0 && turns >= MAX_TURNS) { rc = 1; finish = finish == null ? "turn_limit" : finish; }
         session.end(turns, toolErrors, compactions, finish);
         return result(name, rc, t0, finish, turns, toolErrors, compactions, session, start);
     }
