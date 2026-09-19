@@ -6,13 +6,13 @@ import java.nio.file.*;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 
 /** Ports of run_bench.py's process-level machinery: the single-run lock (two runs would share the
  *  model server and fight over Docker), git workspace snapshots (the commit SHAs live OUTSIDE the
- *  workspace; the bundle is P3's evidence), the kill tree (SIGTERM the process group and every
- *  descendant, then SIGKILL survivors) and the scrubbed environment (PATH/LANG/TMPDIR only, no
- *  operator tokens, a pinned JAVA_HOME first on PATH). */
+ *  workspace; the bundle is P3's evidence) and the scrubbed environment (PATH/LANG/TMPDIR only, no
+ *  operator tokens, a pinned JAVA_HOME first on PATH). run_bench.py's kill_tree was deliberately NOT
+ *  ported: Java's ProcessHandle.Info exposes only command()/commandLine()/arguments(), never the
+ *  process environment, so its AB_RUN_ID sweep could never match; descendants() covers the process tree. */
 public final class RunBenchSupport {
     private RunBenchSupport() {}
 
@@ -82,30 +82,6 @@ public final class RunBenchSupport {
         List<String> cmd = new ArrayList<>(List.of("git", "-C", ws.toString()));
         cmd.addAll(List.of(args));
         return new ProcessBuilder(cmd).start();
-    }
-
-    /** port of kill_tree: SIGTERM every descendant, then SIGKILL survivors (Java's ProcessHandle
-     *  replaces the ppid walk; processes marked with AB_RUN_ID are swept too). */
-    public static List<Long> killTree(ProcessHandle root, String runId) {
-        Set<ProcessHandle> targets = new LinkedHashSet<>();
-        root.descendants().forEach(targets::add);
-        targets.add(root);
-        if (runId != null)
-            ProcessHandle.allProcesses().forEach(ph -> ph.info().commandLine()
-                    .ifPresent(cl -> { if (cl.contains("AB_RUN_ID=" + runId)) targets.add(ph); }));
-        targets.remove(ProcessHandle.current());
-        for (int pass = 0; pass < 2; pass++) {
-            for (ProcessHandle t : targets) { try { if (pass == 0) t.destroy(); else t.destroyForcibly(); } catch (Exception ignore) {} }
-            long deadline = System.currentTimeMillis() + 20000;
-            List<Long> survivors = new ArrayList<>();
-            while (System.currentTimeMillis() < deadline) {
-                survivors.clear();
-                for (ProcessHandle t : targets) if (t.isAlive()) survivors.add(t.pid());
-                if (survivors.isEmpty()) return List.of();
-                try { TimeUnit.MILLISECONDS.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return survivors; }
-            }
-        }
-        return targets.stream().filter(ProcessHandle::isAlive).map(ProcessHandle::pid).toList();
     }
 
     public static Optional<String> javaHome() {

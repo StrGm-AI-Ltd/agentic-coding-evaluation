@@ -137,3 +137,10 @@ modified_paths. Switched to path-segment membership, matching BuildChecks.
 Never called, and its name promised a Gradle home while it actually read AB_JAVA_HOME (a JDK
 home). Renamed to javaHome(); callers wiring a JDK pin can discover it by its real meaning.
 Tests: full `./gradlew test` green.
+
+## 32+33. RunBenchSupport.killTree — dead method with a latent matching bug [bug/medium + maintainability/low]
+Never called, and its AB_RUN_ID sweep checked `info().commandLine()` while AB_RUN_ID is set as an
+environment variable - Java's ProcessHandle.Info never exposes the environment, so the sweep could
+never match any process. Removed the method (and the now-unused TimeUnit import) and the javadoc
+now records WHY the Python kill_tree was not ported, instead of a misleading trap.
+Tests: full `./gradlew test` green.
