@@ -107,8 +107,16 @@ public final class AgentSession {
             JsonNode m = r.path("message");
             if (!"message".equals(r.path("type").asText())) continue;
             switch (m.path("role").asText()) {
-                case "system" -> msgs.add(SystemMessage.from(m.path("content").get(0).path("text").asText()));
-                case "user" -> msgs.add(UserMessage.from(m.path("content").get(0).path("text").asText()));
+                case "system" -> {
+                    // path(0) yields MissingNode (not null) when content is absent/empty, so a truncated
+                    // or hand-edited session file degrades to a skipped message instead of an NPE on resume
+                    JsonNode c = m.path("content").path(0);
+                    if (!c.isMissingNode()) msgs.add(SystemMessage.from(c.path("text").asText()));
+                }
+                case "user" -> {
+                    JsonNode c = m.path("content").path(0);
+                    if (!c.isMissingNode()) msgs.add(UserMessage.from(c.path("text").asText()));
+                }
                 case "assistant" -> {
                     StringBuilder text = new StringBuilder();
                     List<ToolExecutionRequest> calls = new ArrayList<>();

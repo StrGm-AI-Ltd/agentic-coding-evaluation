@@ -1,1 +1,8 @@
 # review.txt fix log (agentbench-trading-service-jls) — round 2 (2026-07-23)
+
+## 1. AgentSession.loadMessages — NPE when a system/user record has empty or missing `content` [bug/high]
+Root cause: `m.path("content").get(0)` returns null for an empty/missing content array, so a
+truncated or hand-edited session file (re-read for --continue resume) crashed the program with an NPE.
+Fix: use `path(0)` (MissingNode, never null) and skip the message when it is a MissingNode, for
+both the system and user branches.
+Tests: full `./gradlew test` green (32s).
