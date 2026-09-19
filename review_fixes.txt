@@ -247,3 +247,7 @@ The fixture is now a @TempDir (JUnit deletes it) instead of a never-cleaned crea
 and tests 5/6 assume the rescan actually imported it-rescan-run-1 (clean skip) before asserting on
 it, making the ordering dependency explicit.
 Tests: DockerApplicationIT is docker-tagged; full `./gradlew test` green + compiles.
+
+## 55. AgentToolsTest.compactionStubs... - unused `req` local [maintainability/low]
+The c1 request was declared but never added (the loop builds its own c0..c5). Removed.
+Tests: full `./gradlew test` green.
