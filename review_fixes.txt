@@ -277,3 +277,9 @@ A bare sleep(5) then now() could land on the buy's own millisecond on a loaded C
 test reads the buy's real executedAt from the outcome and spins (sleep + re-read) until `between`
 is strictly after it, so the exclusive-boundary assertion is deterministic.
 Tests: full `./gradlew test` green (TradingServiceTest).
+
+## 60. JournalFactsTest - the 429 test baked a second "status" into the JSON [bug/medium]
+The chat() template already emits "status": 200 and the test's topExtra added "status": 429,
+producing a duplicate key (RFC 8259: members SHOULD be unique) that only last-wins parsers tolerate.
+chat() now takes an explicit status overload that replaces the template's 200; the 429 test uses it.
+Tests: full `./gradlew test` green (JournalFactsTest).

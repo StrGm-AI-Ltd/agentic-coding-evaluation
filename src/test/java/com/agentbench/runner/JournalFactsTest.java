@@ -29,9 +29,15 @@ class JournalFactsTest {
     }
 
     private static String chat(String ts, String topExtra, String respExtra, String requestJson) {
+        return chat(ts, 200, topExtra, respExtra, requestJson);
+    }
+
+    // an explicit status overrides the template's 200 - the old topExtra-only way produced a DUPLICATE
+    // "status" key (RFC 8259: members SHOULD be unique; the test passed only by last-wins parsing luck)
+    private static String chat(String ts, int status, String topExtra, String respExtra, String requestJson) {
         String usage = respExtra.contains("\"usage\"") ? "" : "\"usage\": {\"completion_tokens\": 2, \"prompt_tokens\": 50}";
         String respSep = (respExtra.isBlank() || usage.isBlank()) ? "" : ",";
-        return "{\"ts\": \"" + ts + "\", \"path\": \"/v1/chat/completions\", \"status\": 200" + topExtra
+        return "{\"ts\": \"" + ts + "\", \"path\": \"/v1/chat/completions\", \"status\": " + status + topExtra
                 + ", \"request\": " + requestJson + ", \"response\": {" + respExtra + respSep + usage + "}}\n";
     }
 
@@ -66,7 +72,7 @@ class JournalFactsTest {
     @Test
     void budgetRefusalsCountSeparatelyFromErrors() throws Exception {
         Path j = track(Files.createTempFile("j", ".jsonl"));
-        Files.writeString(j, chat("2026-09-14T10:00:00Z", ", \"status\": 429, \"budget_exceeded\": true", "", REQ));
+        Files.writeString(j, chat("2026-09-14T10:00:00Z", 429, ", \"budget_exceeded\": true", "", REQ));
         Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null);
         assertEquals(1, ((Number) f.get("budget_refusals")).intValue());
         assertEquals(0, ((Number) f.get("errors")).intValue());
