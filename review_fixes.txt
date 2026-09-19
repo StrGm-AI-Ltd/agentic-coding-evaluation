@@ -6,3 +6,12 @@ truncated or hand-edited session file (re-read for --continue resume) crashed th
 Fix: use `path(0)` (MissingNode, never null) and skip the message when it is a MissingNode, for
 both the system and user branches.
 Tests: full `./gradlew test` green (32s).
+
+## 2. AgentSession.loadMessages — same NPE for `toolResult` records [bug/high]
+Same root cause as #1 on the toolResult branch: `m.path("content").get(0)` is null for an
+empty/missing content array. Switched to `path(0)` + MissingNode check; corrupt records are skipped
+instead of crashing resume.
+## 3. AgentSession.message — dead `Void a, b, c` parameters [maintainability/low]
+The three Void parameters were never read (call sites passed `null, null, null`). Removed them and
+the nulls at the two call sites.
+Tests: full `./gradlew test` green after each change.
