@@ -172,10 +172,10 @@ public class Reviews {
         List<Trajectory.Turn> turns = Trajectory.turnsFromProxy(recs);
         Map<String, Object> derived = manifest.get("derived") instanceof Map<?, ?> d ? (Map<String, Object>) d : Map.of();
         List<Map<String, Object>> dockerWindows = manifest.get("docker_windows") instanceof List<?> l ? (List<Map<String, Object>>) l : null;
-        Map<String, Object> s = Trajectory.analyze(turns, derived, dockerWindows);
         // exclude review sessions from the agent's trajectory (they are the reviewer's, not the agent's) BEFORE any analysis
+        List<Trajectory.Turn> agentTurns = turns;
         if (manifest.get("review_windows") instanceof List<?> rw && !rw.isEmpty()) {
-            List<Trajectory.Turn> agentTurns = new ArrayList<>();
+            agentTurns = new ArrayList<>();
             for (Trajectory.Turn t : turns) {
                 boolean inReview = false;
                 if (t.ts() != null) {
@@ -187,8 +187,10 @@ public class Reviews {
                 }
                 if (!inReview) agentTurns.add(t);
             }
-            s = Trajectory.analyze(agentTurns, derived, dockerWindows);
         }
+        // one analysis over the correct (possibly filtered) turn list - analyzing all turns first was double work
+        // over a megabyte-sized journal for the only case that mattered (review windows present)
+        Map<String, Object> s = Trajectory.analyze(agentTurns, derived, dockerWindows);
         var idx = Trajectory.objectiveIndex(s, manifest);
         s.put("harness_trajectory_pct", idx.getKey());
         s.put("harness_trajectory_penalties", idx.getValue());
