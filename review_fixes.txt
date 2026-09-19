@@ -22,3 +22,10 @@ IndexOutOfBoundsException surfaced to the model as a cryptic tool error.
 Fix: clamp `s` to a minimum of 1, and return a descriptive error when the requested start is past
 the end of a non-empty file (instead of silently reporting "(empty file)").
 Tests: full `./gradlew test` green.
+
+## 5. AgentTools.edit — `getOrDefault` + `String.valueOf` mishandled JSON nulls [bug/high]
+When `old_string`/`new_string` is present but JSON `null`, getOrDefault returns null (the key IS
+present) and `String.valueOf(null)` yields the literal string "null" — the edit would then search
+for the text `null`. Fixed with explicit null → "" mapping; the existing `old.isEmpty()` guard
+then rejects a null old_string correctly.
+Tests: full `./gradlew test` green.

@@ -59,7 +59,10 @@ public final class AgentTools {
         if (!Files.isRegularFile(p)) return new Outcome("error: no such file: " + a.get("path"), true);
         String src;
         try { src = Files.readString(p, StandardCharsets.UTF_8); } catch (IOException e) { return new Outcome("error: " + e, true); }
-        String old = String.valueOf(a.getOrDefault("old_string", "")), neu = String.valueOf(a.getOrDefault("new_string", ""));
+        // explicit null check: getOrDefault returns null when the key is present with a JSON null,
+        // and String.valueOf(null) would search for the literal text "null"
+        String old = a.get("old_string") == null ? "" : String.valueOf(a.get("old_string"));
+        String neu = a.get("new_string") == null ? "" : String.valueOf(a.get("new_string"));
         if (old.isEmpty()) return new Outcome("error: old_string is empty", true);
         int n = countOccurrences(src, old);
         boolean all = Boolean.TRUE.equals(a.get("replace_all")) || "true".equals(String.valueOf(a.get("replace_all")));
