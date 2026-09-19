@@ -53,8 +53,11 @@ public final class ReferenceServer {
                 if (parts.length == 2) { reply(x, 200, a); return; }
                 if (parts[2].equals("holdings")) {
                     String asOf = param(q, "asOf");
-                    Instant as = asOf == null ? null : Instant.parse(asOf);
+                    Instant as = asOf == null ? null : parseAsOf(asOf);
                     reply(x, 200, svc.holdings(parts[1], as));
+                } else {
+                    // without this reply() is never called and the client hangs until timeout
+                    reply(x, 404, Map.of("error", "not found"));
                 }
             } else if (method.equals("POST") && parts.length == 3 && parts[2].equals("deposits")) {
                 Map<String, Object> r = svc.deposit(parts[1], body.path("amount").asText("0"));
@@ -79,8 +82,16 @@ public final class ReferenceServer {
     }
 
     private static String param(String query, String name) {
-        for (String kv : query.split("&")) if (kv.startsWith(name + "=")) return kv.substring(name.length() + 1);
+        // URL-decode: getQuery() is still percent-encoded, so asOf=2024-01-15T10%3A30%3A00Z would fail Instant.parse
+        for (String kv : query.split("&")) if (kv.startsWith(name + "=")) return URLDecoder.decode(kv.substring(name.length() + 1), StandardCharsets.UTF_8);
         return null;
+    }
+
+    /** Instant.parse throws DateTimeParseException (a RuntimeException, NOT an IllegalArgumentException),
+     *  which would bypass the 400 catch and leave the client with a connection reset. */
+    private static Instant parseAsOf(String s) {
+        try { return Instant.parse(s); }
+        catch (java.time.format.DateTimeParseException e) { throw new IllegalArgumentException("bad asOf: " + s); }
     }
 
     private static void reply(HttpExchange x, int status, Object body) throws Exception {
