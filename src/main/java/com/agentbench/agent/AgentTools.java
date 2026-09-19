@@ -74,6 +74,7 @@ public final class AgentTools {
     }
 
     static int countOccurrences(String s, String sub) {
+        if (sub.isEmpty()) return 0;   // indexOf("", i) is always >= 0, which would loop forever
         int n = 0, i = 0;
         while ((i = s.indexOf(sub, i)) >= 0) { n++; i += sub.length(); }
         return n;

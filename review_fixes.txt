@@ -29,3 +29,9 @@ present) and `String.valueOf(null)` yields the literal string "null" — the edi
 for the text `null`. Fixed with explicit null → "" mapping; the existing `old.isEmpty()` guard
 then rejects a null old_string correctly.
 Tests: full `./gradlew test` green.
+
+## 6. AgentTools.countOccurrences — infinite loop on empty substring [bug/medium]
+`indexOf(sub, i)` with an empty sub always returns >= 0 and the index never advances. The only
+caller guards with `old.isEmpty()`, but the package-private utility was unsafe if reused; added an
+explicit `if (sub.isEmpty()) return 0;` guard.
+Tests: full `./gradlew test` green.
