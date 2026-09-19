@@ -82,3 +82,14 @@ A null `s` (a JSON status field with no value) crashed with NPE, which the
 `catch (IllegalArgumentException)` does not cover — violating the method's own contract that any
 bad input is a FAIL, never silence. Added `if (s == null) return FAIL;`.
 Tests: full `./gradlew test` green.
+
+## 16. RunOracle — `Map.of` NPE when `docker image inspect` fails [bug/critical]
+A non-zero inspect rc made the ternary yield a null digest; Map.of rejects nulls and killed the
+whole scoring run. Now built with a LinkedHashMap that tolerates the null digest.
+## 17. RunOracle — missing ladder.json / fallback rung NPE'd [bug/high]
+getResourceAsStream can return null (resource not packaged), and a missing L7_full_platform rung
+left `rung` null → NPE on rung.get("checks"). Both now throw a clear IllegalStateException.
+## 18. RunOracle — redundant `id != CheckId.P1` gate condition [maintainability/low]
+P1 is already in the `offline` list, so `!offline.contains(id)` excludes it; the extra condition
+would silently change gating semantics if P1 ever left `offline`. Removed, with a comment.
+Tests: full `./gradlew test` green after the changes (shared run for the three same-file points).
