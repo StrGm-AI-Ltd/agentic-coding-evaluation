@@ -300,3 +300,9 @@ The file only holds host-specific settings (org.gradle.caching, a local JDK pin)
 does not need, so the exclusion is safe. Documented in the Dockerfile that an ESSENTIAL build
 setting must come from a sibling gradle.properties, not the host file.
 Tests: no code change; full `./gradlew test` green.
+
+## 64. Dockerfile - the runtime container ran as root [security/medium]
+No USER directive. Added an unprivileged `appuser` (adduser --disabled-password), chowned the
+jar to it, and `USER appuser` before EXPOSE/ENTRYPOINT, so a compromise of the app cannot start
+with root's blast radius.
+Tests: no code change; full `./gradlew test` green.
