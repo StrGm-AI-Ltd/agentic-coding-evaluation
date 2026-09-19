@@ -76,3 +76,9 @@ Tests: full `./gradlew test` green.
 Called per record in Scorer's stream filter, and the mutable EnumSet let callers mutate the
 "source of truth". Now a `static final` unmodifiable set built once.
 Tests: full `./gradlew test` green.
+
+## 15. CheckStatus.parse — NPE on a null status [bug/medium]
+A null `s` (a JSON status field with no value) crashed with NPE, which the
+`catch (IllegalArgumentException)` does not cover — violating the method's own contract that any
+bad input is a FAIL, never silence. Added `if (s == null) return FAIL;`.
+Tests: full `./gradlew test` green.
