@@ -19,6 +19,7 @@ class PacksTest {
         assertEquals(2000, half.get("plan"));   // 4000 x 0.5
         Map<String, Integer> floor = Packs.setScale(0.1, Map.of());   // below pack_scale_min: 0.25 floors
         assertEquals(1000, floor.get("plan"));
+        // no assertion on purpose: a scale of 1.0 with an empty map must simply not throw (setScale is a mutating no-op then)
         Packs.setScale(1.0, Map.of());
     }
 

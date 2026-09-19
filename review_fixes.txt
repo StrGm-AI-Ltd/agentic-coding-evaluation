@@ -257,3 +257,8 @@ Tests: full `./gradlew test` green.
 passed even with no cap. Replaced with a check of the truncation indicator ("more lines" for the
 500-line file) plus a negative check that line 300 is beyond the 250-line cap.
 Tests: full `./gradlew test` green.
+
+## 58. PacksTest.capsScale... - `Packs.setScale(1.0, Map.of())` had no assertion [test/low]
+Documented the intent: with an empty map a 1.0 scale is a mutating no-op that must simply not
+throw, rather than removing a deliberate "does not blow up" probe.
+Tests: full `./gradlew test` green.
