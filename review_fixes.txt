@@ -217,3 +217,10 @@ empty forever. Now a size < start resets the offset to 0 so new content is taile
 (Also in this point's neighbourhood: the (int)(size - start) cast was clamped at Integer.MAX_VALUE
 so a >2GiB unread tail cannot NegativeArraySizeException; the remainder is read on the next poll.)
 Tests: full `./gradlew test` green (TailerTest).
+
+## 49. TreatmentPin - "unpinned" fallback was invisible [maintainability/medium]
+When compute() threw, every job stamped "unpinned" silently passed WorkerService.guard() - the
+drift protection was off with zero operator visibility. It now logs the cause at ERROR.
+## 50. TreatmentPin - Files.readAllBytes on the whole fat jar [performance/low]
+A 100-300MB one-time heap spike at startup; now streamed into the digest with a 1MiB buffer.
+Tests: full `./gradlew test` green.

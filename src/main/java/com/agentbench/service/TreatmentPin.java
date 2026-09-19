@@ -1,9 +1,13 @@
 package com.agentbench.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.system.ApplicationHome;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -26,6 +30,8 @@ import java.util.stream.Stream;
  *  startup: the bytecode a live JVM runs cannot change under it. */
 @Component
 public class TreatmentPin {
+
+    private static final Logger log = LoggerFactory.getLogger(TreatmentPin.class);
 
     private final String current;
 
@@ -50,11 +56,18 @@ public class TreatmentPin {
                     }
                 }
             } else {
-                sha.update(Files.readAllBytes(root));
+                // stream the (potentially 100-300MB fat) jar in chunks instead of holding it all in a byte[]
+                try (FileInputStream in = new FileInputStream(source)) {
+                    byte[] buf = new byte[1 << 20];
+                    int n;
+                    while ((n = in.read(buf)) > 0) sha.update(buf, 0, n);
+                }
             }
             return HexFormat.of().formatHex(sha.digest()).substring(0, 16);
         } catch (Exception e) {
-            return "unpinned";   // an unreadable code source must not stop the service from queueing work
+            // "unpinned" disables the drift guard in WorkerService.guard() - make that failure VISIBLE
+            log.error("treatment pin could not be computed, running UNPINNED (drift guard disabled): {}", e);
+            return "unpinned";
         }
     }
 }
