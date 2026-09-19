@@ -3,8 +3,11 @@
 # this one too, so DockerApplicationIT proves the same thing the grader would rely on.
 FROM eclipse-temurin:21-jdk AS build
 WORKDIR /src
-# gradle.properties is deliberately NOT copied: it pins org.gradle.java.home to the host's Homebrew
-# JDK path, which does not exist in this image - the base image's own JDK 21 is found on PATH instead
+# gradle.properties is deliberately NOT copied: it pins host-specific settings (org.gradle.java.home
+# to the local Homebrew JDK, org.gradle.caching for the host daemon) that do not exist in this image
+# - the base image's own JDK 21 is found on PATH instead, and the toolchain config in
+# build.gradle.kts is what the build actually needs. If a setting ever becomes ESSENTIAL for the
+# in-image build, provide it via a sibling gradle.properties copied here, not the host file.
 COPY gradlew settings.gradle.kts build.gradle.kts ./
 COPY gradle ./gradle
 RUN chmod +x gradlew && ./gradlew --version
@@ -18,7 +21,12 @@ FROM eclipse-temurin:21-jre
 # guard() and would refuse every job forever - this is not test-only scaffolding, a real deployment
 # needs this to do its actual job
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+# least privilege: an app compromise (e.g. RCE) must not start as root and be able to touch
+# system files or /root/.ssh - a dedicated unprivileged user runs the service instead
+RUN adduser --disabled-password --gecos '' appuser
 WORKDIR /app
 COPY --from=build /src/app.jar app.jar
+chown appuser /app/app.jar   # the file itself; /app is left world-readable so the user can read it
+USER appuser
 EXPOSE 8765
 ENTRYPOINT ["java", "-jar", "app.jar"]
