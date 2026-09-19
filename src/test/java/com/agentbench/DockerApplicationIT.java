@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.junit.jupiter.api.io.TempDir;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
@@ -187,8 +188,7 @@ class DockerApplicationIT {
      *  endpoint used to serve counts and crash the Vaadin UI's JSON parsing). */
     @Test
     @Order(4)
-    void rescanningTheResultsFolderActuallyImportsARealRun() throws Exception {
-        Path fixture = Files.createTempDirectory("it-rescan");
+    void rescanningTheResultsFolderActuallyImportsARealRun(@TempDir Path fixture) throws Exception {   // @TempDir: the hand-rolled temp dir leaked on every run
         Files.writeString(fixture.resolve("oracle.json"), """
                 {"task": "L3p_point_in_time", "schema_version": 3, "weighted_score_pct": 83.5,
                  "functional_score_pct": 91.0, "functional_points_got": 9, "functional_denominator": 10,
@@ -226,6 +226,9 @@ class DockerApplicationIT {
     @Test
     @Order(5)
     void compareRespondsSensiblyAboutTheImportedRun() throws Exception {
+        // this test silently depends on test 4's import; make the dependency explicit instead of
+        // crashing with an unexplained NPE if the rescan test was skipped/failed/excluded
+        Assumptions.assumeTrue(get("/api/runs").body().contains("it-rescan-run-1"), "it-rescan-run-1 was not imported - skipping");
         HttpResponse<String> compare = post("/api/compare", """
                 {"a": ["it-rescan-run-1"], "b": ["it-rescan-run-1"], "metric": "functional",
                  "model_ab": false, "allow_partial": false, "include_invalid": false, "allow_budget_mismatch": false}""");
@@ -242,6 +245,7 @@ class DockerApplicationIT {
     @Test
     @Order(6)
     void groupsPlacesASingleImportedRunInIndicativeNeverRanked() throws Exception {
+        Assumptions.assumeTrue(get("/api/runs").body().contains("it-rescan-run-1"), "it-rescan-run-1 was not imported - skipping");
         HttpResponse<String> groups = get("/api/groups");
         assertEquals(200, groups.statusCode(), groups.body());
         JsonNode body = json.readTree(groups.body());

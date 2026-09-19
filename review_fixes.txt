@@ -241,3 +241,9 @@ last assertion so a live job does not fight the rest of the suite (container tea
 the backstop).
 Tests: DockerApplicationIT is docker-tagged (not in the `test` task); full `./gradlew test` green
 and the file compiles.
+
+## 54. DockerApplicationIT - leaked temp dir + implicit test-5/6 dependency on test 4 [maintainability/low]
+The fixture is now a @TempDir (JUnit deletes it) instead of a never-cleaned createTempDirectory,
+and tests 5/6 assume the rescan actually imported it-rescan-run-1 (clean skip) before asserting on
+it, making the ordering dependency explicit.
+Tests: DockerApplicationIT is docker-tagged; full `./gradlew test` green + compiles.
