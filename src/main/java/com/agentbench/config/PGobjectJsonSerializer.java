@@ -21,7 +21,10 @@ public class PGobjectJsonSerializer extends StdSerializer<PGobject> {
 
     @Override
     public void serialize(PGobject value, JsonGenerator gen, SerializerProvider provider) throws IOException {
-        if (value.getValue() != null && ("json".equals(value.getType()) || "jsonb".equals(value.getType())))
+        // an empty string is not valid JSON text: writeRawValue("") would emit zero bytes and leave a
+        // dangling token (e.g. {"field":,}), corrupting the whole response body - fall back to a JSON string
+        if (value.getValue() != null && !value.getValue().isEmpty()
+                && ("json".equals(value.getType()) || "jsonb".equals(value.getType())))
             gen.writeRawValue(value.getValue());   // already valid JSON text - write it in place, not re-escaped
         else
             gen.writeString(value.getValue());

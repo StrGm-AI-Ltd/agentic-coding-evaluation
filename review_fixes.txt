@@ -44,3 +44,9 @@ When the while loop exited because turns hit 400, rc stayed 0 (success), misrepr
 session cut short. After the loop: if rc is still 0 and turns >= MAX_TURNS, set rc = 1 and, if
 no finish reason exists, record finish = "turn_limit" (does not override the wall-deadline rc=124).
 Tests: full `./gradlew test` green after each change.
+
+## 9. PGobjectJsonSerializer — empty jsonb string produced malformed JSON [bug/medium]
+`writeRawValue("")` writes zero bytes, leaving a value-less token (`{"field":,}`) and corrupting
+the response. Added `!value.getValue().isEmpty()` to the raw-value condition; an empty value now
+falls through to `writeString`, which emits a valid JSON string.
+Tests: full `./gradlew test` green.
