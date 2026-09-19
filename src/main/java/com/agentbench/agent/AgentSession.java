@@ -128,9 +128,14 @@ public final class AgentSession {
                     }
                     msgs.add(calls.isEmpty() ? AiMessage.from(text.toString()) : AiMessage.from(text.toString(), calls));
                 }
-                case "toolResult" -> msgs.add(ToolExecutionResultMessage.from(
-                        ToolExecutionRequest.builder().id(m.path("toolCallId").asText()).name(m.path("toolName").asText()).build(),
-                        m.path("content").get(0).path("text").asText()));
+                case "toolResult" -> {
+                    // path(0) -> MissingNode (never null) for an empty/missing content array, so a corrupt
+                    // session file skips the record instead of throwing NPE on resume
+                    JsonNode c = m.path("content").path(0);
+                    if (!c.isMissingNode()) msgs.add(ToolExecutionResultMessage.from(
+                            ToolExecutionRequest.builder().id(m.path("toolCallId").asText()).name(m.path("toolName").asText()).build(),
+                            c.path("text").asText()));
+                }
             }
         }
         return msgs;
