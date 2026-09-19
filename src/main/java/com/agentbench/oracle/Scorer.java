@@ -45,7 +45,10 @@ public final class Scorer {
         rep.put("infra", all.stream().filter(r -> r.status() == CheckStatus.INFRA).map(r -> r.id().name()).toList());
         rep.put("denominator", denom);
         rep.put("full_denominator", fullDenom);
-        rep.put("functional_denominator", fAll.stream().mapToInt(r -> r.id().weight).sum());
+        // counted denominator (consistent with `denominator` above) - fpct is computed over fDenom,
+        // so on a partial run the full value would mislead any consumer that validates the stored points
+        rep.put("functional_denominator", fDenom);
+        rep.put("functional_full_denominator", fAll.stream().mapToInt(r -> r.id().weight).sum());
         rep.put("by_category", byCat);
         double pct = denom > 0 ? round1(100.0 * got / denom) : 0.0;   // Python round(x, 1) is banker's rounding
         Double fpct = fDenom > 0 ? round1(100.0 * fGot / fDenom) : null;

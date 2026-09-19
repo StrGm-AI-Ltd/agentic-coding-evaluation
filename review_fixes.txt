@@ -93,3 +93,10 @@ left `rung` null → NPE on rung.get("checks"). Both now throw a clear IllegalSt
 P1 is already in the `offline` list, so `!offline.contains(id)` excludes it; the extra condition
 would silently change gating semantics if P1 ever left `offline`. Removed, with a comment.
 Tests: full `./gradlew test` green after the changes (shared run for the three same-file points).
+
+## 19. Scorer — `functional_denominator` inconsistent with `fpct` [bug/high]
+fpct is computed over the *counted* functional denominator (fDenom) but the reported
+functional_denominator was the full one (fAll), breaking the points/denominator invariant on any
+partial run. Now reports fDenom (mirroring `denominator`), with the full value kept as a separate
+`functional_full_denominator` (analogous to `full_denominator`).
+Tests: full `./gradlew test` green (ScorerTest unaffected: in non-partial runs fDenom == full).
