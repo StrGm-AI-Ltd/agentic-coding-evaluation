@@ -15,3 +15,10 @@ instead of crashing resume.
 The three Void parameters were never read (call sites passed `null, null, null`). Removed them and
 the nulls at the two call sites.
 Tests: full `./gradlew test` green after each change.
+
+## 4. AgentTools.read — no lower bound on `start_line` [bug/high]
+A 0/negative start_line made the loop call `lines.get(i-1)` with a negative index →
+IndexOutOfBoundsException surfaced to the model as a cryptic tool error.
+Fix: clamp `s` to a minimum of 1, and return a descriptive error when the requested start is past
+the end of a non-empty file (instead of silently reporting "(empty file)").
+Tests: full `./gradlew test` green.

@@ -28,7 +28,10 @@ public final class AgentTools {
         List<String> lines;
         try { lines = Files.readAllLines(p, StandardCharsets.UTF_8); }
         catch (IOException e) { return new Outcome("error: " + e, true); }
-        int s = a.get("start_line") instanceof Number n ? n.intValue() : 1;
+        // clamp the lower bound: a 0/negative start_line would index lines.get(-1) and throw
+        int s = Math.max(1, a.get("start_line") instanceof Number n ? n.intValue() : 1);
+        if (!lines.isEmpty() && s > lines.size())
+            return new Outcome("error: start_line " + s + " is past the end of the file (" + lines.size() + " lines)", true);
         int e = a.get("end_line") instanceof Number n ? Math.min(n.intValue(), lines.size()) : lines.size();
         if (e - s + 1 > READ_MAX_LINES && !a.containsKey("end_line")) e = s + READ_MAX_LINES - 1;
         StringBuilder out = new StringBuilder();
