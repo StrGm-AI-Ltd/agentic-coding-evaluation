@@ -320,3 +320,14 @@ checked first and the build fails loudly if it is not exactly one.
 Tests: no code change; full `./gradlew test` green.
 
 ── END OF ROUND 2: all 66 review findings addressed (1..66) ──
+
+## 27. RecordingProxyFactory.TERMINAL_PROXY_STATES - dead constant [other/low]
+Declared but referenced nowhere (a leftover from a removed proxy state machine). Removed, with
+the now-unused java.util.List import.
+## 29. Reviews.renderTrajectory - the all-turns analysis ran, then was recomputed on the filtered list [performance/low]
+The first analyze() result was discarded whenever review windows existed - double work over a
+megabyte-sized journal, and the "BEFORE any analysis" comment lied. The turn list is now filtered
+first and analyzed exactly once (identical result in both cases).
+## 33. see ## 32+33 - the dead public killTree was removed in that entry (same method).
+## 48. Tailer - see ## 47's entry, which also records the (int)(size - start) overflow clamp.
+## 62. see ## 63 - the ValidityTest weak-assertion fix (instanceof Boolean -> assert the value).
