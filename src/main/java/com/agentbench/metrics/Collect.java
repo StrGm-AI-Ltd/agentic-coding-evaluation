@@ -61,8 +61,13 @@ public final class Collect {
         Map<String, Object> sr = (Map<String, Object>) manifest.getOrDefault("self_review", Map.of());
         Map<String, Object> tr = (Map<String, Object>) manifest.getOrDefault("trajectory_review", Map.of());
         Map<String, Object> pp = (Map<String, Object>) manifest.getOrDefault("parallel_plan", Map.of());
-        if (sr.get("score") instanceof Number s) leaderboard.put("self_review", Map.of("score", s.doubleValue(),
-                "calibration_gap", functional == null ? null : round1(Math.abs(s.doubleValue() - functional))));
+        if (sr.get("score") instanceof Number s) {
+            // LinkedHashMap: calibration_gap may legitimately be null (functional pct absent), and Map.of would NPE
+            Map<String, Object> e = new LinkedHashMap<>();
+            e.put("score", s.doubleValue());
+            e.put("calibration_gap", functional == null ? null : round1(Math.abs(s.doubleValue() - functional)));
+            leaderboard.put("self_review", e);
+        }
         if (tr.get("score") instanceof Number s) leaderboard.put("trajectory_review", Map.of("score", s.doubleValue(),
                 "calibration_gap", manifest.get("trajectory_review") instanceof Map<?, ?> tm && tm.get("objective_index_pct") instanceof Number oi
                         ? round1(Math.abs(s.doubleValue() - oi.doubleValue())) : null));

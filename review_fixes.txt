@@ -50,3 +50,8 @@ Tests: full `./gradlew test` green after each change.
 the response. Added `!value.getValue().isEmpty()` to the raw-value condition; an empty value now
 falls through to `writeString`, which emits a valid JSON string.
 Tests: full `./gradlew test` green.
+
+## 10. Collect — `Map.of` NPE in the self_review block [bug/critical]
+When the oracle reported no numeric functional_score_pct, the ternary yielded a null calibration_gap
+and `Map.of` threw NPE, crashing the whole collect. Replaced with a LinkedHashMap (null-tolerant).
+Tests: full `./gradlew test` green.
