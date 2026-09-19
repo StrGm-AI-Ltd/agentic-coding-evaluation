@@ -25,11 +25,12 @@ public class RecordingProxyFactory {
         RecordingProxy proxy = new RecordingProxy(props);
         final String[] base = new String[1];
         try { base[0] = proxy.start(journal, tokenBudget, tag); }
-        catch (Exception e) { throw new IllegalStateException("cannot start the recording proxy", e); }
+        catch (Exception e) {
+            try { proxy.stop(); } catch (Exception ignored) {}   // release the partially-started server/executor, don't wait for GC
+            throw new IllegalStateException("cannot start the recording proxy", e);
+        }
         return new ProxySession(base[0], () -> {
             try { proxy.stop(); } catch (Exception ignore) {}
         });
     }
-
-    public static final List<Integer> TERMINAL_PROXY_STATES = List.of(0);
 }
