@@ -204,3 +204,9 @@ Tests: full `./gradlew test` green (JobQueueIT passes with the guarded statement
 The method enforces strict positivity (0 is rejected, "budgets must be positive") despite the
 "nonNeg" name. Renamed to positive().
 Tests: full `./gradlew test` green.
+
+## 46. Tailer.newFiles - Files.list() stream never closed [bug/high]
+Files.list holds an open directory FD; with poll() in a 2-second loop each poll leaked one,
+heading for the process FD limit. Now try-with-resources (sorted()/toList() fully materialize
+inside the try).
+Tests: full `./gradlew test` green (TailerTest).

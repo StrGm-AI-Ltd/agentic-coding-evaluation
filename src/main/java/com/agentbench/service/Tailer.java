@@ -45,8 +45,10 @@ public final class Tailer {
     private void newFiles(Path dir, List<Map<String, Object>> events) {
         if (!Files.isDirectory(dir)) return;
         List<Path> paths;
-        try { paths = Files.list(dir).filter(Files::isRegularFile)
-                .sorted(Comparator.comparing(p -> { try { return Files.getLastModifiedTime(p).toMillis(); } catch (IOException e) { return 0L; } })).toList(); }
+        try (java.util.stream.Stream<Path> stream = Files.list(dir)) {   // the stream holds a directory FD - it must be closed
+            paths = stream.filter(Files::isRegularFile)
+                    .sorted(Comparator.comparing(p -> { try { return Files.getLastModifiedTime(p).toMillis(); } catch (IOException e) { return 0L; } })).toList();
+        }
         catch (IOException e) { return; }
         for (Path p : paths) {
             String key = dir.getFileName() + "/" + p.getFileName();
