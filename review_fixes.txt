@@ -150,3 +150,15 @@ A failing git command silently returned its (possibly empty) stdout; the only ca
 with an ugly double `gitOut` call in a ternary (writing the object twice). gitOut now throws on a
 non-zero exit like runGit, and the handoff caller makes a single call, storing null on failure.
 Tests: full `./gradlew test` green.
+
+## 35. Validity — `(int)` cast on the requests counter [maintainability/medium]
+A direct (int) cast CCEs if the value ever arrives as a Long (JSON deserialization); the errors
+line already used the Number pattern. Same fix here.
+## 36. VerifyTask — log writer leaked when the loop threw IOException [bug/medium]
+The outer catch swallowed the exception before close(). The writer is now created in an inner try
+with a finally that flushes/closes, so any mid-loop IOException still releases the file descriptor.
+## 37. VerifyTask.firstError — Pattern.compile per line [performance/medium]
+The same regex was re-parsed for every output line; hoisted to a static final ERROR_PATTERN.
+## 38. VerifyTask — DocumentBuilderFactory.newInstance() per XML file [performance/low]
+One factory (and per-file builder) is now created before the loop.
+Tests: full `./gradlew test` green after the changes (shared run for the same-file points).

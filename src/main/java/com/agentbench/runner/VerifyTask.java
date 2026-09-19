@@ -16,6 +16,9 @@ import java.util.regex.Pattern;
 public final class VerifyTask {
     private VerifyTask() {}
 
+    // compiled ONCE: firstError runs this per output line, and Pattern.compile per line re-parses the regex every time
+    private static final Pattern ERROR_PATTERN = Pattern.compile("error:|FAILED|What went wrong|cannot find symbol|requires JVM");
+
     public static Map<String, Object> verify(Path ws, Map<String, Object> cfg, Path logPath) {
         List<Path> roots = StructureChecks.gradleRoots(ws);
         if (roots.isEmpty()) return Map.of("ran", false, "reason", "no gradle project");
@@ -31,40 +34,47 @@ public final class VerifyTask {
         res.put("first_error", "");
         long t0 = System.nanoTime();
         try {
-            java.io.Writer log = logPath == null ? null : Files.newBufferedWriter(logPath, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-            for (Path r : roots) {
-                String cmd0 = Files.isRegularFile(r.resolve("gradlew")) && r.resolve("gradlew").toFile().canExecute()
-                        ? r.resolve("gradlew").toString() : "gradle";
-                List<String> cmd = List.of(cmd0, "test", "-q", "--console=plain", "--warning-mode=none", "--no-daemon");
-                int rc;
-                String out;
-                try {
-                    Map<String, String> env = new java.util.LinkedHashMap<>(System.getenv());   // drained concurrently: a full test suite overflows the pipe
-                    env.put("CI", "1");
-                    env.put("GRADLE_OPTS", "-Dorg.gradle.daemon=false");
-                    if (cfg.get("java_home") != null) { env.put("JAVA_HOME", String.valueOf(cfg.get("java_home"))); env.put("PATH", cfg.get("java_home") + "/bin:" + env.getOrDefault("PATH", "")); }
-                    var r2 = com.agentbench.docker.DockerService.proc(timeoutSec, r, env, cmd.toArray(String[]::new));
-                    rc = r2.rc();
-                    out = r2.out() + r2.err();
-                } catch (Exception e) { rc = 127; out = String.valueOf(e); }
-                ((List<Integer>) res.get("rc")).add(rc);
-                ((List<String>) res.get("roots")).add(ws.relativize(r).toString());
-                if (log != null) log.write("### root=" + ws.relativize(r) + " cmd=" + String.join(" ", cmd) + " rc=" + rc + "\n" + out + "\n");
-                if (rc != 0 && String.valueOf(res.get("first_error")).isEmpty())
-                    res.put("first_error", firstError(out));
-                for (Path x : StructureChecks.glob(r, "**/build/test-results/**/*.xml")) {
+            java.io.Writer log = null;
+            try {
+                log = logPath == null ? null : Files.newBufferedWriter(logPath, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                // one factory for the whole glob: newInstance() per XML file re-ran security/feature setup every time
+                var docFactory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+                for (Path r : roots) {
+                    String cmd0 = Files.isRegularFile(r.resolve("gradlew")) && r.resolve("gradlew").toFile().canExecute()
+                            ? r.resolve("gradlew").toString() : "gradle";
+                    List<String> cmd = List.of(cmd0, "test", "-q", "--console=plain", "--warning-mode=none", "--no-daemon");
+                    int rc;
+                    String out;
                     try {
-                        var doc = javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(x.toFile());
-                        var root = doc.getDocumentElement();
-                        if (root.getTagName().equals("testsuite")) {
-                            res.merge("executed", Integer.parseInt(root.getAttribute("tests").isEmpty() ? "0" : root.getAttribute("tests")), (a, b) -> (int) a + (int) b);
-                            res.merge("failed", Integer.parseInt(root.getAttribute("failures").isEmpty() ? "0" : root.getAttribute("failures"))
-                                            + Integer.parseInt(root.getAttribute("errors").isEmpty() ? "0" : root.getAttribute("errors")), (a, b) -> (int) a + (int) b);
+                        Map<String, String> env = new java.util.LinkedHashMap<>(System.getenv());   // drained concurrently: a full test suite overflows the pipe
+                        env.put("CI", "1");
+                        env.put("GRADLE_OPTS", "-Dorg.gradle.daemon=false");
+                        if (cfg.get("java_home") != null) { env.put("JAVA_HOME", String.valueOf(cfg.get("java_home"))); env.put("PATH", cfg.get("java_home") + "/bin:" + env.getOrDefault("PATH", "")); }
+                        var r2 = com.agentbench.docker.DockerService.proc(timeoutSec, r, env, cmd.toArray(String[]::new));
+                        rc = r2.rc();
+                        out = r2.out() + r2.err();
+                    } catch (Exception e) { rc = 127; out = String.valueOf(e); }
+                    ((List<Integer>) res.get("rc")).add(rc);
+                    ((List<String>) res.get("roots")).add(ws.relativize(r).toString());
+                    if (log != null) log.write("### root=" + ws.relativize(r) + " cmd=" + String.join(" ", cmd) + " rc=" + rc + "\n" + out + "\n");
+                    if (rc != 0 && String.valueOf(res.get("first_error")).isEmpty())
+                        res.put("first_error", firstError(out));
+                    for (Path x : StructureChecks.glob(r, "**/build/test-results/**/*.xml")) {
+                        try {
+                            var doc = docFactory.newDocumentBuilder().parse(x.toFile());
+                            var root = doc.getDocumentElement();
+                            if (root.getTagName().equals("testsuite")) {
+                                res.merge("executed", Integer.parseInt(root.getAttribute("tests").isEmpty() ? "0" : root.getAttribute("tests")), (a, b) -> (int) a + (int) b);
+                                res.merge("failed", Integer.parseInt(root.getAttribute("failures").isEmpty() ? "0" : root.getAttribute("failures"))
+                                                + Integer.parseInt(root.getAttribute("errors").isEmpty() ? "0" : root.getAttribute("errors")), (a, b) -> (int) a + (int) b);
+                            }
+                        } catch (Exception ignore) {}
                         }
-                    } catch (Exception ignore) {}
-                }
+                    }
+            } finally {
+                // an IOException mid-loop must still reach the close, or the file descriptor leaks
+                if (log != null) { try { log.flush(); log.close(); } catch (IOException ignore) {} }
             }
-            if (log != null) { log.flush(); log.close(); }
         } catch (IOException ignore) {}
         res.put("seconds", Math.round((System.nanoTime() - t0) / 1e8) / 10.0);
         List<Integer> rcs = (List<Integer>) res.get("rc");
@@ -80,7 +90,7 @@ public final class VerifyTask {
     static String firstError(String out) {
         for (String line : out.split("\n")) {
             String l = line.strip();
-            if (Pattern.compile("error:|FAILED|What went wrong|cannot find symbol|requires JVM").matcher(l).find())
+            if (ERROR_PATTERN.matcher(l).find())
                 return l.substring(0, Math.min(160, l.length()));
         }
         String[] lines = Arrays.stream(out.split("\n")).filter(x -> !x.isBlank()).toArray(String[]::new);

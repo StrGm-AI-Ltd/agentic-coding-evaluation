@@ -25,7 +25,7 @@ public final class Validity {
                 reasons.add(t.get("id") + ": agent exited rc=" + t.get("rc"));
         for (Object rc : manifest.get("proxy_rcs") instanceof List<?> l ? l : List.of())
             if (rc != null && !rc.equals(0) && !rc.equals(-15) && !rc.equals(-9)) reasons.add("proxy died rc=" + rc);
-        int requests = (int) facts.getOrDefault("requests", 0);
+        int requests = ((Number) facts.getOrDefault("requests", 0)).intValue();   // (int) would CCE on a Long from JSON deserialization
         long errors = ((Number) facts.getOrDefault("errors", 0)).longValue() + ((Number) facts.getOrDefault("upstream_errors", 0)).longValue();
         if (requests > 0 && (double) errors / requests > maxErrorRate)
             reasons.add(errors + "/" + requests + " requests errored");
