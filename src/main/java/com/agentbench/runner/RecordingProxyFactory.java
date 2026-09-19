@@ -5,7 +5,6 @@ import com.agentbench.proxy.RecordingProxy;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
-import java.util.List;
 
 /** The factory RunBench uses for per-session recording proxies (one proxy per phase/task with
  *  that session's own token budget and journal tag; parallel tasks each get their own journal and
