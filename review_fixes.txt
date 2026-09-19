@@ -100,3 +100,16 @@ functional_denominator was the full one (fAll), breaking the points/denominator 
 partial run. Now reports fDenom (mirroring `denominator`), with the full value kept as a separate
 `functional_full_denominator` (analogous to `full_denominator`).
 Tests: full `./gradlew test` green (ScorerTest unaffected: in non-partial runs fDenom == full).
+
+## 20. PlanError — no (message, cause) constructor [maintainability/low]
+The only (String) constructor made `parseFile`'s wrap drop the IOException stack trace. Added a
+(message, Throwable) constructor and updated the call site to preserve the cause chain.
+## 21. PlanTask — `score` field could diverge from `score()` [maintainability/medium]
+The parser's dedup field and the pure richness method were two values with overlapping names; the
+field is now `dedupScore` (assigned once by the parser, exposed via a single dedupScore()
+accessor) and the comment documents the relationship, so there is one source of truth for dedup.
+The input fields stay public (RunBench reads deps/checks) but the class javadoc now says so.
+## 22. SseAssembler — explicit null `reasoning_content` appended as "null" [bug/medium]
+NullNode is not a MissingNode, so the guard passed and asText() contributed the literal string
+"null". Added `!isNull()`, matching the content check two lines above.
+Tests: full `./gradlew test` green after each change.

@@ -29,7 +29,7 @@ public final class SseAssembler {
                 for (JsonNode ch : obj.path("choices")) {
                     JsonNode d = ch.path("delta");
                     if (!d.path("content").isMissingNode() && !d.path("content").isNull() && !d.path("content").asText("").isEmpty()) text.append(d.path("content").asText());
-                    if (!d.path("reasoning_content").isMissingNode()) reasoning.append(d.path("reasoning_content").asText());
+                    if (!d.path("reasoning_content").isMissingNode() && !d.path("reasoning_content").isNull()) reasoning.append(d.path("reasoning_content").asText());
                     if (!d.path("reasoning").isMissingNode() && d.path("reasoning").isTextual()) reasoning.append(d.path("reasoning").asText());
                     for (JsonNode tc : d.path("tool_calls")) {
                         int i = tc.path("index").asInt(0);

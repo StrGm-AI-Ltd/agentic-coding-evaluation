@@ -30,7 +30,7 @@ public final class PlanParser {
         try {
             return parse(java.nio.file.Files.readString(path));
         } catch (java.io.IOException e) {
-            throw new PlanError("cannot read plan: " + e.getMessage());
+            throw new PlanError("cannot read plan: " + e.getMessage(), e);   // keep the stack trace of the I/O failure
         }
     }
 
@@ -97,9 +97,9 @@ public final class PlanParser {
                 t.deps = (!mentioned.isEmpty() && Pattern.compile("\\b(depend|after|requires|prereq|blocked)", Pattern.CASE_INSENSITIVE).matcher(body).find())
                         ? List.copyOf(mentioned) : List.of();
             }
-            t.score = t.score() + (table ? 0 : 1);       // a detailed section beats an overview row
+            t.dedupScore = t.score() + (table ? 0 : 1);   // a detailed section beats an overview row
             PlanTask prev = tasks.get(tid);
-            if (prev == null || t.score > prev.score) tasks.put(tid, t);
+            if (prev == null || t.dedupScore > prev.dedupScore) tasks.put(tid, t);
         }
         if (tasks.isEmpty()) throw new PlanError("no tasks found (expected headings/list items/table rows carrying ids like T1, ST-01, Task 3)");
         for (PlanTask t : tasks.values())
