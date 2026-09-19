@@ -70,7 +70,9 @@ public final class RunBenchSupport {
 
     public static String gitOut(Path ws, String... args) throws IOException, InterruptedException {
         Process p = git(ws, args);
-        return new String(p.getInputStream().readAllBytes()).strip();
+        String out = new String(p.getInputStream().readAllBytes()).strip();
+        if (p.waitFor() != 0) throw new IOException("git " + args[0] + " failed: " + new String(p.getErrorStream().readAllBytes()));   // like runGit, don't return partial output on failure
+        return out;
     }
 
     static void runGit(Path ws, String... args) throws IOException, InterruptedException {

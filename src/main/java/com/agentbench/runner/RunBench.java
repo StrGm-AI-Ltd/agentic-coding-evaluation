@@ -577,7 +577,10 @@ public class RunBench {
             if (Files.isRegularFile(hp)) {
                 String txt = Files.readString(hp);
                 manifestHandoffs(manifest).add(new String[]{t.id, txt});
-                rec.put("handoff_sha", RunBenchSupport.gitOut(ws, "hash-object", "-w", hp.toString()).isEmpty() ? null : RunBenchSupport.gitOut(ws, "hash-object", "-w", hp.toString()));
+                String sha;
+                try { sha = RunBenchSupport.gitOut(ws, "hash-object", "-w", hp.toString()); }
+                catch (Exception e) { sha = null; }
+                rec.put("handoff_sha", sha.isEmpty() ? null : sha);   // one hash-object, not the old double call that wrote the object twice
                 rec.put("handoff_chars", txt.length());
             }
             rec.put("handoff_seconds", h.seconds());
