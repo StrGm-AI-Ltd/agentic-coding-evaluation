@@ -44,9 +44,14 @@ public enum CheckId {
     public final String description;
     CheckId(String category, int weight, String description) { this.category = category; this.weight = weight; this.description = description; }
 
-    /** the ids that make up the PRIMARY (product) score — port of registry.FUNCTIONAL */
+    /** the ids that make up the PRIMARY (product) score — port of registry.FUNCTIONAL.
+     *  One immutable instance: functional() is called per record in Scorer's stream filter, so the
+     *  set is built once, and an unmodifiable view keeps the "source of truth" from being mutated. */
+    private static final java.util.Set<CheckId> FUNCTIONAL =
+            java.util.Collections.unmodifiableSet(java.util.EnumSet.of(F1, F2, F3, F4, F5, F6, F7, F8, F9));
+
     public static java.util.Set<CheckId> functional() {
-        return java.util.EnumSet.of(F1, F2, F3, F4, F5, F6, F7, F8, F9);
+        return FUNCTIONAL;
     }
     public static int weightOf(CheckId id) { return id.weight; }
     public static String categoryOf(CheckId id) { return id.category; }

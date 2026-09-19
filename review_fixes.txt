@@ -71,3 +71,8 @@ and inviting a wrong simplification. Replaced with the explicit closed form
 `30 + 0.3 * parallelism + 0.4 * (100 * (1 - friction))` with a comment noting validity=100 is the
 constant 30. Identical value (validity is forced to 100 by the early-return above).
 Tests: full `./gradlew test` green.
+
+## 14. CheckId.functional() — fresh mutable EnumSet per call [performance/low]
+Called per record in Scorer's stream filter, and the mutable EnumSet let callers mutate the
+"source of truth". Now a `static final` unmodifiable set built once.
+Tests: full `./gradlew test` green.
