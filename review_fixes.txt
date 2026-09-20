@@ -213,3 +213,9 @@ JobLiveState.apply's String switch would NPE on the consumer thread. It now
 uses hasNonNull("type") and falls back to the SSE event type, or the empty
 string when both are absent — consumers' default branches ignore the empty
 string, and the result can never be null.
+
+────────────────────────────────────────────────────────────────────────────────
+[20] SseEvent — unused import
+     (src/main/java/com/agentbench/ui/SseEvent.java)
+────────────────────────────────────────────────────────────────────────────────
+java.util.List was imported but never referenced; removed.

@@ -2,8 +2,6 @@ package com.agentbench.ui;
 
 import tools.jackson.databind.JsonNode;
 
-import java.util.List;
-
 /** One parsed server-sent event: the "event:" type and the "data:" JSON payload. */
 public record SseEvent(String type, JsonNode data) {
 
