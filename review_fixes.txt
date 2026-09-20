@@ -261,3 +261,14 @@ longer alive (fail-fast on timeout) before asserting the final state.
      (src/test/java/com/agentbench/ui/RoutesReflectionTest.java)
 ────────────────────────────────────────────────────────────────────────────────
 assertTrue was imported but never referenced (only assertEquals is used); removed.
+
+────────────────────────────────────────────────────────────────────────────────
+[26] ServiceClientMappingTest — any exception read as "unimported"
+     (src/test/java/com/agentbench/ui/ServiceClientMappingTest.java)
+────────────────────────────────────────────────────────────────────────────────
+queueJobsMayBeUnimportedRuns404NotImported classified ANY failure of
+client.run() as "unimported"; a transient connection drop or a 5xx would then
+be asserted to be a 404 with the "is not imported" text and fail for the wrong
+reason (ServiceClient.errorText maps connection errors to "Cannot reach
+agentbench-service at …"). Only an explicit 404 now marks the job as
+unimported; other response statuses are rethrown and surface honestly.

@@ -79,9 +79,12 @@ class ServiceClientMappingTest {
         for (Api.Job job : jobs) {
             try {
                 client.run(job.run_id());
-            } catch (Exception e) {
-                unimported = job;
-                break;
+            } catch (RestClientResponseException e) {
+                if (e.getStatusCode().value() == 404) {
+                    unimported = job;
+                    break;
+                }
+                throw e; // 5xx / other status: surface it, don't call it "unimported"
             }
         }
         Assumptions.assumeTrue(unimported != null,
