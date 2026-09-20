@@ -139,6 +139,10 @@ class JobLiveStateTest {
         reader.start();
         writer.join(10_000);
         reader.join(10_000);
+        // join(timeout) only times out — verify the threads actually finished, or the final
+        // assertions below would race a live mutator and fail for misleading reasons
+        assertFalse(writer.isAlive(), "writer outlived the join timeout");
+        assertFalse(reader.isAlive(), "reader outlived the join timeout");
         assertNull(failure.get(), "no ConcurrentModificationException or other failure");
         assertEquals(events, state.requestCount(), "every request event is applied exactly once");
         assertEquals(JobLiveState.MAX_RECENT_REQUESTS, state.recentRequests().size());

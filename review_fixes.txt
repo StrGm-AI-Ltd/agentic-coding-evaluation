@@ -246,3 +246,12 @@ why model_ab is deliberately absent (see modelAb_needsBothModels).
 harnessEffect_keepsCheckedArms called ExperimentParams.build twice on the same
 raw map for its two assertions; it now builds once into a local params
 variable (as the other tests do) and asserts on it.
+
+────────────────────────────────────────────────────────────────────────────────
+[24] JobLiveStateTest — join(timeout) never verified thread completion
+     (src/test/java/com/agentbench/ui/JobLiveStateTest.java)
+────────────────────────────────────────────────────────────────────────────────
+join(10s) only times out; on a slow CI box the writer could still be running
+when the final assertions read state it is mutating, producing misleading
+failures that look like SUT bugs. The test now asserts both threads are no
+longer alive (fail-fast on timeout) before asserting the final state.
