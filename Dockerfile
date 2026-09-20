@@ -16,7 +16,8 @@ COPY gradle ./gradle
 RUN chmod +x gradlew && ./gradlew --version \
     && mkdir -p src/main/java/com/agentbench \
     && echo 'package com.agentbench; final class __probe{}' > src/main/java/com/agentbench/__probe.java \
-    && ./gradlew --no-daemon compileJava
+    && ./gradlew --no-daemon compileJava \
+    && rm -rf src   # the probe is done its job; delete it so COPY src below brings ONLY the real sources
 COPY src ./src
 RUN ./gradlew bootJar --no-daemon -x test
 # exactly ONE boot jar is expected: if the filter ever matched more (a -sources/-javadoc jar, a new
@@ -34,8 +35,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /
 # system files or /root/.ssh - a dedicated unprivileged user runs the service instead
 RUN adduser --disabled-password --gecos '' appuser
 WORKDIR /app
+# /app doubles as the writable results/ home, so the whole tree (plus the jar) must be owned by
+# the unprivileged user - the app cannot create or write under a root-owned /app
+RUN mkdir -p /app/results && chown -R appuser /app
 COPY --from=build /src/app.jar app.jar
-chown appuser /app/app.jar   # the file itself; /app is left world-readable so the user can read it
+RUN chown appuser /app/app.jar
 USER appuser
 EXPOSE 8765
 ENTRYPOINT ["java", "-jar", "app.jar"]

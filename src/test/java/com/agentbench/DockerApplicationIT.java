@@ -198,6 +198,10 @@ class DockerApplicationIT {
                 {"mode": "monolithic", "provenance": {"model": "it-rescan-model", "harness": "ref"},
                  "validity": {"valid": true, "reasons": []}}""");
         app.copyFileToContainer(MountableFile.forHostPath(fixture), "/app/results/it-rescan-run-1");
+        // the copy lands root-owned (Testcontainers copies as root), but the app runs as the
+        // unprivileged `appuser` and cannot chown itself - do it as root, or the import cannot
+        // read a root 0700 dir it never created
+        app.execInContainerWithUser("root", "chown", "-R", "appuser:appuser", "/app/results/it-rescan-run-1");
 
         HttpResponse<String> imported = post("/api/import");
         assertEquals(200, imported.statusCode(), imported.body());
