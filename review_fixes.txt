@@ -180,3 +180,14 @@ should surface at the call site, not as a dead link in the UI.
 ────────────────────────────────────────────────────────────────────────────────
 com.vaadin.flow.component.UI was imported but never explicitly referenced
 (event.getUI() / getUI().ifPresent(...) infer the type); removed.
+
+────────────────────────────────────────────────────────────────────────────────
+[17] PreflightView — poll interval left stale when the fetch fails
+     (src/main/java/com/agentbench/ui/PreflightView.java)
+────────────────────────────────────────────────────────────────────────────────
+The early return on a failed GET /api/preflight skipped ui.setPollInterval,
+leaving the previous 2s cadence in place: a poll every 2s re-issuing failing
+GETs against a downed service. The error path now explicitly sets a 10s
+interval — the polling state is deterministic regardless of the fetch
+outcome, the dead backend is not hammered, and auto-recovery still works
+when the service comes back.

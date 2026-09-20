@@ -63,6 +63,9 @@ public class PreflightView extends VerticalLayout {
             state = client.preflight();
         } catch (Exception e) {
             add(Panels.error(client.errorText(e)));
+            // the early return would otherwise leave the previous interval in place; back off
+            // to a slower cadence so a downed service is not hammered, but auto-recovery works
+            getUI().ifPresent(ui -> ui.setPollInterval(10_000));
             return;
         }
 
