@@ -22,6 +22,9 @@ public final class ExperimentParams {
      * @throws IllegalArgumentException with a user-presentable message on bad input
      */
     public static Map<String, Object> build(String template, Map<String, Object> raw) {
+        if (template == null || template.isBlank()) {
+            throw new IllegalArgumentException("unknown template: " + template);
+        }
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("task_wall", intOr(raw.get("task_wall"), 3600, "task_wall"));
         params.put("task_tokens", taskTokens(raw.get("task_tokens")));

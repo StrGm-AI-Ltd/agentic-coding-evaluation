@@ -88,3 +88,13 @@ rejected), Double/Integer parse or reject, everything else is kept as text.
 Parse failures surface as IllegalArgumentException with a named field, as
 documented. Added a regression test
 (sharedParams_parseStringValuesInsteadOfCasting).
+
+────────────────────────────────────────────────────────────────────────────────
+[7] ExperimentParams.build — null/blank template hit the switch and NPE'd
+     (src/main/java/com/agentbench/ui/ExperimentParams.java)
+────────────────────────────────────────────────────────────────────────────────
+A null template used to fall into the switch expression and throw a bare
+NullPointerException, violating the documented "@throws IllegalArgumentException
+on bad input" contract (the sole caller only catches that type). An explicit
+null/blank guard now rejects it with the same "unknown template: ..." message
+as any other unknown template.
