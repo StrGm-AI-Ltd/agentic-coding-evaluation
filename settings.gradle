@@ -5,4 +5,4 @@ pluginManagement {
     }
 }
 
-rootProject.name = 'agentbench-trading-ui'
+rootProject.name = 'ace-ui-vaadin'

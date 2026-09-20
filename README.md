@@ -1,4 +1,4 @@
-# agentbench-trading UI (Vaadin)
+# ace-ui-vaadin
 
 A Vaadin 25 web UI for the **agentbench-trading** benchmark service
 (`agentbench-trading-service/service` — the FastAPI run-queue / stats service).
@@ -29,7 +29,7 @@ with duplicate `conventionErrorViewResolver` beans, so keep them aligned.
 2. Start this UI:
 
    ```sh
-   cd agentbench-trading-UI-Vaadin
+   cd ace-ui-vaadin
    ./gradlew bootRun
    ```
 
@@ -38,8 +38,8 @@ with duplicate `conventionErrorViewResolver` beans, so keep them aligned.
 Port layout (collisions matter on the benchmark machine): `8800` UI · `8765` service ·
 `8080` benchmark oracle · `9191` oMLX. Configured in `src/main/resources/application.yml`:
 
-- `agentbench.service.base-url` — where the FastAPI service lives
-- `agentbench.service.connect-timeout` / `read-timeout` — bounded HTTP budgets (default 2 s / 15 s)
+- `ace.service.base-url` — where the FastAPI service lives
+- `ace.service.connect-timeout` / `read-timeout` — bounded HTTP budgets (default 2 s / 15 s)
   so a stuck service can never hang the UI thread indefinitely
 
 > `gradle.properties` pins `org.gradle.java.home` to the Homebrew JDK 21 on this machine
@@ -83,7 +83,7 @@ re-validates everything). Remaining service-only surface: the SSE log tail strea
 ./gradlew build      # compiles + Vaadin production frontend bundle
 ./gradlew test       # 139 deterministic, service-independent tests (unit + stub-server wire tests)
 ./gradlew testLive   # 5 live wire-mapping tests against the running service (skipped if it is down,
-                     # override with -Dagentbench.service.base-url=…)
+                     # override with -Dace.service.base-url=…)
 ```
 
 The default `test` task is fully offline: the wire tier runs against an in-process stub HTTP
