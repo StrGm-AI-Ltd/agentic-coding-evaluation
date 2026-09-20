@@ -1,0 +1,44 @@
+/* Styling for the markdown file viewer: commonmark semantic HTML under Lumo. */
+
+.md-body table {
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+
+.md-body th,
+.md-body td {
+  border: 1px solid var(--lumo-contrast-20pct);
+  padding: 4px 10px;
+  text-align: left;
+}
+
+.md-body code {
+  background: var(--lumo-contrast-10pct);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 0.9em;
+}
+
+.md-body pre {
+  background: var(--lumo-contrast-10pct);
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+}
+
+.md-body pre code {
+  background: none;
+  padding: 0;
+}
+
+.md-body blockquote {
+  border-left: 3px solid var(--lumo-contrast-30pct);
+  margin: 8px 0;
+  padding: 4px 14px;
+  color: var(--lumo-secondary-text-color);
+}
+
+.md-body img {
+  max-width: 100%;
+  height: auto; /* preserve aspect ratio for images with an explicit height attribute */
+}

@@ -1,0 +1,324 @@
+# review_fixes.txt — record of fixes for the code review in review.txt
+
+One section per review point, in the order processed. Each fix is followed by a full test
+run (./gradlew test) and its own commit.
+
+────────────────────────────────────────────────────────────────────────────────
+[baseline] Make the test suite green before starting the review fixes
+────────────────────────────────────────────────────────────────────────────────
+Files: Json.java, ServiceClient.java, application.yml, ServiceClientWireTest.java, review.txt
+
+The working tree carried uncommitted changes (confirmed with the author as intentional):
+Json.java disables Jackson FAIL_ON_NULL_FOR_PRIMITIVES because the service answers null
+for booleans it cannot decide, ServiceClientWireTest gained a "poolable":null case, and
+application.yml points back at the API server on 8765. The suite was red (2 failures):
+the wire tests build their RestClient from the framework default, which uses its own
+Jackson mapper, so the lenient setting in the shared Json.MAPPER never applied there.
+
+Change: ServiceClient.build() now replaces the framework-default Jackson 3 converter
+(JacksonJsonHttpMessageConverter) with one backed by the shared Json.MAPPER, honoring
+the C-9 "one shared mapper" design; the converter is appended (not prepended) so
+String/byte converters still win for String targets (plain-text file downloads).
+Json.MAPPER's static type was narrowed from ObjectMapper to JsonMapper (the type the
+Spring 7 Jackson 3 converter requires); all existing callers use inherited ObjectMapper
+methods, so this is source-compatible.
+
+Result: 140/140 tests pass.
+
+────────────────────────────────────────────────────────────────────────────────
+[1] md-viewer.css — responsive images with an explicit height attribute
+     (src/main/frontend/styles/md-viewer.css)
+────────────────────────────────────────────────────────────────────────────────
+Added `height: auto` next to `max-width: 100%` on `.md-body img`. CommonMark emits
+<img width=".." height=".."> attributes; without height:auto the pixel height is not
+scaled down, so images overflow horizontally instead of keeping their aspect ratio.
+
+Test run: 140/140 pass (CSS-only change; full suite run for good measure).
+
+────────────────────────────────────────────────────────────────────────────────
+[2] ExperimentDetailView.blockedReasons() — N+1 sequential HTTP calls
+     (src/main/java/com/agentbench/ui/ExperimentDetailView.java)
+────────────────────────────────────────────────────────────────────────────────
+The per-blocked-job GET /api/jobs/{id} lookups now run on a bounded parallel
+stream (ForkJoinPool.commonPool). The shared RestClient is immutable and
+thread-safe, so the fetches no longer serialize 20+ round-trips on the UI
+thread during render() / requeue-and-re-render. Encounter order is preserved
+when folding into the LinkedHashMap, so tooltips and the joined reason line
+display in the same order as before. Per-job failures are still tolerated
+(tooltip simply absent).
+
+────────────────────────────────────────────────────────────────────────────────
+[3] ExperimentDetailView — String.join("\n") renders as one collapsed line
+     (src/main/java/com/agentbench/ui/ExperimentDetailView.java)
+────────────────────────────────────────────────────────────────────────────────
+Browsers collapse consecutive whitespace (including newlines) in inline Span
+content, so multiple blocked reasons ran together on one line. The blocked-line
+span now sets white-space: pre-line, so each reason renders on its own line.
+
+────────────────────────────────────────────────────────────────────────────────
+[4] ExperimentNewView — NPE on auto-unboxing of un-checked checkboxes
+     (src/main/java/com/agentbench/ui/ExperimentNewView.java)
+────────────────────────────────────────────────────────────────────────────────
+monoRules/par were never given an initial value; Vaadin Checkbox.getValue()
+returns null until toggled, so if (checkbox.getValue()) threw an NPE on form
+submit when the user never touched the box. Submit now uses
+Boolean.TRUE.equals(...), which treats null as unchecked (the intended
+default) and can never NPE.
+
+────────────────────────────────────────────────────────────────────────────────
+[5] ExperimentNewView — initial enabled-state desync for the parallel field
+     (src/main/java/com/agentbench/ui/ExperimentNewView.java)
+────────────────────────────────────────────────────────────────────────────────
+The "parallel" IntegerField was interactively enabled (Vaadin default) while
+the par checkbox it depends on starts unchecked; the value-change listener only
+fires on subsequent toggles, so the user saw a live control that could not
+affect the submission. Added parallel.setEnabled(false) at construction; the
+existing par value-change listener syncs it from then on.
+
+────────────────────────────────────────────────────────────────────────────────
+[6] ExperimentParams.putIfPresent — type.cast escapes the IAE contract
+     (src/main/java/com/agentbench/ui/ExperimentParams.java,
+      src/test/java/com/agentbench/ui/ExperimentParamsTest.java)
+────────────────────────────────────────────────────────────────────────────────
+Values that are not already the target type (e.g. "0.5" for a Double) used to
+escape as a raw ClassCastException, violating the Javadoc contract. The
+normalizer now passes through type.isInstance(value), and otherwise parses the
+toString() of the value: Boolean accepts "true"/"false" (anything else is
+rejected), Double/Integer parse or reject, everything else is kept as text.
+Parse failures surface as IllegalArgumentException with a named field, as
+documented. Added a regression test
+(sharedParams_parseStringValuesInsteadOfCasting).
+
+────────────────────────────────────────────────────────────────────────────────
+[7] ExperimentParams.build — null/blank template hit the switch and NPE'd
+     (src/main/java/com/agentbench/ui/ExperimentParams.java)
+────────────────────────────────────────────────────────────────────────────────
+A null template used to fall into the switch expression and throw a bare
+NullPointerException, violating the documented "@throws IllegalArgumentException
+on bad input" contract (the sole caller only catches that type). An explicit
+null/blank guard now rejects it with the same "unknown template: ..." message
+as any other unknown template.
+
+────────────────────────────────────────────────────────────────────────────────
+[8] ExperimentsView — NPE when the experiment status is null
+     (src/main/java/com/agentbench/ui/ExperimentsView.java,
+      src/main/java/com/agentbench/ui/ExperimentDetailView.java)
+────────────────────────────────────────────────────────────────────────────────
+When experiment.status() is null, ExperimentStatuses.effective(...) returns the
+raw value (null), so !effective.equals(...) threw an NPE and broke the whole
+grid render, even though every other consumer treats status as nullable. Both
+spots now use Objects.equals: the status-badge tooltip in ExperimentsView and
+the identical latent pattern in ExperimentDetailView.render().
+
+────────────────────────────────────────────────────────────────────────────────
+[9] ExperimentsView — status column sorted by the raw table status
+     (src/main/java/com/agentbench/ui/ExperimentsView.java)
+────────────────────────────────────────────────────────────────────────────────
+The cell renders the derived effective status (queued → running/blocked from
+the jobs) but the comparator sorted by the raw table status, so clicking the
+header produced visibly unsorted badges. The comparator now maps each row to
+the same ExperimentStatuses.effective(...) the badge renders (nulls-last,
+matching the previous null handling).
+
+────────────────────────────────────────────────────────────────────────────────
+[10] FilesBrowser — case-sensitive extension match misclassified README.MD
+     (src/main/java/com/agentbench/ui/FilesBrowser.java)
+────────────────────────────────────────────────────────────────────────────────
+TEXT_SUFFIXES is lowercase but the matched suffix kept the file's original
+case, so README.MD / CONFIG.JSON were treated as binary and linked to the raw
+URL instead of the text viewer. isText now lowercases (Locale.ROOT, to dodge
+the Turkish-İ locale bug) before the set lookup.
+
+────────────────────────────────────────────────────────────────────────────────
+[11] GroupsView — API data fetched once per session, never refreshed
+     (src/main/java/com/agentbench/ui/GroupsView.java)
+────────────────────────────────────────────────────────────────────────────────
+Vaadin caches @Route instances per session, so render()-in-constructor meant
+the leaderboard was fetched exactly once and went stale. Replaced the
+constructor render() with addAttachListener(e -> render()), matching the
+sibling views ExperimentsView and JobsView, so every navigation re-fetches.
+
+────────────────────────────────────────────────────────────────────────────────
+[12] JobSpecs.build — no null guard on the raw map
+     (src/main/java/com/agentbench/ui/JobSpecs.java)
+────────────────────────────────────────────────────────────────────────────────
+A null raw map would crash with a bare NPE at raw.entrySet(). It is now
+normalized to Map.of() (an empty form → task + default flags only), and the
+Javadoc documents that contract, mirroring the explicit task validation.
+
+────────────────────────────────────────────────────────────────────────────────
+[13] JobStatuses — Set.of(...).contains(null) throws NPE
+     (src/main/java/com/agentbench/ui/JobStatuses.java)
+────────────────────────────────────────────────────────────────────────────────
+isTerminal/canRequeue passed job.status() straight to ImmutableCollections'
+null-rejecting contains(); a null status from the API would crash the UI
+thread. Both are now guarded (null → non-terminal / not requeueable), and
+canCancel inherits the fix through isTerminal.
+
+────────────────────────────────────────────────────────────────────────────────
+[14] JobsView — raise-priority button offered for every job
+     (src/main/java/com/agentbench/ui/JobsView.java)
+────────────────────────────────────────────────────────────────────────────────
+The raise button was added unconditionally, including for terminal jobs
+(succeeded/failed/cancelled) where setPriority is a confusing no-op/error.
+It now renders only for non-terminal, non-running jobs — the states where
+priority can still reorder the queue — mirroring the existing
+canCancel/canRequeue gating.
+
+────────────────────────────────────────────────────────────────────────────────
+[15] Links.experimentLink — null Long rendered the route param "null"
+     (src/main/java/com/agentbench/ui/Links.java)
+────────────────────────────────────────────────────────────────────────────────
+String.valueOf on a null boxed Long yields the literal string "null", which
+would produce a silently broken link. experimentLink now fails fast with
+Objects.requireNonNull(experimentId, "experimentId") — a programming error
+should surface at the call site, not as a dead link in the UI.
+
+────────────────────────────────────────────────────────────────────────────────
+[16] PreflightView — unused import
+     (src/main/java/com/agentbench/ui/PreflightView.java)
+────────────────────────────────────────────────────────────────────────────────
+com.vaadin.flow.component.UI was imported but never explicitly referenced
+(event.getUI() / getUI().ifPresent(...) infer the type); removed.
+
+────────────────────────────────────────────────────────────────────────────────
+[17] PreflightView — poll interval left stale when the fetch fails
+     (src/main/java/com/agentbench/ui/PreflightView.java)
+────────────────────────────────────────────────────────────────────────────────
+The early return on a failed GET /api/preflight skipped ui.setPollInterval,
+leaving the previous 2s cadence in place: a poll every 2s re-issuing failing
+GETs against a downed service. The error path now explicitly sets a 10s
+interval — the polling state is deterministic regardless of the fetch
+outcome, the dead backend is not hammered, and auto-recovery still works
+when the service comes back.
+
+────────────────────────────────────────────────────────────────────────────────
+[18] ServiceProperties — auto-derived serialVersionUID breaks session restore
+     (src/main/java/com/agentbench/ui/ServiceProperties.java)
+────────────────────────────────────────────────────────────────────────────────
+The record is stored as a non-transient field in the session-serializable
+ServiceClient but omitted a pinned UID; the compiler derives one from the
+class structure, so any future component addition/removal/rename would change
+it and persisted sessions would fail with InvalidClassException — the exact
+failure the pinned UIDs in ServiceClient/JobLiveState guard against. Pinned
+serialVersionUID = 1L for consistency.
+
+────────────────────────────────────────────────────────────────────────────────
+[19] SseEvent.payloadType — could return null and NPE the SSE consumer thread
+     (src/main/java/com/agentbench/ui/SseEvent.java)
+────────────────────────────────────────────────────────────────────────────────
+SseParser only sets the SSE "event:" type when the line is present, and the
+payload may carry a JSON-null "type"; payloadType() then returned null and
+JobLiveState.apply's String switch would NPE on the consumer thread. It now
+uses hasNonNull("type") and falls back to the SSE event type, or the empty
+string when both are absent — consumers' default branches ignore the empty
+string, and the result can never be null.
+
+────────────────────────────────────────────────────────────────────────────────
+[20] SseEvent — unused import
+     (src/main/java/com/agentbench/ui/SseEvent.java)
+────────────────────────────────────────────────────────────────────────────────
+java.util.List was imported but never referenced; removed.
+
+────────────────────────────────────────────────────────────────────────────────
+[21] ExperimentDetailViewTest — dead stub for job 35
+     (src/test/java/com/agentbench/ui/ExperimentDetailViewTest.java)
+────────────────────────────────────────────────────────────────────────────────
+Job 35 is not part of that test's jobs list (31, 32, 33), so the throwing
+when(client.job(35L)) stub was never exercised — a leftover that misleadingly
+suggested a fetch-failure scenario. Removed; fetch-failure tolerance is
+documented as covered by blockedReasonsTolerateFetchFailures.
+
+────────────────────────────────────────────────────────────────────────────────
+[22] ExperimentParamsTest — model_ab in the missing-model loop
+     (src/test/java/com/agentbench/ui/ExperimentParamsTest.java)
+────────────────────────────────────────────────────────────────────────────────
+The review flagged that model_ab was in the model-is-required loop while the
+model_ab branch validates model_a/model_b and the view hides the shared model
+field for that template. The current tree's loop already contains only
+harness_effect/agent_ab; added the review's clarifying comment documenting
+why model_ab is deliberately absent (see modelAb_needsBothModels).
+
+────────────────────────────────────────────────────────────────────────────────
+[23] ExperimentParamsTest — same raw map built twice
+     (src/test/java/com/agentbench/ui/ExperimentParamsTest.java)
+────────────────────────────────────────────────────────────────────────────────
+harnessEffect_keepsCheckedArms called ExperimentParams.build twice on the same
+raw map for its two assertions; it now builds once into a local params
+variable (as the other tests do) and asserts on it.
+
+────────────────────────────────────────────────────────────────────────────────
+[24] JobLiveStateTest — join(timeout) never verified thread completion
+     (src/test/java/com/agentbench/ui/JobLiveStateTest.java)
+────────────────────────────────────────────────────────────────────────────────
+join(10s) only times out; on a slow CI box the writer could still be running
+when the final assertions read state it is mutating, producing misleading
+failures that look like SUT bugs. The test now asserts both threads are no
+longer alive (fail-fast on timeout) before asserting the final state.
+
+────────────────────────────────────────────────────────────────────────────────
+[25] RoutesReflectionTest — unused import
+     (src/test/java/com/agentbench/ui/RoutesReflectionTest.java)
+────────────────────────────────────────────────────────────────────────────────
+assertTrue was imported but never referenced (only assertEquals is used); removed.
+
+────────────────────────────────────────────────────────────────────────────────
+[26] ServiceClientMappingTest — any exception read as "unimported"
+     (src/test/java/com/agentbench/ui/ServiceClientMappingTest.java)
+────────────────────────────────────────────────────────────────────────────────
+queueJobsMayBeUnimportedRuns404NotImported classified ANY failure of
+client.run() as "unimported"; a transient connection drop or a 5xx would then
+be asserted to be a 404 with the "is not imported" text and fail for the wrong
+reason (ServiceClient.errorText maps connection errors to "Cannot reach
+agentbench-service at …"). Only an explicit 404 now marks the job as
+unimported; other response statuses are rethrown and surface honestly.
+
+────────────────────────────────────────────────────────────────────────────────
+[27] ServiceClientMappingTest — empty-runs precondition turned into hard failures
+     (src/test/java/com/agentbench/ui/ServiceClientMappingTest.java)
+────────────────────────────────────────────────────────────────────────────────
+A benign "no data yet" state (empty runs list) was producing hard suite
+failures: runsListMaps… asserted !runs.isEmpty(), and
+runDetailCarriesChecksManifestAndOracle dereferenced runs.get(0) with no
+length guard (IndexOutOfBoundsException). Both now use
+Assumptions.assumeTrue(!runs.isEmpty(), "no runs imported"), matching the
+convention already used by runDetailProvenanceRendersFromRealManifest, so a
+fresh service skips cleanly.
+
+────────────────────────────────────────────────────────────────────────────────
+[28] ServiceClientMappingTest — computed allGroups never asserted
+     (src/test/java/com/agentbench/ui/ServiceClientMappingTest.java)
+────────────────────────────────────────────────────────────────────────────────
+groupsJobsExperimentsPreflightMap carefully null-safe summed ranked()+
+indicative() into allGroups and then never read it — clearly a dropped
+sanity assertion. Restored as Assumptions.assumeTrue(allGroups > 0, …) so a
+service returning zero groups skips the group-shape assertions instead of
+vacuously looping over nothing.
+
+────────────────────────────────────────────────────────────────────────────────
+[29] ServiceClientSerializationTest — unused import
+     (src/test/java/com/agentbench/ui/ServiceClientSerializationTest.java)
+────────────────────────────────────────────────────────────────────────────────
+assertNull was imported but never used; removed.
+
+────────────────────────────────────────────────────────────────────────────────
+[30] ServiceClientSerializationTest — vacuous "round-trip" assertion
+     (src/test/java/com/agentbench/ui/ServiceClientSerializationTest.java)
+────────────────────────────────────────────────────────────────────────────────
+The comment claimed the rebuilt RestClient "actually works — round-trip one
+call through the wire stub", but the assertion only checked that the
+ORIGINAL object's http field is non-null (trivially true: the constructor
+always builds it) and verified nothing about the deserialized instance. The
+test now spins up the same in-process stub server pattern as
+ServiceClientWireTest (port 0, /api/models),
+serializes/deserializes the client pointed at it, and asserts that the
+RESTORED client serves a real round-trip: restored.models() must equal the
+stub's ["m1","m2"]. This also covers the restored Jackson converter wiring.
+
+────────────────────────────────────────────────────────────────────────────────
+[31] .gitignore — no .env / log patterns
+     (.gitignore)
+────────────────────────────────────────────────────────────────────────────────
+A local .env with API keys or DB credentials could have been committed
+accidentally. Added .env, .env.* (with !.env.example so a documented
+example file can still be committed), plus *.log and logs/.

@@ -1,0 +1,50 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.1.1'
+    id 'io.spring.dependency-management' version '1.1.7'
+    id 'com.vaadin' version '25.2.8'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'com.vaadin:vaadin-spring-boot-starter'
+    implementation 'org.springframework.boot:spring-boot-starter-restclient'
+    implementation 'org.commonmark:commonmark:0.30.0'
+    implementation 'org.commonmark:commonmark-ext-gfm-tables:0.30.0'
+    developmentOnly 'com.vaadin:vaadin-dev'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+dependencyManagement {
+    imports {
+        mavenBom 'com.vaadin:vaadin-bom:25.2.8'
+    }
+}
+
+tasks.named('test') {
+    useJUnitPlatform {
+        excludeTags 'live' // deterministic, service-independent baseline (P3)
+    }
+}
+
+// Live wire-mapping tests against a running agentbench-service on :8765.
+tasks.register('testLive', Test) {
+    useJUnitPlatform {
+        includeTags 'live'
+    }
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    group = 'verification'
+    description = 'Runs the live wire-mapping tests against a running agentbench-service.'
+}

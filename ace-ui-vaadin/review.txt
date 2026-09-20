@@ -1,0 +1,508 @@
+─── src/main/frontend/styles/md-viewer.css:41-43 ───
+[bug · medium] Images with an explicit `height` attribute (common in CommonMark HTML output) will
+not scale proportionally when constrained by `max-width: 100%`. Adding `height: auto` ensures the
+browser preserves the aspect ratio, which is the standard pattern for responsive images.
+
+  .md-body img {
+    max-width: 100%;
++   height: auto;
+  }
+
+
+─── src/main/java/com/agentbench/ui/ExperimentDetailView.java:139-146 ───
+[performance · medium] N+1 sequential HTTP calls on the UI thread: `blockedReasons()` issues one
+blocking HTTP request per blocked job in a loop. For an experiment with, say, 20+ blocked jobs (arm
+× repeat grid), this blocks the UI thread for the duration of 20+ sequential network round-trips
+during `render()`. After the requeue button, `render()` re-fetches everything and re-runs this loop
+again. Consider parallelizing the fetches (e.g., with a bounded parallel stream or
+`CompletableFuture`) or adding a batch endpoint to `ServiceClient` to fetch multiple job details in
+one request.
+
+
+
+─── src/main/java/com/agentbench/ui/ExperimentDetailView.java:90-91 ───
+[bug · medium] The `String.join("\n", ...)` separator will not produce visible line breaks in the
+rendered output. The `Span` element renders its text as inline HTML text content, and browsers
+collapse consecutive whitespace (including newlines) to a single space by default. Multiple blocked
+reasons will appear jumbled on one line rather than on separate lines as apparently intended.
+Consider setting `white-space: pre-line` on the span's style, or rendering each reason as a separate
+element (e.g., a vertical `Div` with one `Span` per reason).
+
+
+
+─── src/main/java/com/agentbench/ui/ExperimentNewView.java:242-243 ───
+[bug · critical] Bug: `monoRules` is never initialized with `setValue(false)` (only `orch` and
+`mono` are set to `true` in the constructor). Since Vaadin `Checkbox.getValue()` returns `null` when
+no value has been explicitly set, the auto-unboxing in `if (monoRules.getValue())` will throw a
+`NullPointerException` when the user submits the form without having interacted with that checkbox.
+The same NPE applies to `if (par.getValue())` on the next line. Fix: either initialize both
+checkboxes (`monoRules.setValue(false); par.setValue(false);`) or use null-safe checks
+(`Boolean.TRUE.equals(monoRules.getValue())`).
+
+-                 if (monoRules.getValue()) arms.add("mono+rules");
+-                 if (par.getValue()) arms.add("par");
++                 if (Boolean.TRUE.equals(monoRules.getValue())) arms.add("mono+rules");
++                 if (Boolean.TRUE.equals(par.getValue())) arms.add("par");
+
+
+─── src/main/java/com/agentbench/ui/ExperimentNewView.java:91-93 ───
+[bug · low] UI state inconsistency: `parallel` starts in the enabled state (Vaadin default) while
+`par` is null/unchecked. The value-change listener on `par` (line 145) handles subsequent toggles,
+but there's no initial call to `parallel.setEnabled(false)` to match the unchecked default. Add
+`parallel.setEnabled(false);` after setting the initial values so the field's enabled state matches
+`par`'s default.
+
+          parallel.setValue(3);
+          parallel.setMin(2);
+          parallel.setMax(20);
++         parallel.setEnabled(false); // par is unchecked by default
+
+
+─── src/main/java/com/agentbench/ui/ExperimentParams.java:121-121 ───
+[bug · medium] type.cast(value) throws a raw ClassCastException (a RuntimeException not covered by
+the Javadoc contract 'throws IllegalArgumentException ... on bad input') whenever a field carries a
+String for a typed parameter, e.g. putIfPresent(params, raw, "review_weight", Double.class) with
+"0.5", or "review_blind" with "true". The sole caller (ExperimentNewView.submit) only catches
+IllegalArgumentException, so such input would escape as an unhandled 500 with an un-user-presentable
+message. The current Vaadin form happens to pass Double/Boolean, but this method is documented as a
+pure, unit-testable normalizer whose raw map is Map<String, Object>; parse via toString() instead of
+casting, and convert parse failures to IllegalArgumentException to honor the documented contract.
+
+-         params.put(key, type.cast(value));
++         if (type.isInstance(value)) {
++             params.put(key, value);
++             return;
++         }
++         String text = value.toString();
++         Object typed = switch (type.getName()) {
++             case "java.lang.Boolean" -> Boolean.parseBoolean(text);
++             case "java.lang.Double" -> Double.valueOf(text);
++             case "java.lang.Integer" -> Integer.valueOf(text);
++             default -> text;
++         };
++         params.put(key, typed);
+
+
+─── src/main/java/com/agentbench/ui/ExperimentParams.java:39-39 ───
+[bug · low] A null `template` makes the switch expression throw a NullPointerException, which
+violates the method's documented contract ("@throws IllegalArgumentException with a user-presentable
+message on bad input"). The Javadoc contract applies to all bad input, including null; callers like
+ExperimentNewView.submit only catch IllegalArgumentException, so an NPE would surface as an
+unhandled 500. Guard with an explicit null/blank check that throws IllegalArgumentException("unknown
+template: " + template).
+
++         if (template == null || template.isBlank()) {
++             throw new IllegalArgumentException("unknown template: " + template);
++         }
+          switch (template) {
+
+
+─── src/main/java/com/agentbench/ui/ExperimentsView.java:67-67 ───
+[bug · high] NPE risk: when `experiment.status()` is null, `ExperimentStatuses.effective(...)`
+returns the raw value as-is (null), so `effective` is null and `!effective.equals(...)` throws NPE,
+breaking rendering of the whole grid. The rest of this file treats status as possibly null (the
+status column uses `Fmt.nullsLast`, and `Badges.status(null)` is explicitly guarded), so this line
+is the only unguarded spot. Use `Objects.equals` instead.
+
+-         if (!effective.equals(experiment.status())) {
++         if (!java.util.Objects.equals(effective, experiment.status())) {
+
+
+─── src/main/java/com/agentbench/ui/ExperimentsView.java:44-44 ───
+[other · medium] Sort/display mismatch: this column renders the *derived* effective status
+(queued→running/blocked from jobs), but the comparator sorts by the *raw* table status. A row
+showing a "running" or "blocked" badge is still ordered by its raw "queued" value, so after clicking
+the status header the visible badges are not in sorted order. The comparator should map each item to
+the same derived status the cell displays (e.g. `ExperimentStatuses.effective(exp.status(),
+jobStatusesByExperiment.get(exp.id()))` with a nullsLast comparator).
+
+-                 .setSortable(true).setComparator(Fmt.nullsLast(Api.Experiment::status));
++                 .setSortable(true)
++                 .setComparator(Fmt.nullsLast(exp -> ExperimentStatuses.effective(
++                         exp.status(), jobStatusesByExperiment.get(exp.id()))));
+
+
+─── src/main/java/com/agentbench/ui/FilesBrowser.java:76-76 ───
+[bug · medium] Case-sensitivity bug: `TEXT_SUFFIXES` contains only lowercase extensions (`.md`,
+`.json`, …), but `name.substring(dot)` preserves the original case. A file like `README.MD` or
+`CONFIG.JSON` (common on case-insensitive file systems) would be misclassified as binary and linked
+to the raw file URL instead of the text viewer. Consider lowercasing before the comparison:
+`TEXT_SUFFIXES.contains(name.substring(dot).toLowerCase())`.
+
+-         return dot >= 0 && TEXT_SUFFIXES.contains(name.substring(dot));
++         return dot >= 0 && TEXT_SUFFIXES.contains(name.substring(dot).toLowerCase());
+
+
+─── src/main/java/com/agentbench/ui/GroupsView.java:17-21 ───
+[bug · high] Bug: stale data on re-navigation. In Vaadin, `@Route` view instances are cached per
+session and reused across navigations. Since `render()` is only invoked in the constructor, the API
+data is fetched **once** per session and never refreshed. The sibling views `ExperimentsView` and
+`JobsView` both use `addAttachListener(e -> load())` to reload data on every navigation. You should
+do the same here so the leaderboard reflects new groups/runs when the user revisits the page.
+
+      public GroupsView(ServiceClient client) {
+          this.client = client;
+          setPadding(true);
+-         render();
++         addAttachListener(e -> render());
+      }
+
+
+─── src/main/java/com/agentbench/ui/JobSpecs.java:33-35 ───
+[maintainability · low] The `raw` parameter is never null-checked. If a future caller (or refactor)
+passes `null`, this will throw a bare `NullPointerException` at `raw.entrySet()` rather than a
+descriptive error. Given the method already validates `task` explicitly, adding a null guard (or at
+minimum a Javadoc `@throws`) for `raw` would be consistent and make the contract clearer.
+
++         if (raw == null) {
++             raw = Map.of();
++         }
+          Map<String, Object> spec = new LinkedHashMap<>();
+          spec.put("task", task);
+          for (Map.Entry<String, Object> entry : raw.entrySet()) {
+
+
+─── src/main/java/com/agentbench/ui/JobStatuses.java:18-20 ───
+[bug · medium] Both `isTerminal(String status)` and `canRequeue(String status)` call
+`Set.of(...).contains(status)`, which throws a NullPointerException for a null argument
+(ImmutableCollections.SetN rejects null). Callers pass `job.status()` directly from parsed API
+responses (e.g. JobDetailView:89/202, JobsView:88), and JobDetailView:415 explicitly defends against
+a null previous status, indicating null is a real possibility. A null status would crash the UI
+thread instead of being treated as non-terminal / non-requeueable. Fix: guard both with `status !=
+null &&` before the `contains` call.
+
+      public static boolean isTerminal(String status) {
+-         return TERMINAL.contains(status);
++         return status != null && TERMINAL.contains(status);
+      }
+
+
+─── src/main/java/com/agentbench/ui/JobsView.java:94-97 ───
+[bug] The "raise priority" button is added unconditionally for all jobs, including terminal ones
+(succeeded, failed, cancelled). Both `canCancel` and `canRequeue` are properly gated, but the raise
+button is not. For terminal jobs, clicking this button will call `client.setPriority()` which will
+likely fail or be a no-op, and the user will get a confusing error notification. This should be
+gated with `!JobStatuses.isTerminal(job.status())` (and possibly also exclude "running" since you
+can't reorder a job that's already executing).
+
++         if (!JobStatuses.isTerminal(job.status()) && "running".equals(job.status()) == false) {
+-         Button raise = new Button(VaadinIcon.ARROW_UP.create(),
++             Button raise = new Button(VaadinIcon.ARROW_UP.create(),
+-                 e -> act(() -> client.setPriority(job.id(), job.priority() == null ? 1 : job.priority() + 1), job));
++                     e -> act(() -> client.setPriority(job.id(), job.priority() == null ? 1 : job.priority() + 1), job));
+-         raise.getElement().setAttribute("aria-label", "raise priority");
++             raise.getElement().setAttribute("aria-label", "raise priority");
+-         layout.add(raise);
++             layout.add(raise);
++         }
+
+
+─── src/main/java/com/agentbench/ui/Links.java:31-34 ───
+[bug · medium] Null-safety issue: `experimentId` is a boxed `Long`, so it can be null.
+`String.valueOf(null)` (via the `Object` overload) returns the literal string `"null"` rather than
+throwing NPE. This would silently produce a link with text "null" and route param value "null" — a
+confusing broken UI rather than a clear error. Consider adding a null guard (e.g.
+`Objects.requireNonNull(experimentId, "experimentId")`) or switching the parameter to primitive
+`long` if null should not be allowed.
+
+
+
+─── src/main/java/com/agentbench/ui/PreflightView.java:9-9 ───
+[maintainability · low] The `UI` type is never explicitly referenced in this file (only
+`event.getUI()` / `getUI().ifPresent(...)` are used, whose inferred return type never needs the
+import spelled out). This import is dead and should be removed.
+
+
+
+─── src/main/java/com/agentbench/ui/PreflightView.java:65-68 ───
+[bug · medium] When `client.preflight()` throws, this early return skips `ui.setPollInterval(...)`
+below, leaving the previous interval in place. If a poll fires while a run was active (interval
+2000ms) and the service is down, every subsequent poll re-issues the failing GET until the service
+recovers — an unnecessary request storm against a dead backend. After rendering the error, also set
+the interval explicitly (e.g. to -1 so the user must retry via the button, or keep 2000 if
+auto-recovery is intended) so the polling state is deterministic regardless of the fetch outcome.
+
+
+
+─── src/main/java/com/agentbench/ui/ServiceProperties.java:14-19 ───
+[maintainability · medium] This record is Serializable specifically for Vaadin UI session
+persistence (V-3) and is stored as a non-transient field in ServiceClient, so it is written into
+persisted sessions. Sibling session-serializable classes in this package (ServiceClient,
+JobLiveState) both pin `serialVersionUID = 1L`, but this record omits it. Without an explicit UID,
+the compiler auto-derives it from the class structure, so any future component
+addition/removal/rename changes the UID and previously persisted sessions fail to restore with
+InvalidClassException — the exact failure mode the pinned UIDs in the siblings guard against. Please
+pin it explicitly for consistency and to keep V-3's session-restore guarantee stable.
+
+  @ConfigurationProperties(prefix = "agentbench.service")
+  public record ServiceProperties(
+          @DefaultValue("http://127.0.0.1:8765") String baseUrl,
+          @DefaultValue("2s") Duration connectTimeout,
+          @DefaultValue("15s") Duration readTimeout) implements Serializable {
++
++     private static final long serialVersionUID = 1L;
+  }
+
+
+─── src/main/java/com/agentbench/ui/SseEvent.java:11-13 ───
+[bug · medium] payloadType() can return null: SseParser only populates eventType when it sees an
+"event:" line, so SseEvent may carry a null `type` (the tests already construct `new SseEvent(null,
+...)`). If the payload JSON also lacks a non-null "type" field (e.g. a JSON null value passes
+`has()` but falls back to the null `type`), this method returns null, and the caller
+`JobLiveState.apply` does `switch (event.payloadType())` on the SSE consumer thread — a String
+switch on null throws NPE and can kill the event loop. Guarantee a non-null result, e.g. use
+`hasNonNull` and fall back to an empty/"unknown" string when `type` is null.
+
+      public String payloadType() {
+-         return data != null && data.has("type") ? Fmt.textOr(data.get("type"), type) : type;
++         if (data != null && data.hasNonNull("type")) {
++             return Fmt.textOr(data.get("type"), type);
++         }
++         return type != null ? type : "";
+      }
+
+
+─── src/main/java/com/agentbench/ui/SseEvent.java:5-5 ───
+[maintainability · low] Dead code: `java.util.List` is imported but never referenced in this file —
+remove the unused import.
+
+
+
+─── src/test/java/com/agentbench/ui/ExperimentDetailViewTest.java:30-30 ───
+[maintainability · low] Dead/unreachable stub: job id 35 is not part of this test's jobs list (only
+31, 32, 33), so `blockedReasons` can never call `client.job(35L)` and this stub is never exercised.
+It looks like a leftover from an earlier version and misleadingly suggests a fetch-failure scenario
+here, which is actually only covered by the dedicated `blockedReasonsTolerateFetchFailures` test.
+Remove it.
+
+-         when(client.job(35L)).thenThrow(new RuntimeException("fetch failed"));
++         // (fetch-failure tolerance is covered by blockedReasonsTolerateFetchFailures)
+
+
+─── src/test/java/com/agentbench/ui/ExperimentParamsTest.java:94-100 ───
+[bug · high] This loop includes `"model_ab"`, but the production `model_ab` branch never reads or
+validates the `model` field (it only checks `model_a`/`model_b`), and the view intentionally
+hides/omits `model` for that template. With `model=null` and `model_a="a"`/`model_b="b"`, no
+exception is thrown, so the `assertThrows` for `model_ab` will fail. Either remove `"model_ab"` from
+the loop (it is covered by the dedicated `modelAb_needsBothModels` test) or, if the service
+genuinely requires a shared `model` for every template, fix `ExperimentParams.build` to call
+`requireModel` in the `model_ab` branch.
+
+          for (String template : new String[]{"harness_effect", "agent_ab"}) {
+              Map<String, Object> raw = common();
+              raw.put("model", null);
+              IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                      () -> ExperimentParams.build(template, raw));
+              assertTrue(e.getMessage().contains("model is required"), template);
+          }
++         // model_ab validates model_a/model_b instead of a single model (see modelAb_needsBothModels)
+
+
+─── src/test/java/com/agentbench/ui/ExperimentParamsTest.java:58-59 ───
+[maintainability · low] The same `raw` map is passed to two separate `ExperimentParams.build(...)`
+calls, duplicating the computation and making the test harder to reason about. Build once into a
+local `params` variable (as the other tests do) and assert on it.
+
+-         assertEquals(List.of("orch", "mono+rules", "par"), ExperimentParams.build("harness_effect", raw).get("arms"));
+-         assertEquals(5, ExperimentParams.build("harness_effect", raw).get("parallel"));
++         Map<String, Object> params = ExperimentParams.build("harness_effect", raw);
++         assertEquals(List.of("orch", "mono+rules", "par"), params.get("arms"));
++         assertEquals(5, params.get("parallel"));
+
+
+─── src/test/java/com/agentbench/ui/JobLiveStateTest.java:140-143 ───
+[test · medium] join(timeout) only times out — it never verifies the threads actually finished. If
+the writer is still running after 10 s (slow CI), the final assertions (assertEquals(events,
+state.requestCount()), logTail, recentRequests size) read state that the writer is still mutating,
+making the test flaky and producing misleading failure messages about the SUT rather than a timeout.
+Assert the threads are no longer alive (or fail fast on timeout) before asserting final state, and
+consider interrupting/relying on the failure ref for the timed-out case.
+
+          writer.join(10_000);
+          reader.join(10_000);
++         assertFalse(writer.isAlive(), "writer outlived the join timeout");
++         assertFalse(reader.isAlive(), "reader outlived the join timeout");
+          assertNull(failure.get(), "no ConcurrentModificationException or other failure");
+          assertEquals(events, state.requestCount(), "every request event is applied exactly once");
+
+
+─── src/test/java/com/agentbench/ui/RoutesReflectionTest.java:14-15 ───
+[maintainability · low] Unused static import: `assertTrue` is imported but never referenced in this
+file (only `assertEquals` is used). Remove it to avoid dead code.
+
+  import static org.junit.jupiter.api.Assertions.assertEquals;
+- import static org.junit.jupiter.api.Assertions.assertTrue;
+
+
+─── src/test/java/com/agentbench/ui/ServiceClientMappingTest.java:80-85 ───
+[bug · medium] Overly broad catch: any exception from `client.run(job.run_id())` (e.g.,
+ResourceAccessException on a transient connection drop, read timeout, or a 5xx response — all
+plausible on a live service with a 2s timeout) is treated as "unimported". The subsequent
+`assertThrows(RestClientResponseException.class, ...)` and `errorText(e).endsWith("is not
+imported")` will then fail for the wrong reason (verified: `ServiceClient.errorText` maps
+`ResourceAccessException` to "Cannot reach agentbench-service at …"). Classify a job as unimported
+only on an explicit 404 response.
+
+              try {
+                  client.run(job.run_id());
+-             } catch (Exception e) {
++             } catch (RestClientResponseException e) {
++                 if (e.getStatusCode().value() == 404) {
+-                 unimported = job;
++                     unimported = job;
+-                 break;
++                     break;
++                 }
++                 throw e; // 5xx / other status: surface it, don't call it "unimported"
+              }
+
+
+─── src/test/java/com/agentbench/ui/ServiceClientMappingTest.java:58-60 ───
+[bug · medium] Empty-runs precondition handled inconsistently in this live test: (1) `runs.get(0)`
+is called without a length check, so an empty list throws `IndexOutOfBoundsException` — a hard
+FAILURE instead of a skip; (2) the separate `assertFalse(runs.isEmpty(), …)` also turns a benign 'no
+data yet' state into a suite failure. Both spots should use `Assumptions.assumeTrue(!runs.isEmpty(),
+"no runs imported")` to match the convention already used by
+`runDetailProvenanceRendersFromRealManifest` in the same class.
+
+          List<Api.Run> runs = runsOrSkip();
++         Assumptions.assumeTrue(!runs.isEmpty(), "no runs imported");
+          Api.Run run = client.run(runs.get(0).run_id());
+          assertNotNull(run.checks());
+
+
+─── src/test/java/com/agentbench/ui/ServiceClientMappingTest.java:124-125 ───
+[maintainability · medium] Dead code: `allGroups` is computed (with deliberate null-safe handling of
+both `ranked()` and `indicative()`) but never read anywhere. The careful null-safe summation
+suggests an intended assertion (e.g., `assertFalse(allGroups == 0, "expected at least one group")`
+or a sanity check on the mapping) that was dropped; either restore the assertion or delete the
+variable.
+
+          int allGroups = (groups.ranked() == null ? 0 : groups.ranked().size())
+                  + (groups.indicative() == null ? 0 : groups.indicative().size());
++         Assumptions.assumeTrue(allGroups > 0, "no groups returned by the service");
+
+
+─── src/test/java/com/agentbench/ui/ServiceClientSerializationTest.java:14-14 ───
+[maintainability · low] The `assertNull` import is never used in this test class. Remove it to keep
+the file clean (compilers/IDEs will flag it as an unused import).
+
+
+
+─── src/test/java/com/agentbench/ui/ServiceClientSerializationTest.java:42-43 ───
+[test · medium] The comment claims "the rebuilt RestClient actually works — round-trip one call
+through the wire stub", but the assertion only checks that the ORIGINAL object's `http` field is
+non-null, which is trivially true (the constructor always builds it) and verifies nothing about the
+deserialized instance. Either perform an actual HTTP round-trip against a stub server on the
+restored client (e.g., as ServiceClientWireTest does), or fix the comment to state that this only
+guards that deserialization leaves the original untouched.
+
+
+
+─── .gitignore:1-10 ───
+[security · medium] No `.env` file patterns are listed. If the project uses `.env` files for storing
+secrets (API keys, DB credentials, etc.), they could be accidentally committed. Consider adding
+`.env` and `.env.*` (or at minimum `.env` and `!.env.example`) to prevent secret leakage.
+
+  .gradle/
+  build/
+  node_modules/
+  src/main/frontend/generated/
+  frontend/generated/
+  .idea/
+  *.iml
+  .vscode/
+  .DS_Store
+  target/
++ .env
++ .env.*
++ !.env.example
++ *.log
++ logs/
+
+
+
+──────── Project Summary ────────
+
+## Top Issues
+
+1. **Systemic null-safety gap across the UI layer** (7 files)
+   `ExperimentNewView` (uninitialized `monoRules` → NPE on auto-unbox), `ExperimentParams` (null `template` → NPE; `type.cast` → raw `ClassCastException` violating the documented `IllegalArgumentException` contract), `ExperimentsView` (null `status` → NPE in `effective.equals(…)`), `JobStatuses` (`Set.of(…).contains(null)` → NPE from `ImmutableCollections`), `Links` (boxed `Long` null → `String.valueOf` yields `"null"` in route params), `SseEvent` (`payloadType()` returns null for typeless events), and `JobSpecs` (no null guard on `raw`). Each is individually a latent crash; together they indicate the absence of a null-accepting-input convention or `@Nullable` annotations throughout `com.agentbench.ui`.
+
+2. **N+1 sequential HTTP calls on the UI thread** – `ExperimentDetailView.blockedReasons()`
+   One blocking HTTP round-trip per blocked job, executed synchronously. For an arm × repeat grid producing 20+ blocked jobs the UI freezes for the full sum of network latencies. No parallelism, no batching endpoint, no progress indicator.
+
+3. **Stale data on re-navigation** – `GroupsView`
+   Vaadin caches `@Route` instances per session; `render()` runs only in the constructor, so API data is fetched exactly once and never refreshed. Sibling views (`ExperimentsView`, `JobsView`) re-fetch on re-entry, making `GroupsView` the lone outlier.
+
+4. **Sort/display mismatch in the experiment grid** – `ExperimentsView`
+   The status column *renders* the derived effective status (queued → running/blocked) but the *comparator* sorts by the raw table status. Clicking the column header produces a visibly wrong ordering.
+
+5. **Serialization contract broken** – `ServiceProperties`
+   The record is stored as a non-transient field in `ServiceClient` (session-serializable) but omits `serialVersionUID`, unlike its siblings `ServiceClient` and `JobLiveState`. Any field reordering or type change silently breaks persisted sessions.
+
+6. **Secret-leak vector** – `.gitignore`
+   No `.env` / `.env.*` pattern. API keys or DB credentials placed in a local `.env` can be committed accidentally.
+
+7. **Flaky / vacuous test assertions** – `JobLiveStateTest`, `ServiceClientMappingTest`
+   `join(10 s)` in `JobLiveStateTest` never asserts the writer actually terminated, so subsequent `assertEquals` calls race a live mutator. In `ServiceClientMappingTest`, an overly broad `catch (Exception)` masks any transient I/O failure as "unimported," and `runs.get(0)` on an empty list produces a hard `IndexOutOfBoundsException` rather than a clean skip.
+
+8. **UI state desync on init** – `ExperimentNewView`
+   `parallel` checkbox is Vaadin-default (enabled) while the `par` checkbox it gates is unchecked; no initial `setEnabled(false)` call. The value-change listener fires only on *subsequent* toggles, so the user sees a dead control on first render.
+
+9. **CSS: images with explicit `height` attribute break responsiveness** – `md-viewer.css`
+   CommonMark HTML output emits `<img width="800" height="600">`; `max-width: 100%` alone does not override the pixel `height`, so images render at fixed height and overflow horizontally.
+
+10. **HTML rendering: `String.join("\n", …)` produces invisible separators** – `ExperimentDetailView`
+    Browsers collapse consecutive whitespace (including `\n`) in inline `Span` content. Multiple blocked reasons render as a single run-on string.
+
+---
+
+## Module Hotspots
+
+| Path | Comment count | Severity note |
+|---|---|---|
+| `src/main/java/com/agentbench/ui/ExperimentDetailView.java` | 3 | N+1 HTTP, invisible `\n` join, UI-thread block |
+| `src/main/java/com/agentbench/ui/ExperimentNewView.java` | 2 | NPE on unbox, UI-state desync |
+| `src/main/java/com/agentbench/ui/ExperimentParams.java` | 2 | Contract violation (NPE / CCE) |
+| `src/main/java/com/agentbench/ui/ExperimentsView.java` | 2 | NPE, sort/display mismatch |
+| `src/test/java/com/agentbench/ui/ServiceClientMappingTest.java` | 3 | Broad catch, empty-list crash, dead code |
+| `src/main/java/com/agentbench/ui/` (overall) | 15 | Null-safety cluster dominates |
+| `src/test/java/com/agentbench/ui/` (overall) | 8 | Dead imports, vacuous assertions, race in concurrency test |
+| `.gitignore` | 1 | Security |
+
+The production UI package (`src/main/java/com/agentbench/ui/`) accounts for **15 of 31** comments; the test package for another 8. No other module is flagged.
+
+---
+
+## Cross-Cutting Concerns
+
+- **Null-input handling is ad-hoc and inconsistent.** Seven production classes in `com.agentbench.ui` each fail differently on null (NPE, CCE, `"null"` string, skipped cleanup). There is no shared `Objects.requireNonNull` guard, no `@Nullable`/`@NonNull` annotation policy, and the Javadoc contracts (`ExperimentParams`) promise `IllegalArgumentException` but the code throws `NullPointerException` / `ClassCastException` instead.
+  Representative: `ExperimentParams.java`, `JobStatuses.java`, `Links.java`, `SseEvent.java`.
+
+- **Dead code / unused imports in both production and test files.** Four files carry imports that the compiler/IDE flags as unused (`PreflightView` → `UI`, `SseEvent` → `java.util.List`, `RoutesReflectionTest` → `assertTrue`, `ServiceClientSerializationTest` → `assertNull`). A fifth (`ServiceClientMappingTest`) computes `allGroups` with null-safe logic but never asserts on it.
+  Representative: `PreflightView.java`, `SseEvent.java`, `RoutesReflectionTest.java`, `ServiceClientMappingTest.java`.
+
+- **UI lifecycle assumptions not respected.** Vaadin caches `@Route` views; `GroupsView` fetches data once in the constructor and never refreshes. `PreflightView` returns early on exception without resetting the poll interval, leaving a stale 2 s cadence that hammers a downed service.
+  Representative: `GroupsView.java`, `PreflightView.java`.
+
+- **Test assertions weaker than the code under test.** `JobLiveStateTest` uses `join(timeout)` without verifying completion; `ServiceClientMappingTest` catches all exceptions as "expected unimported" and dereferences `runs.get(0)` without a length guard. Both will produce false-green or false-red results under CI timing variance.
+  Representative: `JobLiveStateTest.java`, `ServiceClientMappingTest.java`.
+
+---
+
+## Quick Wins
+
+| Fix | File(s) | Effort |
+|---|---|---|
+| Add `height: auto` to the responsive-image rule | `md-viewer.css` | 1 line |
+| Replace `String.join("\n", …)` with a `<br>`-aware renderer or `white-space: pre-line` style | `ExperimentDetailView.java` | 2–3 lines |
+| Initialize `monoRules.setValue(false)` in constructor | `ExperimentNewView.java` | 1 line |
+| Call `parallel.setEnabled(false)` in constructor to match unchecked `par` | `ExperimentNewView.java` | 1 line |
+| Remove 4 unused imports (`UI`, `List`, `assertTrue`, `assertNull`) | `PreflightView`, `SseEvent`, `RoutesReflectionTest`, `ServiceClientSerializationTest` | 4 deletions |
+| Add `.env` and `!.env.example` to `.gitignore` | `.gitignore` | 2 lines |
+| Add `serialVersionUID` to `ServiceProperties` | `ServiceProperties.java` | 1 line |
+| Guard `JobStatuses.isTerminal` / `canRequeue` with `status != null &&` | `JobStatuses.java` | 2 lines |
+| Remove dead stub for job 35 in `ExperimentDetailViewTest` | `ExperimentDetailViewTest.java` | 1 deletion |
+| In `ExperimentsView`, sort by the *same* derived effective status that is displayed | `ExperimentsView.java` | ~3 lines |
+
