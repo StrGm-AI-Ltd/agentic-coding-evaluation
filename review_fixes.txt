@@ -272,3 +272,15 @@ be asserted to be a 404 with the "is not imported" text and fail for the wrong
 reason (ServiceClient.errorText maps connection errors to "Cannot reach
 agentbench-service at …"). Only an explicit 404 now marks the job as
 unimported; other response statuses are rethrown and surface honestly.
+
+────────────────────────────────────────────────────────────────────────────────
+[27] ServiceClientMappingTest — empty-runs precondition turned into hard failures
+     (src/test/java/com/agentbench/ui/ServiceClientMappingTest.java)
+────────────────────────────────────────────────────────────────────────────────
+A benign "no data yet" state (empty runs list) was producing hard suite
+failures: runsListMaps… asserted !runs.isEmpty(), and
+runDetailCarriesChecksManifestAndOracle dereferenced runs.get(0) with no
+length guard (IndexOutOfBoundsException). Both now use
+Assumptions.assumeTrue(!runs.isEmpty(), "no runs imported"), matching the
+convention already used by runDetailProvenanceRendersFromRealManifest, so a
+fresh service skips cleanly.
