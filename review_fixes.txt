@@ -284,3 +284,13 @@ length guard (IndexOutOfBoundsException). Both now use
 Assumptions.assumeTrue(!runs.isEmpty(), "no runs imported"), matching the
 convention already used by runDetailProvenanceRendersFromRealManifest, so a
 fresh service skips cleanly.
+
+────────────────────────────────────────────────────────────────────────────────
+[28] ServiceClientMappingTest — computed allGroups never asserted
+     (src/test/java/com/agentbench/ui/ServiceClientMappingTest.java)
+────────────────────────────────────────────────────────────────────────────────
+groupsJobsExperimentsPreflightMap carefully null-safe summed ranked()+
+indicative() into allGroups and then never read it — clearly a dropped
+sanity assertion. Restored as Assumptions.assumeTrue(allGroups > 0, …) so a
+service returning zero groups skips the group-shape assertions instead of
+vacuously looping over nothing.

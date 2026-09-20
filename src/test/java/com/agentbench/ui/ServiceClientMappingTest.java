@@ -129,6 +129,7 @@ class ServiceClientMappingTest {
         assertNotNull(groups);
         int allGroups = (groups.ranked() == null ? 0 : groups.ranked().size())
                 + (groups.indicative() == null ? 0 : groups.indicative().size());
+        Assumptions.assumeTrue(allGroups > 0, "no groups returned by the service");
         for (Api.Group group : groups.ranked() == null ? List.<Api.Group>of() : groups.ranked()) {
             assertNotNull(group.summary().k());
             assertNotNull(group.run_ids());
