@@ -173,3 +173,10 @@ String.valueOf on a null boxed Long yields the literal string "null", which
 would produce a silently broken link. experimentLink now fails fast with
 Objects.requireNonNull(experimentId, "experimentId") — a programming error
 should surface at the call site, not as a dead link in the UI.
+
+────────────────────────────────────────────────────────────────────────────────
+[16] PreflightView — unused import
+     (src/main/java/com/agentbench/ui/PreflightView.java)
+────────────────────────────────────────────────────────────────────────────────
+com.vaadin.flow.component.UI was imported but never explicitly referenced
+(event.getUI() / getUI().ifPresent(...) infer the type); removed.
