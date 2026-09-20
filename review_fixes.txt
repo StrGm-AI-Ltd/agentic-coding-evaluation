@@ -1,0 +1,36 @@
+# review_fixes.txt — record of fixes for the code review in review.txt
+
+One section per review point, in the order processed. Each fix is followed by a full test
+run (./gradlew test) and its own commit.
+
+────────────────────────────────────────────────────────────────────────────────
+[baseline] Make the test suite green before starting the review fixes
+────────────────────────────────────────────────────────────────────────────────
+Files: Json.java, ServiceClient.java, application.yml, ServiceClientWireTest.java, review.txt
+
+The working tree carried uncommitted changes (confirmed with the author as intentional):
+Json.java disables Jackson FAIL_ON_NULL_FOR_PRIMITIVES because the service answers null
+for booleans it cannot decide, ServiceClientWireTest gained a "poolable":null case, and
+application.yml points back at the API server on 8765. The suite was red (2 failures):
+the wire tests build their RestClient from the framework default, which uses its own
+Jackson mapper, so the lenient setting in the shared Json.MAPPER never applied there.
+
+Change: ServiceClient.build() now replaces the framework-default Jackson 3 converter
+(JacksonJsonHttpMessageConverter) with one backed by the shared Json.MAPPER, honoring
+the C-9 "one shared mapper" design; the converter is appended (not prepended) so
+String/byte converters still win for String targets (plain-text file downloads).
+Json.MAPPER's static type was narrowed from ObjectMapper to JsonMapper (the type the
+Spring 7 Jackson 3 converter requires); all existing callers use inherited ObjectMapper
+methods, so this is source-compatible.
+
+Result: 140/140 tests pass.
+
+────────────────────────────────────────────────────────────────────────────────
+[1] md-viewer.css — responsive images with an explicit height attribute
+     (src/main/frontend/styles/md-viewer.css)
+────────────────────────────────────────────────────────────────────────────────
+Added `height: auto` next to `max-width: 100%` on `.md-body img`. CommonMark emits
+<img width=".." height=".."> attributes; without height:auto the pixel height is not
+scaled down, so images overflow horizontally instead of keeping their aspect ratio.
+
+Test run: 140/140 pass (CSS-only change; full suite run for good measure).

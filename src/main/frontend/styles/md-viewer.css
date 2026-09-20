@@ -40,4 +40,5 @@
 
 .md-body img {
   max-width: 100%;
+  height: auto; /* preserve aspect ratio for images with an explicit height attribute */
 }
