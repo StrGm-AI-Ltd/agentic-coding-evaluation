@@ -127,4 +127,18 @@ class ExperimentParamsTest {
     void unknownTemplateRejected() {
         assertThrows(IllegalArgumentException.class, () -> ExperimentParams.build("nope", Map.of()));
     }
+
+    @Test
+    void sharedParams_parseStringValuesInsteadOfCasting() {
+        Map<String, Object> raw = common();
+        raw.put("model", "qwen");
+        raw.put("review_weight", "0.25");
+        raw.put("review_blind", "true");
+        Map<String, Object> params = ExperimentParams.build("harness_effect", raw);
+        assertEquals(0.25, params.get("review_weight"));
+        assertTrue((Boolean) params.get("review_blind"));
+        // unparseable values are bad input: IllegalArgumentException, not ClassCastException
+        raw.put("review_weight", "abc");
+        assertThrows(IllegalArgumentException.class, () -> ExperimentParams.build("harness_effect", raw));
+    }
 }

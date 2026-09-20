@@ -74,3 +74,17 @@ the par checkbox it depends on starts unchecked; the value-change listener only
 fires on subsequent toggles, so the user saw a live control that could not
 affect the submission. Added parallel.setEnabled(false) at construction; the
 existing par value-change listener syncs it from then on.
+
+────────────────────────────────────────────────────────────────────────────────
+[6] ExperimentParams.putIfPresent — type.cast escapes the IAE contract
+     (src/main/java/com/agentbench/ui/ExperimentParams.java,
+      src/test/java/com/agentbench/ui/ExperimentParamsTest.java)
+────────────────────────────────────────────────────────────────────────────────
+Values that are not already the target type (e.g. "0.5" for a Double) used to
+escape as a raw ClassCastException, violating the Javadoc contract. The
+normalizer now passes through type.isInstance(value), and otherwise parses the
+toString() of the value: Boolean accepts "true"/"false" (anything else is
+rejected), Double/Integer parse or reject, everything else is kept as text.
+Parse failures surface as IllegalArgumentException with a named field, as
+documented. Added a regression test
+(sharedParams_parseStringValuesInsteadOfCasting).

@@ -118,6 +118,29 @@ public final class ExperimentParams {
         if (value == null || blank(value)) {
             return;
         }
-        params.put(key, type.cast(value));
+        if (type.isInstance(value)) {
+            params.put(key, value);
+            return;
+        }
+        // raw may carry Strings (Map<String, Object> contract): parse instead of casting,
+        // and convert parse failures to IllegalArgumentException per the documented contract
+        String text = value.toString();
+        Object typed;
+        try {
+            typed = switch (type.getName()) {
+                case "java.lang.Boolean" -> {
+                    if ("true".equalsIgnoreCase(text) || "false".equalsIgnoreCase(text)) {
+                        yield Boolean.parseBoolean(text);
+                    }
+                    throw new IllegalArgumentException(key + ": expected true or false");
+                }
+                case "java.lang.Double" -> Double.valueOf(text);
+                case "java.lang.Integer" -> Integer.valueOf(text);
+                default -> text;
+            };
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(key + ": expected a number");
+        }
+        params.put(key, typed);
     }
 }
