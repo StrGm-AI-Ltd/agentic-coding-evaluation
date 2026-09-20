@@ -7,4 +7,4 @@ agentbench:
     # The Java/Spring/LangChain4j service from agentbench-trading-service-jls, run on a non-default
     # port/DB (AB_JLS_PORT/AB_JLS_DSN) precisely so it can coexist with the Python service instead of
     # colliding with it on 8765/agentbench. Was http://127.0.0.1:8765 (the Python FastAPI service).
-    base-url: http://127.0.0.1:8766
+    base-url: http://127.0.0.1:8765

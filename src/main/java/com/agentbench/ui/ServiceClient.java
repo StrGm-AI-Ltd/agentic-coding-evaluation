@@ -2,6 +2,7 @@ package com.agentbench.ui;
 
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
@@ -61,6 +62,12 @@ public class ServiceClient implements Serializable {
         return builder.clone() // never mutate the injected prototype (mock/test seam stays intact)
                 .baseUrl(properties.baseUrl())
                 .requestFactory(factory)
+                .messageConverters(cs -> {
+                    // C-9: one shared mapper for the whole app — replace the framework-default
+                    // Jackson converter so the lenient null-to-primitive setting applies here.
+                    cs.removeIf(c -> c instanceof JacksonJsonHttpMessageConverter);
+                    cs.add(new JacksonJsonHttpMessageConverter(Json.MAPPER)); // appended, so text/plain converters keep winning for String targets
+                })
                 .build();
     }
 

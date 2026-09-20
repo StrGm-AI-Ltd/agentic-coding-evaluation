@@ -43,7 +43,8 @@ class ServiceClientWireTest {
                "weighted_score_pct":90.0,"points_got":65,"denominator":77,
                "valid":true,"validity_reasons":[],"contended":false,
                "wall_sec":1234.5,"completion_tokens":45678,"started":"2026-09-15T23:57:00Z"},
-              {"run_id":"r2","task":"L2_one_endpoint","poolable":false,"valid":null}
+              {"run_id":"r2","task":"L2_one_endpoint","poolable":false,"valid":null},
+              {"run_id":"r3","poolable":null}
             ]""";
 
     private static final String RUN_DETAIL_JSON = """
@@ -205,7 +206,7 @@ class ServiceClientWireTest {
     void runs_omitsBlankFiltersAndMapsSnakeCase() {
         List<Api.Run> runs = client.runs(null, null, null, null, null);
         assertEquals("/api/runs", last().uri(), "blank filters must produce no query string");
-        assertEquals(2, runs.size());
+        assertEquals(3, runs.size());
         Api.Run first = runs.get(0);
         assertEquals("r1", first.run_id());
         assertEquals("L3p_point_in_time", first.task());
@@ -215,6 +216,8 @@ class ServiceClientWireTest {
         assertNull(first.checks(), "the list endpoint carries no checks");
         Api.Run second = runs.get(1);
         assertNull(second.valid());
+        // the service answers null when it cannot decide — must map to false, not fail the list
+        assertFalse(runs.get(2).poolable());
     }
 
     @Test
