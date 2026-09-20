@@ -17,7 +17,8 @@ public class GroupsView extends VerticalLayout {
     public GroupsView(ServiceClient client) {
         this.client = client;
         setPadding(true);
-        render();
+        // @Route views are cached per session — reload on every navigation, like ExperimentsView/JobsView
+        addAttachListener(e -> render());
     }
 
     private void render() {

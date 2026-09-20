@@ -128,3 +128,12 @@ TEXT_SUFFIXES is lowercase but the matched suffix kept the file's original
 case, so README.MD / CONFIG.JSON were treated as binary and linked to the raw
 URL instead of the text viewer. isText now lowercases (Locale.ROOT, to dodge
 the Turkish-İ locale bug) before the set lookup.
+
+────────────────────────────────────────────────────────────────────────────────
+[11] GroupsView — API data fetched once per session, never refreshed
+     (src/main/java/com/agentbench/ui/GroupsView.java)
+────────────────────────────────────────────────────────────────────────────────
+Vaadin caches @Route instances per session, so render()-in-constructor meant
+the leaderboard was fetched exactly once and went stale. Replaced the
+constructor render() with addAttachListener(e -> render()), matching the
+sibling views ExperimentsView and JobsView, so every navigation re-fetches.
