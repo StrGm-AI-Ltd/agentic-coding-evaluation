@@ -300,3 +300,17 @@ vacuously looping over nothing.
      (src/test/java/com/agentbench/ui/ServiceClientSerializationTest.java)
 ────────────────────────────────────────────────────────────────────────────────
 assertNull was imported but never used; removed.
+
+────────────────────────────────────────────────────────────────────────────────
+[30] ServiceClientSerializationTest — vacuous "round-trip" assertion
+     (src/test/java/com/agentbench/ui/ServiceClientSerializationTest.java)
+────────────────────────────────────────────────────────────────────────────────
+The comment claimed the rebuilt RestClient "actually works — round-trip one
+call through the wire stub", but the assertion only checked that the
+ORIGINAL object's http field is non-null (trivially true: the constructor
+always builds it) and verified nothing about the deserialized instance. The
+test now spins up the same in-process stub server pattern as
+ServiceClientMaterialTest… ServiceClientWireTest (port 0, /api/models),
+serializes/deserializes the client pointed at it, and asserts that the
+RESTORED client serves a real round-trip: restored.models() must equal the
+stub's ["m1","m2"]. This also covers the restored Jackson converter wiring.
