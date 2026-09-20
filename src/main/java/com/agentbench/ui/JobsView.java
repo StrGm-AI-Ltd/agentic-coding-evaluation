@@ -91,10 +91,13 @@ public class JobsView extends VerticalLayout {
         if (JobStatuses.canRequeue(job.status())) {
             layout.add(new Button("Requeue", e -> act(() -> client.requeue(job.id()), job)));
         }
-        Button raise = new Button(VaadinIcon.ARROW_UP.create(),
-                e -> act(() -> client.setPriority(job.id(), job.priority() == null ? 1 : job.priority() + 1), job));
-        raise.getElement().setAttribute("aria-label", "raise priority");
-        layout.add(raise);
+        // priority only reorders the queue: meaningless for running/terminal jobs
+        if (!JobStatuses.isTerminal(job.status()) && !"running".equals(job.status())) {
+            Button raise = new Button(VaadinIcon.ARROW_UP.create(),
+                    e -> act(() -> client.setPriority(job.id(), job.priority() == null ? 1 : job.priority() + 1), job));
+            raise.getElement().setAttribute("aria-label", "raise priority");
+            layout.add(raise);
+        }
         return layout;
     }
 

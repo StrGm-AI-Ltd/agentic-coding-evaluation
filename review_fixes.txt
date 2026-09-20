@@ -154,3 +154,13 @@ isTerminal/canRequeue passed job.status() straight to ImmutableCollections'
 null-rejecting contains(); a null status from the API would crash the UI
 thread. Both are now guarded (null → non-terminal / not requeueable), and
 canCancel inherits the fix through isTerminal.
+
+────────────────────────────────────────────────────────────────────────────────
+[14] JobsView — raise-priority button offered for every job
+     (src/main/java/com/agentbench/ui/JobsView.java)
+────────────────────────────────────────────────────────────────────────────────
+The raise button was added unconditionally, including for terminal jobs
+(succeeded/failed/cancelled) where setPriority is a confusing no-op/error.
+It now renders only for non-terminal, non-running jobs — the states where
+priority can still reorder the queue — mirroring the existing
+canCancel/canRequeue gating.
