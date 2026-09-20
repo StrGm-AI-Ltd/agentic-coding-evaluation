@@ -191,3 +191,14 @@ GETs against a downed service. The error path now explicitly sets a 10s
 interval — the polling state is deterministic regardless of the fetch
 outcome, the dead backend is not hammered, and auto-recovery still works
 when the service comes back.
+
+────────────────────────────────────────────────────────────────────────────────
+[18] ServiceProperties — auto-derived serialVersionUID breaks session restore
+     (src/main/java/com/agentbench/ui/ServiceProperties.java)
+────────────────────────────────────────────────────────────────────────────────
+The record is stored as a non-transient field in the session-serializable
+ServiceClient but omitted a pinned UID; the compiler derives one from the
+class structure, so any future component addition/removal/rename would change
+it and persisted sessions would fail with InvalidClassException — the exact
+failure the pinned UIDs in ServiceClient/JobLiveState guard against. Pinned
+serialVersionUID = 1L for consistency.
