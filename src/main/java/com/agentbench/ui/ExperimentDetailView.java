@@ -90,6 +90,8 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
             blockedPanel.setSpacing(false);
             Span blockedLine = new Span(blockedCount + " blocked job" + (blockedCount == 1 ? "" : "s")
                     + (blockedReasons.isEmpty() ? "" : " — " + String.join("\n", new java.util.LinkedHashSet<>(blockedReasons.values()))));
+            // browsers collapse \n in inline text; pre-line renders each reason on its own line
+            blockedLine.getStyle().set("white-space", "pre-line");
             Button requeueAll = new Button("Requeue all blocked", e -> {
                 String failures = requeueAllBlocked(client, jobs);
                 if (failures == null) {

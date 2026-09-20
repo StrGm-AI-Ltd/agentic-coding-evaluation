@@ -46,3 +46,11 @@ thread during render() / requeue-and-re-render. Encounter order is preserved
 when folding into the LinkedHashMap, so tooltips and the joined reason line
 display in the same order as before. Per-job failures are still tolerated
 (tooltip simply absent).
+
+────────────────────────────────────────────────────────────────────────────────
+[3] ExperimentDetailView — String.join("\n") renders as one collapsed line
+     (src/main/java/com/agentbench/ui/ExperimentDetailView.java)
+────────────────────────────────────────────────────────────────────────────────
+Browsers collapse consecutive whitespace (including newlines) in inline Span
+content, so multiple blocked reasons ran together on one line. The blocked-line
+span now sets white-space: pre-line, so each reason renders on its own line.
