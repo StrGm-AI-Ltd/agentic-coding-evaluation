@@ -109,3 +109,13 @@ raw value (null), so !effective.equals(...) threw an NPE and broke the whole
 grid render, even though every other consumer treats status as nullable. Both
 spots now use Objects.equals: the status-badge tooltip in ExperimentsView and
 the identical latent pattern in ExperimentDetailView.render().
+
+────────────────────────────────────────────────────────────────────────────────
+[9] ExperimentsView — status column sorted by the raw table status
+     (src/main/java/com/agentbench/ui/ExperimentsView.java)
+────────────────────────────────────────────────────────────────────────────────
+The cell renders the derived effective status (queued → running/blocked from
+the jobs) but the comparator sorted by the raw table status, so clicking the
+header produced visibly unsorted badges. The comparator now maps each row to
+the same ExperimentStatuses.effective(...) the badge renders (nulls-last,
+matching the previous null handling).

@@ -41,7 +41,10 @@ public class ExperimentsView extends VerticalLayout {
         grid.addColumn(Api.Experiment::template).setHeader("template").setAutoWidth(true);
         grid.addColumn(exp -> "k=" + exp.k()).setHeader("k").setAutoWidth(true);
         grid.addColumn(new ComponentRenderer<>(this::statusBadge)).setHeader("status").setAutoWidth(true)
-                .setSortable(true).setComparator(Fmt.nullsLast(Api.Experiment::status));
+                // sort by the same derived status the badge renders (queued rows can display running/blocked)
+                .setSortable(true)
+                .setComparator(Fmt.nullsLast(exp -> ExperimentStatuses.effective(
+                        exp.status(), jobStatusesByExperiment.get(exp.id()))));
         grid.addColumn(exp -> Fmt.when(exp.created_at())).setHeader("created").setAutoWidth(true)
                 .setComparator(Fmt.comparingTime(Api.Experiment::created_at));
         grid.addItemClickListener(e -> e.getSource().getUI()
