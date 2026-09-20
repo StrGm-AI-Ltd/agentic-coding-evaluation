@@ -55,8 +55,9 @@ class ExperimentParamsTest {
         raw.put("model", "qwen");
         raw.put("arms", List.of("orch", "mono+rules", "par"));
         raw.put("parallel", 5);
-        assertEquals(List.of("orch", "mono+rules", "par"), ExperimentParams.build("harness_effect", raw).get("arms"));
-        assertEquals(5, ExperimentParams.build("harness_effect", raw).get("parallel"));
+        Map<String, Object> params = ExperimentParams.build("harness_effect", raw);
+        assertEquals(List.of("orch", "mono+rules", "par"), params.get("arms"));
+        assertEquals(5, params.get("parallel"));
     }
 
     @Test

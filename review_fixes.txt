@@ -238,3 +238,11 @@ model_ab branch validates model_a/model_b and the view hides the shared model
 field for that template. The current tree's loop already contains only
 harness_effect/agent_ab; added the review's clarifying comment documenting
 why model_ab is deliberately absent (see modelAb_needsBothModels).
+
+────────────────────────────────────────────────────────────────────────────────
+[23] ExperimentParamsTest — same raw map built twice
+     (src/test/java/com/agentbench/ui/ExperimentParamsTest.java)
+────────────────────────────────────────────────────────────────────────────────
+harnessEffect_keepsCheckedArms called ExperimentParams.build twice on the same
+raw map for its two assertions; it now builds once into a local params
+variable (as the other tests do) and asserts on it.
