@@ -1,4 +1,4 @@
-# agentbench-jls
+# ace-service
 
 The Java/Spring/LangChain4j port of [agentbench-trading-service](../agentbench-trading-service) — a
 benchmark harness that measures an LLM agent building a Spring-based trading service against a
@@ -9,12 +9,12 @@ frozen contract, with an exploit-hardened oracle and a run-queue service.
 ```bash
 ./gradlew build          # compile + all tests + jar
 ./gradlew test           # 69 tests; the JobQueue IT runs when a local Postgres is reachable
-                       #   (DB: agentbench_jls_test — auto-created once, wiped per test) and skips otherwise
-AB_JLS_DSN=jdbc:postgresql://localhost/agentbench ./gradlew bootRun   # the service on :8765
+                       #   (DB: ace_jls_test — auto-created once, wiped per test) and skips otherwise
+ACE_JLS_DSN=jdbc:postgresql://localhost/agentbench ./gradlew bootRun   # the service on :8765
 ```
 
 JDK 21 (pinned via `org.gradle.java.home`), Spring Boot 3.5, LangChain4j 1.1, Postgres. Model
-server: any OpenAI-compatible endpoint (`AB_ENDPOINT`, default oMLX on :9191).
+server: any OpenAI-compatible endpoint (`ACE_ENDPOINT`, default oMLX on :9191).
 
 ## What is a faithful port
 
@@ -91,7 +91,7 @@ Still not ported (documented, not silent):
 ## Layout
 
 ```
-com.agentbench
+com.strgmai.ace.service
 ├── agent/     ReferenceAgent (LangChain4j), AgentTools, AgentSession (+ compaction)
 ├── proxy/     RecordingProxy (JDK HttpServer), SseAssembler
 ├── runner/    RunBench (probe, waves, docker windows, reviews), ContextProbe, Reviews,

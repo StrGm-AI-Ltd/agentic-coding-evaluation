@@ -1,25 +1,25 @@
 spring:
-  application.name: agentbench-jls
+  application.name: ace-service
   sql.init.mode: always   # schema.sql is idempotent (IF NOT EXISTS); the DB is the record
   datasource:
-    url: ${AB_JLS_DSN:jdbc:postgresql://localhost/agentbench}
+    url: ${ACE_JLS_DSN:jdbc:postgresql://localhost/agentbench}
     # the benchmark's own ports must stay free: 8080 is probed by the oracle, 9191 is the model server
 server:
-  port: ${AB_JLS_PORT:8765}
+  port: ${ACE_JLS_PORT:8765}
 
-agentbench:
-  model: ${AB_MODEL:Qwen3.6-27B-graft}
-  endpoint: ${AB_ENDPOINT:http://127.0.0.1:9191/v1}
+ace:
+  model: ${ACE_MODEL:Qwen3.6-27B-graft}
+  endpoint: ${ACE_ENDPOINT:http://127.0.0.1:9191/v1}
   api-key: ${OMLX_API_KEY:}
   temperature: 1.0
   top-p: 0.95
   max-output-tokens: 8192
-  context-window: ${AB_CONTEXT_WINDOW:}   # EMPTY = no operator cap; the probe owns the window (Python default)
+  context-window: ${ACE_CONTEXT_WINDOW:}   # EMPTY = no operator cap; the probe owns the window (Python default)
   keep-recent-turns: 8
   compaction-trigger: 28000
-  results-dir: ${AB_RESULTS_DIR:./results}
-  workspace-root: ${AB_WORKSPACE_ROOT:${java.io.tmpdir}/agentbench-jls-ws}
+  results-dir: ${ACE_RESULTS_DIR:./results}
+  workspace-root: ${ACE_WORKSPACE_ROOT:${java.io.tmpdir}/ace-service-ws}
   poll-sec: 10
   max-error-rate: 0.2
   reference-server-port: 0     # 0 = the reference trading server stays off (the oracle starts it on demand)
-  java-home: ${AB_JAVA_HOME:}
+  java-home: ${ACE_JAVA_HOME:}

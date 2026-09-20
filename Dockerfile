@@ -8,14 +8,14 @@ WORKDIR /src
 # - the base image's own JDK 21 is found on PATH instead, and the toolchain config in
 # build.gradle.kts is what the build actually needs. If a setting ever becomes ESSENTIAL for the
 # in-image build, provide it via a sibling gradle.properties copied here, not the host file.
-COPY gradlew settings.gradle.kts build.gradle.kts ./
+COPY gradlew settings.gradle build.gradle ./
 COPY gradle ./gradle
 # pre-fetch ALL dependencies into this layer: a one-line source change invalidates only the src
 # layer below, never a full Maven Central re-download. The probe class is a dummy so compileJava
 # (and thus the whole dependency graph) resolves before the real sources arrive.
 RUN chmod +x gradlew && ./gradlew --version \
-    && mkdir -p src/main/java/com/agentbench \
-    && echo 'package com.agentbench; final class __probe{}' > src/main/java/com/agentbench/__probe.java \
+    && mkdir -p src/main/java/com/strgmai/ace/service \
+    && echo 'package com.strgmai.ace.service; final class __probe{}' > src/main/java/com/strgmai/ace/service/__probe.java \
     && ./gradlew --no-daemon compileJava \
     && rm -rf src   # the probe is done its job; delete it so COPY src below brings ONLY the real sources
 COPY src ./src
