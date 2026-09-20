@@ -1,0 +1,3 @@
+rootProject.name = 'agentic-coding-evaluation'
+
+include 'ace-service'

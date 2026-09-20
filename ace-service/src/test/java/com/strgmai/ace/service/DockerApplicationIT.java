@@ -75,8 +75,13 @@ class DockerApplicationIT {
         String apiKey = System.getenv().getOrDefault("OMLX_API_KEY", "");
         modelServerConfigured = !apiKey.isBlank();
 
+        // ace-service is a Gradle subproject: the Dockerfile needs the repo root as build context
+        // (gradlew/settings.gradle/gradle/ now live one level up), so the whole root is staged and
+        // the Dockerfile is addressed by its path within that context, not by its own parent dir.
+        Path repoRoot = Path.of(System.getProperty("user.dir")).getParent();
         app = new GenericContainer<>(new ImageFromDockerfile()
-                .withDockerfile(Path.of(System.getProperty("user.dir"), "Dockerfile")))
+                .withFileFromPath(".", repoRoot)
+                .withDockerfilePath("ace-service/Dockerfile"))
                 .withNetwork(network)
                 .withExposedPorts(8765)
                 .withEnv("ACE_JLS_DSN", "jdbc:postgresql://db:5432/ace_service")
