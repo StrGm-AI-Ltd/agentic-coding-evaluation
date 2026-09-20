@@ -92,6 +92,8 @@ class ExperimentParamsTest {
     @Test
     void modelRequiredForEveryTemplate() {
         for (String template : new String[]{"harness_effect", "agent_ab"}) {
+            // model_ab is deliberately absent: it validates model_a/model_b instead of a
+            // single model (see modelAb_needsBothModels)
             Map<String, Object> raw = common();
             raw.put("model", null);
             IllegalArgumentException e = assertThrows(IllegalArgumentException.class,

@@ -228,3 +228,13 @@ Job 35 is not part of that test's jobs list (31, 32, 33), so the throwing
 when(client.job(35L)) stub was never exercised — a leftover that misleadingly
 suggested a fetch-failure scenario. Removed; fetch-failure tolerance is
 documented as covered by blockedReasonsTolerateFetchFailures.
+
+────────────────────────────────────────────────────────────────────────────────
+[22] ExperimentParamsTest — model_ab in the missing-model loop
+     (src/test/java/com/agentbench/ui/ExperimentParamsTest.java)
+────────────────────────────────────────────────────────────────────────────────
+The review flagged that model_ab was in the model-is-required loop while the
+model_ab branch validates model_a/model_b and the view hides the shared model
+field for that template. The current tree's loop already contains only
+harness_effect/agent_ab; added the review's clarifying comment documenting
+why model_ab is deliberately absent (see modelAb_needsBothModels).
