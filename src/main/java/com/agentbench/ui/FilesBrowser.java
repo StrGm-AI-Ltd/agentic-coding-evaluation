@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -73,7 +74,8 @@ public class FilesBrowser extends VerticalLayout {
 
     static boolean isText(String name) {
         int dot = name.lastIndexOf('.');
-        return dot >= 0 && TEXT_SUFFIXES.contains(name.substring(dot));
+        // extensions are case-sensitive in the set, but not on case-insensitive file systems
+        return dot >= 0 && TEXT_SUFFIXES.contains(name.substring(dot).toLowerCase(Locale.ROOT));
     }
 
     static String sizeOf(String resultsDir, String name) {
