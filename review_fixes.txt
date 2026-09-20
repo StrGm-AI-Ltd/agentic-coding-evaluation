@@ -34,3 +34,15 @@ Added `height: auto` next to `max-width: 100%` on `.md-body img`. CommonMark emi
 scaled down, so images overflow horizontally instead of keeping their aspect ratio.
 
 Test run: 140/140 pass (CSS-only change; full suite run for good measure).
+
+────────────────────────────────────────────────────────────────────────────────
+[2] ExperimentDetailView.blockedReasons() — N+1 sequential HTTP calls
+     (src/main/java/com/agentbench/ui/ExperimentDetailView.java)
+────────────────────────────────────────────────────────────────────────────────
+The per-blocked-job GET /api/jobs/{id} lookups now run on a bounded parallel
+stream (ForkJoinPool.commonPool). The shared RestClient is immutable and
+thread-safe, so the fetches no longer serialize 20+ round-trips on the UI
+thread during render() / requeue-and-re-render. Encounter order is preserved
+when folding into the LinkedHashMap, so tooltips and the joined reason line
+display in the same order as before. Per-job failures are still tolerated
+(tooltip simply absent).

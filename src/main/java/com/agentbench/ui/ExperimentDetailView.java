@@ -18,6 +18,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import tools.jackson.databind.JsonNode;
 
 /** Experiment detail — the UI twin of GET /api/experiments/{id}: params and its arm × repeat jobs. */
@@ -135,22 +136,28 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         return badge;
     }
 
-    /** Fetches the blocked reason per blocked job (the experiments API does not carry it). */
+    /**
+     * Fetches the blocked reason per blocked job (the experiments API does not carry it).
+     * The per-job lookups run in parallel (the shared RestClient is thread-safe) so a large
+     * arm × repeat grid does not cost one sequential network round-trip per blocked job.
+     */
     static Map<Long, String> blockedReasons(ServiceClient client, List<Api.ExperimentJob> jobs) {
         Map<Long, String> reasons = new java.util.LinkedHashMap<>();
-        for (Api.ExperimentJob job : jobs) {
-            if (!"blocked".equals(job.status())) {
-                continue;
-            }
-            try {
-                Api.Job full = client.job(job.id());
-                if (full != null && full.blocked_reason() != null) {
-                    reasons.put(job.id(), full.blocked_reason());
-                }
-            } catch (Exception ignored) {
-                // the tooltip is simply absent for that job
-            }
-        }
+        jobs.parallelStream()
+                .filter(job -> "blocked".equals(job.status()))
+                .map(job -> {
+                    try {
+                        Api.Job full = client.job(job.id());
+                        if (full != null && full.blocked_reason() != null) {
+                            return Map.entry(job.id(), full.blocked_reason());
+                        }
+                    } catch (Exception ignored) {
+                        // the tooltip is simply absent for that job
+                    }
+                    return null;
+                })
+                .filter(Objects::nonNull)
+                .forEach(entry -> reasons.put(entry.getKey(), entry.getValue()));
         return reasons;
     }
 
