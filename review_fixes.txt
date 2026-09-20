@@ -202,3 +202,14 @@ class structure, so any future component addition/removal/rename would change
 it and persisted sessions would fail with InvalidClassException — the exact
 failure the pinned UIDs in ServiceClient/JobLiveState guard against. Pinned
 serialVersionUID = 1L for consistency.
+
+────────────────────────────────────────────────────────────────────────────────
+[19] SseEvent.payloadType — could return null and NPE the SSE consumer thread
+     (src/main/java/com/agentbench/ui/SseEvent.java)
+────────────────────────────────────────────────────────────────────────────────
+SseParser only sets the SSE "event:" type when the line is present, and the
+payload may carry a JSON-null "type"; payloadType() then returned null and
+JobLiveState.apply's String switch would NPE on the consumer thread. It now
+uses hasNonNull("type") and falls back to the SSE event type, or the empty
+string when both are absent — consumers' default branches ignore the empty
+string, and the result can never be null.
