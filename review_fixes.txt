@@ -54,3 +54,13 @@ display in the same order as before. Per-job failures are still tolerated
 Browsers collapse consecutive whitespace (including newlines) in inline Span
 content, so multiple blocked reasons ran together on one line. The blocked-line
 span now sets white-space: pre-line, so each reason renders on its own line.
+
+────────────────────────────────────────────────────────────────────────────────
+[4] ExperimentNewView — NPE on auto-unboxing of un-tenched checkboxes
+     (src/main/java/com/agentbench/ui/ExperimentNewView.java)
+────────────────────────────────────────────────────────────────────────────────
+monoRules/par were never given an initial value; Vaadin Checkbox.getValue()
+returns null until toggled, so if (checkbox.getValue()) threw an NPE on form
+submit when the user never touched the box. Submit now uses
+Boolean.TRUE.equals(...), which treats null as unchecked (the intended
+default) and can never NPE.

@@ -239,8 +239,8 @@ public class ExperimentNewView extends VerticalLayout {
                 List<String> arms = new ArrayList<>();
                 if (orch.getValue()) arms.add("orch");
                 if (mono.getValue()) arms.add("mono");
-                if (monoRules.getValue()) arms.add("mono+rules");
-                if (par.getValue()) arms.add("par");
+                if (Boolean.TRUE.equals(monoRules.getValue())) arms.add("mono+rules");
+                if (Boolean.TRUE.equals(par.getValue())) arms.add("par");
                 raw.put("arms", arms);
                 raw.put("parallel", parallel.getValue());
             }
