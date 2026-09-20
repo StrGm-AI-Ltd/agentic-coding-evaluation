@@ -22,13 +22,17 @@ public final class JobSpecs {
 
     /**
      * @param task  the required rung
-     * @param raw   field values by RunSpec key (Strings/Integers/Doubles/Booleans, may be null or blank)
+     * @param raw   field values by RunSpec key (Strings/Integers/Doubles/Booleans, may be null or blank);
+     *              a null map is treated as empty
      * @return the normalized spec map; task first
      * @throws IllegalArgumentException when task is blank
      */
     public static Map<String, Object> build(String task, Map<String, Object> raw) {
         if (task == null || task.isBlank()) {
             throw new IllegalArgumentException("task is required (a rung from tasks/ladder.json)");
+        }
+        if (raw == null) {
+            raw = Map.of();
         }
         Map<String, Object> spec = new LinkedHashMap<>();
         spec.put("task", task);

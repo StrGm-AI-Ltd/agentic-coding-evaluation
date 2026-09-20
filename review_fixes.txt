@@ -137,3 +137,11 @@ Vaadin caches @Route instances per session, so render()-in-constructor meant
 the leaderboard was fetched exactly once and went stale. Replaced the
 constructor render() with addAttachListener(e -> render()), matching the
 sibling views ExperimentsView and JobsView, so every navigation re-fetches.
+
+────────────────────────────────────────────────────────────────────────────────
+[12] JobSpecs.build — no null guard on the raw map
+     (src/main/java/com/agentbench/ui/JobSpecs.java)
+────────────────────────────────────────────────────────────────────────────────
+A null raw map would crash with a bare NPE at raw.entrySet(). It is now
+normalized to Map.of() (an empty form → task + default flags only), and the
+Javadoc documents that contract, mirroring the explicit task validation.
