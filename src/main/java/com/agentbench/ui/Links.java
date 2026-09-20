@@ -29,6 +29,8 @@ public final class Links {
     }
 
     public static RouterLink experimentLink(Long experimentId) {
+        // a null id would otherwise silently produce the route param value "null"
+        Objects.requireNonNull(experimentId, "experimentId");
         return paramLink(String.valueOf(experimentId), ExperimentDetailView.class,
                 "experimentId", String.valueOf(experimentId));
     }

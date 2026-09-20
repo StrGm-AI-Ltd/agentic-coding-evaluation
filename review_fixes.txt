@@ -164,3 +164,12 @@ The raise button was added unconditionally, including for terminal jobs
 It now renders only for non-terminal, non-running jobs — the states where
 priority can still reorder the queue — mirroring the existing
 canCancel/canRequeue gating.
+
+────────────────────────────────────────────────────────────────────────────────
+[15] Links.experimentLink — null Long rendered the route param "null"
+     (src/main/java/com/agentbench/ui/Links.java)
+────────────────────────────────────────────────────────────────────────────────
+String.valueOf on a null boxed Long yields the literal string "null", which
+would produce a silently broken link. experimentLink now fails fast with
+Objects.requireNonNull(experimentId, "experimentId") — a programming error
+should surface at the call site, not as a dead link in the UI.
