@@ -255,3 +255,9 @@ join(10s) only times out; on a slow CI box the writer could still be running
 when the final assertions read state it is mutating, producing misleading
 failures that look like SUT bugs. The test now asserts both threads are no
 longer alive (fail-fast on timeout) before asserting the final state.
+
+────────────────────────────────────────────────────────────────────────────────
+[25] RoutesReflectionTest — unused import
+     (src/test/java/com/agentbench/ui/RoutesReflectionTest.java)
+────────────────────────────────────────────────────────────────────────────────
+assertTrue was imported but never referenced (only assertEquals is used); removed.
