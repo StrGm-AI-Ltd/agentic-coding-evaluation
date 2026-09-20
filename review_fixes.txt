@@ -294,3 +294,9 @@ indicative() into allGroups and then never read it — clearly a dropped
 sanity assertion. Restored as Assumptions.assumeTrue(allGroups > 0, …) so a
 service returning zero groups skips the group-shape assertions instead of
 vacuously looping over nothing.
+
+────────────────────────────────────────────────────────────────────────────────
+[29] ServiceClientSerializationTest — unused import
+     (src/test/java/com/agentbench/ui/ServiceClientSerializationTest.java)
+────────────────────────────────────────────────────────────────────────────────
+assertNull was imported but never used; removed.
