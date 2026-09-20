@@ -1,0 +1,337 @@
+# review.txt fix log (agentbench-trading-service-jls) — round 2 (2026-07-23)
+
+## 1. AgentSession.loadMessages — NPE when a system/user record has empty or missing `content` [bug/high]
+Root cause: `m.path("content").get(0)` returns null for an empty/missing content array, so a
+truncated or hand-edited session file (re-read for --continue resume) crashed the program with an NPE.
+Fix: use `path(0)` (MissingNode, never null) and skip the message when it is a MissingNode, for
+both the system and user branches.
+Tests: full `./gradlew test` green (32s).
+
+## 2. AgentSession.loadMessages — same NPE for `toolResult` records [bug/high]
+Same root cause as #1 on the toolResult branch: `m.path("content").get(0)` is null for an
+empty/missing content array. Switched to `path(0)` + MissingNode check; corrupt records are skipped
+instead of crashing resume.
+## 3. AgentSession.message — dead `Void a, b, c` parameters [maintainability/low]
+The three Void parameters were never read (call sites passed `null, null, null`). Removed them and
+the nulls at the two call sites.
+Tests: full `./gradlew test` green after each change.
+
+## 4. AgentTools.read — no lower bound on `start_line` [bug/high]
+A 0/negative start_line made the loop call `lines.get(i-1)` with a negative index →
+IndexOutOfBoundsException surfaced to the model as a cryptic tool error.
+Fix: clamp `s` to a minimum of 1, and return a descriptive error when the requested start is past
+the end of a non-empty file (instead of silently reporting "(empty file)").
+Tests: full `./gradlew test` green.
+
+## 5. AgentTools.edit — `getOrDefault` + `String.valueOf` mishandled JSON nulls [bug/high]
+When `old_string`/`new_string` is present but JSON `null`, getOrDefault returns null (the key IS
+present) and `String.valueOf(null)` yields the literal string "null" — the edit would then search
+for the text `null`. Fixed with explicit null → "" mapping; the existing `old.isEmpty()` guard
+then rejects a null old_string correctly.
+Tests: full `./gradlew test` green.
+
+## 6. AgentTools.countOccurrences — infinite loop on empty substring [bug/medium]
+`indexOf(sub, i)` with an empty sub always returns >= 0 and the index never advances. The only
+caller guards with `old.isEmpty()`, but the package-private utility was unsafe if reused; added an
+explicit `if (sub.isEmpty()) return 0;` guard.
+Tests: full `./gradlew test` green.
+
+## 7. ReferenceAgent — a new ObjectMapper per tool call [performance/medium]
+ObjectMapper is thread-safe and built for reuse; with 400 turns x several calls, per-call
+construction allocated hundreds of instances. Hoisted to a `private static final MAPPER`.
+## 8. ReferenceAgent — turn-capped exit reported as success [bug/medium]
+When the while loop exited because turns hit 400, rc stayed 0 (success), misrepresenting a
+session cut short. After the loop: if rc is still 0 and turns >= MAX_TURNS, set rc = 1 and, if
+no finish reason exists, record finish = "turn_limit" (does not override the wall-deadline rc=124).
+Tests: full `./gradlew test` green after each change.
+
+## 9. PGobjectJsonSerializer — empty jsonb string produced malformed JSON [bug/medium]
+`writeRawValue("")` writes zero bytes, leaving a value-less token (`{"field":,}`) and corrupting
+the response. Added `!value.getValue().isEmpty()` to the raw-value condition; an empty value now
+falls through to `writeString`, which emits a valid JSON string.
+Tests: full `./gradlew test` green.
+
+## 10. Collect — `Map.of` NPE in the self_review block [bug/critical]
+When the oracle reported no numeric functional_score_pct, the ternary yielded a null calibration_gap
+and `Map.of` threw NPE, crashing the whole collect. Replaced with a LinkedHashMap (null-tolerant).
+Tests: full `./gradlew test` green.
+
+## 11. Collect — `Map.of` NPE + unchecked cast in the trajectory_review block [bug/critical]
+Same class of bug as #10 (null calibration_gap kills Map.of) plus a bare unchecked cast on
+manifest.get("trajectory_review") that would CCE on a non-Map. Rewritten with the instanceof
+guard + LinkedHashMap, matching the null-safe access pattern used two lines up.
+## 12. Collect — trajTerm re-fetched via a bare unchecked cast [bug/medium]
+If trajectory_review were absent/null while tr held a score, the raw cast NPE'd; for a non-Map it
+CCE'd. Now guarded with the same instanceof pattern (via tr) as the calibration-gap line.
+Tests: full `./gradlew test` green after each change.
+
+## 13. Collect.parallelTerm — opaque algebraic tautology [maintainability/medium]
+The four `0.3 * 100` terms cancel exactly, hiding the validity component that the javadoc promises
+and inviting a wrong simplification. Replaced with the explicit closed form
+`30 + 0.3 * parallelism + 0.4 * (100 * (1 - friction))` with a comment noting validity=100 is the
+constant 30. Identical value (validity is forced to 100 by the early-return above).
+Tests: full `./gradlew test` green.
+
+## 14. CheckId.functional() — fresh mutable EnumSet per call [performance/low]
+Called per record in Scorer's stream filter, and the mutable EnumSet let callers mutate the
+"source of truth". Now a `static final` unmodifiable set built once.
+Tests: full `./gradlew test` green.
+
+## 15. CheckStatus.parse — NPE on a null status [bug/medium]
+A null `s` (a JSON status field with no value) crashed with NPE, which the
+`catch (IllegalArgumentException)` does not cover — violating the method's own contract that any
+bad input is a FAIL, never silence. Added `if (s == null) return FAIL;`.
+Tests: full `./gradlew test` green.
+
+## 16. RunOracle — `Map.of` NPE when `docker image inspect` fails [bug/critical]
+A non-zero inspect rc made the ternary yield a null digest; Map.of rejects nulls and killed the
+whole scoring run. Now built with a LinkedHashMap that tolerates the null digest.
+## 17. RunOracle — missing ladder.json / fallback rung NPE'd [bug/high]
+getResourceAsStream can return null (resource not packaged), and a missing L7_full_platform rung
+left `rung` null → NPE on rung.get("checks"). Both now throw a clear IllegalStateException.
+## 18. RunOracle — redundant `id != CheckId.P1` gate condition [maintainability/low]
+P1 is already in the `offline` list, so `!offline.contains(id)` excludes it; the extra condition
+would silently change gating semantics if P1 ever left `offline`. Removed, with a comment.
+Tests: full `./gradlew test` green after the changes (shared run for the three same-file points).
+
+## 19. Scorer — `functional_denominator` inconsistent with `fpct` [bug/high]
+fpct is computed over the *counted* functional denominator (fDenom) but the reported
+functional_denominator was the full one (fAll), breaking the points/denominator invariant on any
+partial run. Now reports fDenom (mirroring `denominator`), with the full value kept as a separate
+`functional_full_denominator` (analogous to `full_denominator`).
+Tests: full `./gradlew test` green (ScorerTest unaffected: in non-partial runs fDenom == full).
+
+## 20. PlanError — no (message, cause) constructor [maintainability/low]
+The only (String) constructor made `parseFile`'s wrap drop the IOException stack trace. Added a
+(message, Throwable) constructor and updated the call site to preserve the cause chain.
+## 21. PlanTask — `score` field could diverge from `score()` [maintainability/medium]
+The parser's dedup field and the pure richness method were two values with overlapping names; the
+field is now `dedupScore` (assigned once by the parser, exposed via a single dedupScore()
+accessor) and the comment documents the relationship, so there is one source of truth for dedup.
+The input fields stay public (RunBench reads deps/checks) but the class javadoc now says so.
+## 22. SseAssembler — explicit null `reasoning_content` appended as "null" [bug/medium]
+NullNode is not a MissingNode, so the guard passed and asText() contributed the literal string
+"null". Added `!isNull()`, matching the content check two lines above.
+Tests: full `./gradlew test` green after each change.
+
+## 23. ReferenceServer — a malformed asOf slipped past the 400 catch [bug/high]
+Instant.parse throws DateTimeParseException (a RuntimeException, not IllegalArgumentException),
+so a bad asOf reached the outer lambda, which only closed the exchange - a connection reset, not
+a 400. parseAsOf() now converts it to IllegalArgumentException.
+## 24. ReferenceServer - unknown /accounts/{id}/X sub-resources left the client hanging [bug/high]
+With parts[2] != "holdings" neither branch called reply(); added a 404 fallback.
+## 25. ReferenceServer.param — value not URL-decoded [bug/medium]
+getQuery() is still percent-encoded, so asOf=2024-01-15T10%3A30%3A00Z failed Instant.parse. Now
+URLDecoder.decode(..., UTF_8).
+## 26. ReferenceServer.stop - the cached thread pool was never shut down [maintainability/low]
+The executor is stored in a field and shutdownNow()'d in stop() instead of waiting out 60s
+keep-alives.
+Tests: full `./gradlew test` green after the changes (shared run for the same-file points).
+
+## 30. Reviews.changedSources — top-level skip dirs missed [maintainability/low]
+`path.contains("/" + d + "/")` requires a leading slash, so a changed file directly under a
+top-level skip dir (build/Foo.java) was wrongly reported as code, flipping modified_code/
+modified_paths. Switched to path-segment membership, matching BuildChecks.
+
+## 31. RunBenchSupport.gradleHome — dead, misnamed method [maintainability/low]
+Never called, and its name promised a Gradle home while it actually read AB_JAVA_HOME (a JDK
+home). Renamed to javaHome(); callers wiring a JDK pin can discover it by its real meaning.
+Tests: full `./gradlew test` green.
+
+## 32+33. RunBenchSupport.killTree — dead method with a latent matching bug [bug/medium + maintainability/low]
+Never called, and its AB_RUN_ID sweep checked `info().commandLine()` while AB_RUN_ID is set as an
+environment variable - Java's ProcessHandle.Info never exposes the environment, so the sweep could
+never match any process. Removed the method (and the now-unused TimeUnit import) and the javadoc
+now records WHY the Python kill_tree was not ported, instead of a misleading trap.
+Tests: full `./gradlew test` green.
+
+## 34. RunBenchSupport.gitOut — no exit-code check [bug/medium]
+A failing git command silently returned its (possibly empty) stdout; the only caller compensated
+with an ugly double `gitOut` call in a ternary (writing the object twice). gitOut now throws on a
+non-zero exit like runGit, and the handoff caller makes a single call, storing null on failure.
+Tests: full `./gradlew test` green.
+
+## 35. Validity — `(int)` cast on the requests counter [maintainability/medium]
+A direct (int) cast CCEs if the value ever arrives as a Long (JSON deserialization); the errors
+line already used the Number pattern. Same fix here.
+## 36. VerifyTask — log writer leaked when the loop threw IOException [bug/medium]
+The outer catch swallowed the exception before close(). The writer is now created in an inner try
+with a finally that flushes/closes, so any mid-loop IOException still releases the file descriptor.
+## 37. VerifyTask.firstError — Pattern.compile per line [performance/medium]
+The same regex was re-parsed for every output line; hoisted to a static final ERROR_PATTERN.
+## 38. VerifyTask — DocumentBuilderFactory.newInstance() per XML file [performance/low]
+One factory (and per-file builder) is now created before the loop.
+Tests: full `./gradlew test` green after the changes (shared run for the same-file points).
+
+## 30. Reviews.changedSources — a changed file directly under a TOP-LEVEL skip dir was reported as code [maintainability/low]
+`path.contains("/" + d + "/")` needs a leading slash, so build/Foo.java slipped through. Now path
+segments are tested for membership, matching BuildChecks.
+Tests: full `./gradlew test` green.
+
+## 39. BenchController.enqueue — 500 when the body has no "spec" [bug/high]
+spec null -> spec.get("task") NPE'd into a 500. Now an IllegalArgumentException, which
+ApiExceptionHandler maps to a 400.
+Tests: full `./gradlew test` green.
+
+## 40. BenchController.compare — null/empty a or b [bug/high]
+A null list NPE'd in the for-loop; an empty list crashed later on ra.get(0) (and neither was
+covered by the inner catch). Early validation now throws IllegalArgumentException (mapped to a 400
+by ApiExceptionHandler).
+Tests: full `./gradlew test` green.
+
+## 41. BenchController.priority — `(int) body.get("priority")` [bug/medium]
+A missing key NPE'd on unboxing, a non-Number CCE'd - both 500s. Now an instanceof Number guard
+(400 via ApiExceptionHandler), matching enqueue's safe pattern.
+Tests: full `./gradlew test` green.
+
+## 42. BenchController.events - unbounded raw threads per SSE client [performance/medium]
+Each connection spawned a non-daemon Thread with an SseEmitter(0L) (no timeout); a leaked client
+or stuck job held a thread forever. Now a bounded (16) daemon pool + a 30-minute emitter timeout;
+a timed-out stream ends, the job itself keeps running, and the worker releases itself on the next
+send.
+Tests: full `./gradlew test` green.
+
+## 43. JobQueue.cancel - check-then-act race [bug/high]
+Between the get() and the UPDATE a concurrent finish() could reach a terminal state, and the
+CASE (filtering only on id) would write 'cancelled' over it. The UPDATE now requires a
+non-terminal status and throws if 0 rows were updated.
+## 44. JobQueue.requeue - same pattern [bug/medium]
+The UPDATE now requires status IN ('failed','cancelled','blocked'), so a concurrent cancel of a
+blocked job is not silently undone; 0 rows -> explicit error.
+Tests: full `./gradlew test` green (JobQueueIT passes with the guarded statements).
+
+## 45. RunSpec.nonNeg - misleading name [maintainability/low]
+The method enforces strict positivity (0 is rejected, "budgets must be positive") despite the
+"nonNeg" name. Renamed to positive().
+Tests: full `./gradlew test` green.
+
+## 46. Tailer.newFiles - Files.list() stream never closed [bug/high]
+Files.list holds an open directory FD; with poll() in a 2-second loop each poll leaked one,
+heading for the process FD limit. Now try-with-resources (sorted()/toList() fully materialize
+inside the try).
+Tests: full `./gradlew test` green (TailerTest).
+
+## 47. Tailer.tailLines - truncation left a permanently stale offset [bug/medium]
+When the file shrank below the saved offset (rotation/truncation), `size <= start` returned
+empty forever. Now a size < start resets the offset to 0 so new content is tailed.
+(Also in this point's neighbourhood: the (int)(size - start) cast was clamped at Integer.MAX_VALUE
+so a >2GiB unread tail cannot NegativeArraySizeException; the remainder is read on the next poll.)
+Tests: full `./gradlew test` green (TailerTest).
+
+## 49. TreatmentPin - "unpinned" fallback was invisible [maintainability/medium]
+When compute() threw, every job stamped "unpinned" silently passed WorkerService.guard() - the
+drift protection was off with zero operator visibility. It now logs the cause at ERROR.
+## 50. TreatmentPin - Files.readAllBytes on the whole fat jar [performance/low]
+A 100-300MB one-time heap spike at startup; now streamed into the digest with a 1MiB buffer.
+Tests: full `./gradlew test` green.
+
+## 51. DockerApplicationIT - `List.of(elements().next().asText())` skip-guard was inert [test/medium]
+For an empty model array that produced List.of(null): isEmpty() was always false, the skip never
+fired, and String.format embedded the literal "null" as the model name. collectIntoList(String)
+now parses the array properly so the empty case skips via assumeTrue.
+Tests: DockerApplicationIT is docker-tagged (not in the `test` task); full `./gradlew test` green.
+
+## 52. DockerApplicationIT - the final re-cancel was fire-and-forget [test/medium]
+No assertion, so the test passed even when the cancel did nothing; a job that raced into running
+would then burn the suite's worker slot and model budget. Now asserts 200 + status "cancelled".
+## 53. DockerApplicationIT - the 2s poll loop accepted only "running" [test/medium]
+A fast claim->run->finish could land between samples and fail the test on a correct run; a
+non-failed terminal state now also counts as success. Added a best-effort cancel after the
+last assertion so a live job does not fight the rest of the suite (container teardown remains
+the backstop).
+Tests: DockerApplicationIT is docker-tagged (not in the `test` task); full `./gradlew test` green
+and the file compiles.
+
+## 54. DockerApplicationIT - leaked temp dir + implicit test-5/6 dependency on test 4 [maintainability/low]
+The fixture is now a @TempDir (JUnit deletes it) instead of a never-cleaned createTempDirectory,
+and tests 5/6 assume the rescan actually imported it-rescan-run-1 (clean skip) before asserting on
+it, making the ordering dependency explicit.
+Tests: DockerApplicationIT is docker-tagged; full `./gradlew test` green + compiles.
+
+## 55. AgentToolsTest.compactionStubs... - unused `req` local [maintainability/low]
+The c1 request was declared but never added (the loop builds its own c0..c5). Removed.
+Tests: full `./gradlew test` green.
+
+## 56. AgentToolsTest.readIsRangedAndCapped - ineffective line-cap assertion [test/medium]
+`"line\nline"` can never appear (every line carries its "%5d: " number prefix), so the assertion
+passed even with no cap. Replaced with a check of the truncation indicator ("more lines" for the
+500-line file) plus a negative check that line 300 is beyond the 250-line cap.
+Tests: full `./gradlew test` green.
+
+## 58. PacksTest.capsScale... - `Packs.setScale(1.0, Map.of())` had no assertion [test/low]
+Documented the intent: with an empty map a 1.0 scale is a mutating no-op that must simply not
+throw, rather than removing a deliberate "does not blow up" probe.
+Tests: full `./gradlew test` green.
+
+## 57. PacksTest / JournalFactsTest / RunBenchTest - temp files and dirs never deleted [maintainability/low]
+Each class now tracks the temp paths it creates in a Set and deletes them in an @AfterEach
+(Files.deleteIfExists for the files, a recursive walk for RunBenchTest's workspace dir), so
+repeated local/CI runs stop accumulating in $TMPDIR.
+## 61. RunBenchTest.everyLadderTask... - `generic` may be null [bug/medium]
+getResourceAsStream("/tasks/PROMPT.md") can be null; `generic.readAllBytes()` would then NPE with
+a confusing message. Added assertNotNull(generic, ...) before dereferencing.
+Tests: full `./gradlew test` green.
+
+## 59. TradingServiceTest.theAsOfBoundary... - the boundary instant was a timing guess [test/medium]
+A bare sleep(5) then now() could land on the buy's own millisecond on a loaded CI runner. Now the
+test reads the buy's real executedAt from the outcome and spins (sleep + re-read) until `between`
+is strictly after it, so the exclusive-boundary assertion is deterministic.
+Tests: full `./gradlew test` green (TradingServiceTest).
+
+## 60. JournalFactsTest - the 429 test baked a second "status" into the JSON [bug/medium]
+The chat() template already emits "status": 200 and the test's topExtra added "status": 429,
+producing a duplicate key (RFC 8259: members SHOULD be unique) that only last-wins parsers tolerate.
+chat() now takes an explicit status overload that replaces the template's 200; the 429 test uses it.
+Tests: full `./gradlew test` green (JournalFactsTest).
+
+## 62. ValidityTest - `instanceof Boolean` assertion was a tautology [bug/high]
+Validity.validity() always puts a boolean for "valid", so `instanceof Boolean` passed even when
+valid was false - the "10% <= maxErrorRate: fine" intent was never verified. Replaced with
+`assertTrue((Boolean) ... .get("valid"), ...)`.
+Tests: full `./gradlew test` green.
+
+## 63. ValidityTest - `instanceof Boolean` is a tautology; assert the VALUE [bug/high]
+`validity()` always puts a boolean, so `instanceof Boolean` passed even when valid=false - the
+"10% <= maxErrorRate: fine" intent was never actually verified. Now `assertTrue((Boolean) ... .get("valid"))`.
+Tests: full `./gradlew test` green.
+
+## 63. .dockerignore - gradle.properties exclusion [maintainability/low]
+The file only holds host-specific settings (org.gradle.caching, a local JDK pin) the in-image build
+does not need, so the exclusion is safe. Documented in the Dockerfile that an ESSENTIAL build
+setting must come from a sibling gradle.properties, not the host file.
+Tests: no code change; full `./gradlew test` green.
+
+## 64. Dockerfile - the runtime container ran as root [security/medium]
+No USER directive. Added an unprivileged `appuser` (adduser --disabled-password), chowned the
+jar to it, and `USER appuser` before EXPOSE/ENTRYPOINT, so a compromise of the app cannot start
+with root's blast radius.
+Tests: no code change; full `./gradlew test` green.
+
+## 65. Dockerfile - a source change re-ran the dependency download [performance/medium]
+COPY src preceded the only gradle invocation, so every source edit invalidated the layer that
+also resolved dependencies. Added a pre-fetch layer (probe class + compileJava) between the
+build-file copy and the source copy; source-only changes now reuse the cached dependencies.
+Tests: no code change; full `./gradlew test` green.
+
+## 66. Dockerfile - the jar filter copied every match, last one silently won [maintainability/low]
+`find ... -exec cp` with multiple matches (a -sources/-javadoc jar, a new sub-project) would copy
+them in filesystem order and the last would become app.jar non-deterministically. Now the count is
+checked first and the build fails loudly if it is not exactly one.
+Tests: no code change; full `./gradlew test` green.
+
+── END OF ROUND 2: all 66 review findings addressed (1..66) ──
+
+## 27. RecordingProxyFactory.TERMINAL_PROXY_STATES - dead constant [other/low]
+Declared but referenced nowhere (a leftover from a removed proxy state machine). Removed, with
+the now-unused java.util.List import.
+## 29. Reviews.renderTrajectory - the all-turns analysis ran, then was recomputed on the filtered list [performance/low]
+The first analyze() result was discarded whenever review windows existed - double work over a
+megabyte-sized journal, and the "BEFORE any analysis" comment lied. The turn list is now filtered
+first and analyzed exactly once (identical result in both cases).
+## 33. see ## 32+33 - the dead public killTree was removed in that entry (same method).
+## 48. Tailer - see ## 47's entry, which also records the (int)(size - start) overflow clamp.
+## 62. see ## 63 - the ValidityTest weak-assertion fix (instanceof Boolean -> assert the value).
+
+## 28. RecordingProxyFactory.start - a failed proxy.start() leaked the half-started server [bug/medium]
+If start() threw after the HttpServer/thread-pool was attached, the proxy was abandoned to GC.
+The catch now calls proxy.stop() (safe: it no-ops when server == null) before rethrowing.

@@ -1,0 +1,11 @@
+{
+  "_doc": "Java port of tasks/ladder.json: per-rung check subsets. Score denominator = weights of the listed ids only, FIXED per rung.",
+  "L1_migration_entity": {"budget_sec": 2700, "denominator": 11, "checks": ["S6", "S9", "M1", "M2", "M3", "B1", "B2"]},
+  "L2_one_endpoint": {"budget_sec": 3600, "denominator": 27, "checks": ["S4", "S6", "S7", "M1", "M2", "B1", "B2", "C2", "F5", "F6", "F7"]},
+  "L3_point_in_time": {"budget_sec": 4500, "denominator": 34, "checks": ["M1", "M2", "M4", "B1", "B2", "B3", "C2", "F1", "F2", "F3", "F8"]},
+  "L4_state_machine": {"budget_sec": 4500, "denominator": 24, "checks": ["M1", "B1", "B2", "C2", "F3", "F4", "F9"]},
+  "L5_second_service": {"budget_sec": 5400, "denominator": 15, "checks": ["S4", "S5", "S6", "S9", "B1", "B2", "C1", "C2"]},
+  "L6_compose_health": {"budget_sec": 3600, "denominator": 10, "checks": ["S4", "S5", "B1", "C1", "C2"]},
+  "L7_full_platform": {"budget_sec": 14400, "denominator": 77, "checks": "all"},
+  "L3p_point_in_time": {"budget_sec": 5400, "denominator": 36, "checks": ["M1", "M2", "M4", "P2", "B1", "B2", "B3", "C2", "F1", "F2", "F3", "F8"], "phases": ["p1_plan", "p2_implementation"]}
+}

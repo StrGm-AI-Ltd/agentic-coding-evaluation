@@ -1,0 +1,103 @@
+[
+ {
+  "item": "accounts endpoints (create/get/deposit)",
+  "any": [
+   "POST /accounts",
+   "deposit"
+  ]
+ },
+ {
+  "item": "HALF_EVEN rounding of deposits",
+  "any": [
+   "HALF_EVEN",
+   "half.even",
+   "0\\.005"
+  ]
+ },
+ {
+  "item": "orders with immediate fill and 201",
+  "any": [
+   "POST /orders",
+   "immediate(ly)? fill",
+   "FILLED"
+  ]
+ },
+ {
+  "item": "422 on insufficient funds/holdings",
+  "any": [
+   "422",
+   "insufficient"
+  ]
+ },
+ {
+  "item": "ledger of fills (symbol, side, quantity, executedAt)",
+  "any": [
+   "ledger"
+  ]
+ },
+ {
+  "item": "point-in-time holdings endpoint",
+  "any": [
+   "holdings",
+   "asOf",
+   "point.in.time"
+  ]
+ },
+ {
+  "item": "asOf boundary exclusive",
+  "any": [
+   "exclusive",
+   "strictly before"
+  ]
+ },
+ {
+  "item": "asOfApplied echoed in UTC millis",
+  "any": [
+   "asOfApplied"
+  ]
+ },
+ {
+  "item": "replay subtracts sells",
+  "any": [
+   "subtract",
+   "sell.{0,40}(minus|negative|reduce)"
+  ]
+ },
+ {
+  "item": "BigDecimal / no float money",
+  "any": [
+   "BigDecimal",
+   "minor units",
+   "no (float|double)",
+   "decimal.{0,25}string",
+   "string decimal"
+  ]
+ },
+ {
+  "item": "Flyway migration",
+  "any": [
+   "[Ff]lyway",
+   "migration"
+  ]
+ },
+ {
+  "item": "tests for each task",
+  "any": [
+   "\\btest",
+   "\\bassert"
+  ]
+ },
+ {
+  "item": "Dockerfile + docker-compose with healthcheck",
+  "any": [
+   "[Dd]ockerfile",
+   "compose"
+  ]
+ },
+ {
+  "item": "health endpoint",
+  "any": [
+   "/health"
+  ]
+ }
+]

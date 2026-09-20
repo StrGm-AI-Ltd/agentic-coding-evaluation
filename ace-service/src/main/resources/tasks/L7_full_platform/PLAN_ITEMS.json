@@ -1,0 +1,95 @@
+[
+ {
+  "item": "three services (account, market, gateway)",
+  "any": [
+   "market",
+   "gateway"
+  ]
+ },
+ {
+  "item": "accounts + deposits with HALF_EVEN",
+  "any": [
+   "HALF_EVEN",
+   "half.even"
+  ]
+ },
+ {
+  "item": "orders with state machine (409 on illegal transition)",
+  "any": [
+   "409",
+   "state machine",
+   "transition"
+  ]
+ },
+ {
+  "item": "Idempotency-Key on orders",
+  "any": [
+   "[Ii]dempoten"
+  ]
+ },
+ {
+  "item": "point-in-time holdings with exclusive asOf",
+  "any": [
+   "asOf",
+   "exclusive"
+  ]
+ },
+ {
+  "item": "asOfApplied echoed",
+  "any": [
+   "asOfApplied",
+   "[Ee]choed"
+  ]
+ },
+ {
+  "item": "422 on insufficient funds/holdings",
+  "any": [
+   "422",
+   "insufficient"
+  ]
+ },
+ {
+  "item": "decimal strings / BigDecimal",
+  "any": [
+   "BigDecimal",
+   "decimal.{0,25}string",
+   "string decimal"
+  ]
+ },
+ {
+  "item": "OpenAPI contract",
+  "any": [
+   "[Oo]pen[Aa][Pp][Ii]",
+   "contract",
+   "status codes"
+  ]
+ },
+ {
+  "item": "docker compose with health checks",
+  "any": [
+   "compose",
+   "health"
+  ]
+ },
+ {
+  "item": "React frontend",
+  "any": [
+   "[Rr]eact",
+   "\\bweb\\b",
+   "frontend"
+  ]
+ },
+ {
+  "item": "migrations",
+  "any": [
+   "[Ff]lyway",
+   "migration"
+  ]
+ },
+ {
+  "item": "tests per subtask",
+  "any": [
+   "\\btest"
+  ]
+ }
+]

@@ -1,0 +1,15 @@
+openapi: 3.1.0
+info: {title: agentbench-trading frozen contract, version: "2"}
+# Machine-readable twin of the "Frozen API contract" table in task/PROMPT.md. Oracle-owned:
+# 06_blackbox.py grades every observed (method, path, status) against it and validates 2xx
+# bodies against the SCHEMAS table in that file. `default` responses earn nothing.
+paths:
+  /health: {get: {responses: {"200": {description: ok, any body}}}}
+  /accounts: {post: {responses: {"201": {description: created}, "400": {description: bad request}}}}
+  /accounts/{id}: {get: {responses: {"200": {description: ok}, "404": {description: not found}}}}
+  /accounts/{id}/deposits: {post: {responses: {"200": {description: ok}, "400": {description: non-positive amount}, "404": {description: not found}}}}
+  /accounts/{id}/holdings: {get: {responses: {"200": {description: ok}, "400": {description: bad asOf}, "404": {description: not found}}}}
+  /orders: {post: {responses: {"200": {description: idempotent repeat}, "201": {description: filled}, "400": {description: bad request}, "422": {description: insufficient funds or holdings}}}}
+  /orders/{id}: {get: {responses: {"200": {description: ok}, "404": {description: not found}}}}
+  /orders/{id}/cancel: {post: {responses: {"200": {description: cancelled}, "404": {description: not found}, "409": {description: illegal transition}}}}
+  /prices/{symbol}: {get: {responses: {"200": {description: ok}, "404": {description: unknown symbol}}}}

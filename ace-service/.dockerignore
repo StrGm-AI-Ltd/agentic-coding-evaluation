@@ -1,0 +1,11 @@
+.git
+.gradle
+build
+*.log
+.env*
+*.jks
+*.keystore
+gradle.properties
+.idea
+*.iml
+out

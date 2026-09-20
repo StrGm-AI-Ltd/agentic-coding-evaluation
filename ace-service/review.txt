@@ -1,0 +1,948 @@
+─── src/main/java/com/agentbench/agent/AgentSession.java:110-111 ───
+[bug · high] NPE risk: `m.path("content").get(0)` returns `null` when the `content` array is empty
+or the `content` field is missing/malformed in the JSONL file. Since this file is persisted to disk
+and re-read for `--continue` resume, a truncated or hand-edited file will crash the program with a
+NullPointerException on `.path("text")`.
+
+Add a null-safety guard, e.g. use `m.path("content").size() > 0` before accessing element 0, or use
+`path("content").path(0)` (JsonNode `path(int)` returns `MissingNode` for out-of-range rather than
+null, and `MissingNode.asText()` returns `""`).
+
+-                 case "system" -> msgs.add(SystemMessage.from(m.path("content").get(0).path("text").asText()));
+-                 case "user" -> msgs.add(UserMessage.from(m.path("content").get(0).path("text").asText()));
++                 case "system" -> {
++                     JsonNode c = m.path("content").path(0);
++                     if (!c.isMissingNode()) msgs.add(SystemMessage.from(c.path("text").asText()));
++                 }
++                 case "user" -> {
++                     JsonNode c = m.path("content").path(0);
++                     if (!c.isMissingNode()) msgs.add(UserMessage.from(c.path("text").asText()));
++                 }
+
+
+─── src/main/java/com/agentbench/agent/AgentSession.java:123-125 ───
+[bug · high] Same NPE risk: `m.path("content").get(0)` returns null for an empty or missing
+`content` node, causing a NullPointerException on `.path("text")`. Use `path(0)` with a
+`MissingNode` check instead.
+
+-                 case "toolResult" -> msgs.add(ToolExecutionResultMessage.from(
++                 case "toolResult" -> {
++                     JsonNode c = m.path("content").path(0);
++                     if (!c.isMissingNode()) msgs.add(ToolExecutionResultMessage.from(
+-                         ToolExecutionRequest.builder().id(m.path("toolCallId").asText()).name(m.path("toolName").asText()).build(),
++                             ToolExecutionRequest.builder().id(m.path("toolCallId").asText()).name(m.path("toolName").asText()).build(),
+-                         m.path("content").get(0).path("text").asText()));
++                             c.path("text").asText()));
++                 }
+
+
+─── src/main/java/com/agentbench/agent/AgentSession.java:92-92 ───
+[maintainability · low] Dead code: parameters `a`, `b`, and `c` are never read inside the method
+body. They add noise and mislead future maintainers into thinking they might be used. Remove them
+(and the `null, null, null` at call sites) or document why they exist (e.g. as placeholder for a
+future signature change).
+
+-     private void message(String role, String text, Void a, Void b, Void c) throws IOException {
++     private void message(String role, String text) throws IOException {
+
+
+─── src/main/java/com/agentbench/agent/AgentTools.java:31-31 ───
+[bug · high] Bug: no lower-bound validation on `start_line`. If a caller passes `start_line = 0` or
+a negative value (e.g. via JSON `"start_line": 0`), the loop `for (int i = s; ...)` will call
+`lines.get(i - 1)` with a negative index, throwing `IndexOutOfBoundsException`. The `ReferenceAgent`
+try-catch will turn it into a cryptic error instead of a helpful one.
+
+Fix: clamp `s` to `[1, lines.size()]`:
+```java
+int s = Math.max(1, a.get("start_line") instanceof Number n ? n.intValue() : 1);
+```
+Also consider returning a descriptive error if the requested range is entirely out of bounds instead
+of silently reporting "(empty file)".
+
+-         int s = a.get("start_line") instanceof Number n ? n.intValue() : 1;
++         int s = Math.max(1, a.get("start_line") instanceof Number n ? n.intValue() : 1);
+
+
+─── src/main/java/com/agentbench/agent/AgentTools.java:59-59 ───
+[bug · high] Bug: `String.valueOf(a.getOrDefault("old_string", ""))` is incorrect when the key is
+present but mapped to `null` (as Jackson does for JSON `"old_string": null`). In that case
+`getOrDefault` returns `null` (the key *is* present), and `String.valueOf(null)` yields the literal
+string `"null"` — the edit would then search for the text `null` in the file. The same issue applies
+to `new_string`.
+
+Fix: add an explicit null check before the `String.valueOf` conversion:
+```java
+Object oldObj = a.get("old_string");
+String old = oldObj == null ? "" : String.valueOf(oldObj);
+Object newStr = a.get("new_string");
+String neu = newStr == null ? "" : String.valueOf(newStr);
+```
+This ensures `null` maps to an empty string and the existing `if (old.isEmpty())` guard catches it
+correctly.
+
+-         String old = String.valueOf(a.getOrDefault("old_string", "")), neu = String.valueOf(a.getOrDefault("new_string", ""));
++         Object oldObj = a.get("old_string");
++         String old = oldObj == null ? "" : String.valueOf(oldObj);
++         Object neuObj = a.get("new_string");
++         String neu = neuObj == null ? "" : String.valueOf(neuObj);
+
+
+─── src/main/java/com/agentbench/agent/AgentTools.java:70-72 ───
+[bug · medium] Robustness: `countOccurrences` enters an infinite loop when `sub` is an empty string
+(because `i += sub.length()` adds 0). Although the sole caller in `edit` guards with `if
+(old.isEmpty())` beforehand, this package-private utility is unsafe if called from elsewhere with an
+empty argument. Add a guard:
+```java
+if (sub.isEmpty()) return 0;
+```
+
+      static int countOccurrences(String s, String sub) {
++         if (sub.isEmpty()) return 0;
+          int n = 0, i = 0;
+          while ((i = s.indexOf(sub, i)) >= 0) { n++; i += sub.length(); }
+
+
+─── src/main/java/com/agentbench/agent/ReferenceAgent.java:172-173 ───
+[performance · medium] **Performance issue:** A new `ObjectMapper` is allocated on every single
+tool-call argument parse. With up to 400 turns × multiple tool calls per turn, this creates hundreds
+of expensive instances (each initializes serializers, deserializers, modules, etc.). `ObjectMapper`
+is thread-safe and designed for reuse — it should be a `private static final` field (or a
+class-level constant) rather than constructed in the hot path.
+
+-                 try { args = new com.fasterxml.jackson.databind.ObjectMapper().readValue(c.arguments(), Map.class); }
++                 try { args = MAPPER.readValue(c.arguments(), Map.class); }
+                  catch (Exception e) { args = Map.of(); }
+
+
+─── src/main/java/com/agentbench/agent/ReferenceAgent.java:147-148 ───
+[bug · medium] **Logic issue:** If the `while (turns < MAX_TURNS)` loop exits because `turns`
+reaches 400 (i.e., the model was still issuing tool calls and never voluntarily stopped), `rc`
+remains 0 (success). This semantically misrepresents the outcome — the session was cut short, not
+completed. A non-zero rc (e.g., 1 or a dedicated code) would distinguish a turn-limited abort from a
+clean completion so the harness can score it correctly.
+
++         if (turns >= MAX_TURNS) rc = 1;   // cut short by turn limit, not a clean completion
+          session.end(turns, toolErrors, compactions, finish);
+          return result(name, rc, t0, finish, turns, toolErrors, compactions, session, start);
+
+
+─── src/main/java/com/agentbench/config/PGobjectJsonSerializer.java:24-27 ───
+[bug · medium] Potential malformed JSON output: if `value.getValue()` returns an empty string `""`
+(non-null) and the type is "json"/"jsonb", `gen.writeRawValue("")` writes zero bytes, producing a
+JSON token with a missing value (e.g. `{"field":,}` or `[null,]`). The null-guard covers `null` but
+not empty string. Consider adding an emptiness check:
+
+```java
+if (value.getValue() != null && !value.getValue().isEmpty()
+        && ("json".equals(value.getType()) || "jsonb".equals(value.getType())))
+    gen.writeRawValue(value.getValue());
+else
+    gen.writeNull();
+```
+
+While PostgreSQL normally rejects invalid JSON in json/jsonb columns, edge cases (e.g. driver-level
+quirks, column type changes, or a `::jsonb` cast on an empty literal) could surface an empty string,
+silently corrupting the entire HTTP response body.
+
+
+
+─── src/main/java/com/agentbench/metrics/Collect.java:64-65 ───
+[bug · critical] Bug: `Map.of` throws NullPointerException on any null value. When `functional` is
+null (oracle didn't report a numeric functional_score_pct, e.g. a failed/incomplete oracle run) this
+ternary evaluates to null and the whole `collect()` call crashes, losing all metrics for the run.
+Use a null-tolerant map, e.g. a `LinkedHashMap`, instead of `Map.of` here.
+
+-         if (sr.get("score") instanceof Number s) leaderboard.put("self_review", Map.of("score", s.doubleValue(),
+-                 "calibration_gap", functional == null ? null : round1(Math.abs(s.doubleValue() - functional))));
++         if (sr.get("score") instanceof Number s) {
++             Map<String, Object> e = new LinkedHashMap<>();
++             e.put("score", s.doubleValue());
++             e.put("calibration_gap", functional == null ? null : round1(Math.abs(s.doubleValue() - functional)));
++             leaderboard.put("self_review", e);
++         }
+
+
+─── src/main/java/com/agentbench/metrics/Collect.java:66-68 ───
+[bug · critical] Two issues here:
+1. Bug: `objective_index_pct` is written from `summary.get("harness_trajectory_pct")` in
+`Reviews.trajectoryReview` (can be null when the harness metric is absent), so `tr`'s score can be
+numeric while `objective_index_pct` is non-numeric — the ternary then yields null and `Map.of`
+throws NPE, crashing the whole collect. Use a null-tolerant map as well.
+2. The `((Map<?, ?>) manifest.get("trajectory_review"))` is an unchecked cast that diverges from the
+null-safe `getOrDefault` access used for `tr` just above (the sibling branch two lines up uses
+`manifest.get(...) instanceof Map<?, ?>` for exactly this reason). A non-Map value under
+`trajectory_review` would cause a ClassCastException instead of degrading gracefully.
+
+-         if (tr.get("score") instanceof Number s) leaderboard.put("trajectory_review", Map.of("score", s.doubleValue(),
+-                 "calibration_gap", manifest.get("trajectory_review") instanceof Map<?, ?> tm && tm.get("objective_index_pct") instanceof Number oi
+-                         ? round1(Math.abs(s.doubleValue() - oi.doubleValue())) : null));
++         if (tr.get("score") instanceof Number s) {
++             boolean hasObj = manifest.get("trajectory_review") instanceof Map<?, ?> tm && tm.get("objective_index_pct") instanceof Number oi;
++             Map<String, Object> e = new LinkedHashMap<>();
++             e.put("score", s.doubleValue());
++             e.put("calibration_gap", hasObj ? round1(Math.abs(s.doubleValue() - ((Number) ((Map<?, ?>) manifest.get("trajectory_review")).get("objective_index_pct")).doubleValue())) : null);
++             leaderboard.put("trajectory_review", e);
++         }
+
+
+─── src/main/java/com/agentbench/metrics/Collect.java:74-75 ───
+[bug · medium] The `trajTerm` expression re-fetches `manifest.get("trajectory_review")` via a bare
+unchecked cast (unlike the `getOrDefault` access that built `tr` above). If the key is ever absent
+or null while `tr` holds a score, this cast nulls out and the next `.get(...)` NPEs (or CCE for a
+non-Map). Reuse the `instanceof Map` guard pattern used in the calibration-gap line above, or reuse
+`tr` consistently.
+
+-             double trajTerm = tr.get("score") instanceof Number s && ((Map<?, ?>) manifest.get("trajectory_review")).get("objective_index_pct") instanceof Number oi
++             double trajTerm = tr.get("score") instanceof Number s && tr.get("objective_index_pct") instanceof Number oi
+                      ? wt * (100 - Math.abs(s.doubleValue() - oi.doubleValue())) : 0;
+
+
+─── src/main/java/com/agentbench/metrics/Collect.java:95-95 ───
+[maintainability · medium] Maintainability: the four `0.3 * 100` terms algebraically cancel to zero,
+so this opaque tautology evaluates to `30 + 0.3 * parallelism + 0.4 * (100 * (1 - friction))`
+regardless. As written, the "0.3 x validity" component promised by the javadoc is invisible and the
+expression invites a wrong 'simplification' by a future reader. Replace with the explicit closed
+form, e.g. `return 30 + 0.3 * parallelism + 40 * (1 - friction);`.
+
+-         return 0.3 * 100 + 0.3 * parallelism + 0.4 * (100 * (1 - friction)) - 0.3 * 100 + 0.3 * 100 - 0.3 * 100 + 30;   // = 30 + 0.3*par + 0.4*(100-friction*100)
++         return 30 + 0.3 * parallelism + 0.4 * (100 * (1 - friction));   // validity=100 contributes the constant 30
+
+
+─── src/main/java/com/agentbench/oracle/CheckId.java:48-50 ───
+[performance · low] `functional()` builds a new mutable `EnumSet` on every call. It is invoked
+per-element inside a stream filter in `Scorer.score()` (`filter(r ->
+CheckId.functional().contains(r.id()))`), so a fresh 9-entry set is allocated per record. Worse, the
+returned `EnumSet` is mutable, so a caller could silently mutate the "single source of truth" score
+definition. Cache it as a static final constant and return an unmodifiable view.
+
++     private static final java.util.Set<CheckId> FUNCTIONAL =
++             java.util.Collections.unmodifiableSet(java.util.EnumSet.of(F1, F2, F3, F4, F5, F6, F7, F8, F9));
++
+      public static java.util.Set<CheckId> functional() {
+-         return java.util.EnumSet.of(F1, F2, F3, F4, F5, F6, F7, F8, F9);
++         return FUNCTIONAL;
+      }
+
+
+─── src/main/java/com/agentbench/oracle/CheckStatus.java:10-11 ───
+[bug · medium] Null-pointer risk: if `s` is null (e.g., from a JSON field with no value),
+`s.toUpperCase()` throws a `NullPointerException`, which is **not** caught by `catch
+(IllegalArgumentException)`. The method's stated intent is "an unknown status from a checker is a
+FAIL, never silence" — a null input should also map to FAIL rather than crashing the caller.
+
+Suggested fix: add a null guard.
+
++         if (s == null) return FAIL;
+          try { return valueOf(s.toUpperCase().trim()); }
+          catch (IllegalArgumentException e) { return FAIL; }   // an unknown status from a checker is a FAIL, never silence
+
+
+─── src/main/java/com/agentbench/oracle/RunOracle.java:91-92 ───
+[bug · critical] `Map.of()` does not permit null values — it throws `NullPointerException`. When
+`docker image inspect` fails (non-zero rc, e.g., the pinned image is not pulled locally or has been
+pruned), the ternary evaluates to `null` and this line crashes the entire scoring run. Use
+`Map.entry` with `Objects.toString(...)` or build the map with a null-safe helper instead.
+
+-         rep.put("provenance", Map.of("build_image", BUILD_IMAGE, "build_image_digest", digest.rc() == 0 ? digest.out().strip() : null,
+-                 "checks", wanted.stream().map(Enum::name).toList()));
++         String digestStr = digest.rc() == 0 ? digest.out().strip() : null;
++         var prov = new java.util.LinkedHashMap<String, Object>();
++         prov.put("build_image", BUILD_IMAGE);
++         prov.put("build_image_digest", digestStr);
++         prov.put("checks", wanted.stream().map(Enum::name).toList());
++         rep.put("provenance", prov);
+
+
+─── src/main/java/com/agentbench/oracle/RunOracle.java:37-38 ───
+[bug · high] If the `ladder.json` resource is missing or `ladder` resolves to `null` (e.g., the
+resource was not packaged into the jar), `getResourceAsStream` returns `null` and Jackson's
+`readTree(null)` throws an `IllegalArgumentException`/NPE. More subtly, if `task` is a key not
+present in the ladder, `ladder.get("L7_full_platform")` acts as fallback — but if the ladder object
+itself is null or the fallback key is missing, `rung` is null and `rung.get("checks")` NPEs.
+Consider guarding with a null check before proceeding.
+
+-         JsonNode ladder = json.readTree(getClass().getResourceAsStream("/tasks/ladder.json"));
++         var ladderStream = getClass().getResourceAsStream("/tasks/ladder.json");
++         if (ladderStream == null) throw new IllegalStateException("ladder.json resource not found on classpath");
++         JsonNode ladder = json.readTree(ladderStream);
+          JsonNode rung = ladder.has(task) ? ladder.get(task) : ladder.get("L7_full_platform");
++         if (rung == null) throw new IllegalStateException("no ladder rung for task '" + task + "' and no L7_full_platform fallback");
+
+
+─── src/main/java/com/agentbench/oracle/RunOracle.java:53-53 ───
+[maintainability · low] This condition `id != CheckId.P1` is redundant: `P1` is already in the
+`offline` list, so `!offline.contains(id)` already excludes it. The redundant check suggests the
+`offline` list membership might drift from the gated-filter intent. If P1 is later removed from
+`offline`, this guard silently changes gating semantics without a clear signal. Consider removing it
+or adding a comment explaining why it's intentionally double-guarded.
+
+
+
+─── src/main/java/com/agentbench/oracle/Scorer.java:48-48 ───
+[bug · high] Inconsistency: `functional_denominator` is computed from `fAll` (ALL functional checks,
+including unscored), but the score `fpct` is computed using `fDenom` (only *counted* functional
+checks). This breaks the contract that `functional_score_pct ≈ 100 * functional_points_got /
+functional_denominator` — the invariant that holds for the main `denominator`/`weighted_score_pct`
+pair.
+
+In the normal (non-partial) case the two are equal so the bug is latent, but when any functional
+check is SKIPPED/INFRA (partial run), the reported `functional_denominator` will be larger than the
+one actually used, making the DB column misleading to any consumer that validates the score from the
+stored points/denominator.
+
+The fix mirrors the main `denominator` field: report `fDenom` (the counted functional denominator)
+as `functional_denominator`, and if the full value is needed for reference, add a separate
+`functional_full_denominator` field (analogous to `full_denominator`).
+
+-         rep.put("functional_denominator", fAll.stream().mapToInt(r -> r.id().weight).sum());
++         rep.put("functional_denominator", fDenom);   // counted (consistent with `denominator` semantics); `fpct` is computed over fDenom
+
+
+─── src/main/java/com/agentbench/plan/PlanError.java:4-4 ───
+[maintainability · low] Missing constructor with `Throwable cause`. The class only provides `(String
+message)`, so callers that wrap an exception (e.g. `PlanParser.parseFile` line 33: `throw new
+PlanError("cannot read plan: " + e.getMessage())`) lose the original exception's stack trace. Adding
+a `(String message, Throwable cause)` constructor would let callers preserve the root-cause chain,
+which is standard practice for unchecked exceptions used for wrapping.
+
+      public PlanError(String message) { super(message); }
++     public PlanError(String message, Throwable cause) { super(message, cause); }
+
+
+─── src/main/java/com/agentbench/plan/PlanTask.java:10-10 ───
+[maintainability · medium] The `score` field and the `score()` method can diverge: PlanParser
+computes `t.score = t.score() + (table ? 0 : 1)` and uses the *field* for dedup comparison, but all
+the inputs of `score()` (`goal`, `services`, `acceptance`, `deps`, `checks`) are public mutable
+fields. Since `PlanTask` instances are shared across waves/handoffs in RunBench, any future mutation
+of a field after scoring (or the field itself being set inconsistently) silently desynchronizes the
+two, and callers invoking `score()` no longer get the authoritative dedup score used by the parser.
+Suggest encapsulating the state: make the fields package-private with setters only where needed,
+and/or rename the field (e.g., `dedupScore`) and have a single accessor return the effective score
+so there is one source of truth.
+
+
+
+─── src/main/java/com/agentbench/proxy/SseAssembler.java:32-32 ───
+[bug · medium] Bug: missing null check for `reasoning_content`. When the JSON value is explicitly
+`null` (e.g. `{"reasoning_content": null}`), `isMissingNode()` returns `false` (it's a `NullNode`,
+not `MissingNode`), so the condition passes and `asText()` on a `NullNode` returns the literal
+4-character string `"null"`, which gets appended to the reasoning buffer. Compare with the `content`
+field check two lines above which correctly adds `!d.path("content").isNull()` as a guard.
+
+Fix: add `&& !d.path("reasoning_content").isNull()` to the condition, or use `asText("")` with an
+emptiness check.
+
+-                     if (!d.path("reasoning_content").isMissingNode()) reasoning.append(d.path("reasoning_content").asText());
++                     if (!d.path("reasoning_content").isMissingNode() && !d.path("reasoning_content").isNull()) reasoning.append(d.path("reasoning_content").asText());
+
+
+─── src/main/java/com/agentbench/reference/ReferenceServer.java:55-57 ───
+[bug · high] Bug: `Instant.parse(asOf)` throws `DateTimeParseException` (extends `DateTimeException`
+→ `RuntimeException`), which is NOT an `IllegalArgumentException`. A malformed `asOf` query
+parameter (e.g., `?asOf=not-a-date`) will bypass the `catch (IllegalArgumentException e)` block and
+propagate to the outer lambda, which simply calls `x.close()`. The client receives a connection
+reset instead of a proper 400 error response. Consider catching `RuntimeException` or specifically
+adding `DateTimeParseException` to the catch clause.
+
+
+
+─── src/main/java/com/agentbench/reference/ReferenceServer.java:53-58 ───
+[bug · high] Bug: When `parts.length > 2` and `parts[2]` is not `"holdings"` (e.g., `GET
+/accounts/{id}/transactions`), neither the `parts.length == 2` return nor the
+`parts[2].equals("holdings")` branch fires. The method falls through without ever calling `reply()`,
+leaving the `HttpExchange` without a response — the client will hang until timeout. Add an `else`
+fallback to reply with 404.
+
+
+
+─── src/main/java/com/agentbench/reference/ReferenceServer.java:82-82 ───
+[bug · medium] The `param()` method does not URL-decode the value. `getRequestURI().getQuery()`
+returns the raw (still percent-encoded) query string, so a value like
+`asOf=2024-01-15T10%3A30%3A00Z` would be passed to `Instant.parse()` un-decoded and fail. Apply
+`URLDecoder.decode(value, StandardCharsets.UTF_8)` to the extracted value.
+
+
+
+─── src/main/java/com/agentbench/reference/ReferenceServer.java:34-34 ───
+[maintainability · low] Resource leak: `stop()` calls `server.stop(0)` but never shuts down the
+cached thread pool created in `start()`. Threads will eventually time out after 60s of inactivity,
+but the pool itself is never explicitly shut down. Store the executor in a field and call
+`executor.shutdownNow()` (or `shutdown()`) in `stop()`.
+
+
+
+─── src/main/java/com/agentbench/runner/RecordingProxyFactory.java:34-34 ───
+[other · low] Dead code: `TERMINAL_PROXY_STATES` is declared here but never referenced anywhere in
+the codebase. This constant appears to be a leftover from a previous implementation (perhaps
+intended to drive a proxy-state machine that was removed). It should be deleted to avoid confusion
+about the intended proxy lifecycle states.
+
+
+
+─── src/main/java/com/agentbench/runner/RecordingProxyFactory.java:27-28 ───
+[bug · medium] Resource leak on `start()` failure: if `proxy.start()` throws after the `HttpServer`
+has been created and a cached thread pool attached (lines 54–56 of `RecordingProxy`), the
+partially-initialized proxy is abandoned without cleanup. The factory should call `proxy.stop()` in
+the catch block before rethrowing, so the server reference is nulled and any spawned executor
+threads are released promptly rather than waiting for GC.
+
+Suggested fix:
+```java
+catch (Exception e) {
+    try { proxy.stop(); } catch (Exception ignored) {}
+    throw new IllegalStateException("cannot start the recording proxy", e);
+}
+```
+Note: `proxy.stop()` is safe here — if `server == null` it returns immediately, so it handles both
+partial-init and fully-init cases.
+
+          try { base[0] = proxy.start(journal, tokenBudget, tag); }
+-         catch (Exception e) { throw new IllegalStateException("cannot start the recording proxy", e); }
++         catch (Exception e) { try { proxy.stop(); } catch (Exception ignored) {}
++             throw new IllegalStateException("cannot start the recording proxy", e); }
+
+
+─── src/main/java/com/agentbench/runner/Reviews.java:175-177 ───
+[performance · low] Redundant computation + misleading comment. `s` is first computed from ALL
+`turns`, then recomputed from the filtered `agentTurns` when review windows exist, discarding the
+first result entirely. The comment claims exclusion happens 'BEFORE any analysis', but the all-turns
+analysis always runs first. Analyze once after building the correct (possibly filtered) turn list to
+avoid double work over a megabyte-sized journal and to make the code match the comment.
+
+-         Map<String, Object> s = Trajectory.analyze(turns, derived, dockerWindows);
+-         // exclude review sessions from the agent's trajectory (they are the reviewer's, not the agent's) BEFORE any analysis
++         List<Trajectory.Turn> agentTurns = turns;
+          if (manifest.get("review_windows") instanceof List<?> rw && !rw.isEmpty()) {
++             // exclude review sessions from the agent's trajectory (they are the reviewer's, not the agent's)
++             agentTurns = new ArrayList<>();
++             ...
+
+
+─── src/main/java/com/agentbench/runner/Reviews.java:39-39 ───
+[maintainability · low] Skip-dir matching is inconsistent with `BuildChecks` and can miss top-level
+skip dirs. `path.contains("/" + d + "/")` requires a leading slash, so a changed file directly under
+a top-level skip dir (e.g. `build/Foo.java`, `target/app.jar` handled only by the .jar suffix) will
+not match `/build/` and will be wrongly reported in `changed`, flipping
+`modified_code`/`modified_paths`. `BuildChecks` deliberately matches on path *segments*
+(`Arrays.asList(segs).contains(d)`) precisely to avoid this. Consider splitting on `/` and testing
+segment membership for consistency.
+
+
+
+─── src/main/java/com/agentbench/runner/RunBenchSupport.java:111-115 ───
+[maintainability · medium] Dead code: `gradleHome()` is never called anywhere in the codebase. It
+reads the `AB_JAVA_HOME` environment variable and checks for `bin/java`, but the name `gradleHome`
+is also misleading — it returns a JDK home, not a Gradle home. If this method is not intended for
+future use, it should be removed. If it is intended to be used, the name should be `javaHome()` to
+match what it actually does.
+
+
+
+─── src/main/java/com/agentbench/runner/RunBenchSupport.java:93-95 ───
+[bug · medium] Latent logic bug (currently dead code — `killTree` is never called): The sweep for
+AB_RUN_ID-tagged processes checks `ph.info().commandLine()`, but `AB_RUN_ID` is set as an
+**environment variable** in `scrubbedEnv` (line 44) — it does not appear on the command line. The
+Python original used `ps -E` (which shows environment); Java's `ProcessHandle.Info` exposes only
+`commandLine()`, `command()`, and `arguments()`, never the environment. This means the AB_RUN_ID
+sweep will never match any process. To port the Python behavior on Linux, you'd need to read
+`/proc/<pid>/environ` explicitly. Since the method is currently dead code, this should be fixed or
+the method removed to avoid a misleading trap for future callers.
+
+
+
+─── src/main/java/com/agentbench/runner/RunBenchSupport.java:89-89 ───
+[maintainability · low] Dead code: `killTree` is a public method that is never called anywhere in
+the codebase (including tests). If the kill-tree behavior is needed in the future, consider fixing
+the `commandLine()` vs. environment issue first (see other comment), or remove this method to avoid
+it being wired up later with the latent bug intact.
+
+
+
+─── src/main/java/com/agentbench/runner/RunBenchSupport.java:71-74 ───
+[bug · medium] `gitOut` does not check the process exit code. If the git command fails (e.g., `git
+hash-object` on a missing file), it silently returns whatever partial/empty stdout contains. The
+current caller in `RunBench.java` compensates by calling `gitOut` twice in a ternary and checking
+`.isEmpty()`, but this makes the double-side-effect call worse. Consider adding an exit-code check
+that throws (like `runGit` does) or at minimum documenting that the return value may be empty on
+failure.
+
+
+
+─── src/main/java/com/agentbench/runner/Validity.java:28-28 ───
+[maintainability · medium] Inconsistent numeric type casting: this line uses a direct `(int)` cast,
+which only works if the stored value is specifically an `Integer` instance. If the value were a
+`Long` (e.g., from JSON deserialization or a future change to `JournalFacts`), this would throw
+`ClassCastException`. The immediately following line handles the same type of counter safely via
+`((Number) ...).longValue()`. Using the same `(Number)` pattern here would make the code robust
+against any numeric subtype.
+
+-         int requests = (int) facts.getOrDefault("requests", 0);
++         int requests = ((Number) facts.getOrDefault("requests", 0)).intValue();
+
+
+─── src/main/java/com/agentbench/runner/VerifyTask.java:34-34 ───
+[bug · medium] Resource leak: if an `IOException` occurs during the `for` loop body (e.g. from
+`log.write(...)` or `StructureChecks.glob`), the outer `catch (IOException ignore)` swallows it and
+`log.close()` is never called, leaking the file descriptor. The writer should be closed in a
+`finally` block or the writer should be managed with try-with-resources.
+
+-             java.io.Writer log = logPath == null ? null : Files.newBufferedWriter(logPath, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
++             java.io.Writer log;
++             try {
++                 log = logPath == null ? null : Files.newBufferedWriter(logPath, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
++                 // ... loop body ...
++             } finally {
++                 if (log != null) try { log.close(); } catch (IOException ignore) {}
++             }
+
+
+─── src/main/java/com/agentbench/runner/VerifyTask.java:83-83 ───
+[performance · medium] Performance: `Pattern.compile(...)` is called on every iteration of the loop,
+re-parsing the same regex for each line. For large outputs (thousands of lines) this is expensive.
+Hoist the compiled `Pattern` to a `static final` field or at minimum compile it once before the
+loop.
+
+-             if (Pattern.compile("error:|FAILED|What went wrong|cannot find symbol|requires JVM").matcher(l).find())
++     private static final Pattern ERROR_PATTERN =
++             Pattern.compile("error:|FAILED|What went wrong|cannot find symbol|requires JVM");
++
++     static String firstError(String out) {
++         for (String line : out.split("\n")) {
++             String l = line.strip();
++             if (ERROR_PATTERN.matcher(l).find())
+
+
+─── src/main/java/com/agentbench/runner/VerifyTask.java:57-57 ───
+[performance · low] Performance: `DocumentBuilderFactory.newInstance()` is called for every XML file
+in the glob loop. Since all files share the same parsing configuration, a single factory (or at
+least a single `DocumentBuilder` if not thread-reused) should be created once outside the loop and
+reused.
+
+-                         var doc = javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(x.toFile());
++                         var doc = docBuilder.parse(x.toFile());  // docBuilder created once before the loop
+
+
+─── src/main/java/com/agentbench/service/BenchController.java:106-106 ───
+[bug · high] NPE when `body` doesn't contain a `"spec"` key: `spec` becomes `null` and
+`spec.get("task")` immediately throws a NullPointerException, producing a 500. Add a null guard (or
+make `spec` required and return 400).
+
+          Map<String, Object> spec = (Map<String, Object>) body.get("spec");
++         if (spec == null) throw new IllegalArgumentException("missing 'spec' in request body");
+
+
+─── src/main/java/com/agentbench/service/BenchController.java:158-158 ───
+[bug · high] If `body.get("a")` or `body.get("b")` is `null`, the `for (String id : a)` loop NPEs.
+If the list is empty, `ra.get(0)` below throws `IndexOutOfBoundsException` — neither is caught by
+the `catch (IllegalArgumentException e)` that wraps only the inner `try`. Add early validation of
+`a` and `b` (non-null, non-empty) before the for-loops, or widen the catch.
+
+
+
+─── src/main/java/com/agentbench/service/BenchController.java:127-127 ───
+[bug · medium] If `body` doesn't contain `"priority"`, `body.get("priority")` returns `null` and the
+`(int)` cast triggers a NullPointerException (auto-unboxing). If the value is a non-Number (e.g. a
+JSON string), a `ClassCastException` is thrown. Both produce a 500. Consider using the same safe
+`instanceof Number` pattern used in `enqueue()`.
+
+-         queue.setPriority(id, (int) body.get("priority"));
++         Object p = body.get("priority");
++         if (!(p instanceof Number n)) throw new IllegalArgumentException("'priority' must be a number");
++         queue.setPriority(id, n.intValue());
+
+
+─── src/main/java/com/agentbench/service/BenchController.java:256-267 ───
+[performance · medium] Each SSE connection spawns a raw, non-daemon `Thread` with `SseEmitter(0L)`
+(no timeout). Under load this creates unbounded native threads, and a single leaked client
+connection (or a job that never reaches a terminal state) leaves a thread alive indefinitely.
+Consider using a bounded executor (or Spring's `@Async`), setting a reasonable SseEmitter timeout,
+and marking the thread as a daemon so it doesn't block JVM shutdown.
+
+
+
+─── src/main/java/com/agentbench/service/JobQueue.java:84-85 ───
+[bug · high] Race condition: between the `get(jobId)` check (line 82) and this `UPDATE` (line 84), a
+concurrent worker thread could call `finish()` to transition the job to a terminal state (e.g.
+'succeeded'). Since the WHERE clause only filters on `id`, the CASE expression would see the new
+terminal status (which is not 'running'), set `status` to 'cancelled', and overwrite `finished_at` —
+silently corrupting a completed job record. Add a status guard to the WHERE clause (e.g. `AND status
+NOT IN ('succeeded','failed','cancelled')`) and check the affected-row count; if 0 rows were
+updated, the job transitioned to terminal concurrently and you should throw or return early rather
+than returning a stale result.
+
+-         jdbc.update("UPDATE jobs SET cancel_requested = true, status = CASE WHEN status = 'running' THEN status ELSE 'cancelled' END, "
+-                 + "finished_at = CASE WHEN status = 'running' THEN finished_at ELSE now() END WHERE id = ?", jobId);
++         int updated = jdbc.update("UPDATE jobs SET cancel_requested = true, "
++                 + "status = CASE WHEN status = 'running' THEN status ELSE 'cancelled' END, "
++                 + "finished_at = CASE WHEN status = 'running' THEN finished_at ELSE now() END "
++                 + "WHERE id = ? AND status NOT IN ('succeeded','failed','cancelled')", jobId);
++         if (updated == 0)
++             throw new IllegalStateException("job " + jobId + " transitioned to a terminal state concurrently");
+
+
+─── src/main/java/com/agentbench/service/JobQueue.java:95-96 ───
+[bug · medium] Same check-then-act pattern as in `cancel()`: the UPDATE unconditionally sets `status
+= 'queued'` based only on `id`. Although the common transitions are benign (a 'failed' job can't be
+concurrently claimed or cancelled), a 'blocked' job could be concurrently cancelled (cancel sets it
+to 'cancelled'), and then this UPDATE would flip it back to 'queued', silently undoing the cancel.
+Adding `AND status IN ('failed','cancelled','blocked')` to the WHERE clause would make the update
+atomic with the intent checked above.
+
+-         jdbc.update("UPDATE jobs SET status = 'queued', cancel_requested = false, blocked_reason = NULL, pid = NULL, "
+-                 + "exit_code = NULL, result_line = NULL, started_at = NULL, finished_at = NULL, enqueued_at = now() WHERE id = ?", jobId);
++         int updated = jdbc.update("UPDATE jobs SET status = 'queued', cancel_requested = false, blocked_reason = NULL, pid = NULL, "
++                 + "exit_code = NULL, result_line = NULL, started_at = NULL, finished_at = NULL, enqueued_at = now() "
++                 + "WHERE id = ? AND status IN ('failed','cancelled','blocked')", jobId);
++         if (updated == 0)
++             throw new IllegalStateException("job " + jobId + " status changed concurrently; re-try the requeue");
+
+
+─── src/main/java/com/agentbench/service/RunSpec.java:25-25 ───
+[maintainability · low] Misleading method name: `nonNeg` implies "non-negative" (i.e., v >= 0 is
+valid), but the implementation enforces strict positivity (`v > 0`, rejecting 0) and the error
+message confirms this ("budgets must be positive"). Consider renaming to `positive` (or
+`assertPositive`) to avoid confusion for a future maintainer who might add a "0 = unlimited" budget
+case and incorrectly assume 0 is already handled.
+
+-     private static Integer nonNeg(Integer v) { return v == null || v > 0 ? v : failPositive(v); }
++     private static Integer positive(Integer v) { return v == null || v > 0 ? v : failPositive(v); }
+
+
+─── src/main/java/com/agentbench/service/Tailer.java:48-50 ───
+[bug · high] Resource leak: `Files.list(dir)` returns a `Stream<Path>` that implements `Closeable`
+(it holds an open directory file descriptor). The stream is only materialized via `.toList()` but
+never closed. Since `poll()` is invoked in a tight 2-second loop (see `BenchController.events`),
+each call leaks a directory FD and will eventually exhaust the process's file descriptor limit.
+
+Use try-with-resources to ensure the stream (and thus the directory handle) is closed:
+
+-         try { paths = Files.list(dir).filter(Files::isRegularFile)
+-                 .sorted(Comparator.comparing(p -> { try { return Files.getLastModifiedTime(p).toMillis(); } catch (IOException e) { return 0L; } })).toList(); }
+-         catch (IOException e) { return; }
++         try (Stream<Path> stream = Files.list(dir)) {
++             paths = stream.filter(Files::isRegularFile)
++                     .sorted(Comparator.comparing(p -> { try { return Files.getLastModifiedTime(p).toMillis(); } catch (IOException e) { return 0L; } })).toList();
++         } catch (IOException e) { return; }
+
+
+─── src/main/java/com/agentbench/service/Tailer.java:108-108 ───
+[bug · low] Potential integer overflow: `(int)(size - start)` silently wraps to a negative value
+when the file's unread portion exceeds `Integer.MAX_VALUE` (~2 GiB), causing a
+`NegativeArraySizeException`. For the typical small JSONL/log files this won't trigger, but the
+defensive guard is cheap and makes the intent explicit:
+
+-                 byte[] data = new byte[(int) (size - start)];
++                 long len = size - start;
++                 if (len > Integer.MAX_VALUE) len = Integer.MAX_VALUE; // clamp; remaining bytes handled on next poll
++                 byte[] data = new byte[(int) len];
+
+
+─── src/main/java/com/agentbench/service/Tailer.java:105-105 ───
+[bug · medium] If a file is truncated or rotated (its on-disk size shrinks below the saved byte
+offset), `size <= start` is true so the method returns empty and the stale offset is never reset.
+The tailer would permanently stop reading that file. Consider resetting the offset to 0 when the
+file has been truncated (size < start) so the new content is still picked up on subsequent polls:
+
++             if (size < start) offsets.put(path.toString(), 0L);  // file was truncated/rotated
+              if (size <= start) return List.of();
+
+
+─── src/main/java/com/agentbench/service/TreatmentPin.java:56-58 ───
+[maintainability · medium] Silent exception swallowing with no logging makes the safety mechanism's
+failure invisible. Since `pin.current()` is used in `WorkerService.guard()` to detect treatment
+drift (`!job.pinnedRunnerSha().equals(pin.current())`), if `compute()` throws and returns
+`"unpinned"`, then all jobs stamped with `"unpinned"` will silently pass the guard—completely
+disabling the protection with zero operator visibility. At minimum, log the exception at WARN/ERROR
+level (the project already uses SLF4J in `WorkerService`).
+
+
+
+─── src/main/java/com/agentbench/service/TreatmentPin.java:0-0 ───
+[performance · low] `Files.readAllBytes(root)` loads the entire JAR into a `byte[]` before passing
+it to the digest. For a Spring Boot fat JAR this can be 100–300 MB, creating a large one-time heap
+spike at startup. Consider streaming the file into the digest in chunks (e.g., with a
+`FileInputStream` and a reusable buffer) to avoid holding the whole JAR in memory:
+
+
+
+─── src/test/java/com/agentbench/DockerApplicationIT.java:294-296 ───
+[test · medium] The skip-guard is ineffective. `List.of(null)` (when the array is empty, so
+`elements().next()` returns null) creates a SINGLE-element list containing null, so
+`models.isEmpty()` is always false and `assumeTrue` can never skip. Then `models.get(0)` is null,
+and `String.format("...\"model\": \"%s\"...", null)` embeds the literal string "null" as the model
+name. If the model server legitimately reports zero models, this does NOT skip gracefully
+(contradicting the method's own javadoc) — it produces a 200 experiment with model="null" and fails
+confusingly later in `assertJobReachesRunningWithoutFailing`. Fix: parse the array into a list
+properly (e.g. `collectIntoList(String.class)`) and skip if empty, or check `asText().isEmpty()`
+first.
+
+-         List<String> models = List.of(json.readTree(get("/api/models").body()).elements().next().asText());
++         List<String> models = json.readTree(get("/api/models").body()).collectIntoList(String.class);
+          Assumptions.assumeTrue(!models.isEmpty(), "the model server reported no models");
+          String model = models.get(0);
+
+
+─── src/test/java/com/agentbench/DockerApplicationIT.java:174-175 ───
+[test · medium] The final re-cancel is fire-and-forget: no status code or body is asserted, so the
+test passes even if it did nothing useful. The race it is meant to prevent is real: between
+`/requeue` and this call the background worker can claim the job (claim→running). As the Order(8)
+test documents, cancelling an already-running job only sets the ignored `cancel_requested` flag —
+`JobQueue.requeue` even hard-fails on a running job — so a job that raced into "running" here keeps
+executing a full real experiment (600s task_wall) while the rest of the suite runs, consuming the
+single worker slot and model-server budget. At minimum assert the final GET status is "cancelled"
+(and if it came back "running", that is a signal the race happened and the suite is now contending
+with a live job).
+
+-         // cancel it again so it does not sit queued and racing the worker for the rest of the suite
+-         post("/api/jobs/" + id + "/cancel");
++         HttpResponse<String> finalCancel = post("/api/jobs/" + id + "/cancel");
++         assertEquals(200, finalCancel.statusCode(), finalCancel.body());
++         assertEquals("cancelled", json.readTree(get("/api/jobs/" + id).body()).get("status").asText());
+
+
+─── src/test/java/com/agentbench/DockerApplicationIT.java:320-323 ───
+[test · medium] Two related flakiness issues in this poll loop: (1) "running" is the ONLY accepted
+success state, sampled on a 2s cadence — if the job ever reaches a terminal success state
+("succeeded"/"done") before a sample, or transitions too fast to be sampled as running, `sawRunning`
+never flips and the test fails with "never reached 'running'" even though the job ran correctly.
+Suggest accepting any non-failed terminal state as success (sawRunning = true or terminal-success =
+true). (2) On success the loop breaks but the real job is left running — nothing is ever cancelled
+or waited to completion; the suite's `@AfterAll` kills the container mid-job, which is fine for this
+IT, but a final cleanup call (cancel + accept best-effort) would make the intent explicit instead of
+relying on container teardown to dispose of in-flight LLM work.
+
+
+
+─── src/test/java/com/agentbench/DockerApplicationIT.java:186-187 ───
+[maintainability · low] The temp results directory is created but never deleted; a temp dir is
+leaked on every run of this test. Also, tests 5 (compare) and 6 (groups) implicitly depend on this
+test's run "it-rescan-run-1" having landed in Postgres — if this test is ever excluded from a run
+(or fails), they crash with an unexplained NPE from `json.readTree(detail.body())` returning null
+rather than a clean skip. Consider `@AfterEach`-style cleanup of `fixture` (recursively) and, in
+tests 5/6, an `Assumptions` guard that the run exists before asserting on it, to make the ordering
+dependency explicit.
+
+
+
+─── src/test/java/com/agentbench/agent/AgentToolsTest.java:69-71 ───
+[maintainability · low] Dead code: the variable `req` is declared but never used. The `msgs` list
+only receives `system` and `pack` before the loop, and the loop creates its own local `tr`
+variables. This line can be safely removed.
+
+-         var req = dev.langchain4j.agent.tool.ToolExecutionRequest.builder().id("c1").name("bash").arguments("{}").build();
+          java.util.List<dev.langchain4j.data.message.ChatMessage> msgs = new java.util.ArrayList<>();
+          msgs.add(system); msgs.add(pack);
+
+
+─── src/test/java/com/agentbench/agent/AgentToolsTest.java:42-42 ───
+[test · medium] This assertion is ineffective at verifying the line cap. The `read` implementation
+formats each line as `"%5d: %s%n"` (e.g., `"    1: line\n    2: line"`), so the substring
+`"line\nline"` can never appear in the output regardless of whether the cap is applied — the
+line-number prefix always intervenes. The assertion would pass even if `READ_MAX_LINES` were 10000
+or unbounded. A correct assertion would check for the truncation indicator, e.g.
+`assertTrue(all.output().contains("more lines"))` or verify the output does not contain a line
+number beyond the cap.
+
+-         assertFalse(all.output().contains("line\nline"), "the default read must cap the line count");   // capped at READ_MAX_LINES
++         assertTrue(all.output().contains("more lines"), "the default read must cap the line count");   // capped at READ_MAX_LINES
+
+
+─── src/test/java/com/agentbench/pack/PacksTest.java:55-55 ───
+[maintainability · low] Test resource leak across multiple test classes: temp files/directories
+created via `Files.createTempFile(...)` or `Files.createTempDirectory(...)` are never deleted.
+
+- `PacksTest.java` – several tests create temp `.json` files but never delete them.
+- `JournalFactsTest.java` – all 8 tests create a temp `.jsonl` file but never delete it.
+- `RunBenchTest.java` – a temp directory `ws` is created but never cleaned up.
+
+Over repeated local runs or CI executions these accumulate in the OS temp directory. Consider JUnit
+5 `@TempDir` (auto-cleaned) or an `@AfterEach` cleanup with `Files.deleteIfExists` for guaranteed
+cleanup.
+
+
+
+─── src/test/java/com/agentbench/pack/PacksTest.java:22-22 ───
+[test · low] This call has no assertion or result check — it contributes no verification. If the
+intent is to assert that a scale of 1.0 with an empty map does not throw, add a comment explaining
+that. Otherwise remove it as dead code in the test.
+
+
+
+─── src/test/java/com/agentbench/reference/TradingServiceTest.java:56-58 ───
+[test · medium] Flaky test risk: This test relies on `Thread.sleep(5)` to guarantee that `between`
+is strictly after the buy's `executedAt` and strictly before the sell's `executedAt`. While 5ms is
+usually sufficient given the 1ms truncation in `TradingService.now()`, on a heavily loaded CI runner
+(GC pauses, CPU starvation) the `Instant.now()` captured for `between` could theoretically land on
+the same millisecond as the buy's `executedAt`, making the exclusive-boundary assertion flaky.
+
+Consider a more robust approach: inject or mock a controllable clock, or retry the assertion with an
+incremented `between` offset until the boundary is strictly exceeded. Alternatively, assert that
+`between` is strictly after the buy's `executedAt` (and fail fast with a clear message if the sleep
+wasn't sufficient), rather than relying on the implicit timing assumption.
+
+
+
+─── src/test/java/com/agentbench/runner/JournalFactsTest.java:54-54 ───
+[bug · medium] Duplicate JSON `"status"` key: The `chat()` helper template already emits `"status":
+200`, and this test passes `, "status": 429, ...` as `topExtra`, producing `{..., "status": 200,
+"status": 429, ...}`. This is technically invalid JSON (RFC 8259 §4: object members SHOULD have
+unique names). The test only passes because the particular parser (e.g., Jackson/Gson) resolves
+duplicates by taking the **last** value. If the parser is ever switched to first-wins or
+strict-mode, this test will silently break. Consider adding a parameter to override the status in
+`chat()`, or not baking the default `"status": 200` into the template when `topExtra` already
+contains one.
+
+-         Files.writeString(j, chat("2026-09-14T10:00:00Z", ", \"status\": 429, \"budget_exceeded\": true", "", REQ));
++         // e.g. chat() could accept an optional status, or topExtra could omit the key name:
++         Files.writeString(j, chat("2026-09-14T10:00:00Z", ", \"status\": 429, \"budget_exceeded\": true", "", REQ));  // NOTE: produces duplicate "status" key; consider a dedicated helper or status param
+
+
+─── src/test/java/com/agentbench/runner/RunBenchTest.java:68-70 ───
+[bug · medium] Potential NPE: `generic` (from `getResourceAsStream("/tasks/PROMPT.md")`) may be
+`null` if the resource is missing, yet `generic.readAllBytes()` is called without a null check. If
+the vendored generic prompt is accidentally absent, this test will fail with a confusing
+`NullPointerException` rather than a clear assertion message. Add `assertNotNull(generic, "generic
+tasks/PROMPT.md must be vendored")` before dereferencing it.
+
+                  assertNotNull(perTask, task + " must resolve to a vendored prompt");
++                 assertNotNull(generic, "generic tasks/PROMPT.md must be vendored");
+                  String taskText = new String(perTask.readAllBytes(), StandardCharsets.UTF_8);
+                  String genericText = new String(generic.readAllBytes(), StandardCharsets.UTF_8);
+
+
+─── src/test/java/com/agentbench/runner/ValidityTest.java:62-62 ───
+[bug · high] Weak assertion: `instanceof Boolean` will always be `true` here because
+`Validity.validity()` always puts a `boolean` (autoboxed to `Boolean`) for the `"valid"` key. This
+assertion passes even when `valid` is `false`, so it does NOT actually verify what the trailing
+comment claims ("10% <= maxErrorRate: fine"). If the implementation were to erroneously invalidate a
+10% error rate run, this test would still pass.
+
+Replace with a value assertion to match the intent:
+
+-         assertTrue(Validity.validity(manifest, facts(10, 1), 0.2).get("valid") instanceof Boolean);   // 10% <= maxErrorRate: fine
++         assertTrue((Boolean) Validity.validity(manifest, facts(10, 1), 0.2).get("valid"), "10% error rate <= maxErrorRate: run should be valid");
+
+
+─── .dockerignore:8-8 ───
+[maintainability · low] Excluding `gradle.properties` is a security best practice (avoids leaking
+repository credentials into the image), but if the Dockerfile build context relies on
+`gradle.properties` for essential build configuration (e.g., toolchain settings, repository URLs,
+dependency versions), the Docker build will silently use defaults or fail. Ensure the Dockerfile or
+a sibling `gradle.properties` is provided at build time if these settings are required. If not
+needed in the image, this is fine.
+
+
+
+─── Dockerfile:24-24 ───
+[security · medium] The runtime stage has no `USER` directive, so the Java application runs as root
+inside the container. Even if the app itself doesn't need elevated privileges, running as root
+violates the least-privilege principle and widens the blast radius if the process is ever
+compromised (e.g., a RCE in the app could trivially modify system files, read `/root/.ssh`, etc.).
+Add a non-root user before the `COPY` / `ENTRYPOINT` lines:
+
+```
+RUN adduser --disabled-password --gecos '' appuser && chown -R appuser /app
+USER appuser
+```
+
+
+
+─── Dockerfile:10-10 ───
+[performance · medium] The `./gradlew --version` call on line 10 only validates the wrapper — it
+does **not** pre-fetch project dependencies. Because `COPY src ./src` (line 11) precedes `RUN
+./gradlew bootJar` (line 12), any single-line source change invalidates the layer that also handles
+dependency resolution, forcing a full re-download of all Maven Central / Gradle module dependencies
+on every rebuild. A common optimization is to insert a layer that resolves (but doesn't compile)
+dependencies between the build-file copy and the source copy, e.g.:
+
+```
+COPY gradlew settings.gradle.kts build.gradle.kts ./
+COPY gradle ./gradle
+RUN chmod +x gradlew && mkdir -p src/main/java src/main/resources && ./gradlew --no-daemon
+dependencies
+COPY src ./src
+RUN ./gradlew bootJar --no-daemon -x test
+```
+
+This makes iterative CI builds dramatically faster.
+
+
+
+─── Dockerfile:14-14 ───
+[maintainability · low] If the filter ever matches more than one jar (a new sub-project, a
+`-sources.jar`, a `-javadoc.jar`, or any differently-named non-plain classifier), `-exec cp {} … \;`
+will copy them all sequentially and the **last** one in filesystem order silently wins — making the
+resulting `app.jar` non-deterministic. Consider either:
+
+```dockerfile
+RUN sh -c 'count=$(find build/libs -maxdepth 1 -name "*.jar" ! -name "*-plain.jar" | wc -l); \
+  test "$count" -eq 1 && cp $(find build/libs -maxdepth 1 -name "*.jar" ! -name "*-plain.jar")
+/src/app.jar'
+
+- RUN find build/libs -maxdepth 1 -name "*.jar" ! -name "*-plain.jar" -exec cp {} /src/app.jar \;
++ RUN sh -c 'jar=$(find build/libs -maxdepth 1 -name "*.jar" ! -name "*-plain.jar"); \
++   [ "$(echo "$jar" | wc -l)" -eq 1 ] || { echo "Expected exactly 1 boot jar, got: $jar"; exit 1; }; \
++   cp "$jar" /src/app.jar'
+
+
+
+──────── Project Summary ────────
+
+### Top Issues
+
+| # | Issue | Impact | Key Paths |
+|---|-------|--------|-----------|
+| 1 | **`Map.of()` NPE crashes the entire scoring pipeline** – both `Collect.collect()` and `RunOracle.run()` call `Map.of(...)` with a ternary that can be `null` (missing oracle metric, failed `docker image inspect`). One missing metric kills the whole run. | Total loss of metrics / scoring for a benchmark run | `metrics/Collect.java`, `oracle/RunOracle.java` |
+| 2 | **Check-then-act race in `JobQueue`** – `get(jobId)` followed by an unconditional `UPDATE … WHERE id = ?` allows a concurrent `finish()` to be clobbered, corrupting job state in Postgres. | Data corruption in production job lifecycle | `service/JobQueue.java` (×2: `cancel` and `requeue`) |
+| 3 | **Unbounded raw threads + NPEs in SSE endpoint** – each client connection spawns a non-daemon `Thread` with no timeout; `body.get("spec")`, `body.get("a")`, `(int) body.get("priority")` all NPE/CCE on missing or wrong-typed fields, returning 500s. Under load or with a stuck job, threads leak indefinitely. | DoS vector + 500 errors on any malformed request | `service/BenchController.java` |
+| 4 | **File-descriptor and stream leaks in hot paths** – `Tailer.poll()` opens a `Files.list` stream every 2 s and never closes it; `VerifyTask` can skip `log.close()` on mid-loop IOException; `ReferenceServer.stop()` never shuts down its thread pool; `RecordingProxyFactory` abandons a half-started proxy. | FD exhaustion, thread-pool leak, container OOM over time | `service/Tailer.java`, `runner/VerifyTask.java`, `reference/ReferenceServer.java`, `runner/RecordingProxyFactory.java` |
+| 5 | **Object allocation inside hot loops** – a new `ObjectMapper` per tool-call parse (up to 400 turns × N calls), `Pattern.compile` per line, `DocumentBuilderFactory.newInstance()` per XML file, a fresh `EnumSet` per record in a stream filter. | GC pressure and CPU waste at benchmark scale | `agent/ReferenceAgent.java`, `runner/VerifyTask.java`, `oracle/CheckId.java` |
+| 6 | **Scorer denominator mismatch** – `functional_denominator` uses all functional checks (including unscored) while the percentage uses only *counted* checks, so the reported `functional_score_pct` violates the documented `points_got / denominator` contract. | Incorrect benchmark scores published to users | `oracle/Scorer.java` |
+| 7 | **Tailer permanently stalls on file rotation** – if a file shrinks below the saved byte offset, the method returns empty forever and never resets the offset. A single log rotation kills tailing for that file. | Silent loss of log/event delivery | `service/Tailer.java` |
+| 8 | **Container runs as root; Dockerfile layer ordering defeats caching** – no `USER` directive; `COPY src` before the dependency-fetch step invalidates the dependency layer on every source change. | Security exposure + slow CI builds | `Dockerfile` |
+| 9 | **`TreatmentPin` silently swallows all exceptions and returns `"unpinned"`** – the drift-detection guard in `WorkerService.guard()` then treats every job as unpinned, disabling the safety mechanism with zero log output. | Treatment-drift protection silently off | `service/TreatmentPin.java` |
+| 10 | **`ReferenceServer` never calls `reply()` for unrecognised sub-paths** – a 3+-segment path that isn't `/holdings` falls through without sending any HTTP response, leaving the client hanging. Also `param()` doesn't URL-decode, so any `:`-encoded timestamp fails parsing. | Hanging clients, broken API for any non-`/holdings` sub-resource | `reference/ReferenceServer.java` |
+
+---
+
+### Module Hotspots
+
+| Module | Files | Comment count | Dominant themes |
+|--------|-------|:---:|-----------------|
+| `src/main/java/com/agentbench/service/` | BenchController, JobQueue, Tailer, TreatmentPin, RunSpec | 14 | NPE on missing JSON fields, unbounded threads, FD leaks, race conditions, silent exception swallowing |
+| `src/main/java/com/agentbench/oracle/` | Scorer, RunOracle, CheckId, CheckStatus | 8 | `Map.of` null-crash, denominator mismatch, per-call allocation, NPE on null status |
+| `src/main/java/com/agentbench/runner/` | VerifyTask, Reviews, RunBenchSupport, RunBench | 9 | Resource leaks, per-iteration object creation, dead code with latent bugs |
+| `src/test/java/com/agentbench/` | DockerApplicationIT, PacksTest, JournalFactsTest, TradingServiceTest, ValidityTest, RunBenchTest, AgentToolsTest | 12 | Flaky timing, ineffective assertions, temp-file leaks, duplicate JSON keys |
+| `src/main/java/com/agentbench/reference/` | ReferenceServer | 4 | Missing `reply()`, wrong exception type, no URL-decode, thread-pool leak |
+
+The **`service/`** package is the clear hotspot: four files, 14 comments, and the two highest-impact findings (race condition, unbounded threads) both live here.
+
+---
+
+### Cross-Cutting Concerns
+
+1. **Null-safety against Jackson / JSON inputs** – `path("…").get(0)` without a `MissingNode` guard, `Map.of` with nullable values, `getOrDefault` that still returns `null` when the key is present-but-null, `getResourceAsStream` returning `null`. This pattern recurs in at least **9 files** (`AgentSession`, `AgentTools`, `Collect`, `RunOracle`, `CheckStatus`, `SseAssembler`, `BenchController`, `RunBenchTest`, `ReferenceServer`).
+
+2. **Resource lifecycle not closed** – `Stream<Path>` from `Files.list`, `HttpServer` + cached thread pool, `FileWriter`/`FileOutputStream`, temp directories in tests. No use of try-with-resources in the leaky sites. Affects `Tailer`, `ReferenceServer`, `RecordingProxyFactory`, `VerifyTask`, and several test classes.
+
+3. **Dead code that obscures intent** – unused method parameters (`AgentSession`), never-called public methods (`RunBenchSupport.killTree`, `gradleHome`), unused constants (`TERMINAL_PROXY_STATES`), unused local variables in tests. 6+ occurrences across 5 files. The dead `killTree` also contains a *latent* bug (checks `commandLine()` for an env-var value), making it doubly dangerous.
+
+4. **Object creation inside loops / hot paths** – `ObjectMapper` (per tool call), `Pattern.compile` (per line), `DocumentBuilderFactory` (per file), `EnumSet` (per record). No caching or reuse.
+
+5. **Inconsistent or overly-broad exception handling** – catching `IllegalArgumentException` when the real exception is `DateTimeException`/`IndexOutOfBoundsException`; `catch (IOException ignore)` that prevents a `finally` close; silent `catch (Exception)` returning a sentinel. Appears in `ReferenceServer`, `VerifyTask`, `TreatmentPin`, `CheckStatus`, `SseAssembler`.
+
+---
+
+### Quick Wins
+
+| Fix | Effort | Leverage |
+|-----|--------|----------|
+| Replace `Map.of(…, ternary)` with `Map.entry` + `HashMap` (or a null-check) in `Collect.java` and `RunOracle.java` | 15 min | Prevents hard crashes of the entire scoring pipeline |
+| Add a `USER nonroot` directive + a `USER` line to the `Dockerfile` runtime stage | 5 min | Closes the root-in-container finding |
+| Hoist `Pattern.compile` and `DocumentBuilderFactory` to `static final` / method-local in `VerifyTask.java` | 10 min | Eliminates per-line / per-file allocation in the hottest verification loop |
+| Wrap `Tailer.poll()`'s `Files.list` in try-with-resources; add offset-reset when `size < start` | 10 min | Stops FD leak in a 2 s polling loop; restores tailing after rotation |
+| Delete dead code: `RunBenchSupport.gradleHome()`, `killTree()`, `RecordingProxyFactory.TERMINAL_PROXY_STATES`, unused `AgentSession` params, unused `req` in `AgentToolsTest` | 15 min | Removes 6 misleading symbols; eliminates a latent bug (`killTree`) from the API surface |
+| Add `finally { log.close(); }` in `VerifyTask` and store/shutdown the executor in `ReferenceServer.stop()` | 10 min | Closes two of the most likely FD / thread leaks |
+| In `JobQueue`, replace check-then-act with a single conditional `UPDATE … WHERE id = ? AND status = 'queued'` and check `getUpdateCount()` | 20 min | Eliminates the race without adding locks or new DB round-trips |
+
+Each of these is a ≤ 30-minute change with a clear correctness or stability payoff, and none requires an architectural redesign.

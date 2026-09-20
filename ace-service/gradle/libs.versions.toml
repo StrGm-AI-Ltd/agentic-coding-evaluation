@@ -1,0 +1,7 @@
+[versions]
+# Single source of truth for the Spring Boot version: the plugin and the spring-boot-dependencies
+# BOM both resolve from this entry, so an upgrade touches exactly one place.
+springBoot = "3.5.5"
+
+[plugins]
+springBoot = { id = "org.springframework.boot", version.ref = "springBoot" }
