@@ -27,7 +27,7 @@ class ExperimentDetailViewTest {
         when(client.job(31L)).thenReturn(ApiFixtures.job(31, "blocked",
                 "runner/ or oracle/ has uncommitted changes:\n M runner/agent_loop.py"));
         when(client.job(33L)).thenReturn(ApiFixtures.job(33, "blocked", null));
-        when(client.job(35L)).thenThrow(new RuntimeException("fetch failed"));
+        // (fetch-failure tolerance is covered by blockedReasonsTolerateFetchFailures)
 
         Map<Long, String> reasons = ExperimentDetailView.blockedReasons(client, jobs);
 

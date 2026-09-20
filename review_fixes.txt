@@ -219,3 +219,12 @@ string, and the result can never be null.
      (src/main/java/com/agentbench/ui/SseEvent.java)
 ────────────────────────────────────────────────────────────────────────────────
 java.util.List was imported but never referenced; removed.
+
+────────────────────────────────────────────────────────────────────────────────
+[21] ExperimentDetailViewTest — dead stub for job 35
+     (src/test/java/com/agentbench/ui/ExperimentDetailViewTest.java)
+────────────────────────────────────────────────────────────────────────────────
+Job 35 is not part of that test's jobs list (31, 32, 33), so the throwing
+when(client.job(35L)) stub was never exercised — a leftover that misleadingly
+suggested a fetch-failure scenario. Removed; fetch-failure tolerance is
+documented as covered by blockedReasonsTolerateFetchFailures.
