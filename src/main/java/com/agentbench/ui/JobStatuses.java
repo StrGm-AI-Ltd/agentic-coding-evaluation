@@ -16,7 +16,8 @@ public final class JobStatuses {
     }
 
     public static boolean isTerminal(String status) {
-        return TERMINAL.contains(status);
+        // Set.of rejects null: an unknown/absent status is non-terminal, not a UI crash
+        return status != null && TERMINAL.contains(status);
     }
 
     /** Cancel: any non-terminal job that has not already been asked to stop. */
@@ -26,6 +27,6 @@ public final class JobStatuses {
 
     /** Requeue: failed, cancelled or blocked — queue.py accepts exactly these. */
     public static boolean canRequeue(String status) {
-        return REQUEUEABLE.contains(status);
+        return status != null && REQUEUEABLE.contains(status);
     }
 }

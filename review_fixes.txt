@@ -145,3 +145,12 @@ sibling views ExperimentsView and JobsView, so every navigation re-fetches.
 A null raw map would crash with a bare NPE at raw.entrySet(). It is now
 normalized to Map.of() (an empty form → task + default flags only), and the
 Javadoc documents that contract, mirroring the explicit task validation.
+
+────────────────────────────────────────────────────────────────────────────────
+[13] JobStatuses — Set.of(...).contains(null) throws NPE
+     (src/main/java/com/agentbench/ui/JobStatuses.java)
+────────────────────────────────────────────────────────────────────────────────
+isTerminal/canRequeue passed job.status() straight to ImmutableCollections'
+null-rejecting contains(); a null status from the API would crash the UI
+thread. Both are now guarded (null → non-terminal / not requeueable), and
+canCancel inherits the fix through isTerminal.
