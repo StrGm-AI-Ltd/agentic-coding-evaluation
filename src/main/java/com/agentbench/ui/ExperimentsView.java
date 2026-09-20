@@ -64,7 +64,7 @@ public class ExperimentsView extends VerticalLayout {
         String effective = ExperimentStatuses.effective(experiment.status(),
                 jobStatusesByExperiment.get(experiment.id()));
         com.vaadin.flow.component.badge.Badge badge = Badges.status(effective);
-        if (!effective.equals(experiment.status())) {
+        if (!java.util.Objects.equals(effective, experiment.status())) {
             badge.getElement().setAttribute("title",
                     "table status: " + experiment.status() + " (derived from its jobs)");
         }

@@ -71,7 +71,7 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         statusLine.setPadding(false);
         statusLine.setSpacing(true);
         statusLine.getStyle().set("margin", "4px 0");
-        if (!effectiveStatus.equals(experiment.status())) {
+        if (!java.util.Objects.equals(effectiveStatus, experiment.status())) {
             Span raw = new Span("(table status: " + experiment.status() + " — derived from its jobs)");
             raw.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em");
             statusLine.add(raw);

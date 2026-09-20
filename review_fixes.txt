@@ -98,3 +98,14 @@ NullPointerException, violating the documented "@throws IllegalArgumentException
 on bad input" contract (the sole caller only catches that type). An explicit
 null/blank guard now rejects it with the same "unknown template: ..." message
 as any other unknown template.
+
+────────────────────────────────────────────────────────────────────────────────
+[8] ExperimentsView — NPE when the experiment status is null
+     (src/main/java/com/agentbench/ui/ExperimentsView.java,
+      src/main/java/com/agentbench/ui/ExperimentDetailView.java)
+────────────────────────────────────────────────────────────────────────────────
+When experiment.status() is null, ExperimentStatuses.effective(...) returns the
+raw value (null), so !effective.equals(...) threw an NPE and broke the whole
+grid render, even though every other consumer treats status as nullable. Both
+spots now use Objects.equals: the status-badge tooltip in ExperimentsView and
+the identical latent pattern in ExperimentDetailView.render().
