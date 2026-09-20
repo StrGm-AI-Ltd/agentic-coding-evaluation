@@ -91,6 +91,7 @@ public class ExperimentNewView extends VerticalLayout {
         parallel.setValue(3);
         parallel.setMin(2);
         parallel.setMax(20);
+        parallel.setEnabled(false); // par is unchecked by default; the value-change listener syncs it afterwards
         agentMode.setLabel("mode");
         agentMode.setItems("orchestrated", "monolithic");
         agentMode.setValue("orchestrated");

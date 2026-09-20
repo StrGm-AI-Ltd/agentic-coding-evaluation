@@ -56,7 +56,7 @@ content, so multiple blocked reasons ran together on one line. The blocked-line
 span now sets white-space: pre-line, so each reason renders on its own line.
 
 ────────────────────────────────────────────────────────────────────────────────
-[4] ExperimentNewView — NPE on auto-unboxing of un-tenched checkboxes
+[4] ExperimentNewView — NPE on auto-unboxing of un-checked checkboxes
      (src/main/java/com/agentbench/ui/ExperimentNewView.java)
 ────────────────────────────────────────────────────────────────────────────────
 monoRules/par were never given an initial value; Vaadin Checkbox.getValue()
@@ -64,3 +64,13 @@ returns null until toggled, so if (checkbox.getValue()) threw an NPE on form
 submit when the user never touched the box. Submit now uses
 Boolean.TRUE.equals(...), which treats null as unchecked (the intended
 default) and can never NPE.
+
+────────────────────────────────────────────────────────────────────────────────
+[5] ExperimentNewView — initial enabled-state desync for the parallel field
+     (src/main/java/com/agentbench/ui/ExperimentNewView.java)
+────────────────────────────────────────────────────────────────────────────────
+The "parallel" IntegerField was interactively enabled (Vaadin default) while
+the par checkbox it depends on starts unchecked; the value-change listener only
+fires on subsequent toggles, so the user saw a live control that could not
+affect the submission. Added parallel.setEnabled(false) at construction; the
+existing par value-change listener syncs it from then on.
