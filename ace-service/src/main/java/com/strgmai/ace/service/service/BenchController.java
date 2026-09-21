@@ -1,22 +1,28 @@
 package com.strgmai.ace.service.service;
 
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.config.JsonColumns;
 import com.strgmai.ace.service.metrics.StatsService;
 import com.strgmai.ace.service.oracle.CheckId;
+import org.jooq.DSLContext;
 import org.springframework.http.ResponseEntity;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.nio.file.*;
 import java.util.*;
 
+import static com.strgmai.ace.service.jooq.Tables.CHECK_RESULTS;
+import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
+import static com.strgmai.ace.service.jooq.Tables.JOBS;
+import static com.strgmai.ace.service.jooq.Tables.RUNS;
+
 /** Port of service/api.py as a JSON API (the HTML UI is not ported; every page has a JSON twin).
  *  Security carries over: files are confined to the run's own results directory (resolve + verified
  *  containment) and workspace/ — the agent's live tree the listing never shows — is never served. */
 @RestController
 public class BenchController {
-    private final JdbcTemplate jdbc;
+    private final DSLContext dsl;
     private final JobQueue queue;
     private final ImporterService importer;
     private final ExperimentsService experiments;
@@ -27,10 +33,10 @@ public class BenchController {
     private final Preflight preflight;
     private final TreatmentPin pin;
 
-    public BenchController(JdbcTemplate jdbc, JobQueue queue, ImporterService importer, ExperimentsService experiments,
+    public BenchController(DSLContext dsl, JobQueue queue, ImporterService importer, ExperimentsService experiments,
                            StatsService stats, WorkerService worker, BenchProperties props, Preflight preflight,
                            TreatmentPin pin) {
-        this.jdbc = jdbc; this.queue = queue; this.importer = importer; this.experiments = experiments;
+        this.dsl = dsl; this.queue = queue; this.importer = importer; this.experiments = experiments;
         this.stats = stats; this.worker = worker; this.props = props; this.preflight = preflight; this.pin = pin;
     }
 
@@ -52,22 +58,23 @@ public class BenchController {
     @GetMapping("/api/runs")
     public List<Map<String, Object>> runs(@RequestParam(required = false) String task, @RequestParam(required = false) String model,
                                           @RequestParam(required = false, defaultValue = "") String valid) {
-        StringBuilder where = new StringBuilder();
-        List<Object> args = new ArrayList<>();
-        if (task != null && !task.isBlank()) { where.append(" AND task = ?"); args.add(task); }
-        if (model != null && !model.isBlank()) { where.append(" AND model = ?"); args.add(model); }
-        if (!valid.isBlank()) { where.append(" AND valid = ?"); args.add("true".equals(valid)); }
-        return jdbc.queryForList("SELECT run_id, task, mode, model, harness, functional_score_pct, weighted_score_pct, "
-                + "valid, contended, wall_sec, completion_tokens FROM runs WHERE true" + where + " ORDER BY imported_at DESC LIMIT 500", args.toArray());
+        List<org.jooq.Condition> where = new ArrayList<>();
+        if (task != null && !task.isBlank()) where.add(RUNS.TASK.eq(task));
+        if (model != null && !model.isBlank()) where.add(RUNS.MODEL.eq(model));
+        if (!valid.isBlank()) where.add(RUNS.VALID.eq("true".equals(valid)));
+        return JsonColumns.parseAll(dsl.select(RUNS.RUN_ID, RUNS.TASK, RUNS.MODE, RUNS.MODEL, RUNS.HARNESS,
+                        RUNS.FUNCTIONAL_SCORE_PCT, RUNS.WEIGHTED_SCORE_PCT, RUNS.VALID, RUNS.CONTENDED, RUNS.WALL_SEC, RUNS.COMPLETION_TOKENS)
+                .from(RUNS).where(where).orderBy(RUNS.IMPORTED_AT.desc()).limit(500).fetch().intoMaps());
     }
 
     @GetMapping("/api/runs/{id}")
     public ResponseEntity<?> run(@PathVariable String id) {
-        List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM runs WHERE run_id = ?", id);
-        if (rows.isEmpty()) return ResponseEntity.status(404).body(Map.of("detail", "run " + id + " is not imported"));
-        Map<String, Object> run = new LinkedHashMap<>(rows.get(0));
-        run.put("checks", jdbc.queryForList("SELECT check_id, category, weight, status, detail FROM check_results WHERE run_id = ? "
-                + "ORDER BY check_id", id));
+        var rec = dsl.selectFrom(RUNS).where(RUNS.RUN_ID.eq(id)).fetchOne();
+        if (rec == null) return ResponseEntity.status(404).body(Map.of("detail", "run " + id + " is not imported"));
+        Map<String, Object> run = JsonColumns.parse(rec.intoMap());
+        run.put("checks", dsl.select(CHECK_RESULTS.CHECK_ID, CHECK_RESULTS.CATEGORY, CHECK_RESULTS.WEIGHT, CHECK_RESULTS.STATUS, CHECK_RESULTS.DETAIL)
+                .from(CHECK_RESULTS).where(CHECK_RESULTS.RUN_ID.eq(id)).orderBy(CHECK_RESULTS.CHECK_ID)
+                .fetch().intoMaps().stream().map(JsonColumns::parse).toList());
         return ResponseEntity.ok(run);
     }
 
@@ -75,9 +82,9 @@ public class BenchController {
     @GetMapping("/api/runs/{id}/files/{path}")
     public ResponseEntity<?> file(@PathVariable String id, @PathVariable String path) {
         try {
-            List<Map<String, Object>> rows = jdbc.queryForList("SELECT results_dir FROM runs WHERE run_id = ?", id);
-            if (rows.isEmpty()) return ResponseEntity.status(404).body(Map.of("detail", "run " + id + " is not imported"));
-            Path base = Path.of((String) rows.get(0).get("results_dir")).toRealPath();
+            String resultsDir = dsl.select(RUNS.RESULTS_DIR).from(RUNS).where(RUNS.RUN_ID.eq(id)).fetchOne(RUNS.RESULTS_DIR);
+            if (resultsDir == null) return ResponseEntity.status(404).body(Map.of("detail", "run " + id + " is not imported"));
+            Path base = Path.of(resultsDir).toRealPath();
             if (path.equals("workspace") || path.startsWith("workspace/"))
                 return ResponseEntity.status(404).body(Map.of("detail", "workspace is the agent's live tree; not part of the record"));
             Path target = base.resolve(path).normalize();
@@ -132,7 +139,7 @@ public class BenchController {
     }
 
     @GetMapping("/api/experiments") public List<Map<String, Object>> experiments() {
-        return jdbc.queryForList("SELECT * FROM experiments ORDER BY id DESC");
+        return JsonColumns.parseAll(dsl.selectFrom(EXPERIMENTS).orderBy(EXPERIMENTS.ID.desc()).fetch().intoMaps());
     }
 
     @PostMapping("/api/experiments")
@@ -147,11 +154,11 @@ public class BenchController {
 
     @GetMapping("/api/experiments/{id}")
     public ResponseEntity<?> experiment(@PathVariable long id) {
-        List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM experiments WHERE id = ?", id);
-        if (rows.isEmpty()) return ResponseEntity.status(404).body(Map.of("detail", "experiment " + id + " does not exist"));
-        Map<String, Object> out = new LinkedHashMap<>(rows.get(0));
-        out.put("jobs", jdbc.queryForList("SELECT id, arm, repeat, run_id, status, result_line FROM jobs "
-                + "WHERE experiment_id = ? ORDER BY repeat, arm", id));
+        var rec = dsl.selectFrom(EXPERIMENTS).where(EXPERIMENTS.ID.eq((int) id)).fetchOne();
+        if (rec == null) return ResponseEntity.status(404).body(Map.of("detail", "experiment " + id + " does not exist"));
+        Map<String, Object> out = JsonColumns.parse(rec.intoMap());
+        out.put("jobs", dsl.select(JOBS.ID, JOBS.ARM, JOBS.REPEAT, JOBS.RUN_ID, JOBS.STATUS, JOBS.RESULT_LINE)
+                .from(JOBS).where(JOBS.EXPERIMENT_ID.eq((int) id)).orderBy(JOBS.REPEAT, JOBS.ARM).fetch().intoMaps());
         return ResponseEntity.ok(out);
     }
 
@@ -214,8 +221,8 @@ public class BenchController {
      *  entry needs k >= 5 comparable, valid runs; smaller groups are indicative and never ranked. */
     @GetMapping("/api/groups")
     public Map<String, Object> groups() throws Exception {
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT run_id, task, model, mode, key_hash, results_dir FROM runs WHERE poolable ORDER BY run_id");
+        List<Map<String, Object>> rows = dsl.select(RUNS.RUN_ID, RUNS.TASK, RUNS.MODEL, RUNS.MODE, RUNS.KEY_HASH, RUNS.RESULTS_DIR)
+                .from(RUNS).where(RUNS.POOLABLE.isTrue()).orderBy(RUNS.RUN_ID).fetch().intoMaps();
         Map<List<Object>, List<Map<String, Object>>> byKey = new LinkedHashMap<>();
         for (Map<String, Object> row : rows)
             byKey.computeIfAbsent(List.of(row.get("task"), row.get("model"), row.get("key_hash")), k -> new ArrayList<>()).add(row);

@@ -1,8 +1,17 @@
+buildscript {
+    repositories { mavenCentral() }
+    // used only by prepareJooqSchema below, to materialise V1__init.sql into a scratch SQLite file
+    // that the jOOQ generator then introspects - lighter than pulling Flyway itself onto the
+    // buildscript classpath just to run one plain-SQL migration file.
+    dependencies { classpath 'org.xerial:sqlite-jdbc:3.47.1.0' }
+}
+
 plugins {
     id 'java'
     // Spring Boot version is pinned once in gradle/libraries.toml and referenced here - the BOM import
     // below resolves the same entry, so the plugin and dependency management can never desync.
     alias(libs.plugins.springBoot)
+    id 'nu.studer.jooq' version '9.0'
 }
 
 group = 'com.strgmai.ace.service'
@@ -18,18 +27,84 @@ dependencies {
     implementation platform('dev.langchain4j:langchain4j-bom:1.1.0')
     implementation platform("org.springframework.boot:spring-boot-dependencies:${libs.versions.springBoot.get()}")
     implementation 'org.springframework.boot:spring-boot-starter-web'
-    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+    // starter-jooq pulls jOOQ + spring-boot-starter-jdbc and auto-configures a DSLContext from the
+    // DataSource; queries use the generated table/field classes below (jOOQ code generation against
+    // the real SQLite schema, not hand-declared DSL.table() references).
+    implementation 'org.springframework.boot:spring-boot-starter-jooq'
     implementation 'dev.langchain4j:langchain4j'
     implementation 'dev.langchain4j:langchain4j-open-ai'
-    implementation 'org.postgresql:postgresql'   // PGobjectJsonSerializer needs org.postgresql.util.PGobject at compile time
-    // 2.x negotiates the Docker API version properly instead of probing with a hardcoded old one -
-    // 1.x's hardcoded 1.32 probe fails outright against Docker 29+, which raised its floor to 1.44
-    // (testcontainers/testcontainers-java#11210, #11212, #11360)
-    testImplementation platform('org.testcontainers:testcontainers-bom:2.0.5')
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.xerial:sqlite-jdbc:3.47.1.0'
+    jooqGenerator 'org.xerial:sqlite-jdbc:3.47.1.0'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    // core Testcontainers (GenericContainer/ImageFromDockerfile/Wait/MountableFile/DockerClientFactory)
+    // for DockerApplicationIT, which builds and runs THIS app's own Docker image - unrelated to which
+    // database the app uses, so this stays even though org.testcontainers:postgresql is gone.
+    testImplementation platform('org.testcontainers:testcontainers-bom:2.0.5')
     testImplementation 'org.testcontainers:junit-jupiter'
-    testImplementation 'org.testcontainers:postgresql'
 }
+
+// jOOQ codegen needs a real database to introspect. V1__init.sql is plain SQL (no Flyway-specific
+// syntax), so it is just executed directly against a fresh scratch file - one statement at a time,
+// since the sqlite-jdbc driver's Statement.execute() does not reliably run a whole ;-separated script.
+def jooqSchemaDb = layout.buildDirectory.file('jooq/schema.db')
+tasks.register('prepareJooqSchema') {
+    def migration = file('src/main/resources/db/migration/V1__init.sql')
+    inputs.file(migration)
+    outputs.file(jooqSchemaDb)
+    doLast {
+        def dbFile = jooqSchemaDb.get().asFile
+        dbFile.parentFile.mkdirs()
+        dbFile.delete()
+        // DriverManager.getConnection() can fail to see this driver here ("no suitable driver") -
+        // the buildscript classloader that loaded org.sqlite.JDBC is not necessarily the one
+        // DriverManager's service-loader lookup runs under from a task action. Instantiating the
+        // driver directly and calling connect() sidesteps that classloader-visibility check entirely.
+        def driver = (java.sql.Driver) Class.forName('org.sqlite.JDBC').getDeclaredConstructor().newInstance()
+        def conn = driver.connect("jdbc:sqlite:${dbFile.absolutePath}", new Properties())
+        try {
+            def stmt = conn.createStatement()
+            // strip line comments FIRST: a comment containing its own ';' (plain English prose does)
+            // would otherwise split one CREATE TABLE into two incomplete fragments.
+            def noComments = migration.text.readLines().collect { line ->
+                def idx = line.indexOf('--')
+                idx < 0 ? line : line.substring(0, idx)
+            }.join('\n')
+            for (def s : noComments.split(';')) {
+                def trimmed = s.trim()
+                if (!trimmed.isEmpty()) stmt.executeUpdate(trimmed)
+            }
+        } finally { conn.close() }
+    }
+}
+
+jooq {
+    version = '3.19.15'
+    configurations {
+        main {
+            // wires generateJooq as a real dependency of compileJava (and thus bootJar etc.), not
+            // just something you happen to have run before. Without this, a clean checkout - or the
+            // Docker build's probe stage - never triggers codegen at all, and compilation fails with
+            // "package com.strgmai.ace.service.jooq does not exist" the first time round.
+            generateSchemaSourceOnCompilation = true
+            generationTool {
+                jdbc {
+                    driver = 'org.sqlite.JDBC'
+                    url = "jdbc:sqlite:${jooqSchemaDb.get().asFile.absolutePath}"
+                }
+                generator {
+                    name = 'org.jooq.codegen.JavaGenerator'
+                    database { name = 'org.jooq.meta.sqlite.SQLiteDatabase' }
+                    target {
+                        packageName = 'com.strgmai.ace.service.jooq'
+                        directory = 'build/generated-src/jooq/main'
+                    }
+                }
+            }
+        }
+    }
+}
+tasks.named('generateJooq') { dependsOn 'prepareJooqSchema' }
 
 tasks.named('test', Test) {
     useJUnitPlatform { excludeTags 'docker' }   // dockerTest below runs these instead - building an image is slow

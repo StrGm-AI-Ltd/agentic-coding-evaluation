@@ -1,7 +1,9 @@
 package com.strgmai.ace.service.service;
 
 import com.strgmai.ace.service.config.BenchProperties;
-import org.springframework.jdbc.core.JdbcTemplate;
+import com.strgmai.ace.service.config.JsonColumns;
+import com.strgmai.ace.service.jooq.tables.records.ExperimentsRecord;
+import org.jooq.DSLContext;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Path;
@@ -10,6 +12,10 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.*;
 
+import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
+import static com.strgmai.ace.service.jooq.Tables.JOBS;
+import static com.strgmai.ace.service.jooq.Tables.RUNS;
+
 /** Port of service/experiments.py: arm -> argv construction for the batch experiment templates.
  *  The model_ab run ids carry the arm suffix — the fix from the Python review: two models whose
  *  names share their first 10 alphanumerics must not mint colliding run ids. */
@@ -17,15 +23,15 @@ import java.util.*;
 public class ExperimentsService {
     public static final String RUNG = "L3p_point_in_time";
 
-    private final JdbcTemplate jdbc;
+    private final DSLContext dsl;
     private final JobQueue queue;
     private final BenchProperties props;
     private final org.springframework.transaction.support.TransactionTemplate tx;
     private final com.strgmai.ace.service.metrics.StatsService stats = new com.strgmai.ace.service.metrics.StatsService();
 
-    public ExperimentsService(JdbcTemplate jdbc, JobQueue queue, BenchProperties props,
+    public ExperimentsService(DSLContext dsl, JobQueue queue, BenchProperties props,
                               org.springframework.transaction.support.TransactionTemplate tx) {
-        this.jdbc = jdbc; this.queue = queue; this.props = props; this.tx = tx;
+        this.dsl = dsl; this.queue = queue; this.props = props; this.tx = tx;
     }
 
     public static String shortName(String model) {
@@ -131,14 +137,21 @@ public class ExperimentsService {
     public Map<String, Object> enqueue(String name, String template, Map<String, Object> params, int k, String resultsDir, String runnerSha, String oracleSha) {
         List<ArmSpec> specs = plan(template, params, k);
         return tx.execute(status -> {
-            Map<String, Object> experiment = jdbc.queryForMap(
-                    "INSERT INTO experiments (name, tag, template, params, k, pinned_runner_sha, pinned_oracle_sha) VALUES (?,?,?,?::jsonb,?,?,?) RETURNING *",
-                    name, defaultTag(), template, toJson(params), k, runnerSha, oracleSha);
-            long id = ((Number) experiment.get("id")).longValue();
+            ExperimentsRecord rec = dsl.insertInto(EXPERIMENTS)
+                    .set(EXPERIMENTS.NAME, name)
+                    .set(EXPERIMENTS.TAG, defaultTag())
+                    .set(EXPERIMENTS.TEMPLATE, template)
+                    .set(EXPERIMENTS.PARAMS, toJson(params))
+                    .set(EXPERIMENTS.K, k)
+                    .set(EXPERIMENTS.PINNED_RUNNER_SHA, runnerSha)
+                    .set(EXPERIMENTS.PINNED_ORACLE_SHA, oracleSha)
+                    .returning()
+                    .fetchOne();
+            int id = rec.getId();
             List<Object> jobs = new ArrayList<>();
             for (ArmSpec s : specs)
                 jobs.add(queue.enqueue(s.spec(), 0, resultsDir, runnerSha, oracleSha, id, s.arm(), s.repeat()));
-            Map<String, Object> out = new LinkedHashMap<>(experiment);
+            Map<String, Object> out = JsonColumns.parse(rec.intoMap());
             out.put("jobs", jobs);
             return out;
         });
@@ -147,17 +160,18 @@ public class ExperimentsService {
     /** port of finalize_if_done: when every job of the experiment is terminal, compute the
      *  template's comparisons from the imported runs (the runs table is the source of truth) */
     public void finalizeIfDone(long experimentId) {
-        Map<String, Object> exp = jdbc.queryForMap("SELECT * FROM experiments WHERE id = ?", experimentId);
-        if (!"queued".equals(exp.get("status"))) return;
-        List<Map<String, Object>> jobs = jdbc.queryForList("SELECT arm, run_id, status FROM jobs WHERE experiment_id = ? ORDER BY repeat, arm", experimentId);
-        if (jobs.stream().anyMatch(j -> !RunSpec.TERMINAL.contains(j.get("status")))) return;
+        ExperimentsRecord exp = dsl.selectFrom(EXPERIMENTS).where(EXPERIMENTS.ID.eq((int) experimentId)).fetchOne();
+        if (exp == null || !"queued".equals(exp.getStatus())) return;
+        var jobs = dsl.select(JOBS.ARM, JOBS.RUN_ID, JOBS.STATUS).from(JOBS)
+                .where(JOBS.EXPERIMENT_ID.eq((int) experimentId)).orderBy(JOBS.REPEAT, JOBS.ARM).fetch();
+        if (jobs.stream().anyMatch(j -> !RunSpec.TERMINAL.contains(j.get(JOBS.STATUS)))) return;
         Map<String, List<Path>> byArm = new LinkedHashMap<>();
-        for (Map<String, Object> j : jobs)
-            if ("succeeded".equals(j.get("status")))
-                jdbc.queryForList("SELECT results_dir FROM runs WHERE run_id = ?", j.get("run_id")).stream().findFirst()
-                        .ifPresent(r -> byArm.computeIfAbsent((String) j.get("arm"), x -> new ArrayList<>()).add(Path.of((String) r.get("results_dir"))));
-        Map<String, Object> params = exp.get("params") instanceof String ps ? fromJson(ps) : new LinkedHashMap<String, Object>();
-        String template = (String) exp.get("template");
+        for (var j : jobs)
+            if ("succeeded".equals(j.get(JOBS.STATUS)))
+                Optional.ofNullable(dsl.select(RUNS.RESULTS_DIR).from(RUNS).where(RUNS.RUN_ID.eq(j.get(JOBS.RUN_ID))).fetchOne())
+                        .ifPresent(r -> byArm.computeIfAbsent(j.get(JOBS.ARM), x -> new ArrayList<>()).add(Path.of(r.value1())));
+        Map<String, Object> params = exp.getParams() instanceof String ps ? fromJson(ps) : new LinkedHashMap<String, Object>();
+        String template = exp.getTemplate();
         Map<String, Object> comparisons = new LinkedHashMap<>();
         for (String[] pair : templatePairs(template, params)) {
             String label = pair[0] + "_vs_" + pair[1];
@@ -173,8 +187,9 @@ public class ExperimentsService {
                 comparisons.put(label, Map.of("refused", String.valueOf(e)));
             }
         }
-        comparisons.put("arms", jobs.stream().map(j -> Map.of("arm", j.get("arm"), "status", j.get("status"))).toList());
-        jdbc.update("UPDATE experiments SET status = 'finished', comparison = ?::jsonb WHERE id = ?", toJson(comparisons), experimentId);
+        comparisons.put("arms", jobs.stream().map(j -> Map.of("arm", j.get(JOBS.ARM), "status", j.get(JOBS.STATUS))).toList());
+        dsl.update(EXPERIMENTS).set(EXPERIMENTS.STATUS, "finished").set(EXPERIMENTS.COMPARISON, toJson(comparisons))
+                .where(EXPERIMENTS.ID.eq((int) experimentId)).execute();
     }
 
     /** the template's arm pairs (experiments.py: TEMPLATE_COMPARISONS) */

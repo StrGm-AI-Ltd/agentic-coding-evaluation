@@ -1,42 +1,30 @@
 package com.strgmai.ace.service.service;
 
-import org.junit.jupiter.api.Assumptions;
+import org.flywaydb.core.Flyway;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.SimpleDriverDataSource;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.sql.Connection;
 import java.util.List;
 import java.util.Map;
 
+import static com.strgmai.ace.service.jooq.Tables.CHECK_RESULTS;
+import static com.strgmai.ace.service.jooq.Tables.RUNS;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Locks down review findings #1 (INSERT/VALUES/ON CONFLICT column-count mismatch) and #2 (the
- *  ON CONFLICT DO UPDATE refreshing every column the INSERT sets, not just 5 of 23). Skipped like
- *  JobQueueIT when no local Postgres is reachable. */
+ *  ON CONFLICT DO UPDATE refreshing every column the INSERT sets, not just 5 of 23). Runs against a
+ *  real, fresh-per-test SQLite database - no external DB server or Testcontainers needed. */
 class ImporterServiceTest {
 
-    private JdbcTemplate jdbc() throws Exception {
-        String dsn = System.getenv().getOrDefault("ACE_JLS_TEST_DSN", "jdbc:postgresql://localhost/ace_jls_test");
-        SimpleDriverDataSource ds = new SimpleDriverDataSource();
-        ds.setDriverClass(org.postgresql.Driver.class);
-        ds.setUrl(dsn);
-        try (Connection c = ds.getConnection()) {
-            Assumptions.assumeTrue(c.createStatement().executeQuery("SELECT 1").next());
-        } catch (Exception e) {
-            Assumptions.assumeTrue(false, "no local Postgres, skipping: " + e.getMessage());
-            return null;
-        }
-        JdbcTemplate db = new JdbcTemplate(ds);
-        db.execute("DROP SCHEMA IF EXISTS public CASCADE");
-        db.execute("CREATE SCHEMA public");
-        try (var c = db.getDataSource().getConnection()) {
-            org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(c,
-                    new org.springframework.core.io.FileSystemResource("src/main/resources/schema.sql"));
-        }
-        return db;
+    private DSLContext dsl() throws Exception {
+        var ds = new org.sqlite.SQLiteDataSource();
+        ds.setUrl("jdbc:sqlite:" + Files.createTempFile("ace-importer-test", ".db") + "?foreign_keys=on");
+        Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
+        return DSL.using(ds, SQLDialect.SQLITE);
     }
 
     private static void write(Path dir, String name, String json) throws Exception {
@@ -45,8 +33,7 @@ class ImporterServiceTest {
 
     @Test
     void insertingARunSucceeds() throws Exception {
-        JdbcTemplate db = jdbc();
-        if (db == null) return;
+        DSLContext db = dsl();
         Path dir = Files.createTempDirectory("run");
         write(dir, "oracle.json", """
                 {"task": "L3p_point_in_time", "schema_version": 3, "weighted_score_pct": 80.0,
@@ -57,15 +44,14 @@ class ImporterServiceTest {
 
         importer.importRun(dir, null);   // must not throw (was #1: column-count mismatch)
 
-        Map<String, Object> run = db.queryForMap("SELECT * FROM runs WHERE run_id = ?", dir.getFileName().toString());
-        assertEquals(80.0, (Double) run.get("weighted_score_pct"));
-        assertEquals(1, db.queryForObject("SELECT count(*) FROM check_results WHERE run_id = ?", Integer.class, dir.getFileName().toString()));
+        var run = db.selectFrom(RUNS).where(RUNS.RUN_ID.eq(dir.getFileName().toString())).fetchOne();
+        assertEquals(80.0, run.getWeightedScorePct(), 0.001);
+        assertEquals(1, db.fetchCount(CHECK_RESULTS, CHECK_RESULTS.RUN_ID.eq(dir.getFileName().toString())));
     }
 
     @Test
     void reimportRefreshesEveryColumnTheInsertSets() throws Exception {
-        JdbcTemplate db = jdbc();
-        if (db == null) return;
+        DSLContext db = dsl();
         Path dir = Files.createTempDirectory("run");
         ImporterService importer = new ImporterService(db);
 
@@ -94,25 +80,25 @@ class ImporterServiceTest {
                 {"leaderboard": {"total_wall_sec": 250.5, "completion_tokens": 2500}}""");
         importer.importRun(dir, null);
 
-        Map<String, Object> run = db.queryForMap("SELECT * FROM runs WHERE run_id = ?", dir.getFileName().toString());
-        assertEquals(1, db.queryForObject("SELECT count(*) FROM runs WHERE run_id = ?", Integer.class, dir.getFileName().toString()),
-                "an upsert, never a duplicate row");
-        assertEquals(99.0, (Double) run.get("weighted_score_pct"));
-        assertEquals(95.0, (Double) run.get("functional_score_pct"));
-        assertEquals(9, run.get("functional_points_got"));
-        assertEquals(9, run.get("points_got"));
-        assertEquals(90.0, (Double) run.get("partial_score_pct"));
-        assertEquals("model-v2", run.get("model"));
-        assertEquals("ref2", run.get("harness"));
-        assertEquals("orchestrated", run.get("mode"));
-        assertEquals(false, run.get("valid"));
-        assertEquals(250.5, (Double) run.get("wall_sec"));
-        assertEquals(2500L, ((Number) run.get("completion_tokens")).longValue());
-        assertTrue(String.valueOf(run.get("validity_reasons")).contains("timeout"));
+        String runId = dir.getFileName().toString();
+        var run = db.selectFrom(RUNS).where(RUNS.RUN_ID.eq(runId)).fetchOne();
+        assertEquals(1, db.fetchCount(RUNS, RUNS.RUN_ID.eq(runId)), "an upsert, never a duplicate row");
+        assertEquals(99.0, run.getWeightedScorePct(), 0.001);
+        assertEquals(95.0, run.getFunctionalScorePct(), 0.001);
+        assertEquals(9, run.getFunctionalPointsGot());
+        assertEquals(9, run.getPointsGot());
+        assertEquals(90.0, run.getPartialScorePct(), 0.001);
+        assertEquals("model-v2", run.getModel());
+        assertEquals("ref2", run.getHarness());
+        assertEquals("orchestrated", run.getMode());
+        assertEquals(false, run.getValid());
+        assertEquals(250.5, run.getWallSec(), 0.001);
+        assertEquals(2500, run.getCompletionTokens());
+        assertTrue(run.getValidityReasons().contains("timeout"));
 
         // check_results was replaced too, not accumulated
-        assertEquals(1, db.queryForObject("SELECT count(*) FROM check_results WHERE run_id = ?", Integer.class, dir.getFileName().toString()));
-        assertEquals("fail", db.queryForObject("SELECT status FROM check_results WHERE run_id = ?", String.class, dir.getFileName().toString()));
+        assertEquals(1, db.fetchCount(CHECK_RESULTS, CHECK_RESULTS.RUN_ID.eq(runId)));
+        assertEquals("fail", db.select(CHECK_RESULTS.STATUS).from(CHECK_RESULTS).where(CHECK_RESULTS.RUN_ID.eq(runId)).fetchOne(CHECK_RESULTS.STATUS));
     }
 
     /** The Vaadin UI's Api.ImportResult(List<String> imported, List<String> skipped) - ported from
@@ -121,8 +107,7 @@ class ImporterServiceTest {
      *  from Integer") because importAll() here returned {"imported": N, "skipped": M} instead. */
     @Test
     void importAllReturnsRunIdListsNotCounts() throws Exception {
-        JdbcTemplate db = jdbc();
-        if (db == null) return;
+        DSLContext db = dsl();
         Path resultsDir = Files.createTempDirectory("results");
         Path scored = resultsDir.resolve("run-scored");
         Files.createDirectories(scored);

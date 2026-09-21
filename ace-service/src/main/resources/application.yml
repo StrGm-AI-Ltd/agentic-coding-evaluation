@@ -1,8 +1,12 @@
 spring:
   application.name: ace-service
-  sql.init.mode: always   # schema.sql is idempotent (IF NOT EXISTS); the DB is the record
+  # Flyway (src/main/resources/db/migration/V1__init.sql) owns the schema now; spring.flyway.enabled
+  # defaults to true once flyway-core is on the classpath, so nothing to set here.
   datasource:
-    url: ${ACE_JLS_DSN:jdbc:postgresql://localhost/agentbench}
+    url: jdbc:sqlite:${ACE_JLS_DB_PATH:./ace-service.db}?foreign_keys=on&journal_mode=WAL&busy_timeout=5000
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 1   # SQLite serializes writers; one pooled connection avoids SQLITE_BUSY under this service's own concurrent access
     # the benchmark's own ports must stay free: 8080 is probed by the oracle, 9191 is the model server
 server:
   port: ${ACE_JLS_PORT:8765}

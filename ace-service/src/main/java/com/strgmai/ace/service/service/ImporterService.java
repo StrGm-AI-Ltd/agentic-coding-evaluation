@@ -1,24 +1,31 @@
 package com.strgmai.ace.service.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.jdbc.core.JdbcTemplate;
+import com.strgmai.ace.service.jooq.tables.records.CheckResultsRecord;
+import org.jooq.DSLContext;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.*;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.util.*;
+
+import static com.strgmai.ace.service.jooq.Tables.CHECK_RESULTS;
+import static com.strgmai.ace.service.jooq.Tables.RUNS;
+import static org.jooq.impl.DSL.coalesce;
+import static org.jooq.impl.DSL.excluded;
 
 /** Port of service/importer.py: results/<run_id>/ -> runs + check_results. Idempotent: the result
  *  files stay the source of truth; the DB row is an upsert. poolable = the schema is current (a
  *  poolable run can enter leaderboards). */
 @Service
 public class ImporterService {
-    private final JdbcTemplate jdbc;
+    private final DSLContext dsl;
     private final ObjectMapper json = new ObjectMapper();
 
-    public ImporterService(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    public ImporterService(DSLContext dsl) { this.dsl = dsl; }
 
-    public Map<String, Object> importRun(Path runDir, Long jobId) throws Exception {
+    public Map<String, Object> importRun(Path runDir, Integer jobId) throws Exception {
         Map<String, Object> oracle = json.readValue(runDir.resolve("oracle.json").toFile(), Map.class);
         Map<String, Object> manifest = Files.exists(runDir.resolve("manifest.json"))
                 ? json.readValue(runDir.resolve("manifest.json").toFile(), Map.class) : new LinkedHashMap<>();
@@ -30,44 +37,75 @@ public class ImporterService {
                 && oracle.get("weighted_score_pct") != null;
         Map<String, Object> contention = manifest.get("contention") instanceof Map<?, ?> cm ? (Map<String, Object>) cm : Map.of();
         Map<String, Object> leaderboard = metrics.get("leaderboard") instanceof Map<?, ?> lb ? (Map<String, Object>) lb : Map.of();
-        // the named columns, the placeholders and the varargs below are one list: wall_sec/completion_tokens
-        // are passed positionally and must be named too. A re-import/rescore refreshes EVERY column the
-        // insert sets (importer.py builds `updates` from the whole row); job_id is the one exception —
-        // importAll passes null and must not orphan the run from the job that produced it.
-        jdbc.update("""
-                INSERT INTO runs (run_id, results_dir, job_id, task, mode, model, harness, schema_version, poolable,
-                    functional_score_pct, functional_points_got, functional_denominator, weighted_score_pct, points_got,
-                    denominator, partial_score_pct, valid, validity_reasons, contended, key_hash, wall_sec,
-                    completion_tokens, manifest, oracle, metrics)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?::jsonb,?::jsonb,?::jsonb)
-                ON CONFLICT (run_id) DO UPDATE SET results_dir = EXCLUDED.results_dir,
-                    job_id = COALESCE(EXCLUDED.job_id, runs.job_id), task = EXCLUDED.task, mode = EXCLUDED.mode,
-                    model = EXCLUDED.model, harness = EXCLUDED.harness, schema_version = EXCLUDED.schema_version,
-                    poolable = EXCLUDED.poolable, functional_score_pct = EXCLUDED.functional_score_pct,
-                    functional_points_got = EXCLUDED.functional_points_got,
-                    functional_denominator = EXCLUDED.functional_denominator,
-                    weighted_score_pct = EXCLUDED.weighted_score_pct, points_got = EXCLUDED.points_got,
-                    denominator = EXCLUDED.denominator, partial_score_pct = EXCLUDED.partial_score_pct,
-                    valid = EXCLUDED.valid, validity_reasons = EXCLUDED.validity_reasons,
-                    contended = EXCLUDED.contended, key_hash = EXCLUDED.key_hash, wall_sec = EXCLUDED.wall_sec,
-                    completion_tokens = EXCLUDED.completion_tokens, manifest = EXCLUDED.manifest,
-                    oracle = EXCLUDED.oracle, metrics = EXCLUDED.metrics, imported_at = now()""",
-                runDir.getFileName().toString(), runDir.toAbsolutePath().toString(), jobId,
-                oracle.get("task"), manifest.getOrDefault("mode", "monolithic"), prov.get("model"), prov.get("harness"),
-                oracle.get("schema_version"), poolable,
-                oracle.get("functional_score_pct"), oracle.get("functional_points_got"), oracle.get("functional_denominator"),
-                oracle.get("weighted_score_pct"), oracle.get("points_got"), oracle.get("denominator"), oracle.get("partial_score_pct"),
-                validity.getOrDefault("valid", true), json.writeValueAsString(validity.getOrDefault("reasons", List.of())),
-                Boolean.TRUE.equals(contention.get("docker_up")) || Boolean.TRUE.equals(contention.get("slow_decode")),
-                keyHash(oracle, manifest),
-                leaderboard.get("total_wall_sec"), leaderboard.get("completion_tokens"),
-                json.writeValueAsString(manifest), json.writeValueAsString(oracle), json.writeValueAsString(metrics));
-        jdbc.update("DELETE FROM check_results WHERE run_id = ?", runDir.getFileName().toString());
+        String runId = runDir.getFileName().toString();
+        // a re-import/rescore refreshes EVERY column the insert sets (importer.py builds `updates`
+        // from the whole row); job_id is the one exception — importAll passes null and must not
+        // orphan the run from the job that produced it (COALESCE onto the existing row's job_id).
+        dsl.insertInto(RUNS)
+                .set(RUNS.RUN_ID, runId)
+                .set(RUNS.RESULTS_DIR, runDir.toAbsolutePath().toString())
+                .set(RUNS.JOB_ID, jobId)
+                .set(RUNS.TASK, str(oracle.get("task")))
+                .set(RUNS.MODE, str(manifest.getOrDefault("mode", "monolithic")))
+                .set(RUNS.MODEL, str(prov.get("model")))
+                .set(RUNS.HARNESS, str(prov.get("harness")))
+                .set(RUNS.SCHEMA_VERSION, num(oracle.get("schema_version")))
+                .set(RUNS.POOLABLE, poolable)
+                .set(RUNS.FUNCTIONAL_SCORE_PCT, flt(oracle.get("functional_score_pct")))
+                .set(RUNS.FUNCTIONAL_POINTS_GOT, num(oracle.get("functional_points_got")))
+                .set(RUNS.FUNCTIONAL_DENOMINATOR, num(oracle.get("functional_denominator")))
+                .set(RUNS.WEIGHTED_SCORE_PCT, flt(oracle.get("weighted_score_pct")))
+                .set(RUNS.POINTS_GOT, num(oracle.get("points_got")))
+                .set(RUNS.DENOMINATOR, num(oracle.get("denominator")))
+                .set(RUNS.PARTIAL_SCORE_PCT, flt(oracle.get("partial_score_pct")))
+                .set(RUNS.VALID, (Boolean) validity.getOrDefault("valid", true))
+                .set(RUNS.VALIDITY_REASONS, toJson(validity.getOrDefault("reasons", List.of())))
+                .set(RUNS.CONTENDED, Boolean.TRUE.equals(contention.get("docker_up")) || Boolean.TRUE.equals(contention.get("slow_decode")))
+                .set(RUNS.KEY_HASH, keyHash(oracle, manifest))
+                .set(RUNS.WALL_SEC, flt(leaderboard.get("total_wall_sec")))
+                .set(RUNS.COMPLETION_TOKENS, num(leaderboard.get("completion_tokens")))
+                .set(RUNS.MANIFEST, toJson(manifest))
+                .set(RUNS.ORACLE, toJson(oracle))
+                .set(RUNS.METRICS, toJson(metrics))
+                .onConflict(RUNS.RUN_ID).doUpdate()
+                .set(RUNS.RESULTS_DIR, excluded(RUNS.RESULTS_DIR))
+                .set(RUNS.JOB_ID, coalesce(excluded(RUNS.JOB_ID), RUNS.JOB_ID))
+                .set(RUNS.TASK, excluded(RUNS.TASK))
+                .set(RUNS.MODE, excluded(RUNS.MODE))
+                .set(RUNS.MODEL, excluded(RUNS.MODEL))
+                .set(RUNS.HARNESS, excluded(RUNS.HARNESS))
+                .set(RUNS.SCHEMA_VERSION, excluded(RUNS.SCHEMA_VERSION))
+                .set(RUNS.POOLABLE, excluded(RUNS.POOLABLE))
+                .set(RUNS.FUNCTIONAL_SCORE_PCT, excluded(RUNS.FUNCTIONAL_SCORE_PCT))
+                .set(RUNS.FUNCTIONAL_POINTS_GOT, excluded(RUNS.FUNCTIONAL_POINTS_GOT))
+                .set(RUNS.FUNCTIONAL_DENOMINATOR, excluded(RUNS.FUNCTIONAL_DENOMINATOR))
+                .set(RUNS.WEIGHTED_SCORE_PCT, excluded(RUNS.WEIGHTED_SCORE_PCT))
+                .set(RUNS.POINTS_GOT, excluded(RUNS.POINTS_GOT))
+                .set(RUNS.DENOMINATOR, excluded(RUNS.DENOMINATOR))
+                .set(RUNS.PARTIAL_SCORE_PCT, excluded(RUNS.PARTIAL_SCORE_PCT))
+                .set(RUNS.VALID, excluded(RUNS.VALID))
+                .set(RUNS.VALIDITY_REASONS, excluded(RUNS.VALIDITY_REASONS))
+                .set(RUNS.CONTENDED, excluded(RUNS.CONTENDED))
+                .set(RUNS.KEY_HASH, excluded(RUNS.KEY_HASH))
+                .set(RUNS.WALL_SEC, excluded(RUNS.WALL_SEC))
+                .set(RUNS.COMPLETION_TOKENS, excluded(RUNS.COMPLETION_TOKENS))
+                .set(RUNS.MANIFEST, excluded(RUNS.MANIFEST))
+                .set(RUNS.ORACLE, excluded(RUNS.ORACLE))
+                .set(RUNS.METRICS, excluded(RUNS.METRICS))
+                .set(RUNS.IMPORTED_AT, Instant.now().toString())
+                .execute();
+        dsl.deleteFrom(CHECK_RESULTS).where(CHECK_RESULTS.RUN_ID.eq(runId)).execute();
         for (Map<String, Object> r : (List<Map<String, Object>>) oracle.getOrDefault("results", List.of())) {
             String id = (String) r.get("id");
             var check = com.strgmai.ace.service.oracle.CheckId.valueOf(id);
-            jdbc.update("INSERT INTO check_results (run_id, check_id, category, weight, status, detail) VALUES (?,?,?,?,?,?::jsonb)",
-                    runDir.getFileName().toString(), id, check.category, check.weight, r.get("status"), json.writeValueAsString(r.get("detail")));
+            CheckResultsRecord rec = dsl.newRecord(CHECK_RESULTS);
+            rec.setRunId(runId);
+            rec.setCheckId(id);
+            rec.setCategory(check.category);
+            rec.setWeight(check.weight);
+            rec.setStatus(str(r.get("status")));
+            rec.setDetail(toJson(r.get("detail")));
+            rec.insert();
         }
         return oracle;
     }
@@ -106,4 +144,11 @@ public class ImporterService {
                 .digest(String.join("|", tuple).getBytes())).substring(0, 16); }
         catch (Exception e) { return null; }
     }
+
+    private String toJson(Object o) {
+        try { return json.writeValueAsString(o); } catch (Exception e) { return "{}"; }
+    }
+    private static String str(Object o) { return o == null ? null : String.valueOf(o); }
+    private static Integer num(Object o) { return o instanceof Number n ? n.intValue() : null; }
+    private static Float flt(Object o) { return o instanceof Number n ? n.floatValue() : null; }
 }

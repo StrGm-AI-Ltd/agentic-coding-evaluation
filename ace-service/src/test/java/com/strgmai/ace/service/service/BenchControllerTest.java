@@ -2,62 +2,74 @@ package com.strgmai.ace.service.service;
 
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.metrics.StatsService;
+import org.flywaydb.core.Flyway;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.postgresql.util.PGobject;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.http.MediaType;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
-import java.util.LinkedHashMap;
+import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 
+import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
+import static com.strgmai.ace.service.jooq.Tables.RUNS;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-/** #6: jsonb columns come back from JdbcTemplate as a raw org.postgresql.util.PGobject; with no
- *  Jackson customization, Jackson bean-serializes it via its getType()/getValue() getters into
- *  {"type":"jsonb","value":"<escaped string>"} instead of real nested JSON. This slice test drives
- *  the SAME Jackson pipeline the running app uses (real HTTP round-trip through MockMvc, no
- *  hand-built ObjectMapper) with a PGobject built exactly as the postgresql driver builds one, so
- *  it needs no live Postgres to reproduce or lock down the fix. It also covers the ApiExceptionHandler
- *  (#13) status/body mapping. @WebMvcTest loads only BenchController + MVC/Jackson infrastructure -
- *  it never touches TradingController, so it is unaffected by that controller's unrelated missing-bean
- *  startup issue (see the session report). */
-@WebMvcTest(BenchController.class)
+/** #6: jsonb-shaped TEXT columns (params/argv/manifest/oracle/metrics/validity_reasons/comparison/
+ *  detail) must reach the client as real nested JSON, not a JSON string — the job of
+ *  {@link com.strgmai.ace.service.config.JsonColumns}, applied inside JobQueue/ExperimentsService and
+ *  directly in BenchController wherever it reads rows itself. Standalone MockMvc (not @WebMvcTest):
+ *  DSLContext is a REAL one against a fresh SQLite database (there is no Postgres-driver PGobject to
+ *  hand-build anymore, and mocking jOOQ's fluent chain step-by-step would be more fragile than just
+ *  using a real embedded database), while the other collaborators stay plain Mockito mocks. Also
+ *  covers the ApiExceptionHandler (#13) status/body mapping. */
 class BenchControllerTest {
 
-    @Autowired private MockMvc mvc;
+    private MockMvc mvc;
+    private JobQueue queue;
+    private ImporterService importer;
+    private ExperimentsService experiments;
+    private StatsService stats;
+    private DSLContext dsl;
+    private BenchProperties props;
 
-    @MockitoBean private JdbcTemplate jdbc;
-    @MockitoBean private JobQueue queue;
-    @MockitoBean private ImporterService importer;
-    @MockitoBean private ExperimentsService experiments;
-    @MockitoBean private StatsService stats;
-    @MockitoBean private WorkerService worker;
-    @MockitoBean private BenchProperties props;
-    @MockitoBean private Preflight preflight;
-    @MockitoBean private TreatmentPin pin;
-
-    private static PGobject jsonb(String json) throws Exception {
-        PGobject pg = new PGobject();
-        pg.setType("jsonb");
-        pg.setValue(json);
-        return pg;
+    @BeforeEach
+    void setUp() throws Exception {
+        var ds = new org.sqlite.SQLiteDataSource();
+        ds.setUrl("jdbc:sqlite:" + Files.createTempFile("ace-benchcontroller-test", ".db") + "?foreign_keys=on");
+        Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
+        dsl = DSL.using(ds, SQLDialect.SQLITE);
+        queue = mock(JobQueue.class);
+        importer = mock(ImporterService.class);
+        experiments = mock(ExperimentsService.class);
+        stats = mock(StatsService.class);
+        WorkerService worker = mock(WorkerService.class);
+        props = mock(BenchProperties.class);
+        Preflight preflight = mock(Preflight.class);
+        TreatmentPin pin = mock(TreatmentPin.class);
+        BenchController controller = new BenchController(dsl, queue, importer, experiments, stats, worker, props, preflight, pin);
+        mvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new ApiExceptionHandler())
+                .setMessageConverters(new MappingJackson2HttpMessageConverter())
+                .build();
     }
 
     @Test
-    void jsonbColumnsComeBackAsRealNestedJsonNotAPGobjectWrapper() throws Exception {
-        Map<String, Object> job = new LinkedHashMap<>();
-        job.put("id", 1L);
+    void jsonbColumnsComeBackAsRealNestedJsonNotAStringOnJobsList() throws Exception {
+        Map<String, Object> job = new java.util.LinkedHashMap<>();
+        job.put("id", 1);
         job.put("run_id", "run-1");
-        job.put("argv", jsonb("[\"--task=L3p\",\"--model=m\"]"));   // exactly what the pg driver hands back for a jsonb column
+        job.put("argv", new com.fasterxml.jackson.databind.ObjectMapper().readTree("[\"--task=L3p\",\"--model=m\"]"));
         when(queue.list()).thenReturn(List.of(job));
 
         mvc.perform(get("/api/jobs"))
@@ -65,23 +77,20 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$[0].id").value(1))
                 .andExpect(jsonPath("$[0].argv").isArray())
                 .andExpect(jsonPath("$[0].argv[0]").value("--task=L3p"))
-                .andExpect(jsonPath("$[0].argv[1]").value("--model=m"))
-                .andExpect(jsonPath("$[0].argv.type").doesNotExist())     // must NOT be {"type":"jsonb","value":"..."}
-                .andExpect(jsonPath("$[0].argv.value").doesNotExist());
+                .andExpect(jsonPath("$[0].argv[1]").value("--model=m"));
     }
 
     @Test
-    void jsonbObjectColumnAlsoComesBackNested() throws Exception {
-        Map<String, Object> exp = new LinkedHashMap<>();
-        exp.put("id", 1L);
-        exp.put("params", jsonb("{\"model\":\"m\",\"nested\":{\"a\":1}}"));
-        when(jdbc.queryForList("SELECT * FROM experiments ORDER BY id DESC")).thenReturn(List.of(exp));
+    void jsonbObjectColumnAlsoComesBackNestedOnExperimentsList() throws Exception {
+        dsl.insertInto(EXPERIMENTS)
+                .set(EXPERIMENTS.NAME, "exp").set(EXPERIMENTS.TAG, "t").set(EXPERIMENTS.TEMPLATE, "harness_effect")
+                .set(EXPERIMENTS.PARAMS, "{\"model\":\"m\",\"nested\":{\"a\":1}}").set(EXPERIMENTS.K, 1)
+                .execute();
 
         mvc.perform(get("/api/experiments"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].params.model").value("m"))
-                .andExpect(jsonPath("$[0].params.nested.a").value(1))
-                .andExpect(jsonPath("$[0].params.type").doesNotExist());
+                .andExpect(jsonPath("$[0].params.nested.a").value(1));
     }
 
     @Test
@@ -105,8 +114,10 @@ class BenchControllerTest {
     void importAllServesRunIdListsAsJsonArraysNotCounts() throws Exception {
         // the actual bug reported: the Vaadin UI's Api.ImportResult expects List<String>, and this
         // endpoint used to serve {"imported": 2, "skipped": 1} - a JSON parse error on the UI side
-        when(props.resultsDir()).thenReturn("/tmp/results");
         when(importer.importAll(any())).thenReturn(Map.of("imported", List.of("run-a", "run-b"), "skipped", List.of("run-c")));
+        // BenchController.importAll() always calls props.resultsDir(); an unstubbed mock returns
+        // null and Path.of(null) NPEs before importer.importAll() is ever reached
+        when(props.resultsDir()).thenReturn("/tmp/results");
 
         mvc.perform(post("/api/import"))
                 .andExpect(status().isOk())
@@ -117,7 +128,7 @@ class BenchControllerTest {
 
     @Test
     void jobByIdReturnsTheJob() throws Exception {
-        when(queue.get(1L)).thenReturn(Map.of("id", 1L, "run_id", "run-1", "status", "queued"));
+        when(queue.get(1L)).thenReturn(Map.of("id", 1, "run_id", "run-1", "status", "queued"));
 
         mvc.perform(get("/api/jobs/1"))
                 .andExpect(status().isOk())
@@ -160,11 +171,12 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.detail").value("job 7 is already succeeded"));
     }
 
-    private static Map<String, Object> runRow(String task, String model, String keyHash, String runId) {
-        Map<String, Object> row = new LinkedHashMap<>();
-        row.put("run_id", runId); row.put("task", task); row.put("model", model);
-        row.put("mode", "monolithic"); row.put("key_hash", keyHash); row.put("results_dir", "/results/" + runId);
-        return row;
+    private void runRow(String task, String model, String keyHash, String runId) {
+        dsl.insertInto(RUNS)
+                .set(RUNS.RUN_ID, runId).set(RUNS.RESULTS_DIR, "/results/" + runId)
+                .set(RUNS.TASK, task).set(RUNS.MODEL, model).set(RUNS.MODE, "monolithic")
+                .set(RUNS.KEY_HASH, keyHash).set(RUNS.POOLABLE, true).set(RUNS.ORACLE, "{}")
+                .execute();
     }
 
     /** /api/groups' own orchestration - grouping DB rows by (task, model, key_hash), the k>=5
@@ -173,12 +185,9 @@ class BenchControllerTest {
      *  here: summarize()'s return drives the branching exactly as the real one would from real k. */
     @Test
     void groupsSplitsRankedFromIndicativeByKAndSortsRankedByFunctionalMeanDescending() throws Exception {
-        List<Map<String, Object>> rows = new java.util.ArrayList<>();
-        for (int i = 1; i <= 5; i++) rows.add(runRow("L3p_point_in_time", "low-scorer", "keyA", "runA" + i));
-        for (int i = 1; i <= 2; i++) rows.add(runRow("L3p_point_in_time", "too-few", "keyB", "runB" + i));
-        for (int i = 1; i <= 5; i++) rows.add(runRow("L3p_point_in_time", "high-scorer", "keyC", "runC" + i));
-        when(jdbc.queryForList("SELECT run_id, task, model, mode, key_hash, results_dir FROM runs WHERE poolable ORDER BY run_id"))
-                .thenReturn(rows);
+        for (int i = 1; i <= 5; i++) runRow("L3p_point_in_time", "low-scorer", "keyA", "runA" + i);
+        for (int i = 1; i <= 2; i++) runRow("L3p_point_in_time", "too-few", "keyB", "runB" + i);
+        for (int i = 1; i <= 5; i++) runRow("L3p_point_in_time", "high-scorer", "keyC", "runC" + i);
         // stats.load(path) tags each summary with the model its results_dir belongs to, so the
         // summarize() stub below can tell the three groups apart without inspecting real files
         when(stats.load(any())).thenAnswer(inv -> {
@@ -190,7 +199,7 @@ class BenchControllerTest {
         when(stats.filterRuns(any(), eq(false), eq(false), any())).thenAnswer(inv -> inv.getArgument(0));
         when(stats.summarize(any())).thenAnswer(inv -> {
             @SuppressWarnings("unchecked") List<StatsService.RunSummary> runs = (List<StatsService.RunSummary>) inv.getArgument(0);
-            Map<String, Object> out = new LinkedHashMap<>();
+            Map<String, Object> out = new java.util.LinkedHashMap<>();
             out.put("k", runs.size());
             double mean = switch (runs.get(0).model()) { case "low-scorer" -> 40.0; case "high-scorer" -> 90.0; default -> 10.0; };
             out.put("functional", Map.of("mean", mean));

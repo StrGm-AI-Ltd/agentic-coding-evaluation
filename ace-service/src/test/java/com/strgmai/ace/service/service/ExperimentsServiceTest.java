@@ -2,18 +2,22 @@ package com.strgmai.ace.service.service;
 
 import com.strgmai.ace.service.config.BenchProperties;
 import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.Assumptions;
+import org.flywaydb.core.Flyway;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.jdbc.datasource.SimpleDriverDataSource;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
-import java.sql.Connection;
+import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
+
+import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
+import static com.strgmai.ace.service.jooq.Tables.JOBS;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -107,33 +111,21 @@ class ExperimentsServiceTest {
 
     // --- #3: enqueue() rolls back the whole experiment on a mid-loop failure ---------------------
 
-    private JdbcTemplate jdbc() throws Exception {
-        String dsn = System.getenv().getOrDefault("ACE_JLS_TEST_DSN", "jdbc:postgresql://localhost/ace_jls_test");
-        SimpleDriverDataSource ds = new SimpleDriverDataSource();
-        ds.setDriverClass(org.postgresql.Driver.class);
-        ds.setUrl(dsn);
-        try (Connection c = ds.getConnection()) {
-            Assumptions.assumeTrue(c.createStatement().executeQuery("SELECT 1").next());
-        } catch (Exception e) {
-            Assumptions.assumeTrue(false, "no local Postgres, skipping: " + e.getMessage());
-            return null;
-        }
-        JdbcTemplate db = new JdbcTemplate(ds);
-        db.execute("DROP SCHEMA IF EXISTS public CASCADE");
-        db.execute("CREATE SCHEMA public");
-        try (var c = db.getDataSource().getConnection()) {
-            org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(c,
-                    new org.springframework.core.io.FileSystemResource("src/main/resources/schema.sql"));
-        }
-        return db;
-    }
-
     @Test
     void aMidLoopEnqueueFailureRollsBackTheWholeExperiment() throws Exception {
-        JdbcTemplate db = jdbc();
-        if (db == null) return;
+        var ds = new org.sqlite.SQLiteDataSource();
+        ds.setUrl("jdbc:sqlite:" + Files.createTempFile("ace-experiments-test", ".db") + "?foreign_keys=on");
+        Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
+        // plain DSL.using(dataSource, dialect) grabs a FRESH connection per statement, so it never
+        // sees the connection a TransactionTemplate-managed transaction is bound to - every JOOQ
+        // write would auto-commit on its own connection and rollback would do nothing. Wrapping the
+        // DataSource in a TransactionAwareDataSourceProxy (what spring-boot-starter-jooq's own
+        // auto-configuration does for the real app's DSLContext bean) makes JOOQ hand back the
+        // SAME connection the current Spring transaction owns.
+        var txAwareDs = new org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy(ds);
+        DSLContext db = DSL.using(new org.jooq.impl.DataSourceConnectionProvider(txAwareDs), SQLDialect.SQLITE);
         JobQueue queue = new JobQueue(db);
-        TransactionTemplate tx = new TransactionTemplate(new DataSourceTransactionManager(db.getDataSource()));
+        TransactionTemplate tx = new TransactionTemplate(new DataSourceTransactionManager(ds));
         ExperimentsService svc = new ExperimentsService(db, queue, props("http://127.0.0.1:1/v1"), tx);
         Map<String, Object> params = Map.of("model", "modelX", "arms", List.of("orch"));
 
@@ -142,10 +134,10 @@ class ExperimentsServiceTest {
         // (no I/O beyond the already-failed-fast unreachable model server), so the gap is sub-millisecond;
         // retry the rare case where the clock ticks over between the two.
         for (int attempt = 0; attempt < 5; attempt++) {
-            db.update("DELETE FROM jobs");
-            db.update("DELETE FROM experiments");
+            db.deleteFrom(JOBS).execute();
+            db.deleteFrom(EXPERIMENTS).execute();
             String collideRunId = svc.plan("harness_effect", params, 2).get(1).spec().runId();   // r2
-            db.update("INSERT INTO jobs (kind, run_id, argv) VALUES ('run', ?, '[]'::jsonb)", collideRunId);
+            db.insertInto(JOBS, JOBS.KIND, JOBS.RUN_ID, JOBS.ARGV).values("run", collideRunId, "[]").execute();
 
             IllegalArgumentException thrown = null;
             try {
@@ -156,10 +148,8 @@ class ExperimentsServiceTest {
             if (thrown == null) continue;   // the tag ticked over between peek and enqueue(); retry
             assertTrue(thrown.getMessage().contains("already queued"), thrown.getMessage());
 
-            assertEquals(0, db.queryForObject("SELECT count(*) FROM experiments", Integer.class),
-                    "the experiment row must not survive a rolled-back arm");
-            assertEquals(1, db.queryForObject("SELECT count(*) FROM jobs", Integer.class),
-                    "only the seed collision row should remain: arm r1's job must have rolled back too");
+            assertEquals(0, db.fetchCount(EXPERIMENTS), "the experiment row must not survive a rolled-back arm");
+            assertEquals(1, db.fetchCount(JOBS), "only the seed collision row should remain: arm r1's job must have rolled back too");
             return;
         }
         fail("could not get the collision to land in the same clock-second after 5 attempts");

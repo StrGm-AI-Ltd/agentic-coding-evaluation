@@ -30,7 +30,7 @@ class WorkerServiceTest {
     }
 
     private static JobQueue.Job job(String pinnedRunnerSha) {
-        return new JobQueue.Job(1L, null, "orch", 1, "run", "run-1", List.of("--task=L3p_point_in_time", "--model=m"),
+        return new JobQueue.Job(1, null, "orch", 1, "run", "run-1", List.of("--task=L3p_point_in_time", "--model=m"),
                 "queued", null, 0, null, null, false, null, null, pinnedRunnerSha, pinnedRunnerSha);
     }
 
@@ -105,7 +105,7 @@ class WorkerServiceTest {
         when(props.workspaceRoot()).thenReturn(Files.createTempDirectory("ws").toString());
         when(props.model()).thenReturn("m");
 
-        JobQueue.Job job = new JobQueue.Job(1L, null, "A", 1, "run", "run-1",
+        JobQueue.Job job = new JobQueue.Job(1, null, "A", 1, "run", "run-1",
                 List.of("--task=L3p_point_in_time", "--model=m", "--mode=orchestrated", "--self-review", "--trajectory-review"),
                 "queued", null, 0, null, null, false, null, null, "build-abc123", "build-abc123");
         when(queue.claim()).thenReturn(job);

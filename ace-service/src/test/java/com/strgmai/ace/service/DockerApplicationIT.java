@@ -13,8 +13,6 @@ import org.junit.jupiter.api.TestMethodOrder;
 import org.junit.jupiter.api.io.TempDir;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.Network;
-import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.images.builder.ImageFromDockerfile;
 import org.testcontainers.utility.MountableFile;
@@ -36,24 +34,23 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-/** Builds THIS repo's own Dockerfile into a real image, runs it as a container next to a real
- *  Postgres container on a shared Docker network, and hits its HTTP API from outside - the same
- *  thing the grader does (build the image, run it, talk to it), not a slice test. Every test is a
- *  real end-to-end round trip: real Postgres, real HTTP, and for job execution a real model server
- *  reachable at host.docker.internal (Docker Desktop's built-in route to the host's own loopback).
+/** Builds THIS repo's own Dockerfile into a real image, runs it as a container, and hits its HTTP
+ *  API from outside - the same thing the grader does (build the image, run it, talk to it), not a
+ *  slice test. Every test is a real end-to-end round trip: the app's own embedded SQLite (Flyway
+ *  migrates it on boot - no separate DB container needed anymore), real HTTP, and for job execution
+ *  a real model server reachable at host.docker.internal (Docker Desktop's built-in route to the
+ *  host's own loopback).
  *
  *  Ordered deliberately: the last test starts a real, long-running background job, so anything that
  *  assumes the worker is idle (the cancel test) runs before it.
  *
- *  Skips gracefully (not a failure) when Docker is unavailable, the same pattern JobQueueIT uses for
- *  "no DB". Slow (a full image build, and the last test waits on real LLM traffic): tagged "docker",
- *  excluded from `test`, run via `./gradlew dockerTest`. */
+ *  Skips gracefully (not a failure) when Docker is unavailable. Slow (a full image build, and the
+ *  last test waits on real LLM traffic): tagged "docker", excluded from `test`, run via
+ *  `./gradlew dockerTest`. */
 @Tag("docker")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class DockerApplicationIT {
 
-    static Network network;
-    static PostgreSQLContainer<?> postgres;
     static GenericContainer<?> app;
     static String base;
     static final HttpClient http = HttpClient.newHttpClient();
@@ -66,12 +63,6 @@ class DockerApplicationIT {
     static void startContainers() throws Exception {
         Assumptions.assumeTrue(DockerClientFactory.instance().isDockerAvailable(), "Docker is not available on this host");
 
-        network = Network.newNetwork();
-        postgres = new PostgreSQLContainer<>("postgres:16")
-                .withDatabaseName("ace_service").withUsername("ace_service").withPassword("ace_service")
-                .withNetwork(network).withNetworkAliases("db");
-        postgres.start();
-
         String apiKey = System.getenv().getOrDefault("OMLX_API_KEY", "");
         modelServerConfigured = !apiKey.isBlank();
 
@@ -82,11 +73,10 @@ class DockerApplicationIT {
         app = new GenericContainer<>(new ImageFromDockerfile()
                 .withFileFromPath(".", repoRoot)
                 .withDockerfilePath("ace-service/Dockerfile"))
-                .withNetwork(network)
                 .withExposedPorts(8765)
-                .withEnv("ACE_JLS_DSN", "jdbc:postgresql://db:5432/ace_service")
-                .withEnv("SPRING_DATASOURCE_USERNAME", "ace_service")
-                .withEnv("SPRING_DATASOURCE_PASSWORD", "ace_service")
+                // SQLite is embedded - no separate DB container/network needed anymore. The default
+                // path (./ace-service.db, relative to the image's /app WORKDIR) is writable by
+                // appuser (the Dockerfile chowns /app to it) and Flyway migrates it on first boot.
                 .withEnv("ACE_RESULTS_DIR", "/app/results")
                 // /usr/libexec/java_home (Preflight's default lookup) is macOS-only and does not exist
                 // in this Linux image; pin the JDK this container actually ships, bypassing that lookup
@@ -104,8 +94,6 @@ class DockerApplicationIT {
     @AfterAll
     static void stopContainers() {
         if (app != null) app.stop();
-        if (postgres != null) postgres.stop();
-        if (network != null) network.close();
     }
 
     private static HttpResponse<String> get(String path) throws Exception {
@@ -128,7 +116,7 @@ class DockerApplicationIT {
 
         HttpResponse<String> jobs = get("/api/jobs");
         assertEquals(200, jobs.statusCode());
-        assertEquals("[]", jobs.body());   // a fresh container, empty queue - real Postgres round-trip, not a stub
+        assertEquals("[]", jobs.body());   // a fresh container, empty queue - a real DB round-trip, not a stub
     }
 
     /** Covers a real gap: GET /api/jobs/{id} was never wired up at all (a plain 404, not even
@@ -188,7 +176,8 @@ class DockerApplicationIT {
 
     /** The "Rescan results/" feature: copies a real, oracle.json-bearing results directory straight
      *  into the running container's own results dir (no shortcuts through the app's internals), hits
-     *  POST /api/import, and checks the run actually lands in Postgres with its real score. Also the
+     *  POST /api/import, and checks the run actually lands in the app's own database with its real
+     *  score. Also the
      *  regression test for the count/list contract bug (Api.ImportResult expects run-id lists; this
      *  endpoint used to serve counts and crash the Vaadin UI's JSON parsing). */
     @Test

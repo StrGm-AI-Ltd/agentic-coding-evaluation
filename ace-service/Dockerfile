@@ -13,7 +13,16 @@ WORKDIR /src
 # in-image build, provide it via a sibling gradle.properties copied here, not the host file.
 COPY gradlew settings.gradle ./
 COPY gradle ./gradle
+# settings.gradle includes ace-ui-vaadin too, and Gradle refuses to configure a multi-module build
+# when an included project's directory does not exist - even for a build invocation scoped entirely
+# to :ace-service:... tasks. An empty stub (no build.gradle) satisfies that without pulling in any
+# of the UI subproject's actual content, which this image has no business depending on.
+RUN mkdir -p ace-ui-vaadin
 COPY ace-service/build.gradle ace-service/build.gradle
+# compileJava now transitively depends on generateJooq -> prepareJooqSchema, which reads this real
+# migration file to build the scratch SQLite DB jOOQ introspects - it is needed at probe time too,
+# not just once the real sources arrive below.
+COPY ace-service/src/main/resources/db ace-service/src/main/resources/db
 # pre-fetch ALL dependencies into this layer: a one-line source change invalidates only the src
 # layer below, never a full Maven Central re-download. The probe class is a dummy so compileJava
 # (and thus the whole dependency graph) resolves before the real sources arrive.
