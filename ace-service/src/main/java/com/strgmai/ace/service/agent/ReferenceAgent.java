@@ -10,6 +10,7 @@ import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import dev.langchain4j.model.output.FinishReason;
 import org.springframework.stereotype.Component;
 
@@ -44,10 +45,29 @@ public class ReferenceAgent {
             complete - or when your budget is nearly spent - stop by answering with a short final message and no tool call. 
             Never claim something works that you did not see pass.""";
 
-    /** the per-session-kind reasoning effort — a scored treatment in the Python original; kept for the record */
+    /** the per-session-kind reasoning effort — a scored treatment, sent via OpenAiChatRequestParameters
+     *  (the standard OpenAI field; the original's oMLX-specific chat_template_kwargs.reasoning_effort
+     *  is deliberately not used here — see README-JLS.md) and recorded in the session header for
+     *  provenance: "record what was sent, not what was configured" (design rule 5). */
     public static final Map<String, String> DEFAULT_REASONING = Map.of(
             "definition", "high", "plan", "high", "implement", "medium", "integrate", "medium",
             "fix", "medium", "status", "low", "review", "medium", "handoff", "low");
+
+    /** maps a session name (a phase id like "p0_definition"/"p1_plan"/"p2_implementation", a task id
+     *  like "T3", or a suffixed continuation like "T3-wrapup"/"T3-handoff"/"T3-fix") to a
+     *  DEFAULT_REASONING key. Unrecognised names (plain task ids) default to "implement". */
+    static String reasoningKind(String name) {
+        if (name.endsWith("-continue")) return reasoningKind(name.substring(0, name.length() - "-continue".length()));
+        if (name.endsWith("-wrapup")) return "status";
+        if (name.endsWith("-handoff")) return "handoff";
+        if (name.endsWith("-fix")) return "fix";
+        if (name.startsWith("p0")) return "definition";
+        if (name.startsWith("p1") || name.equals("PARALLEL_PLAN")) return "plan";
+        if (name.startsWith("p2") || name.equals("implement")) return "implement";
+        if (name.equals("INTEGRATION")) return "integrate";
+        if (name.equals("REVIEW") || name.equals("TRAJECTORY_REVIEW")) return "review";
+        return "implement";
+    }
 
     public record SessionResult(String id, int rc, double seconds, String finish, int turns, int toolErrors,
                                 int compactions, Path sessionFile, Instant start, Instant end) {}
@@ -105,6 +125,7 @@ public class ReferenceAgent {
                              String appendSystem, String cwd, String proxyBase, String model, Map<String, String> extraEnv) throws Exception {
         long t0 = System.nanoTime();
         Instant start = Instant.now();
+        String reasoningEffort = DEFAULT_REASONING.getOrDefault(reasoningKind(name), "medium");
         AgentSession session = new AgentSession(sessionDir, sessionId, continueSession);
         List<ChatMessage> msgs;
         if (continueSession && session.exists()) {
@@ -115,7 +136,7 @@ public class ReferenceAgent {
             String system = SYSTEM.replace("{cwd}", cwd).replace("{date}", start.toString().substring(0, 10))
                     + (appendSystem == null ? "" : "\n\n" + java.nio.file.Files.readString(Path.of(appendSystem)));
             msgs = new ArrayList<>(List.of(SystemMessage.from(system), UserMessage.from(instruction)));
-            session.header(AGENT_VERSION, model == null ? props.model() : model, cwd, null);
+            session.header(AGENT_VERSION, model == null ? props.model() : model, cwd, reasoningEffort);
             session.system(system);
             session.user(instruction);
         }
@@ -124,6 +145,7 @@ public class ReferenceAgent {
                 .apiKey(apiKeyFor(proxyBase, model, extraEnv))
                 .modelName(model == null ? props.model() : model)
                 .timeout(Duration.ofSeconds(3600))
+                .defaultRequestParameters(OpenAiChatRequestParameters.builder().reasoningEffort(reasoningEffort).build())
                 .build();
         List<ToolSpecification> specs = toolSpecs();
         // the run's SCRUBBED environment (fresh HOME, docker shim, pinned JAVA_HOME, AB_RUN_ID) is the
