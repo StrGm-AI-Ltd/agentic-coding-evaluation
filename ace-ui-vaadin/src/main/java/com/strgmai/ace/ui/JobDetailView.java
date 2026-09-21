@@ -152,8 +152,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         errorLine.getStyle().set("color", "var(--lumo-error-color)").set("font-size", "0.85em");
 
         if (job.argv() != null && !job.argv().isEmpty()) {
-            add(new Span("Command"));
-            add(Panels.mono("python3 runner/run_bench.py " + String.join(" ", job.argv())));
+            add(new Span("Run flags"));
+            add(Panels.mono(String.join(" ", job.argv())));
         }
 
         // Urgent actions stay above the live panel, reachable as the run grows (m10).
