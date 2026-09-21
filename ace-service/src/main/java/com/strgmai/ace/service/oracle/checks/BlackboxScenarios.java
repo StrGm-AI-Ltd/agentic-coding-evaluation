@@ -2,6 +2,8 @@ package com.strgmai.ace.service.oracle.checks;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.net.URI;
@@ -20,6 +22,7 @@ import java.util.regex.Pattern;
  *  implementation. F6 grades every observed response against the frozen contract's declared
  *  status codes and the SCHEMAS table, plus the agent's own shipped OpenAPI spec. */
 public final class BlackboxScenarios {
+    private static final Logger log = LoggerFactory.getLogger(BlackboxScenarios.class);
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
     private final ObjectMapper json = new ObjectMapper();
     private final String base;
@@ -38,7 +41,7 @@ public final class BlackboxScenarios {
             HttpResponse<Void> r = http.send(HttpRequest.newBuilder(URI.create(base + "/health")).timeout(Duration.ofSeconds(10)).GET().build(),
                     HttpResponse.BodyHandlers.discarding());
             return r.statusCode() == 200;
-        } catch (Exception e) { return false; }
+        } catch (Exception e) { log.debug("health probe against {} failed: {}", base, e.toString()); return false; }
     }
 
     record Resp(int status, JsonNode body) {}
@@ -91,12 +94,19 @@ public final class BlackboxScenarios {
     }
 
     private static BigDecimal dec(String s) {
-        try { return s == null || s.isEmpty() ? null : new BigDecimal(s); } catch (NumberFormatException e) { return null; }
+        try { return s == null || s.isEmpty() ? null : new BigDecimal(s); }
+        catch (NumberFormatException e) {
+            // a null here can make a real money value silently read as absent, potentially false-
+            // passing a check that exists to catch exactly this kind of money-handling bug
+            log.warn("could not parse '{}' as a decimal amount: {}", s, e.toString());
+            return null;
+        }
     }
 
     private static OffsetDateTime parseTs(String s) {
         if (s == null || s.isEmpty()) return null;
-        try { return OffsetDateTime.parse(s.replace("Z", "+00:00")); } catch (Exception e) { return null; }
+        try { return OffsetDateTime.parse(s.replace("Z", "+00:00")); }
+        catch (Exception e) { log.warn("could not parse '{}' as a timestamp: {}", s, e.toString()); return null; }
     }
 
     private boolean fail(String id, String why) { notes.put(id, why); return false; }
@@ -367,7 +377,7 @@ public final class BlackboxScenarios {
                     spec = parseOpenApiPaths(Files.readString(p));
                     where = ws.relativize(p).toString();
                     if (!spec.isEmpty()) break;
-                } catch (Exception ignore) {}
+                } catch (Exception e) { log.debug("could not parse {} as an OpenAPI spec, trying the next candidate: {}", p, e.toString()); }
             }
         }
         if (spec == null || spec.isEmpty()) problems.add("agent ships no parseable OpenAPI spec with paths");

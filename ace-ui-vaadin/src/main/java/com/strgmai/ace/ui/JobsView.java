@@ -11,6 +11,8 @@ import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.data.renderer.ComponentRenderer;
 import com.vaadin.flow.router.Route;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Comparator;
 import java.util.List;
@@ -20,6 +22,7 @@ import java.util.function.Supplier;
  *  (blocked jobs are actionable, like in the service UI). */
 @Route(value = "jobs", layout = MainLayout.class)
 public class JobsView extends VerticalLayout {
+    private static final Logger log = LoggerFactory.getLogger(JobsView.class);
 
     private final ServiceClient client;
 
@@ -108,6 +111,7 @@ public class JobsView extends VerticalLayout {
                     3000, Notification.Position.BOTTOM_END);
             load();
         } catch (final Exception e) {
+            log.warn("could not act on job {}: {}", job.id(), e.toString());
             Notification.show(client.errorText(e), 6000, Notification.Position.BOTTOM_END);
         }
     }
@@ -118,6 +122,7 @@ public class JobsView extends VerticalLayout {
             jobs = client.jobs();
             error.setText("");
         } catch (final Exception e) {
+            log.warn("could not load jobs: {}", e.toString());
             grid.setItems(List.of());
             error.setText(client.errorText(e));
             emptyState.setVisible(false);

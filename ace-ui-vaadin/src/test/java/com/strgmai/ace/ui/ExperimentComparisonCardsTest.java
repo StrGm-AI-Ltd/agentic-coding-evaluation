@@ -48,7 +48,7 @@ class ExperimentComparisonCardsTest {
         final var cards = ExperimentDetailView.comparisonCards(comparison);
         assertEquals(3, cards.size());
         assertEquals("error", cards.get(0).calloutKind());
-        assertEquals("stats.py refused: k < 5", cards.get(0).calloutText());
+        assertEquals("StatsService refused: k < 5", cards.get(0).calloutText());
         assertEquals("warn", cards.get(1).calloutKind());
         assertEquals("no succeeded, imported runs for arm 'b'", cards.get(1).calloutText());
         assertEquals("warn", cards.get(2).calloutKind());

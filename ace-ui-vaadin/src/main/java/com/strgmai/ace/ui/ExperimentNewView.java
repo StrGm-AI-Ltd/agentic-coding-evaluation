@@ -12,6 +12,8 @@ import com.vaadin.flow.component.textfield.NumberField;
 import com.vaadin.flow.component.textfield.TextField;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -29,7 +31,7 @@ import java.util.stream.Stream;
  */
 @Route(value = "experiments/new", layout = MainLayout.class)
 public class ExperimentNewView extends VerticalLayout {
-
+    private static final Logger log = LoggerFactory.getLogger(ExperimentNewView.class);
 
     private final ServiceClient client;
 
@@ -206,8 +208,8 @@ public class ExperimentNewView extends VerticalLayout {
             modelB.setItems(models);
             reviewerModel.setItems(reviewerSuggestions());
             trajectoryReviewerModel.setItems(reviewerSuggestions());
-        } catch (final Exception ignored) {
-            // suggestions are optional; the server still validates
+        } catch (final Exception e) {
+            log.warn("could not load past-run model/reviewer suggestions: {}", e.toString());
         }
         try {
             // the model server's own list, merged in on top of past-run models (GET /api/models) -
@@ -218,8 +220,9 @@ public class ExperimentNewView extends VerticalLayout {
             model.setItems(merged);
             modelA.setItems(merged);
             modelB.setItems(merged);
-        } catch (final Exception ignored) {
+        } catch (final Exception e) {
             // the model server may be unreachable; past-run suggestions (if any) still stand
+            log.warn("could not reach the model server for live model suggestions: {}", e.toString());
         }
     }
 
@@ -284,6 +287,7 @@ public class ExperimentNewView extends VerticalLayout {
                     4000, Notification.Position.BOTTOM_END);
             getUI().ifPresent(ui -> ui.navigate("experiments/" + experiment.id()));
         } catch (final Exception e) {
+            log.warn("could not create experiment '{}': {}", experimentName, e.toString());
             errors.add(Panels.error(client.errorText(e)));
         }
     }

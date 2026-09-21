@@ -4,6 +4,8 @@ import com.strgmai.ace.service.config.BenchProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.URI;
@@ -35,6 +37,7 @@ import com.strgmai.ace.service.docker.DockerService;
  *  guard against a runaway prompt). The result is cached per setup (checkpoint + settings +
  *  server version + host); a cacheable result is never one set by a transient failure. */
 public final class ContextProbe {
+    private static final Logger log = LoggerFactory.getLogger(ContextProbe.class);
     private static final ObjectMapper JSON = new ObjectMapper();
     public static final Path CACHE_DIR = Path.of(System.getProperty("user.home"), ".cache/ace-service/context-probe");
     public static final Path LOG = Path.of(System.getProperty("user.home"), ".omlx/logs/server.log");
@@ -90,7 +93,7 @@ public final class ContextProbe {
                 final String data = line.substring(5).strip();
                 if (data.equals("[DONE]")) break;
                 JsonNode obj;
-                try { obj = JSON.readTree(data); } catch (Exception e) { continue; }
+                try { obj = JSON.readTree(data); } catch (Exception e) { log.debug("could not parse SSE data chunk, dropping it: {}", e.toString()); continue; }
                 if (obj.hasNonNull("usage")) usage = obj.get("usage");
                 for (JsonNode ch : obj.path("choices")) {
                     final JsonNode d = ch.path("delta");
@@ -125,7 +128,7 @@ public final class ContextProbe {
             final Map<String, JsonNode> out = new LinkedHashMap<>();
             for (JsonNode m : data) out.put(m.path("id").asText(), m);
             return out;
-        } catch (Exception e) { return Map.of(); }
+        } catch (Exception e) { log.warn("could not list models from {}: {}", endpoint, e.toString()); return Map.of(); }
     }
 
     JsonNode health(String endpoint, String key) {
@@ -133,7 +136,7 @@ public final class ContextProbe {
             HttpResponse<String> r = http.send(HttpRequest.newBuilder(URI.create(endpoint.replaceAll("/v1/?$", "") + "/health"))
                     .header("Authorization", "Bearer " + key).timeout(Duration.ofSeconds(15)).GET().build(), HttpResponse.BodyHandlers.ofString());
             return JSON.readTree(r.body());
-        } catch (Exception e) { return JSON.createObjectNode(); }
+        } catch (Exception e) { log.debug("health check against {} failed: {}", endpoint, e.toString()); return JSON.createObjectNode(); }
     }
 
     /** Memory-guard lines the server logged since `since`: max usage and the ceiling it was sized
@@ -145,7 +148,7 @@ public final class ContextProbe {
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(LOG.getParent(), LOG.getFileName() + ".*")) {
             final var all = new ArrayList<Path>(); ds.forEach(all::add);
             files.addAll(all.subList(Math.max(0, all.size() - 2), all.size()));
-        } catch (Exception ignore) {}
+        } catch (Exception e) { log.debug("could not list rotated oMLX log files: {}", e.toString()); }
         for (Path f : files) {
             try {
                 for (String line : Files.readAllLines(f)) {
@@ -153,7 +156,7 @@ public final class ContextProbe {
                     final java.util.regex.Matcher m = re.matcher(line);
                     if (m.find()) { usage.add(Double.parseDouble(m.group(1))); target.add(Double.parseDouble(m.group(2))); ceiling.add(Double.parseDouble(m.group(3))); }
                 }
-            } catch (IOException ignore) {}
+            } catch (IOException e) { log.debug("could not read oMLX log {}: {}", f, e.toString()); }
         }
         if (usage.isEmpty()) return null;
         return Map.of("max_usage_gb", Collections.max(usage), "sizing_target_gb", target.get(target.size() - 1),
@@ -169,7 +172,7 @@ public final class ContextProbe {
                     final JsonNode c = JSON.readTree(Files.readString(cp));
                     final JsonNode t = c.has("text_config") && c.get("text_config").isObject() ? c.get("text_config") : c;
                     return t.path("max_position_embeddings").asInt(dflt);
-                } catch (Exception e) { return dflt; }
+                } catch (Exception e) { log.warn("could not read {}, falling back to the default positional limit {}: {}", cp, dflt, e.toString()); return dflt; }
             }
         }
         return dflt;
@@ -563,7 +566,12 @@ public final class ContextProbe {
                             rec.get("tokens_per_line") instanceof Number n ? n.doubleValue() : 31.0));
                 }
                 if (rec != null) Files.writeString(path, JSON.writerWithDefaultPrettyPrinter().writeValueAsString(rec));
-            } catch (Exception ignore) { rec = null; }
+            } catch (Exception e) {
+                // falls through to a fresh probe below, so nothing is lost functionally - but a
+                // corrupt cache file silently re-probing every time (instead of once) is worth knowing
+                log.warn("could not read/refresh cached probe {}, forcing a fresh probe: {}", path, e.toString());
+                rec = null;
+            }
         }
         if (rec == null) {
             if (Boolean.TRUE.equals(setup.facts().get("docker_up")))
@@ -597,6 +605,6 @@ public final class ContextProbe {
     }
     static String sha256(final String s) {
         try { return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(s.getBytes())).substring(0, 16); }
-        catch (Exception e) { return null; }
+        catch (Exception e) { log.debug("SHA-256 unavailable: {}", e.toString()); return null; }
     }
 }

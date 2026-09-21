@@ -3,6 +3,8 @@ package com.strgmai.ace.service.pack;
 import com.strgmai.ace.service.plan.PlanTask;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.*;
@@ -19,6 +21,7 @@ import java.util.regex.Pattern;
  *  roles, instructions and tolerant parsers, and the parallelisation-plan step's pack + parser. */
 public final class Packs {
     private Packs() {}
+    private static final Logger log = LoggerFactory.getLogger(Packs.class);
     private static final ObjectMapper JSON = new ObjectMapper();
 
     // ---- the caps for a 65,536-token window; set_scale() rescales them to the setup's measured window
@@ -117,7 +120,7 @@ public final class Packs {
                 if (rel.getNameCount() > 0 && rel.getName(rel.getNameCount() - 1).toString().startsWith(".")) return;
                 out.add(rel.toString());
             });
-        } catch (IOException ignore) {}
+        } catch (IOException e) { log.warn("could not walk {} for the repo tree pack: {}", ws, e.toString()); }
         Collections.sort(out);
         return linesCap(String.join("\n", out), CAPS.get("tree"));
     }
@@ -174,7 +177,8 @@ public final class Packs {
         for (String f : files) {
             if (!List.of(".java", ".kt", ".kts", ".gradle", ".yaml", ".yml", ".sql", ".json", ".properties").stream().anyMatch(f::endsWith)) continue;
             String txt;
-            try { txt = Files.readString(ws.resolve(f)); } catch (IOException e) { continue; }
+            try { txt = Files.readString(ws.resolve(f)); }
+            catch (IOException e) { log.debug("could not read {} for dependency interfaces: {}", f, e.toString()); continue; }
             final String sig = signatures(f, txt);
             if (sig.isBlank()) continue;
             final String block = "### " + f + "\n```\n" + sig + "\n```";
@@ -191,7 +195,12 @@ public final class Packs {
             cmd.addAll(List.of(args));
             final Process p = new ProcessBuilder(cmd).start();
             return p.waitFor() == 0 ? new String(p.getInputStream().readAllBytes()) : "";
-        } catch (Exception e) { return ""; }
+        } catch (Exception e) {
+            // an empty result here silently produces a dependency-interfaces pack missing the
+            // files that actually changed - the agent then sees stale/absent context, not an error
+            log.warn("`git {}` in {} failed: {}", String.join(" ", args), ws, e.toString());
+            return "";
+        }
     }
 
     static final Pattern TEST_CMD = Pattern.compile("gradle|gradlew|pytest|npm test|mvn");
@@ -206,7 +215,7 @@ public final class Packs {
             for (String line : Files.readAllLines(sessionPath)) {
                 if (line.isBlank()) continue;
                 JsonNode r;
-                try { r = JSON.readTree(line); } catch (Exception e) { continue; }
+                try { r = JSON.readTree(line); } catch (Exception e) { log.debug("could not parse session line as JSON, skipping it: {}", e.toString()); continue; }
                 final JsonNode msg = r.path("message");
                 if (!"message".equals(r.path("type").asText())) continue;
                 if ("assistant".equals(msg.path("role").asText()))
@@ -222,7 +231,7 @@ public final class Packs {
                     last = new String[]{red ? "red" : "green", linesCap(txt.strip(), CAPS.get("test_tail"))};
                 }
             }
-        } catch (IOException ignore) {}
+        } catch (IOException e) { log.warn("could not read session {} for the last-test-output pack: {}", sessionPath, e.toString()); }
         return last;
     }
 
@@ -268,7 +277,7 @@ public final class Packs {
             parts.add("## Notes left by earlier tasks\n" + blocks);
         }
         final Path pp = ws.resolve("docs/PROGRESS.md");
-        if (Files.exists(pp)) { try { parts.add("## docs/PROGRESS.md\n" + capTail(Files.readString(pp), CAPS.get("progress"))); } catch (IOException ignore) {} }
+        if (Files.exists(pp)) { try { parts.add("## docs/PROGRESS.md\n" + capTail(Files.readString(pp), CAPS.get("progress"))); } catch (IOException e) { log.debug("could not read {} for the pack: {}", pp, e.toString()); } }
         return String.join("\n\n", parts);
     }
 
@@ -366,7 +375,7 @@ public final class Packs {
         if (blind) return String.join("\n\n", parts);
         if (verificationText != null) parts.add("## Harness verification (the tests in the repository, run by the harness)\n" + verificationText);
         final Path pp = ws.resolve("docs/PROGRESS.md");
-        if (Files.exists(pp)) { try { parts.add("## What the implementer claimed (docs/PROGRESS.md)\n" + capTail(Files.readString(pp), CAPS.get("progress"))); } catch (IOException ignore) {} }
+        if (Files.exists(pp)) { try { parts.add("## What the implementer claimed (docs/PROGRESS.md)\n" + capTail(Files.readString(pp), CAPS.get("progress"))); } catch (IOException e) { log.debug("could not read {} for the pack: {}", pp, e.toString()); } }
         return String.join("\n\n", parts);
     }
 
@@ -411,12 +420,14 @@ public final class Packs {
     static Map<String, Object> parseReviewShape(final Path path, final boolean trajectory) {
         if (path == null || !Files.isRegularFile(path)) return null;
         String txt;
-        try { txt = Files.readString(path); } catch (IOException e) { return null; }
+        try { txt = Files.readString(path); }
+        catch (IOException e) { log.warn("could not read {} (exists but unreadable): {}", path, e.toString()); return null; }
         JsonNode d;
         try { d = JSON.readTree(txt); } catch (Exception e) {
             final Matcher m = Pattern.compile("\\{.*\\}", Pattern.DOTALL).matcher(txt);
-            if (!m.find()) return null;
-            try { d = JSON.readTree(m.group(0)); } catch (Exception e2) { return null; }
+            if (!m.find()) { log.warn("{} is not valid JSON and has no embedded {{...}} block, review discarded: {}", path, e.toString()); return null; }
+            try { d = JSON.readTree(m.group(0)); }
+            catch (Exception e2) { log.warn("could not parse the embedded JSON block in {}, review discarded: {}", path, e2.toString()); return null; }
         }
         if (!d.isObject()) return null;
         final Double score = pct(d.path("score"));
@@ -466,7 +477,10 @@ public final class Packs {
     static Double num(final JsonNode v, final double lo, final double hi) {
         double x;
         if (v.isNumber()) x = v.asDouble();
-        else if (v.isTextual()) { try { x = Double.parseDouble(v.asText().strip().replaceAll("%$", "")); } catch (NumberFormatException e) { return null; } }
+        else if (v.isTextual()) {
+            try { x = Double.parseDouble(v.asText().strip().replaceAll("%$", "")); }
+            catch (NumberFormatException e) { log.debug("could not parse '{}' as a number: {}", v.asText(), e.toString()); return null; }
+        }
         else return null;
         return Math.max(lo, Math.min(hi, x));
     }
@@ -500,7 +514,8 @@ public final class Packs {
                 "http_errors", "stalled_turns_gt600s", "prompt_tokens_max", "context_drops_gt30pct", "reasoning_share_pct", "first_artifact_turn", "flags", "per_task"))
             if (summary.containsKey(k)) facts.put(k, summary.get(k));
         String json;
-        try { json = JSON.writerWithDefaultPrettyPrinter().writeValueAsString(facts); } catch (Exception e) { json = "{}"; }
+        try { json = JSON.writerWithDefaultPrettyPrinter().writeValueAsString(facts); }
+        catch (Exception e) { log.warn("could not serialize the trajectory summary for the review pack: {}", e.toString()); json = "{}"; }
         return String.join("\n\n", List.of(
                 "# Trajectory under review",
                 "## Measured summary (trajectory/summary.json)\n```json\n" + json.substring(0, Math.min(6000, json.length())) + "\n```",
@@ -535,12 +550,14 @@ public final class Packs {
     public static Map<String, Object> parseParallelPlan(final Path path) {
         if (path == null || !Files.isRegularFile(path)) return null;
         String txt;
-        try { txt = Files.readString(path); } catch (IOException e) { return null; }
+        try { txt = Files.readString(path); }
+        catch (IOException e) { log.warn("could not read {} (exists but unreadable): {}", path, e.toString()); return null; }
         JsonNode d;
         try { d = JSON.readTree(txt); } catch (Exception e) {
             final Matcher m = Pattern.compile("\\{.*\\}", Pattern.DOTALL).matcher(txt);
-            if (!m.find()) return null;
-            try { d = JSON.readTree(m.group(0)); } catch (Exception e2) { return null; }
+            if (!m.find()) { log.warn("{} is not valid JSON and has no embedded {{...}} block, plan discarded: {}", path, e.toString()); return null; }
+            try { d = JSON.readTree(m.group(0)); }
+            catch (Exception e2) { log.warn("could not parse the embedded JSON block in {}, plan discarded: {}", path, e2.toString()); return null; }
         }
         if (!d.isObject() || !d.path("waves").isArray()) return null;
         final Pattern idNorm = Pattern.compile("^(?:T|ST|Task|Subtask)[- ]?0*(\\d+)$", Pattern.CASE_INSENSITIVE);
@@ -595,7 +612,7 @@ public final class Packs {
         }
         parts.add("## Repository tree\n```\n" + repoTree(ws, 8) + "\n```");
         final Path pp = ws.resolve("docs/PROGRESS.md");
-        if (Files.exists(pp)) { try { parts.add("## docs/PROGRESS.md\n" + capTail(Files.readString(pp), CAPS.get("progress"))); } catch (IOException ignore) {} }
+        if (Files.exists(pp)) { try { parts.add("## docs/PROGRESS.md\n" + capTail(Files.readString(pp), CAPS.get("progress"))); } catch (IOException e) { log.debug("could not read {} for the pack: {}", pp, e.toString()); } }
         return String.join("\n\n", parts);
     }
 }

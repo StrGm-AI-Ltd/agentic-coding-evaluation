@@ -6,6 +6,8 @@ import com.strgmai.ace.service.oracle.CheckResult;
 import com.strgmai.ace.service.oracle.CheckStatus;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.URI;
@@ -30,6 +32,8 @@ import java.util.regex.Pattern;
 public final class ComposeChecks {
     private ComposeChecks() {}
 
+    private static final Logger log = LoggerFactory.getLogger(ComposeChecks.class);
+
     static final List<String> DB_HINTS = List.of("postgres", "db", "database", "redis", "kafka", "zookeeper", "rabbit", "mongo", "flyway", "liquibase", "migrat");
     static final ObjectMapper JSON = new ObjectMapper();
     static final Set<CheckId> IDS = new LinkedHashSet<>(List.of(CheckId.C1, CheckId.C2, CheckId.F1, CheckId.F2, CheckId.F3, CheckId.F4,
@@ -50,7 +54,7 @@ public final class ComposeChecks {
                 final JsonNode n = JSON.readTree(line.strip());
                 if (n.isArray()) for (JsonNode x : n) rows.add(JSON.convertValue(x, Map.class));
                 else if (n.isObject()) rows.add(JSON.convertValue(n, Map.class));
-            } catch (Exception ignore) {}
+            } catch (Exception e) { log.warn("could not parse `docker compose ps` line for project {}: {}", proj, e.toString()); }
         }
         return rows;
     }
@@ -58,7 +62,12 @@ public final class ComposeChecks {
     /** tear down benchmark stacks a killed oracle left behind (they hold :8080) */
     static void sweepStale() {
         final DockerService.Sh ls = DockerService.sh(60, "docker", "compose", "ls", "-a", "--format", "json");
-        if (ls.rc() != 0) return;
+        if (ls.rc() != 0) {
+            // a silently skipped sweep leaves leaked containers/images with no trace, and subsequent
+            // oracle runs can mysteriously fail to bind :8080 with nothing pointing back to why
+            log.warn("`docker compose ls` failed (rc={}), skipping the stale-stack sweep: {}", ls.rc(), ls.out());
+            return;
+        }
         try {
             for (JsonNode p : JSON.readTree(ls.out().isEmpty() ? "[]" : ls.out())) {
                 final String name = p.path("Name").asText("");
@@ -68,7 +77,9 @@ public final class ComposeChecks {
                     // process that would have hit the finally block in run() below is already gone
                     DockerService.sh(300, "docker", "compose", "-p", name, "down", "-v", "--remove-orphans", "--rmi", "local");
             }
-        } catch (Exception ignore) {}
+        } catch (Exception e) {
+            log.warn("stale-stack sweep failed, leftover ab<digits> stacks may remain: {}", e.toString());
+        }
     }
 
     static boolean isDb(final Map<String, Object> row) {
@@ -100,7 +111,10 @@ public final class ComposeChecks {
         final Pattern artefactSrc = Pattern.compile("(?i)(^|/)(build|target|dist|out)/|[\\w.-]+\\.(jar|war|ear|class)$");
         for (Path df : StructureChecks.glob(ws, "**/Dockerfile*")) {
             String src;
-            try { src = Files.readString(df); } catch (IOException e) { continue; }
+            // a read failure here silently means this Dockerfile is never checked for a host-built
+            // artefact copy - an R5 C-1 violation could pass unnoticed, not because it's clean
+            try { src = Files.readString(df); }
+            catch (IOException e) { log.warn("could not read {} for the prebuilt-artefact check: {}", df, e.toString()); continue; }
             final java.util.regex.Matcher m = copy.matcher(src);
             while (m.find()) {
                 final String s = m.group(1);
@@ -116,7 +130,10 @@ public final class ComposeChecks {
     static List<String> absoluteComposePaths(final Path composeFile) {
         final List<String> hits = new ArrayList<>();
         String txt;
-        try { txt = Files.readString(composeFile); } catch (IOException e) { return hits; }
+        // a read failure here silently means this compose file is never checked for an escaped
+        // absolute path (R5 C-19) - an empty result then reads as "clean", not "could not check"
+        try { txt = Files.readString(composeFile); }
+        catch (IOException e) { log.warn("could not read {} for the absolute-path check: {}", composeFile, e.toString()); return hits; }
         for (var m : Pattern.compile("(?m)^\\s*(?:context|dockerfile)\\s*:\\s*(/\\S+)", Pattern.CASE_INSENSITIVE).matcher(txt).results().toList())
             hits.add(m.group(0).strip());
         for (var m : Pattern.compile("(?m)^\\s*-\\s*['\"]?(/(?!dev/|proc/|sys/)[^:'\"\\s]+):", Pattern.CASE_INSENSITIVE).matcher(txt).results().toList())

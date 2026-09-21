@@ -4,6 +4,8 @@ import com.strgmai.ace.service.docker.DockerService;
 import com.strgmai.ace.service.oracle.CheckId;
 import com.strgmai.ace.service.oracle.CheckResult;
 import com.strgmai.ace.service.oracle.CheckStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.w3c.dom.Element;
 
 import java.io.IOException;
@@ -21,6 +23,8 @@ import java.util.regex.*;
  *  copy; the mutation never touches the agent's files. */
 public final class BuildChecks {
     private BuildChecks() {}
+
+    private static final Logger log = LoggerFactory.getLogger(BuildChecks.class);
 
     public static final int GRADLE_TIMEOUT = 2400;
     public static final String DEFAULT_IMAGE = "gradle:8.14-jdk21";
@@ -113,7 +117,11 @@ public final class BuildChecks {
                     fl += Integer.parseInt(r.getAttribute("failures").isEmpty() ? "0" : r.getAttribute("failures"))
                             + Integer.parseInt(r.getAttribute("errors").isEmpty() ? "0" : r.getAttribute("errors"));
                 }
-            } catch (Exception ignore) {}
+            } catch (Exception e) {
+                // silently dropping this file's counts from the B2 check's evidence can flip the
+                // agent's own PASS/FAIL verdict with zero trace - worth logging
+                log.warn("could not parse JUnit XML result {}: {}", x, e.toString());
+            }
         }
         return new int[]{ex, fl};
     }
@@ -151,7 +159,8 @@ public final class BuildChecks {
         for (Path r : roots)
             for (Path bf : StructureChecks.glob(r, "**/build.gradle*")) {
                 String src;
-                try { src = Files.readString(bf).replaceAll("(?s)//[^\\n]*|/\\*.*?\\*/", ""); } catch (IOException e) { continue; }
+                try { src = Files.readString(bf).replaceAll("(?s)//[^\\n]*|/\\*.*?\\*/", ""); }
+                catch (IOException e) { log.warn("could not read {} for the neutered-build-script check: {}", bf, e.toString()); continue; }
                 final Matcher m = blockStart.matcher(src);
                 while (m.find()) {
                     int start = m.end(), depth = 1, i = start;
@@ -182,7 +191,8 @@ public final class BuildChecks {
             final List<String> segs = Arrays.asList(jf.toString().split("/"));
             if (SKIP_DIRS.stream().anyMatch(segs::contains)) continue;
             String src;
-            try { src = Files.readString(jf); } catch (IOException e) { continue; }
+            try { src = Files.readString(jf); }
+            catch (IOException e) { log.warn("could not read {} while picking mutation candidates: {}", jf, e.toString()); continue; }
             final String m = mask(src, true), mKeep = mask(src, false);
             List<int[]> anchors = new ArrayList<>();   // [pos, labelIdx]
             final List<String> labels = new ArrayList<>();

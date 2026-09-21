@@ -1,5 +1,8 @@
 package com.strgmai.ace.ui;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -10,6 +13,7 @@ import java.util.function.Supplier;
  * Extracted from the view so the lifecycle is testable without Vaadin.
  */
 final class JobEventLoop implements Runnable {
+    private static final Logger log = LoggerFactory.getLogger(JobEventLoop.class);
 
     static final int MAX_ATTEMPTS = 3;
 
@@ -63,6 +67,9 @@ final class JobEventLoop implements Runnable {
                     return;
                 }
                 attempts += 1;
+                // after MAX_ATTEMPTS this falls back to polling with nothing else pointing at why the
+                // SSE connection kept failing - worth a trace even though the fallback keeps working
+                log.warn("SSE stream for job {} failed (attempt {}/{}): {}", jobId, attempts, MAX_ATTEMPTS, e.toString());
                 connectionLost = true;
                 try {
                     Thread.sleep(backoffMs);

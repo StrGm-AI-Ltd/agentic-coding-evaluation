@@ -2,6 +2,8 @@ package com.strgmai.ace.service.runner;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -19,6 +21,7 @@ import java.util.regex.Pattern;
  *  file version into compact entries (no request/response bodies); appends extend the cache; a
  *  rewrite rebuilds it; the one record whose request is needed is re-read from its byte offset. */
 public final class JournalFacts {
+    private static final Logger log = LoggerFactory.getLogger(JournalFacts.class);
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Pattern WS_REF = Pattern.compile("agentbench-ws/([A-Za-z0-9][A-Za-z0-9._-]{3,})");
 
@@ -124,18 +127,25 @@ public final class JournalFacts {
                 CACHE.put(p.toString(), new Cache(start, Files.getLastModifiedTime(p).toMillis(), List.copyOf(entries)));
             }
             return entries;
-        } catch (IOException e) { return List.of(); }
+        } catch (IOException e) {
+            // this journal's request counts/errors/budget refusals all silently read as zero -
+            // worth knowing about rather than mistaking for a genuinely uneventful run
+            log.warn("could not read journal {}: {}", p, e.toString());
+            return List.of();
+        }
     }
 
     static Entry parseEntry(String line, final long off) {
         JsonNode r;
-        try { r = JSON.readTree(line); } catch (Exception e) { return null; }
+        try { r = JSON.readTree(line); }
+        catch (Exception e) { log.debug("could not parse journal line as JSON, dropping it: {}", e.toString()); return null; }
         if (!r.isObject() || !r.path("path").asText("").startsWith("/v1/chat/completions")) return null;
         final JsonNode resp = r.get("response");
         final JsonNode u = resp != null && resp.isObject() && resp.path("usage").isObject() ? resp.get("usage") : null;
         final JsonNode req = r.get("request");
         OffsetDateTime ts = null;
-        try { ts = r.hasNonNull("ts") ? OffsetDateTime.parse(r.get("ts").asText()) : null; } catch (Exception ignore) {}
+        try { ts = r.hasNonNull("ts") ? OffsetDateTime.parse(r.get("ts").asText()) : null; }
+        catch (Exception e) { log.debug("could not parse journal entry timestamp: {}", e.toString()); }
         List<String> ws = line.contains("agentbench-ws/")
                 ? WS_REF.matcher(line).results().map(m -> m.group(1)).distinct().toList() : null;
         String effort = null;
@@ -158,7 +168,12 @@ public final class JournalFacts {
             final String line = raf.readLine();
             final JsonNode r = JSON.readTree(new String(line.getBytes(StandardCharsets.ISO_8859_1), StandardCharsets.UTF_8));
             return r.path("request");
-        } catch (Exception e) { return JSON.createObjectNode(); }
+        } catch (Exception e) {
+            // sampler_effective/system_prompt_sha silently end up uncomputed for this journal - a
+            // one-shot lookup (not per-line), so worth surfacing at WARN
+            log.warn("could not re-read the request at offset {} in {}: {}", off, p, e.toString());
+            return JSON.createObjectNode();
+        }
     }
 
     /** port of last_finish: the finish_reason of the last chat completion after sinceIso */
@@ -185,6 +200,6 @@ public final class JournalFacts {
 
     static String sha(final String s) {
         try { return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8))).substring(0, 16); }
-        catch (Exception e) { return null; }
+        catch (Exception e) { log.debug("SHA-256 unavailable: {}", e.toString()); return null; }
     }
 }

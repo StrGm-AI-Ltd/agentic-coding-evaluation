@@ -13,6 +13,8 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.select.Select;
 import com.vaadin.flow.data.renderer.ComponentRenderer;
 import com.vaadin.flow.router.Route;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Comparator;
 import java.util.List;
@@ -20,6 +22,7 @@ import java.util.List;
 /** Runs list with server-side filters — the UI twin of GET /api/runs. */
 @Route(value = "runs", layout = MainLayout.class)
 public class RunsView extends VerticalLayout {
+    private static final Logger log = LoggerFactory.getLogger(RunsView.class);
 
     private final ServiceClient client;
 
@@ -59,6 +62,7 @@ public class RunsView extends VerticalLayout {
                 optionsLoaded = false;
                 load();
             } catch (final Exception ex) {
+                log.warn("could not rescan results/: {}", ex.toString());
                 notifyError(client.errorText(ex));
             }
         });
@@ -119,6 +123,7 @@ public class RunsView extends VerticalLayout {
                     valid.getValue(), poolable.getValue());
             error.setText("");
         } catch (final Exception e) {
+            log.warn("could not load runs: {}", e.toString());
             grid.setItems(List.of());
             error.setText(client.errorText(e));
             emptyState.setVisible(false);

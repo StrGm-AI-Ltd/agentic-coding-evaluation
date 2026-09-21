@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -18,6 +20,7 @@ import java.util.*;
  *  messages (assistant messages carry toolCall parts and usage), compaction and end records.
  *  --continue resumes from the file: the API messages are rebuilt in order. */
 public final class AgentSession {
+    private static final Logger log = LoggerFactory.getLogger(AgentSession.class);
     private static final ObjectMapper JSON = new ObjectMapper();
     private final Path file;
     public final String sessionId;
@@ -30,13 +33,20 @@ public final class AgentSession {
             try (var s = Files.list(sessionDir)) {
                 found = s.filter(p -> p.getFileName().toString().contains(sessionId) && p.getFileName().toString().endsWith(".jsonl"))
                         .findFirst().orElse(null);
-            } catch (IOException ignore) {}
+            } catch (IOException e) {
+                // found stays null below, so --continue silently starts a NEW session instead of
+                // resuming the existing one - a real correctness issue, not just a display glitch
+                log.warn("could not list {} to find the existing session for --continue, starting a new session: {}", sessionDir, e.toString());
+            }
         this.file = found != null ? found
                 : sessionDir.resolve(Instant.now().toString().replace(':', '-').substring(0, 23) + "Z_" + sessionId + ".jsonl");
     }
 
     public Path path() { return file; }
-    public boolean exists() { try { return Files.exists(file) && Files.size(file) > 0; } catch (IOException e) { return false; } }
+    public boolean exists() {
+        try { return Files.exists(file) && Files.size(file) > 0; }
+        catch (IOException e) { log.debug("could not stat session file {}: {}", file, e.toString()); return false; }
+    }
 
     public void write(Map<String, Object> rec) throws IOException {
         Files.writeString(file, JSON.writeValueAsString(rec) + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
@@ -54,8 +64,15 @@ public final class AgentSession {
         final List<Map<String, Object>> parts = new ArrayList<>();
         if (text != null && !text.isEmpty()) parts.add(Map.of("type", "text", "text", text));
         for (ToolExecutionRequest c : calls) {
-            Map<String, Object> args = new LinkedHashMap<>();
-            try { args = JSON.readValue(c.arguments(), Map.class); } catch (Exception ignore) {}
+            Map<String, Object> args;
+            try { args = JSON.readValue(c.arguments(), Map.class); }
+            catch (Exception e) {
+                // silently recording {} here reads as "the model called the tool with no arguments" -
+                // it isn't; the model's real (malformed) output is preserved instead of thrown away
+                log.warn("could not parse tool call arguments for {} ({}): {}", c.name(), c.id(), e.toString());
+                args = new LinkedHashMap<>();
+                args.put("_unparsed", c.arguments());
+            }
             parts.add(Map.of("type", "toolCall", "id", c.id(), "name", c.name(), "arguments", args));
         }
         final Map<String, Object> msg = new LinkedHashMap<>();
@@ -103,7 +120,9 @@ public final class AgentSession {
         for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
             if (line.isBlank()) continue;
             JsonNode r;
-            try { r = JSON.readTree(line); } catch (Exception e) { continue; }
+            // a resumed session silently missing this turn from its conversation history is a real
+            // correctness issue - the model resumes not knowing what actually happened, not a cosmetic gap
+            try { r = JSON.readTree(line); } catch (Exception e) { log.warn("could not parse session line for --continue, skipping it: {}", e.toString()); continue; }
             final JsonNode m = r.path("message");
             if (!"message".equals(r.path("type").asText())) continue;
             switch (m.path("role").asText()) {
@@ -148,14 +167,14 @@ public final class AgentSession {
         try {
             for (String line : Files.readAllLines(sessionFile, StandardCharsets.UTF_8)) {
                 JsonNode r;
-                try { r = JSON.readTree(line); } catch (Exception e) { continue; }
+                try { r = JSON.readTree(line); } catch (Exception e) { log.debug("could not parse session line for usage accounting, skipping it: {}", e.toString()); continue; }
                 if (!"message".equals(r.path("type").asText()) || !"assistant".equals(r.path("message").path("role").asText())) continue;
                 final JsonNode u = r.path("usage");
                 if (u.has("input")) t.merge("input", u.get("input").asLong(), Long::sum);
                 if (u.has("output")) t.merge("output", u.get("output").asLong(), Long::sum);
                 t.merge("turns", 1L, Long::sum);
             }
-        } catch (IOException ignore) {}
+        } catch (IOException e) { log.warn("could not read session {} for usage accounting: {}", sessionFile, e.toString()); }
         return t;
     }
 

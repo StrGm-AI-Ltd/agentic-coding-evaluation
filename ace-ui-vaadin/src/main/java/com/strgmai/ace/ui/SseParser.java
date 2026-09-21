@@ -1,5 +1,8 @@
 package com.strgmai.ace.ui;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -9,6 +12,7 @@ import java.util.List;
  * the stream; it returns a completed {@link SseEvent} at each blank line.
  */
 public final class SseParser {
+    private static final Logger log = LoggerFactory.getLogger(SseParser.class);
 
     private String eventType;
     private final StringBuilder data = new StringBuilder();
@@ -46,7 +50,8 @@ public final class SseParser {
         try {
             return new SseEvent(type, Json.MAPPER.readTree(payload));
         } catch (final Exception e) {
-            return null; // malformed data is skipped, not fatal to the stream
+            log.debug("could not parse SSE event data, skipping it: {}", e.toString()); // not fatal to the stream
+            return null;
         }
     }
 

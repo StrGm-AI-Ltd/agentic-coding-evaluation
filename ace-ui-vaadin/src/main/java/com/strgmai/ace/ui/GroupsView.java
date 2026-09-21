@@ -5,12 +5,15 @@ import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.router.Route;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
 /** Leaderboard — the UI twin of GET /api/groups: ranked (k ≥ 5) and indicative groups. */
 @Route(value = "groups", layout = MainLayout.class)
 public class GroupsView extends VerticalLayout {
+    private static final Logger log = LoggerFactory.getLogger(GroupsView.class);
 
     private final ServiceClient client;
 
@@ -30,6 +33,7 @@ public class GroupsView extends VerticalLayout {
         try {
             groups = client.groups();
         } catch (final Exception e) {
+            log.warn("could not load groups: {}", e.toString());
             add(Panels.error(client.errorText(e)));
             return;
         }

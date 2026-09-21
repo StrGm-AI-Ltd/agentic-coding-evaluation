@@ -9,6 +9,8 @@ import com.strgmai.ace.service.pack.Packs;
 import com.strgmai.ace.service.plan.PlanParser;
 import com.strgmai.ace.service.plan.PlanTask;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -31,6 +33,7 @@ import java.util.regex.Pattern;
  *  the compose runtime checks, the black-box suite), trajectory metrics, validity. */
 @Component
 public class RunBench {
+    private static final Logger log = LoggerFactory.getLogger(RunBench.class);
     private final BenchProperties props;
     private final ReferenceAgent agent;
     private final RecordingProxyFactory proxies;
@@ -247,7 +250,15 @@ public class RunBench {
         return manifest;
     }
 
-    static void deleteRecursive(Path p) { try (var w = Files.walk(p)) { w.sorted(Comparator.reverseOrder()).forEach(x -> { try { Files.deleteIfExists(x); } catch (Exception ignore) {} }); } catch (Exception ignore) {} }
+    static void deleteRecursive(Path p) {
+        // a failed delete here leaks the run's scratch workspace/HOME on disk - harmless per-run,
+        // but silently accumulates across many runs with nothing pointing at why
+        try (var w = Files.walk(p)) {
+            w.sorted(Comparator.reverseOrder()).forEach(x -> {
+                try { Files.deleteIfExists(x); } catch (Exception e) { log.debug("could not delete {}: {}", x, e.toString()); }
+            });
+        } catch (Exception e) { log.warn("could not walk {} for cleanup: {}", p, e.toString()); }
+    }
 
     private void writeManifest(final Path rd, final Map<String, Object> manifest) throws Exception {
         Files.writeString(rd.resolve("manifest.json"), json.writerWithDefaultPrettyPrinter().writeValueAsString(manifest));
@@ -579,8 +590,8 @@ public class RunBench {
                 manifestHandoffs(manifest).add(new String[]{t.id, txt});
                 String sha;
                 try { sha = RunBenchSupport.gitOut(ws, "hash-object", "-w", hp.toString()); }
-                catch (Exception e) { sha = null; }
-                rec.put("handoff_sha", sha.isEmpty() ? null : sha);   // one hash-object, not the old double call that wrote the object twice
+                catch (Exception e) { log.warn("git hash-object failed for handoff {}: {}", t.id, e.toString()); sha = null; }
+                rec.put("handoff_sha", sha == null || sha.isEmpty() ? null : sha);   // one hash-object, not the old double call that wrote the object twice
                 rec.put("handoff_chars", txt.length());
             }
             rec.put("handoff_seconds", h.seconds());
@@ -783,7 +794,11 @@ public class RunBench {
                     final Path dst = to.resolve(from.relativize(p).toString());
                     if (Files.isDirectory(p)) Files.createDirectories(dst);
                     else { Files.createDirectories(dst.getParent()); Files.copy(p, dst, StandardCopyOption.REPLACE_EXISTING); }
-                } catch (Exception ignore) {}
+                } catch (Exception e) {
+                    // a permission/IO error on one file yields a silently incomplete copy of the
+                    // agent's workspace tree - worth knowing about even though the run continues
+                    log.warn("could not copy {} while snapshotting {} -> {}: {}", p, from, to, e.toString());
+                }
             });
         }
     }

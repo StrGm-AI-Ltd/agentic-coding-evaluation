@@ -5,6 +5,8 @@ import com.strgmai.ace.service.config.JsonColumns;
 import com.strgmai.ace.service.metrics.StatsService;
 import com.strgmai.ace.service.oracle.CheckId;
 import org.jooq.DSLContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -22,6 +24,7 @@ import static com.strgmai.ace.service.jooq.Tables.RUNS;
  *  containment) and workspace/ — the agent's live tree the listing never shows — is never served. */
 @RestController
 public class BenchController {
+    private static final Logger log = LoggerFactory.getLogger(BenchController.class);
     private final DSLContext dsl;
     private final JobQueue queue;
     private final ImporterService importer;
@@ -288,7 +291,16 @@ public class BenchController {
                     if (RunSpec.TERMINAL.contains(job.get("status"))) { emitter.complete(); return; }
                     Thread.sleep(2000);
                 }
-            } catch (Exception e) { emitter.complete(); }
+            } catch (java.io.IOException e) {
+                // a broken pipe from a closed browser tab is normal, not a bug - nothing to log
+                emitter.complete();
+            } catch (Exception e) {
+                // completeWithError (not complete()): JobEventLoop on the client treats a clean
+                // stream end as "the job reached a terminal state" - silently calling complete()
+                // here on a genuine bug would make the UI think a still-running job had finished
+                log.warn("SSE stream for job {} failed unexpectedly", id, e);
+                emitter.completeWithError(e);
+            }
         });
         return emitter;
     }

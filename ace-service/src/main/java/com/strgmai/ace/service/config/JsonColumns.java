@@ -2,6 +2,8 @@ package com.strgmai.ace.service.config;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,6 +19,7 @@ import java.util.Set;
 public final class JsonColumns {
     private JsonColumns() {}
 
+    private static final Logger log = LoggerFactory.getLogger(JsonColumns.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Set<String> KEYS = Set.of(
             "argv", "params", "comparison", "manifest", "oracle", "metrics", "validity_reasons", "detail");
@@ -25,7 +28,8 @@ public final class JsonColumns {
         final Map<String, Object> out = new LinkedHashMap<>(row);
         for (String k : KEYS)
             if (out.get(k) instanceof String s && !s.isBlank())
-                try { out.put(k, MAPPER.readTree(s)); } catch (Exception ignore) { /* leave as raw text */ }
+                try { out.put(k, MAPPER.readTree(s)); }
+                catch (Exception e) { log.warn("column {} is not valid JSON, leaving it as raw text: {}", k, e.toString()); }
         return out;
     }
 

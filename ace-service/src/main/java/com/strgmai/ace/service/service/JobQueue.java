@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.strgmai.ace.service.config.JsonColumns;
 import com.strgmai.ace.service.jooq.tables.records.JobsRecord;
 import org.jooq.DSLContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
@@ -22,6 +24,7 @@ import static com.strgmai.ace.service.jooq.Tables.JOBS;
  *  never more than one claimer to skip past. */
 @Repository
 public class JobQueue {
+    private static final Logger log = LoggerFactory.getLogger(JobQueue.class);
     private final DSLContext dsl;
     private final ObjectMapper json = new ObjectMapper();
 
@@ -161,9 +164,15 @@ public class JobQueue {
 
     List<String> fromJson(String s) {
         try { return json.readValue(s, json.getTypeFactory().constructCollectionType(List.class, String.class)); }
-        catch (Exception e) { return List.of(); }
+        catch (Exception e) {
+            // a job's argv silently becoming [] here means the worker would try to run it with no
+            // arguments at all - a real correctness problem, not just a display glitch
+            log.warn("could not parse stored argv '{}', treating as empty: {}", s, e.toString());
+            return List.of();
+        }
     }
     String toJson(Object o) {
-        try { return json.writeValueAsString(o); } catch (Exception e) { return "[]"; }
+        try { return json.writeValueAsString(o); }
+        catch (Exception e) { log.warn("could not serialize argv {}, storing as empty: {}", o, e.toString()); return "[]"; }
     }
 }

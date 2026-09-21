@@ -12,6 +12,8 @@ import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -24,6 +26,7 @@ import tools.jackson.databind.JsonNode;
 /** Experiment detail — the UI twin of GET /api/experiments/{id}: params and its arm × repeat jobs. */
 @Route(value = "experiments/:experimentId", layout = MainLayout.class)
 public class ExperimentDetailView extends VerticalLayout implements BeforeEnterObserver {
+    private static final Logger log = LoggerFactory.getLogger(ExperimentDetailView.class);
 
     private final ServiceClient client;
     private String experimentId;
@@ -50,6 +53,7 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         try {
             experiment = client.experiment(experimentId);
         } catch (final Exception e) {
+            log.warn("could not load experiment {}: {}", experimentId, e.toString());
             add(new com.vaadin.flow.component.html.H2("Experiment #" + experimentId), Panels.error(client.errorText(e)));
             return;
         }
@@ -153,8 +157,9 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
                         if (full != null && full.blocked_reason() != null) {
                             return Map.entry(job.id(), full.blocked_reason());
                         }
-                    } catch (final Exception ignored) {
+                    } catch (final Exception e) {
                         // the tooltip is simply absent for that job
+                        log.warn("could not load blocked reason for job {}: {}", job.id(), e.toString());
                     }
                     return null;
                 })
@@ -174,6 +179,7 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
             try {
                 client.requeue(job.id());
             } catch (final Exception e) {
+                log.warn("could not requeue blocked job {}: {}", job.id(), e.toString());
                 failures.add("job #" + job.id() + ": " + client.errorText(e));
             }
         }
@@ -207,7 +213,7 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
             }
             final var refused = c.path("refused");
             if (!refused.isMissingNode() && !refused.isNull()) {
-                cards.add(new ComparisonCard(title, "error", "stats.py refused: " + Fmt.textOr(refused, ""), printed));
+                cards.add(new ComparisonCard(title, "error", "StatsService refused: " + Fmt.textOr(refused, ""), printed));
                 return;
             }
             final var cmp = c.path("result").path("compare");
@@ -263,7 +269,7 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
                 default -> cardLayout.add(new Span(card.calloutText()));
             }
             if (card.printed() != null && !card.printed().isBlank()) {
-                cardLayout.add(new com.vaadin.flow.component.details.Details("stats.py output",
+                cardLayout.add(new com.vaadin.flow.component.details.Details("StatsService output",
                         Panels.mono(card.printed())));
             }
             add(cardLayout);

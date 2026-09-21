@@ -13,6 +13,8 @@ import com.vaadin.flow.component.textfield.IntegerField;
 import com.vaadin.flow.component.textfield.TextField;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -25,6 +27,7 @@ import java.util.Map;
  */
 @Route(value = "jobs/new", layout = MainLayout.class)
 public class JobNewView extends VerticalLayout {
+    private static final Logger log = LoggerFactory.getLogger(JobNewView.class);
 
     private final ServiceClient client;
 
@@ -147,8 +150,8 @@ public class JobNewView extends VerticalLayout {
             model.setItems(Links.distinctRuns(runs, Api.Run::model));
             reviewerModel.setItems(ExperimentNewView.reviewerSuggestions());
             trajectoryReviewerModel.setItems(ExperimentNewView.reviewerSuggestions());
-        } catch (final Exception ignored) {
-            // suggestions are optional; the server still validates
+        } catch (final Exception e) {
+            log.warn("could not load task/model suggestions: {}", e.toString());
         }
     }
 
@@ -208,6 +211,7 @@ public class JobNewView extends VerticalLayout {
                     4000, Notification.Position.BOTTOM_END);
             getUI().ifPresent(ui -> ui.navigate("jobs"));
         } catch (final Exception e) {
+            log.warn("could not enqueue job for task {}: {}", task.getValue(), e.toString());
             errors.add(Panels.error(client.errorText(e)));
         }
     }

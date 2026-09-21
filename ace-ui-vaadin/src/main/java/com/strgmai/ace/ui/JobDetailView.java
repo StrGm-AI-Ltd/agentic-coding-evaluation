@@ -17,6 +17,8 @@ import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
 import com.vaadin.flow.shared.Registration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.util.ArrayList;
@@ -31,6 +33,7 @@ import java.util.List;
  */
 @Route(value = "jobs/:jobId", layout = MainLayout.class)
 public class JobDetailView extends VerticalLayout implements BeforeEnterObserver {
+    private static final Logger log = LoggerFactory.getLogger(JobDetailView.class);
 
     private final ServiceClient client;
     private String jobId;
@@ -119,6 +122,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             buildChrome(job);   // once per navigation
             update(job);
         } catch (final Exception e) {
+            log.warn("could not load job {}: {}", jobId, e.toString());
             add(new H3("Job #" + jobId), Panels.error(client.errorText(e)));
             chromeBuilt = true;
         }
@@ -187,6 +191,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             errorLine.setText("");
         } catch (final Exception e) {
             // transient fetch errors never kill the SSE loop (m5); the next poll retries
+            log.debug("poll fetch failed for job {}: {}", jobId, e.toString());
             errorLine.setText(client.errorText(e));
         }
     }
@@ -255,6 +260,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                     client.cancel(job.id());
                     refresh();
                 } catch (final Exception ex) {
+                    log.warn("could not cancel job {}: {}", job.id(), ex.toString());
                     Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
                 }
             }));
@@ -265,6 +271,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                     client.requeue(job.id());
                     refresh();
                 } catch (final Exception ex) {
+                    log.warn("could not requeue job {}: {}", job.id(), ex.toString());
                     Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
                 }
             }));
@@ -394,8 +401,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             client.run(runId);
             return true;
         } catch (final RestClientResponseException e) {
+            // a non-404 status means the run likely exists but the server errored reading it -
+            // show the link anyway; the run-detail page surfaces the real error when clicked
             return e.getStatusCode().value() != 404;
         } catch (final Exception e) {
+            // connectivity trouble reads as "not imported" (hides the link) rather than a wrong
+            // link - a real, previously invisible false negative, so at least leave a trace
+            log.warn("could not probe import status for run {}: {}", runId, e.toString());
             return false;
         }
     }

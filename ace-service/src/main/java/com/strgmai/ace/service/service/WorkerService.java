@@ -177,7 +177,11 @@ public class WorkerService {
                             final java.nio.file.Path aborted = java.nio.file.Path.of(props.resultsDir(), "_aborted");
                             java.nio.file.Files.createDirectories(aborted);
                             java.nio.file.Files.move(runDir, aborted.resolve(job.runId() + "-" + System.currentTimeMillis() / 1000));
-                        } catch (Exception ignore) {}
+                        } catch (Exception e) {
+                            // a failed move here is exactly the "must never mix into a re-run" case
+                            // this code exists to prevent - the run dir stays in place, unmoved
+                            log.warn("could not move aside aborted run {}: {}", runDir, e.toString());
+                        }
                     }
                     queue.finish(job.id(), "cancelled", null, "cancelled mid-run");
                     if (job.experimentId() != null) experiments.finalizeIfDone(job.experimentId());

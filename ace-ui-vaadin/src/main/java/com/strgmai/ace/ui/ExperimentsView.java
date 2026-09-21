@@ -8,6 +8,8 @@ import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.data.renderer.ComponentRenderer;
 import com.vaadin.flow.router.Route;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -17,6 +19,7 @@ import java.util.Map;
 /** Experiments list — the UI twin of GET /api/experiments (+ /api/jobs for the live status). */
 @Route(value = "experiments", layout = MainLayout.class)
 public class ExperimentsView extends VerticalLayout {
+    private static final Logger log = LoggerFactory.getLogger(ExperimentsView.class);
 
     private final ServiceClient client;
 
@@ -86,14 +89,16 @@ public class ExperimentsView extends VerticalLayout {
                                 .add(job.status());
                     }
                 }
-            } catch (final Exception ignored) {
+            } catch (final Exception e) {
                 // without the jobs list, the table status is shown as-is
+                log.warn("could not load jobs to derive live experiment statuses: {}", e.toString());
             }
             grid.setItems(experiments);
             error.setText("");
             emptyState.setText("No experiments yet — queue one with “New experiment”.");
             emptyState.setVisible(experiments.isEmpty());
         } catch (final Exception ex) {
+            log.warn("could not load experiments: {}", ex.toString());
             grid.setItems(List.of());
             error.setText(client.errorText(ex));
             emptyState.setVisible(false);

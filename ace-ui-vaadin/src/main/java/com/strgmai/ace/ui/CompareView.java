@@ -11,6 +11,8 @@ import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.select.Select;
 import com.vaadin.flow.router.Route;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,6 +20,7 @@ import java.util.List;
 /** A/B comparison — the UI twin of POST /api/compare (poolable runs only, like the service). */
 @Route(value = "compare", layout = MainLayout.class)
 public class CompareView extends VerticalLayout {
+    private static final Logger log = LoggerFactory.getLogger(CompareView.class);
 
     private final ServiceClient client;
 
@@ -34,7 +37,7 @@ public class CompareView extends VerticalLayout {
         this.client = client;
         setPadding(true);
 
-        add(new H2("Compare — stats.py on two run groups"));
+        add(new H2("Compare — StatsService on two run groups"));
 
         groupA.setPlaceholder("pick one or more run ids");
         groupB.setPlaceholder("pick one or more run ids");
@@ -64,6 +67,7 @@ public class CompareView extends VerticalLayout {
             groupA.setItems(ids);
             groupB.setItems(ids);
         } catch (final Exception e) {
+            log.warn("could not load run ids for compare: {}", e.toString());
             result.removeAll();
             result.add(Panels.error(client.errorText(e)));
         }
@@ -87,13 +91,14 @@ public class CompareView extends VerticalLayout {
         try {
             final var response = client.compare(request);
             if (response.refused() != null) {
-                result.add(Panels.warn("stats.py refused: " + response.refused()));
-                result.add(new Details("stats.py output", Panels.mono(response.printed())));
+                result.add(Panels.warn("StatsService refused: " + response.refused()));
+                result.add(new Details("StatsService output", Panels.mono(response.printed())));
                 return;
             }
-            result.add(new Details("stats.py output", Panels.mono(response.printed())));
+            result.add(new Details("StatsService output", Panels.mono(response.printed())));
             result.add(new Details("result JSON", Panels.mono(Fmt.json(response.result()))));
         } catch (final Exception e) {
+            log.warn("compare request failed: {}", e.toString());
             result.add(Panels.error(client.errorText(e)));
         }
     }

@@ -1,6 +1,8 @@
 package com.strgmai.ace.service.runner;
 
 import com.strgmai.ace.service.oracle.checks.StructureChecks;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.*;
@@ -16,6 +18,8 @@ import java.util.regex.Pattern;
 public final class VerifyTask {
     private VerifyTask() {}
 
+    private static final Logger log = LoggerFactory.getLogger(VerifyTask.class);
+
     // compiled ONCE: firstError runs this per output line, and Pattern.compile per line re-parses the regex every time
     private static final Pattern ERROR_PATTERN = Pattern.compile("error:|FAILED|What went wrong|cannot find symbol|requires JVM");
 
@@ -23,7 +27,11 @@ public final class VerifyTask {
         final List<Path> roots = StructureChecks.gradleRoots(ws);
         if (roots.isEmpty()) return Map.of("ran", false, "reason", "no gradle project");
         final int timeoutSec = cfg.get("verify_timeout_sec") instanceof Number n ? n.intValue() : 600;
-        for (Path x : StructureChecks.glob(ws, "**/build/test-results/**/*.xml")) { try { Files.deleteIfExists(x); } catch (IOException ignore) {} }
+        for (Path x : StructureChecks.glob(ws, "**/build/test-results/**/*.xml")) {
+            // a stale result file that survives this delete gets double-counted into THIS run's
+            // executed/failed totals below - worth knowing about, not just "couldn't delete"
+            try { Files.deleteIfExists(x); } catch (IOException e) { log.warn("could not delete stale test-result file {}: {}", x, e.toString()); }
+        }
         final Map<String, Object> res = new LinkedHashMap<>();
         res.put("ran", true);
         res.put("roots", new ArrayList<String>());
@@ -33,10 +41,11 @@ public final class VerifyTask {
         res.put("seconds", 0.0);
         res.put("first_error", "");
         final long t0 = System.nanoTime();
+        boolean ioAborted = false;
         try {
-            java.io.Writer log = null;
+            java.io.Writer verifyLog = null;
             try {
-                log = logPath == null ? null : Files.newBufferedWriter(logPath, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                verifyLog = logPath == null ? null : Files.newBufferedWriter(logPath, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
                 // one factory for the whole glob: newInstance() per XML file re-ran security/feature setup every time
                 final var docFactory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
                 for (Path r : roots) {
@@ -56,7 +65,7 @@ public final class VerifyTask {
                     } catch (Exception e) { rc = 127; out = String.valueOf(e); }
                     ((List<Integer>) res.get("rc")).add(rc);
                     ((List<String>) res.get("roots")).add(ws.relativize(r).toString());
-                    if (log != null) log.write("### root=" + ws.relativize(r) + " cmd=" + String.join(" ", cmd) + " rc=" + rc + "\n" + out + "\n");
+                    if (verifyLog != null) verifyLog.write("### root=" + ws.relativize(r) + " cmd=" + String.join(" ", cmd) + " rc=" + rc + "\n" + out + "\n");
                     if (rc != 0 && String.valueOf(res.get("first_error")).isEmpty())
                         res.put("first_error", firstError(out));
                     for (Path x : StructureChecks.glob(r, "**/build/test-results/**/*.xml")) {
@@ -68,17 +77,28 @@ public final class VerifyTask {
                                 res.merge("failed", Integer.parseInt(root.getAttribute("failures").isEmpty() ? "0" : root.getAttribute("failures"))
                                                 + Integer.parseInt(root.getAttribute("errors").isEmpty() ? "0" : root.getAttribute("errors")), (a, b) -> (int) a + (int) b);
                             }
-                        } catch (Exception ignore) {}
+                        } catch (Exception e) {
+                            // silently dropping this file's counts from executed/failed can flip a
+                            // real run's green/red verdict with zero trace - this is the harness's
+                            // own "truthful record" the class javadoc promises, so log it
+                            log.warn("could not parse JUnit XML result {}: {}", x, e.toString());
+                        }
                         }
                     }
             } finally {
                 // an IOException mid-loop must still reach the close, or the file descriptor leaks
-                if (log != null) { try { log.flush(); log.close(); } catch (IOException ignore) {} }
+                if (verifyLog != null) { try { verifyLog.flush(); verifyLog.close(); } catch (IOException e) { log.warn("failed to close verify log {}: {}", logPath, e.toString()); } }
             }
-        } catch (IOException ignore) {}
+        } catch (IOException e) {
+            // res already has "ran": true with whatever counters accumulated so far - left alone,
+            // an infra failure here (disk full, bad logPath) would report as a legitimate RED
+            // instead of "could not run", which the class's own javadoc says an infra failure never is
+            log.warn("verify() aborted by an I/O failure, treating as could-not-run: {}", e.toString());
+            ioAborted = true;
+        }
         res.put("seconds", Math.round((System.nanoTime() - t0) / 1e8) / 10.0);
         final List<Integer> rcs = (List<Integer>) res.get("rc");
-        if (rcs.stream().anyMatch(rc -> rc != 0) && ((int) res.get("executed")) == 0) {
+        if (ioAborted || (rcs.stream().anyMatch(rc -> rc != 0) && ((int) res.get("executed")) == 0)) {
             res.put("green", null);   // inconclusive: nothing was executed and the build itself failed
             res.put("could_not_run", true);
         } else {

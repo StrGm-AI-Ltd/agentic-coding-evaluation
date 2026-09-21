@@ -1,5 +1,8 @@
 package com.strgmai.ace.service.service;
 
+import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -18,6 +21,7 @@ import java.util.NoSuchElementException;
  *  ("these runs are not comparable"), a successful answer to the question asked, not an error. */
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
     /** a bad request body/parameter: RunSpec validation, unknown template, k out of range, a run id
      *  already queued, a results dir already on disk (JobQueue.enqueue) */
@@ -38,6 +42,15 @@ public class ApiExceptionHandler {
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<Map<String, Object>> conflict(final IllegalStateException e) {
         return body(HttpStatus.CONFLICT, e);
+    }
+
+    /** anything else: an unexpected server-side failure. Same {"detail": ...} shape as every other
+     *  error - never Spring's default whitebox 500 body - and always logged with the request it
+     *  came from, so an unhandled exception is never silently invisible to the operator. */
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<Map<String, Object>> serverError(final Exception e, final HttpServletRequest req) {
+        log.error("unhandled exception on {} {}", req.getMethod(), req.getRequestURI(), e);
+        return body(HttpStatus.INTERNAL_SERVER_ERROR, e);
     }
 
     private static ResponseEntity<Map<String, Object>> body(final HttpStatus status, final Exception e) {

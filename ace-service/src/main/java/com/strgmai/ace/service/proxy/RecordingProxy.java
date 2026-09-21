@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpServer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -28,6 +30,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *  analysis needs). Streams SSE line-by-line upstream; asks the server to append a usage chunk.
  *  Not a singleton: RunBench's RecordingProxyFactory creates one per phase/task/parallel session. */
 public class RecordingProxy {
+    private static final Logger log = LoggerFactory.getLogger(RecordingProxy.class);
     private final ObjectMapper json = new ObjectMapper();
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(15)).build();
     private final AtomicInteger seq = new AtomicInteger();
@@ -50,9 +53,18 @@ public class RecordingProxy {
         this.journal = journal; this.tokenBudget = tokenBudget; this.tag = tag; this.stopping = false;
         Files.createDirectories(journal.toAbsolutePath().getParent());
         if (!Files.exists(journal)) Files.createFile(journal);
-        try { seq.set((int) Files.lines(journal).count()); } catch (Exception ignore) {}   // --append: the seq continues the journal, as the Python proxy does
+        // --append: the seq continues the journal, as the Python proxy does. A failed count here
+        // silently restarts seq at 0, which can collide with existing entries - worth knowing about.
+        try { seq.set((int) Files.lines(journal).count()); }
+        catch (Exception e) { log.warn("could not count existing journal lines in {}, seq restarts at 0: {}", journal, e.toString()); }
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/", x -> { try { forward(x); } catch (Exception e) { try { x.close(); } catch (Exception ignore) {} } });
+        server.createContext("/", x -> {
+            try { forward(x); }
+            catch (Exception e) {
+                log.warn("recording proxy: unhandled failure forwarding {} {}: {}", x.getRequestMethod(), x.getRequestURI(), e.toString());
+                try { x.close(); } catch (Exception ignore) {}
+            }
+        });
         server.setExecutor(Executors.newCachedThreadPool());
         server.start();
         return "http://127.0.0.1:" + server.getAddress().getPort() + "/v1";
@@ -62,7 +74,9 @@ public class RecordingProxy {
     public synchronized void stop() {
         if (server == null) return;
         stopping = true;
-        for (HttpResponse<InputStream> r : inflight) { try { r.body().close(); } catch (Exception ignore) {} }
+        for (HttpResponse<InputStream> r : inflight) {
+            try { r.body().close(); } catch (Exception e) { log.debug("closing an in-flight stream on stop(): {}", e.toString()); }
+        }
         server.stop(0);
         server = null;
     }
@@ -75,7 +89,10 @@ public class RecordingProxy {
         rec.put("method", x.getRequestMethod());
         rec.put("path", path);
         JsonNode req = null;
-        try { if (body.length > 0) req = json.readTree(body); } catch (Exception ignore) {}
+        // a chat request that fails to parse here silently skips budget enforcement and sampler
+        // pinning below (isChat requires a parsed object) - worth knowing about, not just "not chat"
+        try { if (body.length > 0) req = json.readTree(body); }
+        catch (Exception e) { log.warn("could not parse request body as JSON for {} {}: {}", x.getRequestMethod(), path, e.toString()); }
         final boolean isChat = path.startsWith("/v1/chat/completions") && req != null && req.isObject();
         if (isChat) {
             final ObjectNode r = (ObjectNode) req;
@@ -111,7 +128,10 @@ public class RecordingProxy {
                 final byte[] out = up.body().readAllBytes();
                 reply(x, up.statusCode(), out);
                 JsonNode resp = null;
-                try { if (isChat) resp = json.readTree(out); } catch (Exception ignore) {}
+                // an unparseable upstream response loses the response data for this turn in the
+                // journal, which is the run's ground truth for metrics - worth knowing about
+                try { if (isChat) resp = json.readTree(out); }
+                catch (Exception e) { log.warn("could not parse upstream response as JSON for {}: {}", path, e.toString()); }
                 journalRecord(rec.put("status", up.statusCode()).put("streamed", false)
                         .put("latency_sec", elapsed(t0)), req, resp);
             }
@@ -148,7 +168,12 @@ public class RecordingProxy {
                 if (stopping) { drainAborted = true; break; }
             }
             out.flush();
-        } catch (Exception e) { clientAborted = true; }
+        } catch (Exception e) {
+            // client_aborted IS journaled below - this only adds the reason for diagnosing whether
+            // it was a genuine client disconnect or a bug in the read/relay loop itself
+            log.debug("SSE stream ended abnormally: {}", e.toString());
+            clientAborted = true;
+        }
         if (stopping) drainAborted = true;
         final SseAssembler.Assembled asm = isChat ? SseAssembler.parse(chunks) : null;
         final ObjectNode resp = json.createObjectNode();
@@ -182,7 +207,8 @@ public class RecordingProxy {
             x.getResponseHeaders().set("Content-Type", "application/json");
             x.sendResponseHeaders(status, out.length == 0 ? -1 : out.length);
             if (out.length > 0) { x.getResponseBody().write(out); x.getResponseBody().flush(); }
-        } catch (Exception ignore) {
+        } catch (Exception e) {
+            log.debug("could not write response to client (likely disconnected): {}", e.toString());
         } finally { try { x.close(); } catch (Exception ignore) {} }
     }
 
@@ -197,7 +223,11 @@ public class RecordingProxy {
             rec.put("seq", seq.incrementAndGet());
             Files.write(journal, json.writeValueAsBytes(rec), StandardOpenOption.CREATE, StandardOpenOption.APPEND);   // APPEND: a journal is never truncated
             Files.writeString(journal, "\n", StandardOpenOption.APPEND);
-        } catch (Exception ignore) { /* the journal must never break the proxy */ }
+        } catch (Exception e) {
+            // the journal must never break the proxy - but losing a journal record (the run's own
+            // ground truth for metrics/validity) is worth knowing about, so log it rather than vanish it
+            log.warn("failed to write journal record to {}: {}", journal, e.toString());
+        }
     }
 
     public long spent() { return spent.get(); }

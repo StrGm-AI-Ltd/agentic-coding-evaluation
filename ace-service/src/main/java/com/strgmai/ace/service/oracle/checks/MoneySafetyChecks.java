@@ -3,6 +3,8 @@ package com.strgmai.ace.service.oracle.checks;
 import com.strgmai.ace.service.oracle.CheckId;
 import com.strgmai.ace.service.oracle.CheckResult;
 import com.strgmai.ace.service.oracle.CheckStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.file.*;
 import java.util.*;
@@ -13,6 +15,7 @@ import java.util.regex.*;
  *  Kotlin, SQL column types, test-source-set skipping only, comment stripping, Objects.equals/getter
  *  .equals forms, per-METHOD point-in-time definitions. */
 public final class MoneySafetyChecks {
+    private static final Logger log = LoggerFactory.getLogger(MoneySafetyChecks.class);
     private MoneySafetyChecks() {}
 
     static final String MONEY = "(?:price|amount|balance|cash|total|cost|fee|fees|qty|quantity|notional|premium|margin)";
@@ -130,6 +133,9 @@ public final class MoneySafetyChecks {
     static String stripComments(final String src) {
         return src.replaceAll("(?s)/\\*.*?\\*/", "").replaceAll("//[^\n]*", "");
     }
-    static String read(Path p) { try { return Files.readString(p); } catch (Exception e) { return ""; } }
+    static String read(Path p) {
+        try { return Files.readString(p); }
+        catch (Exception e) { log.warn("could not read {}, treating content as empty (the M-check may false-pass): {}", p, e.toString()); return ""; }
+    }
     static String rel(Path p, Path ws) { return ws.relativize(p).toString(); }
 }

@@ -41,7 +41,7 @@ public class GroupCard extends VerticalLayout {
         add(head);
 
         if (group.refused() != null) {
-            add(Panels.error("stats.py refused: " + group.refused()));
+            add(Panels.error("StatsService refused: " + group.refused()));
         } else {
             final var summary = group.summary();
             final var k = summary == null || summary.k() == null ? 0 : summary.k();
@@ -89,7 +89,7 @@ public class GroupCard extends VerticalLayout {
         add(runs);
 
         final var printed = Panels.mono(group.printed());
-        final var details = new Details("stats.py output", printed);
+        final var details = new Details("StatsService output", printed);
         add(details);
     }
 

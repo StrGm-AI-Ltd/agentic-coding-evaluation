@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -18,6 +20,7 @@ import java.util.concurrent.Executors;
  *  HttpServer (the Spring TradingController serves the same contract inside the app; this is the
  *  standalone twin used to CALIBRATE the black-box suite, with BUGS injection). */
 public final class ReferenceServer {
+    private static final Logger log = LoggerFactory.getLogger(ReferenceServer.class);
     private static final ObjectMapper JSON = new ObjectMapper();
     private final TradingService svc;
     private HttpServer server;
@@ -29,7 +32,15 @@ public final class ReferenceServer {
 
     public int start(final int port) throws Exception {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", port == 0 ? 0 : port), 0);
-        server.createContext("/", x -> { try { route(x); } catch (Exception e) { try { x.close(); } catch (Exception ignore) {} } });
+        server.createContext("/", x -> {
+            try { route(x); }
+            catch (Exception e) {
+                // this reference server calibrates the oracle's blackbox suite - a silently swallowed
+                // failure here can mask a real calibration bug, not just a client hiccup
+                log.warn("reference server: unhandled failure routing {} {}: {}", x.getRequestMethod(), x.getRequestURI(), e.toString());
+                try { x.close(); } catch (Exception ignore) {}
+            }
+        });
         executor = Executors.newCachedThreadPool();   // cached: the pool is shut down explicitly in stop()
         server.setExecutor(executor);
         server.start();

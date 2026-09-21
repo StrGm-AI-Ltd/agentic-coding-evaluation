@@ -16,6 +16,8 @@ import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.client.RestClientResponseException;
 import tools.jackson.databind.JsonNode;
 
@@ -27,6 +29,7 @@ import java.util.List;
  * per-step scores, provenance, re-score, and the embedded file browser. */
 @Route(value = "runs/:runId", layout = MainLayout.class)
 public class RunDetailView extends VerticalLayout implements BeforeEnterObserver {
+    private static final Logger log = LoggerFactory.getLogger(RunDetailView.class);
 
     private static final List<String> PROVENANCE_KEYS = List.of(
             "model", "quantization", "harness", "harness_version", "harness_sha",
@@ -59,6 +62,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
             if (isNotImported(e)) {
                 addNotImportedPanel();
             } else {
+                log.warn("could not load run {}: {}", runId, e.toString());
                 add(new H3("Run " + runId), Panels.error(client.errorText(e)));
             }
             return;
@@ -133,6 +137,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
                     Notification.show("Queued re-score job #" + job.id(), 3000, Notification.Position.BOTTOM_END);
                     getUI().ifPresent(ui -> ui.navigate("jobs"));
                 } catch (final Exception ex) {
+                    log.warn("could not queue re-score for run {}: {}", runId, ex.toString());
                     Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
                 }
             });
@@ -192,8 +197,10 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         Api.Job job = null;   // reassigned below - cannot be final; null initializer rules out var
         try {
             job = jobForRun(client.jobs(), runId);
-        } catch (final Exception ignored) {
-            // the panel falls back to the generic rescan path
+        } catch (final Exception e) {
+            // the panel falls back to the generic rescan path, but loses the more specific
+            // in-flight/blocked/ended messaging it would otherwise show
+            log.warn("could not load jobs to find the one behind run {}: {}", runId, e.toString());
         }
         final var runJob = job;
 
@@ -225,6 +232,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
                         client.importAll();
                         render();
                     } catch (final Exception ex) {
+                        log.warn("could not rescan results/ for run {}: {}", runId, ex.toString());
                         Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
                     }
                 }));

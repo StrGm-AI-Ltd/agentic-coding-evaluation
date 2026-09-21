@@ -12,6 +12,8 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import dev.langchain4j.model.output.FinishReason;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
@@ -28,6 +30,7 @@ import java.util.*;
  *  enforces the token budget. */
 @Component
 public class ReferenceAgent {
+    private static final Logger log = LoggerFactory.getLogger(ReferenceAgent.class);
     public static final String AGENT_VERSION = "jls-ref-1.0";
     /** ObjectMapper is thread-safe and designed for reuse; constructing one per tool call (up to 400
      * turns x several calls) would allocate hundreds of expensive serializer/deserializer instances. */
@@ -172,6 +175,10 @@ public class ReferenceAgent {
                 session.end(turns, toolErrors, compactions, finish);
                 return result(name, rc, t0, finish, turns, toolErrors, compactions, session, start);
             } catch (TransientError e) {
+                // rc=2 alone gives no way to tell auth failure/5xx/network drop apart after the
+                // fact - the real cause (e's cause carries the HTTP status per chatWithRetry) is
+                // otherwise gone the moment this method returns
+                log.warn("session {} ended (rc=2) after retries were exhausted: {}", name, e.getCause() == null ? e : e.getCause());
                 session.end(turns, toolErrors, compactions, finish);
                 return result(name, 2, t0, finish, turns, toolErrors, compactions, session, start);
             }
@@ -195,7 +202,12 @@ public class ReferenceAgent {
             for (ToolExecutionRequest c : calls) {
                 Map<String, Object> args;
                 try { args = MAPPER.readValue(c.arguments(), Map.class); }
-                catch (Exception e) { args = Map.of(); }
+                catch (Exception e) {
+                    // executing the tool with {} instead of the model's real (malformed) args
+                    // silently changes what the tool actually does, with nothing pointing at why
+                    log.warn("could not parse tool call arguments for {} ({}), executing with no arguments: {}", c.name(), c.id(), e.toString());
+                    args = Map.of();
+                }
                 final AgentTools.Outcome out = executeTool(c.name(), args, cwd, env);
                 if (out.isError()) toolErrors++;
                 msgs.add(ToolExecutionResultMessage.from(c, out.output()));

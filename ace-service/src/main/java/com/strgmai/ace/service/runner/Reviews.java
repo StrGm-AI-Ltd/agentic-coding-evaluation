@@ -7,6 +7,8 @@ import com.strgmai.ace.service.metrics.Trajectory;
 import com.strgmai.ace.service.pack.Packs;
 import com.strgmai.ace.service.plan.PlanTask;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.*;
@@ -21,6 +23,7 @@ import java.util.*;
  *  is megabytes), then runs a fresh reviewer session against the harness-computed objective index. */
 @Component
 public class Reviews {
+    private static final Logger log = LoggerFactory.getLogger(Reviews.class);
     private static final ObjectMapper JSON = new ObjectMapper();
     private final BenchProperties props;
     private final ReferenceAgent agent;
@@ -170,7 +173,8 @@ public class Reviews {
         if (Files.isRegularFile(journal))
             for (String line : Files.readAllLines(journal)) {
                 if (line.isBlank()) continue;
-                try { recs.add(JSON.readValue(line, Map.class)); } catch (Exception ignore) {}
+                try { recs.add(JSON.readValue(line, Map.class)); }
+                catch (Exception e) { log.debug("could not parse journal line for the trajectory render, dropping it: {}", e.toString()); }
             }
         final List<Trajectory.Turn> turns = Trajectory.turnsFromProxy(recs);
         final Map<String, Object> derived = manifest.get("derived") instanceof Map<?, ?> d ? (Map<String, Object>) d : Map.of();

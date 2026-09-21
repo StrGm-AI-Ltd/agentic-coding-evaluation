@@ -2,12 +2,15 @@ package com.strgmai.ace.service.proxy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.*;
 
 /** Port of record_proxy.py's parse_sse_chunks: reassemble a streamed chat completion —
  *  content, reasoning, tool_calls (arguments concatenated per index), finish, usage. */
 public final class SseAssembler {
+    private static final Logger log = LoggerFactory.getLogger(SseAssembler.class);
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private SseAssembler() {}
@@ -24,7 +27,10 @@ public final class SseAssembler {
                 final String data = line.substring(5).strip();
                 if (data.equals("[DONE]")) continue;
                 JsonNode obj;
-                try { obj = JSON.readTree(data); } catch (Exception e) { continue; }
+                // a dropped chunk here can silently produce an incomplete content/tool_calls
+                // assembly - and this feeds the journal, which is later treated as ground truth
+                try { obj = JSON.readTree(data); }
+                catch (Exception e) { log.warn("could not parse SSE data chunk, dropping it: {}", e.toString()); continue; }
                 if (obj.hasNonNull("usage")) usage = obj.get("usage");
                 for (JsonNode ch : obj.path("choices")) {
                     final JsonNode d = ch.path("delta");

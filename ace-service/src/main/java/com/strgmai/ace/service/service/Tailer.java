@@ -2,6 +2,8 @@ package com.strgmai.ace.service.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -15,6 +17,7 @@ import java.util.regex.Pattern;
  *  owns one Tailer and keeps polling it. Offsets stay in BYTES — advancing by the re-encoded length
  *  of replace-decoded text would drift past the file's real end on invalid UTF-8. */
 public final class Tailer {
+    private static final Logger log = LoggerFactory.getLogger(Tailer.class);
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Pattern DONE = Pattern.compile("done after (\\d+) turns \\(finish=(\\w+), tool errors (\\d+), compactions (\\d+)\\)");
 
@@ -38,7 +41,7 @@ public final class Tailer {
                 if (finish != null)
                     events.add(Map.of("type", "session_done", "log", p.getFileName().toString(), "finish", finish));
             }
-        } catch (IOException ignore) {}
+        } catch (IOException e) { log.debug("could not list *.log files under {}: {}", runDir, e.toString()); }
         return events;
     }
 
@@ -47,9 +50,12 @@ public final class Tailer {
         List<Path> paths;
         try (java.util.stream.Stream<Path> stream = Files.list(dir)) {   // the stream holds a directory FD - it must be closed
             paths = stream.filter(Files::isRegularFile)
-                    .sorted(Comparator.comparing(p -> { try { return Files.getLastModifiedTime(p).toMillis(); } catch (IOException e) { return 0L; } })).toList();
+                    .sorted(Comparator.comparing(p -> {
+                        try { return Files.getLastModifiedTime(p).toMillis(); }
+                        catch (IOException e) { log.debug("could not read mtime of {}, sorting first: {}", p, e.toString()); return 0L; }
+                    })).toList();
         }
-        catch (IOException e) { return; }
+        catch (IOException e) { log.debug("could not list {}: {}", dir, e.toString()); return; }
         for (Path p : paths) {
             final String key = dir.getFileName() + "/" + p.getFileName();
             if (!Files.isRegularFile(p) || seenFiles.contains(key)) continue;
@@ -75,9 +81,9 @@ public final class Tailer {
                     events.add(Map.of("type", "session_started", "session_id", r.path("id").asText(),
                             "agent", r.path("agent").asText(), "model", r.path("model").asText(),
                             "path", "sessions/" + p.getFileName()));
-                } catch (Exception ignore) { /* header not fully written yet; retry next poll */ }
+                } catch (Exception e) { log.debug("session header for {} not fully written yet, retrying next poll: {}", p, e.toString()); }
             }
-        } catch (IOException ignore) {}
+        } catch (IOException e) { log.debug("could not list session dir {}: {}", dir, e.toString()); }
     }
 
     private void tailRequests(final Path path, final List<Map<String, Object>> events) {
@@ -95,7 +101,7 @@ public final class Tailer {
                 e.put("client_aborted", r.path("client_aborted").asBoolean(false));
                 e.put("tag", r.path("task").isTextual() ? r.path("task").asText() : null);
                 events.add(e);
-            } catch (Exception ignore) {}
+            } catch (Exception ex) { log.debug("could not parse journal line for the live view, skipping it: {}", ex.toString()); }
         }
     }
 
@@ -123,6 +129,10 @@ public final class Tailer {
                 offsets.put(path.toString(), start + lastNl + 1);      // byte-exact: valid multi-byte UTF-8 never drifts
                 return lines;
             }
-        } catch (IOException e) { return List.of(); }
+        } catch (IOException e) {
+            // the live view silently shows no progress with nothing pointing at a read failure
+            log.debug("could not tail {}: {}", path, e.toString());
+            return List.of();
+        }
     }
 }

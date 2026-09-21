@@ -1,5 +1,7 @@
 package com.strgmai.ace.ui;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
 
 import java.time.LocalDateTime;
@@ -11,6 +13,7 @@ import java.util.function.Function;
 
 /** Small formatting helpers mirroring the Jinja2 macros in the original UI (_macros.html). */
 public final class Fmt {
+    private static final Logger log = LoggerFactory.getLogger(Fmt.class);
 
     private Fmt() {
     }
@@ -91,7 +94,8 @@ public final class Fmt {
         }
         try {
             return LocalDateTime.parse(t).atOffset(ZoneOffset.UTC);
-        } catch (final Exception ignored) {
+        } catch (final Exception e) {
+            log.debug("could not parse '{}' as a timestamp in either known format: {}", timestamp, e.toString());
             return null;
         }
     }

@@ -4,6 +4,8 @@ import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.config.JsonColumns;
 import com.strgmai.ace.service.jooq.tables.records.ExperimentsRecord;
 import org.jooq.DSLContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Path;
@@ -21,6 +23,7 @@ import static com.strgmai.ace.service.jooq.Tables.RUNS;
  *  names share their first 10 alphanumerics must not mint colliding run ids. */
 @Service
 public class ExperimentsService {
+    private static final Logger log = LoggerFactory.getLogger(ExperimentsService.class);
     public static final String RUNG = "L3p_point_in_time";
 
     private final DSLContext dsl;
@@ -126,7 +129,12 @@ public class ExperimentsService {
             var plan = com.strgmai.ace.service.plan.PlanParser.parseFile(java.nio.file.Path.of(
                     str(System.getProperty("ace.repo_root", ".")), "task/REFERENCE_PLAN.md"));
             return plan.size() + 1;
-        } catch (Exception e) { return 8; }
+        } catch (Exception e) {
+            // this feeds task_wall/task_tokens budget multipliers for every monolithic arm - a
+            // silent wrong fallback here silently mis-budgets every experiment created
+            log.warn("could not read/parse task/REFERENCE_PLAN.md, falling back to a task count of 8: {}", e.toString());
+            return 8;
+        }
     }
     static String str(Object o) { return o == null ? null : String.valueOf(o); }
     static int num(Object o) { return o instanceof Number n ? n.intValue() : Integer.parseInt(String.valueOf(o)); }
@@ -212,18 +220,33 @@ public class ExperimentsService {
                 com.fasterxml.jackson.databind.JsonNode v = new com.fasterxml.jackson.databind.ObjectMapper()
                         .readTree(d.resolve("oracle.json").toFile()).path("functional_score_pct");
                 if (v.isNumber()) out.add(v.asDouble());
-            } catch (Exception ignore) {}
+            } catch (Exception e) {
+                // a run silently dropped here still lets the comparison "succeed", just on a
+                // smaller/skewed sample - with no record anywhere that data was excluded
+                log.warn("could not read functional_score_pct from {}/oracle.json, excluding it from the comparison: {}", d, e.toString());
+            }
         }
         if (out.isEmpty()) throw new IllegalArgumentException("no functional scores on one side");
         return out;
     }
 
     Map<String, Object> fromJson(String s) {
-        try { return new com.fasterxml.jackson.databind.ObjectMapper().readValue(s, Map.class); } catch (Exception e) { return new LinkedHashMap<>(); }
+        try { return new com.fasterxml.jackson.databind.ObjectMapper().readValue(s, Map.class); }
+        catch (Exception e) {
+            // falling back to {} silently drops the experiment's own params (e.g. agents_a/agents_b
+            // for agent_ab), which templatePairs() reads - a wrong comparison pairing with no trace
+            log.warn("could not parse stored experiment params, treating as empty: {}", e.toString());
+            return new LinkedHashMap<>();
+        }
     }
 
     private String toJson(final Object o) {
         try { return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(o); }
-        catch (Exception e) { return "{}"; }
+        catch (Exception e) {
+            // this stores the experiment's own comparison result - silently storing "{}" here loses
+            // the actual A/B comparison the caller just computed
+            log.warn("could not serialize {} for storage, storing as empty: {}", o, e.toString());
+            return "{}";
+        }
     }
 }

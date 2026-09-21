@@ -6,6 +6,8 @@ import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -23,6 +25,7 @@ import java.util.Set;
  * a new tab at the file-view route; binary files link out to the service.
  */
 public class FilesBrowser extends VerticalLayout {
+    private static final Logger log = LoggerFactory.getLogger(FilesBrowser.class);
 
     private static final Set<String> TEXT_SUFFIXES =
             Set.of(".md", ".log", ".json", ".jsonl", ".txt", ".yaml", ".yml");
@@ -84,6 +87,7 @@ public class FilesBrowser extends VerticalLayout {
                     : size < 1024 * 1024 ? String.format("%.1f KiB", size / 1024.0)
                     : String.format("%.1f MiB", size / 1024.0 / 1024.0);
         } catch (final IOException e) {
+            log.debug("could not stat {}/{}: {}", resultsDir, name, e.toString());
             return "–";
         }
     }
@@ -97,6 +101,7 @@ public class FilesBrowser extends VerticalLayout {
         try {
             return sizeBytes(resultsDir, name);
         } catch (final IOException e) {
+            log.debug("could not stat {}/{} for sorting: {}", resultsDir, name, e.toString());
             return Long.MAX_VALUE;
         }
     }
@@ -126,6 +131,10 @@ public class FilesBrowser extends VerticalLayout {
                 }
             }
         } catch (final IOException e) {
+            // the directory itself was already confirmed to exist above, so this is a genuine
+            // read failure (permissions, a TOCTOU removal) - the browser then shows "no files",
+            // indistinguishable from a truly empty run, unless this is logged
+            log.warn("could not list files under {}: {}", resultsDir, e.toString());
             return List.of();
         }
         return files;

@@ -9,6 +9,8 @@ import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.Location;
 import com.vaadin.flow.router.Route;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
@@ -22,6 +24,7 @@ import java.util.List;
 @Route(value = "file-view")
 @CssImport("./styles/md-viewer.css")
 public class FileViewerView extends VerticalLayout implements BeforeEnterObserver {
+    private static final Logger log = LoggerFactory.getLogger(FileViewerView.class);
 
     private final ServiceClient client;
 
@@ -49,6 +52,7 @@ public class FileViewerView extends VerticalLayout implements BeforeEnterObserve
             final var content = client.runFileText(runId, path);
             add(new FileViewerContent(runId, path, content));
         } catch (final Exception e) {
+            log.warn("could not load {}/{}: {}", runId, path, e.toString());
             add(new com.vaadin.flow.component.html.H2(runId + " — " + path));
             add(Panels.error(client.errorText(e)));
         }

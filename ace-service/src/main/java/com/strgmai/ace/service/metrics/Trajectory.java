@@ -2,6 +2,8 @@ package com.strgmai.ace.service.metrics;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.file.*;
 import java.security.MessageDigest;
@@ -19,6 +21,7 @@ import java.util.regex.Pattern;
  *  design, not the machine — R7). */
 public final class Trajectory {
     private Trajectory() {}
+    private static final Logger log = LoggerFactory.getLogger(Trajectory.class);
     static final ObjectMapper JSON = new ObjectMapper();
     static final Pattern TEST_CMD = Pattern.compile("gradle|gradlew|pytest|npm test|mvn|\\bmake\\b");
 
@@ -74,7 +77,8 @@ public final class Trajectory {
     static boolean isTestOrBuild(final ToolCall c) {
         if (!c.name().equals("bash")) return false;
         String cmd = "";
-        try { cmd = String.valueOf(JSON.readTree(c.args()).path("command").asText("")); } catch (Exception ignore) {}
+        try { cmd = String.valueOf(JSON.readTree(c.args()).path("command").asText("")); }
+        catch (Exception e) { log.debug("could not parse bash tool args as JSON: {}", e.toString()); }
         return TEST_CMD.matcher(cmd).find();
     }
 
@@ -84,7 +88,10 @@ public final class Trajectory {
             final String p = a.path("path").asText(a.path("file_path").asText(a.path("filePath").asText("")));
             if (!p.isEmpty()) return p;
             return a.path("command").asText("").substring(0, Math.min(60, a.path("command").asText("").length()));
-        } catch (Exception e) { return args.substring(0, Math.min(60, args.length())); }
+        } catch (Exception e) {
+            log.debug("could not parse tool args as JSON, falling back to the raw text: {}", e.toString());
+            return args.substring(0, Math.min(60, args.length()));
+        }
     }
 
     static boolean inWindows(Turn t, final List<Map<String, Object>> windows) {
@@ -94,7 +101,10 @@ public final class Trajectory {
             return windows.stream().filter(w -> w.get("start_iso") != null && w.get("end_iso") != null)
                     .anyMatch(w -> !ts.isBefore(OffsetDateTime.parse(String.valueOf(w.get("start_iso"))))
                             && !ts.isAfter(OffsetDateTime.parse(String.valueOf(w.get("end_iso")))));
-        } catch (Exception e) { return false; }
+        } catch (Exception e) {
+            log.debug("could not parse turn/window timestamp, treating as outside the docker window: {}", e.toString());
+            return false;
+        }
     }
 
     /** the effectiveness summary; `derived` (manifest.derived) supplies the run's window and
@@ -260,7 +270,7 @@ public final class Trajectory {
                     try {
                         final OffsetDateTime ts = OffsetDateTime.parse(t.ts().replace("Z", "+00:00"));
                         if (!ts.isBefore(OffsetDateTime.parse(e.getValue()[0])) && !ts.isAfter(OffsetDateTime.parse(e.getValue()[1]))) tt.add(i + 1);
-                    } catch (Exception ignore) {}
+                    } catch (Exception ex) { log.debug("could not parse task window timestamp for {}: {}", e.getKey(), ex.toString()); }
                 }
                 if (!tt.isEmpty()) lines.add("- " + e.getKey() + ": turns " + tt.get(0) + "-" + tt.get(tt.size() - 1) + " (" + tt.size() + " turns)");
             }
@@ -276,7 +286,10 @@ public final class Trajectory {
                 try {
                     final JsonNode d = JSON.readTree(c.args());
                     arg = d.path("command").asText(d.path("path").asText(d.path("file_path").asText(JSON.writeValueAsString(d))));
-                } catch (Exception e) { arg = c.args(); }
+                } catch (Exception e) {
+                    log.debug("could not parse tool call args for the transcript, using the raw text: {}", e.toString());
+                    arg = c.args();
+                }
                 lines.add("- " + c.name() + ": " + arg.substring(0, Math.min(220, arg.length())).replace("\n", " "));
             }
             if (t.toolCalls().isEmpty() && t.contentChars() > 0) lines.add("- says (" + t.contentChars() + " chars)");
@@ -316,6 +329,9 @@ public final class Trajectory {
 
     static String sha1(final String s) {
         try { return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(s.getBytes())).substring(0, 10); }
-        catch (Exception e) { return String.valueOf(s.hashCode()); }
+        catch (Exception e) {
+            log.debug("SHA-1 unavailable, falling back to hashCode() for thrash detection: {}", e.toString());
+            return String.valueOf(s.hashCode());
+        }
     }
 }

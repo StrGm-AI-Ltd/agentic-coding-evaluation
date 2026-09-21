@@ -1,5 +1,8 @@
 package com.strgmai.ace.service.docker;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.nio.file.*;
 import java.time.Instant;
@@ -15,6 +18,8 @@ import java.util.concurrent.TimeUnit;
  *  fresh HOME) and the shim-log parsing that drives the window record. */
 public final class DockerService {
     private DockerService() {}
+
+    private static final Logger log = LoggerFactory.getLogger(DockerService.class);
 
     /** cheap, daemon-free: is Docker Desktop's backend alive right now */
     public static boolean dockerRunning() {
@@ -42,7 +47,7 @@ public final class DockerService {
     /** quit Docker Desktop so its VM stops competing with the model; it wedges, so fall back to a hard kill quickly */
     public static boolean dockerDown(final int timeoutSec) {
         try { new ProcessBuilder("osascript", "-e", "quit app \"Docker\"").start().waitFor(20, TimeUnit.SECONDS); }
-        catch (Exception ignore) {}
+        catch (Exception e) { log.debug("graceful `quit app Docker` failed, falling back to a hard kill: {}", e.toString()); }
         for (int i = 0; i < timeoutSec / 3; i++) {
             if (sh(8, "pgrep", "-f", "com.docker.backend").rc != 0) return true;
             sleep(3);
@@ -94,9 +99,9 @@ public final class DockerService {
                         if (parts.length > 2 && parts[2].startsWith("#ready")) continue;
                         calls++;
                         last = ts.toEpochSecond() + ts.getNano() / 1_000_000_000L;
-                    } catch (Exception ignore) {}
+                    } catch (Exception e) { log.debug("could not parse shim log line '{}': {}", line, e.toString()); }
                 }
-            } catch (IOException ignore) {}
+            } catch (IOException e) { log.warn("could not read docker shim log {}: {}", logPath, e.toString()); }
         }
         out[0] = calls; out[1] = (int) Math.min(last, Integer.MAX_VALUE); out[2] = starts;
         return out;
@@ -141,7 +146,7 @@ public final class DockerService {
         Thread t = new Thread(() -> {
             try (var r = new java.io.BufferedReader(new java.io.InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8))) {
                 for (String line; (line = r.readLine()) != null; ) sb.append(line).append('\n');
-            } catch (Exception ignore) {}
+            } catch (Exception e) { log.debug("subprocess output stream drain ended: {}", e.toString()); }
         }, "proc-drain");
         t.setDaemon(true);
         t.start();

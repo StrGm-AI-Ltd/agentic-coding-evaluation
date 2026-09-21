@@ -3,6 +3,8 @@ package com.strgmai.ace.service.oracle.checks;
 import com.strgmai.ace.service.oracle.CheckId;
 import com.strgmai.ace.service.oracle.CheckResult;
 import com.strgmai.ace.service.oracle.CheckStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.*;
@@ -15,6 +17,7 @@ import java.util.stream.Stream;
  *  (script > 1 KB + properties) in ANY Gradle root; S7 requires the spec to look like OpenAPI
  *  (Java port checks the openapi/paths keys with a tolerant text scan instead of PyYAML). */
 public final class StructureChecks {
+    private static final Logger log = LoggerFactory.getLogger(StructureChecks.class);
     private StructureChecks() {}
 
     static final Set<String> SKIP_DIRS = Set.of("/build/", "/.gradle/", "/node_modules/", "/.git/", "/buildSrc/", "/dist/", "/target/", "/out/");
@@ -138,9 +141,20 @@ public final class StructureChecks {
         int max = 4096;   // a walked workspace is a small source tree; never loop a runaway node_modules
         try (Stream<Path> s = Files.walk(root)) {
             return s.filter(Files::isRegularFile).filter(p -> matchers.stream().anyMatch(m -> m.matches(p))).limit(max).sorted().toList();
-        } catch (IOException e) { return List.of(); }
+        } catch (IOException e) {
+            // used by nearly every check - an empty result here can silently produce a false PASS
+            // ("no violations found") when the real problem is "the workspace was unreadable"
+            log.warn("could not glob {} under {}: {}", pattern, root, e.toString());
+            return List.of();
+        }
     }
 
-    static long fileSize(Path p) { try { return Files.size(p); } catch (IOException e) { return 0; } }
-    static String read(Path p) { try { return Files.readString(p); } catch (IOException e) { return ""; } }
+    static long fileSize(Path p) {
+        try { return Files.size(p); }
+        catch (IOException e) { log.debug("could not stat {}, treating size as 0: {}", p, e.toString()); return 0; }
+    }
+    static String read(Path p) {
+        try { return Files.readString(p); }
+        catch (IOException e) { log.warn("could not read {}, treating content as empty (checks against it may false-pass): {}", p, e.toString()); return ""; }
+    }
 }

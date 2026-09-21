@@ -3,6 +3,8 @@ package com.strgmai.ace.service.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.strgmai.ace.service.jooq.tables.records.CheckResultsRecord;
 import org.jooq.DSLContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.*;
@@ -20,6 +22,7 @@ import static org.jooq.impl.DSL.excluded;
  *  poolable run can enter leaderboards). */
 @Service
 public class ImporterService {
+    private static final Logger log = LoggerFactory.getLogger(ImporterService.class);
     private final DSLContext dsl;
     private final ObjectMapper json = new ObjectMapper();
 
@@ -114,6 +117,10 @@ public class ImporterService {
      *  own importer.import_all contract) deserializes "imported"/"skipped" as List&lt;String&gt;. */
     public Map<String, List<String>> importAll(final Path resultsDir) throws Exception {
         final List<String> imported = new ArrayList<>(), skipped = new ArrayList<>();
+        // a results dir that has never been created yet (a fresh checkout, or ACE_RESULTS_DIR
+        // pointing somewhere nothing has run) means "nothing to import", not a server error -
+        // Files.newDirectoryStream throws NoSuchFileException on a missing directory
+        if (!Files.isDirectory(resultsDir)) return Map.of("imported", imported, "skipped", skipped);
         try (DirectoryStream<Path> s = Files.newDirectoryStream(resultsDir)) {
             for (Path p : s) {
                 if (!Files.isDirectory(p) || p.getFileName().toString().startsWith("_")) continue;
@@ -142,11 +149,16 @@ public class ImporterService {
             }));
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                 .digest(String.join("|", tuple).getBytes())).substring(0, 16); }
-        catch (Exception e) { return null; }
+        catch (Exception e) {
+            // a null key_hash silently opts this run out of leaderboard pooling/comparisons
+            log.warn("could not compute the comparability key hash: {}", e.toString());
+            return null;
+        }
     }
 
     private String toJson(final Object o) {
-        try { return json.writeValueAsString(o); } catch (Exception e) { return "{}"; }
+        try { return json.writeValueAsString(o); }
+        catch (Exception e) { log.warn("could not serialize {} for storage, storing as empty: {}", o, e.toString()); return "{}"; }
     }
     private static String str(Object o) { return o == null ? null : String.valueOf(o); }
     private static Integer num(Object o) { return o instanceof Number n ? n.intValue() : null; }

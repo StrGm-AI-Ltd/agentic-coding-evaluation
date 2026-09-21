@@ -8,10 +8,13 @@ import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.shared.Registration;
 import com.vaadin.flow.router.Route;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Preflight — the UI twin of GET/POST /api/preflight (positive control in the agent's environment). */
 @Route(value = "preflight", layout = MainLayout.class)
 public class PreflightView extends VerticalLayout {
+    private static final Logger log = LoggerFactory.getLogger(PreflightView.class);
 
     private final ServiceClient client;
     private String startError;
@@ -62,6 +65,7 @@ public class PreflightView extends VerticalLayout {
         try {
             state = client.preflight();
         } catch (final Exception e) {
+            log.debug("poll fetch failed for preflight state: {}", e.toString());
             add(Panels.error(client.errorText(e)));
             // the early return would otherwise leave the previous interval in place; back off
             // to a slower cadence so a downed service is not hammered, but auto-recovery works
