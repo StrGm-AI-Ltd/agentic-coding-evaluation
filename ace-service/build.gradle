@@ -122,3 +122,27 @@ tasks.register('dockerTest', Test) {
     classpath = sourceSets.test.runtimeClasspath
     useJUnitPlatform { includeTags 'docker' }
 }
+
+// A backstop, not the primary cleanup path: SelftestIT's own oracle already tears its stacks down
+// itself (ComposeChecks.run()'s finally block, --rmi local), and DockerApplicationIT removes its
+// built image in @AfterAll. Neither runs if the test JVM is killed first - a Gradle test timeout,
+// an OOM, ctrl-C - so this exists for exactly that case: finalizedBy still fires because Gradle
+// itself (not the forked test JVM) survives those.
+abstract class DockerCleanupTask extends DefaultTask {
+    @javax.inject.Inject abstract org.gradle.process.ExecOperations getExecOps()
+    @TaskAction
+    void run() {
+        def ls = new ByteArrayOutputStream()
+        execOps.exec { commandLine 'docker', 'compose', 'ls', '-a', '--format', 'json'; standardOutput = ls; ignoreExitValue = true }
+        def projects = ls.toString().isBlank() ? [] : new groovy.json.JsonSlurper().parseText(ls.toString())
+        projects.findAll { it.Name ==~ /ab\d+/ }.each { p ->
+            execOps.exec { commandLine 'docker', 'compose', '-p', p.Name, 'down', '-v', '--remove-orphans', '--rmi', 'local'; ignoreExitValue = true }
+        }
+        execOps.exec { commandLine 'docker', 'image', 'prune', '-f'; ignoreExitValue = true }
+    }
+}
+tasks.register('dockerCleanup', DockerCleanupTask) {
+    group = 'verification'
+    description = 'Removes docker-compose stacks and images a killed/timed-out dockerTest run left behind.'
+}
+tasks.named('dockerTest') { finalizedBy 'dockerCleanup' }

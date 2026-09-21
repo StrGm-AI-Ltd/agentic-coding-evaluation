@@ -27,6 +27,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -93,7 +94,14 @@ class DockerApplicationIT {
 
     @AfterAll
     static void stopContainers() {
-        if (app != null) app.stop();
+        if (app == null) return;
+        // Testcontainers/Ryuk reaps the CONTAINER on JVM exit but never the image ImageFromDockerfile
+        // built for it - every run builds fresh (the source changed), so left alone these pile up
+        // indefinitely. Best-effort: a failed removal here must not fail the suite.
+        String image = app.getDockerImageName();
+        app.stop();
+        try { new ProcessBuilder("docker", "rmi", "-f", image).start().waitFor(30, TimeUnit.SECONDS); }
+        catch (Exception ignore) {}
     }
 
     private static HttpResponse<String> get(String path) throws Exception {

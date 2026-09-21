@@ -63,7 +63,10 @@ public final class ComposeChecks {
             for (JsonNode p : JSON.readTree(ls.out().isEmpty() ? "[]" : ls.out())) {
                 String name = p.path("Name").asText("");
                 if (name.startsWith("ab") && name.length() > 2 && name.substring(2).chars().allMatch(Character::isDigit))
-                    DockerService.sh(300, "docker", "compose", "-p", name, "down", "-v", "--remove-orphans");
+                    // --rmi local too (R4 C-24): without it, a killed oracle leaves the stale stack's
+                    // images behind forever - this sweep is the only chance to remove them, since the
+                    // process that would have hit the finally block in run() below is already gone
+                    DockerService.sh(300, "docker", "compose", "-p", name, "down", "-v", "--remove-orphans", "--rmi", "local");
             }
         } catch (Exception ignore) {}
     }
