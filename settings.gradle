@@ -1,3 +1,11 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
 rootProject.name = 'agentic-coding-evaluation'
 
 include 'ace-service'
+include 'ace-ui-vaadin'

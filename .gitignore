@@ -7,3 +7,12 @@ results/
 .DS_Store
 *.iml
 local.properties
+node_modules/
+**/src/main/frontend/generated/
+**/frontend/generated/
+.vscode/
+target/
+.env
+.env.*
+!.env.example
+logs/
