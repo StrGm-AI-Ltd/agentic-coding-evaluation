@@ -1,0 +1,14 @@
+{
+  "name": "trading-web",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8"
+  },
+  "scripts": { "build": "vite build", "test": "echo 'no unit tests for the static shell' && exit 0" }
+}

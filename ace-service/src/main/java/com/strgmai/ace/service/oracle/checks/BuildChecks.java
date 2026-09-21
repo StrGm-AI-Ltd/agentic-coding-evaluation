@@ -175,7 +175,12 @@ public final class BuildChecks {
         List<Path> sources = new ArrayList<>(StructureChecks.glob(copy, "**/src/main/**/*.java"));
         sources.addAll(StructureChecks.glob(copy, "**/src/main/**/*.kt"));
         for (Path jf : sources) {
-            if (SKIP_DIRS.stream().anyMatch(jf.toString()::contains)) continue;
+            // SEGMENTS, not substrings (see scratchCopy below): the scratch tmp dir is named
+            // "ab-build-<random>", so a naive jf.toString().contains("build") would skip every
+            // file under it - this was a real bug (B3 always NOT_ATTEMPTED: "no sell-side
+            // arithmetic... to mutate" even when the source plainly had it).
+            List<String> segs = Arrays.asList(jf.toString().split("/"));
+            if (SKIP_DIRS.stream().anyMatch(segs::contains)) continue;
             String src;
             try { src = Files.readString(jf); } catch (IOException e) { continue; }
             String m = mask(src, true), mKeep = mask(src, false);

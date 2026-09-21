@@ -1,0 +1,5 @@
+server:
+  port: 8080
+gateway:
+  account-url: ${ACCOUNT_URL:http://localhost:8081}
+  market-url: ${MARKET_URL:http://localhost:8082}

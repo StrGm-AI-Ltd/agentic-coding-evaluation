@@ -1,0 +1,2 @@
+// Root build: aggregates the three independently buildable services (each has its own plugins,
+// dependencies and Flyway history). `gradle test` here runs every service's suite.

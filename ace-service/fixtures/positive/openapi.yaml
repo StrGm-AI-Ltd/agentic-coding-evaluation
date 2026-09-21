@@ -1,0 +1,86 @@
+openapi: 3.1.0
+info:
+  title: Trading platform API
+  version: "1.0"
+  description: Public edge served by the gateway on localhost:8080. Decimals are strings; timestamps are UTC millis.
+paths:
+  /health:
+    get:
+      summary: Aggregated readiness
+      responses:
+        "200": {description: all upstreams healthy}
+        "503": {description: an upstream is down}
+  /accounts:
+    post:
+      summary: Open an account
+      responses:
+        "201": {description: created, content: {application/json: {schema: {$ref: "#/components/schemas/Account"}}}}
+        "400": {description: bad request}
+  /accounts/{id}:
+    get:
+      summary: Account state
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Account"}}}}
+        "404": {description: unknown account}
+  /accounts/{id}/deposits:
+    post:
+      summary: Deposit (HALF_EVEN to 2 dp)
+      responses:
+        "200": {description: new balance}
+        "400": {description: non-positive amount}
+        "404": {description: unknown account}
+  /accounts/{id}/holdings:
+    get:
+      summary: Holdings, optionally as of an instant (exclusive)
+      responses:
+        "200": {description: holdings and asOfApplied}
+        "400": {description: bad asOf}
+        "404": {description: unknown account}
+  /orders:
+    post:
+      summary: Place an order (immediate fill at limitPrice)
+      responses:
+        "201": {description: filled, content: {application/json: {schema: {$ref: "#/components/schemas/Order"}}}}
+        "200": {description: idempotent repeat}
+        "400": {description: bad request}
+        "422": {description: insufficient funds or holdings}
+  /orders/{id}:
+    get:
+      summary: Order state
+      responses:
+        "200": {description: ok, content: {application/json: {schema: {$ref: "#/components/schemas/Order"}}}}
+        "404": {description: unknown order}
+  /orders/{id}/cancel:
+    post:
+      summary: Cancel a NEW order
+      responses:
+        "200": {description: cancelled}
+        "404": {description: unknown order}
+        "409": {description: illegal transition (terminal order)}
+  /prices/{symbol}:
+    get:
+      summary: Fixed price table
+      responses:
+        "200": {description: ok}
+        "404": {description: unknown symbol}
+components:
+  schemas:
+    Account:
+      type: object
+      required: [accountId, currency, availableBalance, reservedBalance]
+      properties:
+        accountId: {type: string, format: uuid}
+        currency: {type: string}
+        availableBalance: {type: string, pattern: "^\\d+\\.\\d{2}$"}
+        reservedBalance: {type: string, pattern: "^\\d+\\.\\d{2}$"}
+    Order:
+      type: object
+      required: [orderId, status, side, symbol, quantity, limitPrice]
+      properties:
+        orderId: {type: string, format: uuid}
+        status: {type: string, enum: [NEW, FILLED, CANCELLED]}
+        side: {type: string, enum: [BUY, SELL]}
+        symbol: {type: string}
+        quantity: {type: string}
+        limitPrice: {type: string}
+        executedAt: {type: string, format: date-time}

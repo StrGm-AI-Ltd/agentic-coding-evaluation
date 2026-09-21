@@ -10,6 +10,7 @@ import java.nio.file.*;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** Port of oracle/checks/06_blackbox.py: THE correctness score. Oracle-owned scenarios driven
@@ -236,24 +237,72 @@ public final class BlackboxScenarios {
 
     /** minimal paths parser for the frozen-contract YAML shape: path -> method -> status codes (a
      *  full YAML parser is not needed for `paths: { /x: { get: { responses: { 200: ... } } } }`) */
+    private static final List<String> METHOD_KEYS = List.of("get:", "post:", "put:", "delete:", "patch:");
+    private static final Pattern STATUS_LINE = Pattern.compile("^\"?(\\d{3})\"?\\s*:");
+
+    /** For each path, for each method, collect the status codes under its `responses:` block -
+     *  standard OpenAPI YAML is 4 levels deep (path > method > `responses:` > status), tracked
+     *  RELATIVE to each other (not fixed absolute offsets) so it does not care whether the file
+     *  indents with 2 or 4 spaces. A path's entry may instead be inline flow-style JSON on one line
+     *  (the shape this port's own contract/openapi.yaml uses: `/accounts/{id}: {get: {responses:
+     *  {"200": {...}}}}}`) - that is parsed separately by parseFlowPathValue. A file can mix both
+     *  styles per path. */
     static Map<String, Map<String, List<String>>> parseOpenApiPaths(String yaml) {
-        // for each path, for each method at +2 indent, collect the `responses:` status codes at +4
         Map<String, Map<String, List<String>>> out = new LinkedHashMap<>();
         String path = null, method = null;
-        int pIndent = -1;
+        int pIndent = -1, mIndent = -1, rIndent = -1;
         for (String line : yaml.split("\n")) {
             if (line.isBlank() || line.strip().startsWith("#")) continue;
             int indent = line.indexOf(line.strip());
             String t = line.strip();
-            if (t.startsWith("/")) { path = t.split(":")[0]; out.putIfAbsent(path, new LinkedHashMap<>()); pIndent = indent; method = null; }
-            else if (path != null && indent == pIndent + 2 && List.of("get:", "post:", "put:", "delete:", "patch:").contains(t)) {
-                method = t.replace(":", "");
+            if (t.startsWith("/")) {
+                int colon = t.indexOf(':');
+                path = colon < 0 ? t : t.substring(0, colon);
+                out.putIfAbsent(path, new LinkedHashMap<>());
+                pIndent = indent; method = null; mIndent = -1; rIndent = -1;
+                String rest = colon < 0 ? "" : t.substring(colon + 1).strip();
+                if (rest.startsWith("{")) parseFlowPathValue(rest, out.get(path));
+                continue;
+            }
+            if (path == null || indent <= pIndent) { path = null; continue; }   // outside any path block
+            if (METHOD_KEYS.contains(t) && (method == null || indent <= mIndent)) {
+                method = t.substring(0, t.length() - 1);
+                mIndent = indent; rIndent = -1;
                 out.get(path).putIfAbsent(method, new ArrayList<>());
-            } else if (method != null && indent == pIndent + 4 && t.matches("\\d{3}:.*")) {
-                out.get(path).get(method).add(t.split(":")[0]);
+                continue;
+            }
+            if (method == null || indent <= mIndent) continue;   // not inside a method block
+            if (t.equals("responses:")) { rIndent = indent; continue; }
+            if (rIndent >= 0 && indent > rIndent) {
+                Matcher sc = STATUS_LINE.matcher(t);
+                if (sc.find()) out.get(path).get(method).add(sc.group(1));
             }
         }
         return out;
+    }
+
+    /** parse one path's inline flow-style value, e.g. `{get: {responses: {"200": {...}, "404":
+     *  {...}}}, post: {responses: {"201": {...}}}}`, into method -> [status codes]. Brace-matched
+     *  (not a fixed-depth regex), since each status entry nests its own {description: ...} object;
+     *  scoped to this shape, not a general JSON/YAML parser. */
+    private static void parseFlowPathValue(String flow, Map<String, List<String>> methods) {
+        Matcher m = Pattern.compile("\\b(get|post|put|delete|patch)\\s*:\\s*\\{").matcher(flow);
+        while (m.find()) {
+            int open = m.end() - 1, close = matchingBrace(flow, open);
+            if (close < 0) continue;
+            List<String> codes = methods.computeIfAbsent(m.group(1), k -> new ArrayList<>());
+            Matcher c = Pattern.compile("\"(\\d{3})\"\\s*:").matcher(flow.substring(open, close + 1));
+            while (c.find()) codes.add(c.group(1));
+        }
+    }
+
+    private static int matchingBrace(String s, int openPos) {
+        int depth = 0;
+        for (int i = openPos; i < s.length(); i++) {
+            if (s.charAt(i) == '{') depth++;
+            else if (s.charAt(i) == '}' && --depth == 0) return i;
+        }
+        return -1;
     }
 
     static String matchTemplate(Map<String, Map<String, List<String>>> paths, String method, String path) {

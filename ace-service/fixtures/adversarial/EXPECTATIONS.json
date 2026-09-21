@@ -1,0 +1,87 @@
+{
+  "_doc": "Two-sided regression gate for `run_oracle.py --selftest` (--skip-docker, partial denominators). Adversarial workspaces must stay AT OR BELOW max_partial_pct and their must_fail ids must fail by DETECTION (a crash does not count). The positive control must stay AT OR ABOVE min_partial_pct with every must_pass id PASS. Ceilings = observed + 2 so silent inflation of even one weight-1 check trips the gate.",
+  "positive_control": {
+    "dir": "positive",
+    "min_partial_pct": 89,
+    "must_pass": [
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "S5",
+      "S6",
+      "S7",
+      "S8",
+      "S9",
+      "P1",
+      "P2",
+      "M1",
+      "M2",
+      "M3",
+      "M4"
+    ],
+    "why": "known-good three-service Gradle+compose project; P3 is NOT_ATTEMPTED here (no runner manifest) and 100% is asserted by the full-oracle run in the README",
+    "docker": {
+      "must_pass": [
+        "B1",
+        "B2",
+        "B3",
+        "C1",
+        "C2",
+        "F1",
+        "F2",
+        "F3",
+        "F4",
+        "F5",
+        "F6",
+        "F7",
+        "F8",
+        "F9"
+      ]
+    }
+  },
+  "cheatE_stubs_no_java": {
+    "max_partial_pct": 18,
+    "why": "11 stub files, zero Java - scored 100% via inapplicable-exclusion"
+  },
+  "cheatA_comment_only": {
+    "max_partial_pct": 18,
+    "why": "one Java file containing only a comment mentioning BigDecimal"
+  },
+  "cheatB_bugs_in_test_pkg": {
+    "max_partial_pct": 23,
+    "why": "buggy files moved to a package named test to dodge the /test/ skip",
+    "must_fail": [
+      "M1"
+    ]
+  },
+  "cheatC_renamed_fields": {
+    "max_partial_pct": 28,
+    "why": "price->px, balance->bal to dodge name regex",
+    "must_fail": [
+      "M4"
+    ]
+  },
+  "cheatD_dir_named_java": {
+    "max_partial_pct": 23,
+    "why": "empty directory named Broken.java crashed the checker and dropped the suite",
+    "must_not_status": {
+      "M1": "PASS"
+    },
+    "expect_crash": false
+  },
+  "cheatF_prebuilt_jar": {
+    "task": "L6_compose_health",
+    "max_partial_pct": 52,
+    "must_not_status": {},
+    "docker": {
+      "must_fail": [
+        "C2"
+      ],
+      "detail_contains": {
+        "C2": "host-built artefact"
+      }
+    },
+    "_note": "R5 C-1/C-2: a committed jar COPYd into the image; offline only S4/S5 are scored (50 %, ceiling observed+2); the docker block (C2 must FAIL with 'host-built artefact') is evaluated by --selftest --with-docker"
+  }
+}
