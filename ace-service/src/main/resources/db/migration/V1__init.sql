@@ -2,7 +2,7 @@
 -- database, so none of the old idempotent-heal patterns (CREATE ... IF NOT EXISTS, drop-and-re-add
 -- constraints) are needed - constraints are declared inline on first creation.
 CREATE TABLE experiments (
-    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                 UUID PRIMARY KEY,   -- assigned in Java (SQLite has no UUID generator)
     name               TEXT NOT NULL,
     tag                TEXT NOT NULL,
     template           TEXT NOT NULL CHECK (template IN ('harness_effect', 'model_ab', 'agent_ab', 'custom')),
@@ -16,8 +16,8 @@ CREATE TABLE experiments (
 );
 
 CREATE TABLE jobs (
-    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-    experiment_id      INTEGER REFERENCES experiments (id) ON DELETE SET NULL,   -- nullable: unpin, don't fail, on experiment deletion
+    id                 UUID PRIMARY KEY,   -- assigned in Java (SQLite has no UUID generator)
+    experiment_id      UUID REFERENCES experiments (id) ON DELETE SET NULL,   -- nullable: unpin, don't fail, on experiment deletion
     arm                TEXT,
     repeat             INTEGER,
     kind               TEXT NOT NULL CHECK (kind IN ('run', 'score_only')),
@@ -42,10 +42,11 @@ CREATE TABLE jobs (
     CONSTRAINT uq_jobs_kind_run_id UNIQUE (kind, run_id)
 );
 
--- Hot claim() path: SELECT ... WHERE status IN ('queued','waiting_lock') ORDER BY priority DESC, id
--- ... LIMIT 1. Without this every worker claim full-scans the table, so as completed/cancelled jobs
--- accumulate the claim degrades to O(n).
-CREATE INDEX idx_jobs_status_priority ON jobs (status, priority DESC, id);
+-- Hot claim() path: SELECT ... WHERE status IN ('queued','waiting_lock') ORDER BY priority DESC,
+-- enqueued_at ... LIMIT 1. Without this every worker claim full-scans the table, so as completed/
+-- cancelled jobs accumulate the claim degrades to O(n). enqueued_at, not id, is the FIFO tie-break -
+-- a UUID primary key carries no ordering of its own.
+CREATE INDEX idx_jobs_status_priority ON jobs (status, priority DESC, enqueued_at);
 
 -- Experiment detail view: SELECT ... FROM jobs WHERE experiment_id = ? ORDER BY repeat, arm.
 CREATE INDEX idx_jobs_experiment ON jobs (experiment_id, repeat, arm);
@@ -53,7 +54,7 @@ CREATE INDEX idx_jobs_experiment ON jobs (experiment_id, repeat, arm);
 CREATE TABLE runs (
     run_id                  TEXT PRIMARY KEY,
     results_dir             TEXT NOT NULL,
-    job_id                  INTEGER REFERENCES jobs (id) ON DELETE CASCADE,   -- a run dies with its job: cleanup must not need manual orphaning
+    job_id                  UUID REFERENCES jobs (id) ON DELETE CASCADE,   -- a run dies with its job: cleanup must not need manual orphaning
     task                    TEXT,
     mode                    TEXT,
     model                   TEXT,

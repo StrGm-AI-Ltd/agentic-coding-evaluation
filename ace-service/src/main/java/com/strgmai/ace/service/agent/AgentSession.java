@@ -22,7 +22,7 @@ public final class AgentSession {
     private final Path file;
     public final String sessionId;
 
-    public AgentSession(Path sessionDir, String sessionId, boolean appendIfExists) throws IOException {
+    public AgentSession(final Path sessionDir, String sessionId, final boolean appendIfExists) throws IOException {
         this.sessionId = sessionId;
         Files.createDirectories(sessionDir);
         Path found = null;
@@ -42,7 +42,7 @@ public final class AgentSession {
         Files.writeString(file, JSON.writeValueAsString(rec) + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
     }
 
-    public void header(String agentVersion, String model, String cwd, String reasoningEffort) throws IOException {
+    public void header(final String agentVersion, final String model, final String cwd, final String reasoningEffort) throws IOException {
         write(Map.of("type", "session", "id", sessionId, "agent", agentVersion, "model", model,
                 "cwd", cwd, "reasoning_effort", reasoningEffort == null ? "" : reasoningEffort, "ts", Instant.now().toString()));
     }
@@ -50,18 +50,18 @@ public final class AgentSession {
     public void system(String text) throws IOException { message("system", text); }
     public void user(String text) throws IOException { message("user", text); }
 
-    public void assistant(String text, List<ToolExecutionRequest> calls, String finish, Map<String, Object> usage) throws IOException {
-        List<Map<String, Object>> parts = new ArrayList<>();
+    public void assistant(String text, List<ToolExecutionRequest> calls, final String finish, final Map<String, Object> usage) throws IOException {
+        final List<Map<String, Object>> parts = new ArrayList<>();
         if (text != null && !text.isEmpty()) parts.add(Map.of("type", "text", "text", text));
         for (ToolExecutionRequest c : calls) {
             Map<String, Object> args = new LinkedHashMap<>();
             try { args = JSON.readValue(c.arguments(), Map.class); } catch (Exception ignore) {}
             parts.add(Map.of("type", "toolCall", "id", c.id(), "name", c.name(), "arguments", args));
         }
-        Map<String, Object> msg = new LinkedHashMap<>();
+        final Map<String, Object> msg = new LinkedHashMap<>();
         msg.put("role", "assistant");
         msg.put("content", parts);
-        Map<String, Object> rec = new LinkedHashMap<>();
+        final Map<String, Object> rec = new LinkedHashMap<>();
         rec.put("type", "message");
         rec.put("message", msg);
         rec.put("finish", finish);
@@ -70,8 +70,8 @@ public final class AgentSession {
         write(rec);
     }
 
-    public void toolResult(String toolCallId, String toolName, String text, boolean isError) throws IOException {
-        Map<String, Object> msg = new LinkedHashMap<>();
+    public void toolResult(final String toolCallId, final String toolName, String text, final boolean isError) throws IOException {
+        final Map<String, Object> msg = new LinkedHashMap<>();
         msg.put("role", "toolResult");
         msg.put("toolCallId", toolCallId);
         msg.put("toolName", toolName);
@@ -80,17 +80,17 @@ public final class AgentSession {
         write(Map.of("type", "message", "message", msg, "ts", Instant.now().toString()));
     }
 
-    public void compaction(int stubbed, int promptTokensBefore) throws IOException {
+    public void compaction(final int stubbed, final int promptTokensBefore) throws IOException {
         write(Map.of("type", "compaction", "stubbed", stubbed, "prompt_tokens_before", promptTokensBefore, "ts", Instant.now().toString()));
     }
 
-    public void end(int turns, int toolErrors, int compactions, String finish) throws IOException {
+    public void end(final int turns, final int toolErrors, final int compactions, final String finish) throws IOException {
         write(Map.of("type", "end", "turns", turns, "tool_errors", toolErrors, "compactions", compactions,
                 "finish", finish == null ? "" : finish, "ts", Instant.now().toString()));
     }
 
-    private void message(String role, String text) throws IOException {
-        Map<String, Object> msg = new LinkedHashMap<>();
+    private void message(final String role, String text) throws IOException {
+        final Map<String, Object> msg = new LinkedHashMap<>();
         msg.put("role", role);
         msg.put("content", List.of(Map.of("type", "text", "text", text)));
         write(Map.of("type", "message", "message", msg, "ts", Instant.now().toString()));
@@ -98,28 +98,28 @@ public final class AgentSession {
 
     /** rebuild the API messages from the session file (for --continue) */
     public List<ChatMessage> loadMessages() throws IOException {
-        List<ChatMessage> msgs = new ArrayList<>();
+        final List<ChatMessage> msgs = new ArrayList<>();
         if (!Files.exists(file)) return msgs;
         for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
             if (line.isBlank()) continue;
             JsonNode r;
             try { r = JSON.readTree(line); } catch (Exception e) { continue; }
-            JsonNode m = r.path("message");
+            final JsonNode m = r.path("message");
             if (!"message".equals(r.path("type").asText())) continue;
             switch (m.path("role").asText()) {
                 case "system" -> {
                     // path(0) yields MissingNode (not null) when content is absent/empty, so a truncated
                     // or hand-edited session file degrades to a skipped message instead of an NPE on resume
-                    JsonNode c = m.path("content").path(0);
+                    final JsonNode c = m.path("content").path(0);
                     if (!c.isMissingNode()) msgs.add(SystemMessage.from(c.path("text").asText()));
                 }
                 case "user" -> {
-                    JsonNode c = m.path("content").path(0);
+                    final JsonNode c = m.path("content").path(0);
                     if (!c.isMissingNode()) msgs.add(UserMessage.from(c.path("text").asText()));
                 }
                 case "assistant" -> {
-                    StringBuilder text = new StringBuilder();
-                    List<ToolExecutionRequest> calls = new ArrayList<>();
+                    final var text = new StringBuilder();
+                    final List<ToolExecutionRequest> calls = new ArrayList<>();
                     for (JsonNode c : m.path("content")) {
                         if ("text".equals(c.path("type").asText())) text.append(c.path("text").asText());
                         if ("toolCall".equals(c.path("type").asText()))
@@ -131,7 +131,7 @@ public final class AgentSession {
                 case "toolResult" -> {
                     // path(0) -> MissingNode (never null) for an empty/missing content array, so a corrupt
                     // session file skips the record instead of throwing NPE on resume
-                    JsonNode c = m.path("content").path(0);
+                    final JsonNode c = m.path("content").path(0);
                     if (!c.isMissingNode()) msgs.add(ToolExecutionResultMessage.from(
                             ToolExecutionRequest.builder().id(m.path("toolCallId").asText()).name(m.path("toolName").asText()).build(),
                             c.path("text").asText()));
@@ -142,15 +142,15 @@ public final class AgentSession {
     }
 
     /** usage from the session file's assistant records — the only token source for a session that did not go through the proxy */
-    public static Map<String, Long> usage(Path sessionFile) {
-        Map<String, Long> t = new LinkedHashMap<>(Map.of("input", 0L, "output", 0L, "turns", 0L));
+    public static Map<String, Long> usage(final Path sessionFile) {
+        final Map<String, Long> t = new LinkedHashMap<>(Map.of("input", 0L, "output", 0L, "turns", 0L));
         if (sessionFile == null || !Files.isRegularFile(sessionFile)) return t;
         try {
             for (String line : Files.readAllLines(sessionFile, StandardCharsets.UTF_8)) {
                 JsonNode r;
                 try { r = JSON.readTree(line); } catch (Exception e) { continue; }
                 if (!"message".equals(r.path("type").asText()) || !"assistant".equals(r.path("message").path("role").asText())) continue;
-                JsonNode u = r.path("usage");
+                final JsonNode u = r.path("usage");
                 if (u.has("input")) t.merge("input", u.get("input").asLong(), Long::sum);
                 if (u.has("output")) t.merge("output", u.get("output").asLong(), Long::sum);
                 t.merge("turns", 1L, Long::sum);
@@ -161,11 +161,11 @@ public final class AgentSession {
 
     /** port of compact(): stub the oldest tool outputs, keep the newest `keepRecentTurns` assistant
      *  turns intact, never touch the system prompt or the first user message (the harness's pack). */
-    public static int compact(List<ChatMessage> msgs, int keepRecentTurns) {
-        List<Integer> idxAssist = new ArrayList<>();
+    public static int compact(final List<ChatMessage> msgs, final int keepRecentTurns) {
+        final List<Integer> idxAssist = new ArrayList<>();
         for (int i = 0; i < msgs.size(); i++) if (msgs.get(i) instanceof AiMessage) idxAssist.add(i);
         if (idxAssist.size() <= keepRecentTurns) return 0;
-        int cut = idxAssist.get(idxAssist.size() - keepRecentTurns);
+        final int cut = idxAssist.get(idxAssist.size() - keepRecentTurns);
         int n = 0;
         for (int i = 2; i < cut; i++) {
             if (msgs.get(i) instanceof ToolExecutionResultMessage m && !m.text().startsWith("[output dropped")) {

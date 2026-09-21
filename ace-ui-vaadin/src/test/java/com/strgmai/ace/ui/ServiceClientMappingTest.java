@@ -31,7 +31,7 @@ class ServiceClientMappingTest {
 
     private List<Api.Run> runsOrSkip() {
         try {
-            List<Api.Run> runs = client.runs(null, null, null, null, null);
+            final var runs = client.runs(null, null, null, null, null);
             Assumptions.assumeTrue(runs != null, "no runs payload");
             return runs;
         } catch (Exception e) {
@@ -42,24 +42,24 @@ class ServiceClientMappingTest {
 
     @Test
     void runsListMapsAndUnknownPropertiesAreIgnored() {
-        List<Api.Run> runs = runsOrSkip();
+        final var runs = runsOrSkip();
         // "no data yet" is a benign skip, not a suite failure (same convention as
         // runDetailProvenanceRendersFromRealManifest)
         Assumptions.assumeTrue(!runs.isEmpty(), "no runs imported");
-        Api.Run first = runs.get(0);
+        final var first = runs.get(0);
         assertNotNull(first.run_id());
         assertNotNull(first.task());
         assertNotNull(first.started());
 
-        List<Api.Run> filtered = client.runs(first.task(), first.model(), null, null, null);
+        final var filtered = client.runs(first.task(), first.model(), null, null, null);
         assertTrue(filtered.size() <= runs.size(), "filters must narrow, not widen");
     }
 
     @Test
     void runDetailCarriesChecksManifestAndOracle() {
-        List<Api.Run> runs = runsOrSkip();
+        final var runs = runsOrSkip();
         Assumptions.assumeTrue(!runs.isEmpty(), "no runs imported");
-        Api.Run run = client.run(runs.get(0).run_id());
+        final var run = client.run(runs.get(0).run_id());
         assertNotNull(run.checks());
         if (!run.checks().isEmpty()) {
             assertNotNull(run.checks().get(0).check_id());
@@ -71,7 +71,7 @@ class ServiceClientMappingTest {
 
     @Test
     void queueJobsMayBeUnimportedRuns404NotImported() {
-        List<Api.Job> jobs;
+        final List<Api.Job> jobs;
         try {
             jobs = client.jobs();
         } catch (Exception e) {
@@ -79,7 +79,7 @@ class ServiceClientMappingTest {
             return;
         }
         Api.Job unimported = null;
-        for (Api.Job job : jobs) {
+        for (final var job : jobs) {
             try {
                 client.run(job.run_id());
             } catch (RestClientResponseException e) {
@@ -92,8 +92,8 @@ class ServiceClientMappingTest {
         }
         Assumptions.assumeTrue(unimported != null,
                 "no unimported queue job present right now (the 2026-09-16 dead-end bug needs one)");
-        final Api.Job job = unimported;
-        RestClientResponseException e = assertThrows(RestClientResponseException.class,
+        final var job = unimported;
+        final var e = assertThrows(RestClientResponseException.class,
                 () -> client.run(job.run_id()));
         assertEquals(404, e.getStatusCode().value());
         assertTrue(client.errorText(e).endsWith("is not imported"),
@@ -104,7 +104,7 @@ class ServiceClientMappingTest {
      *  11-property object; rendering a real run's provenance must not throw. */
     @Test
     void runDetailProvenanceRendersFromRealManifest() {
-        List<Api.Run> runs;
+        final List<Api.Run> runs;
         try {
             runs = client.runs(null, null, null, null, null);
         } catch (Exception e) {
@@ -112,10 +112,10 @@ class ServiceClientMappingTest {
             return;
         }
         Assumptions.assumeTrue(!runs.isEmpty(), "no runs imported");
-        Api.Run run = client.run(runs.get(0).run_id());
-        List<String> lines = RunDetailView.provenanceLines(run.manifest(), run.results_dir());
+        final var run = client.run(runs.get(0).run_id());
+        final var lines = RunDetailView.provenanceLines(run.manifest(), run.results_dir());
         assertFalse(lines.isEmpty(), "a real manifest produces provenance lines");
-        for (String line : lines) {
+        for (final var line : lines) {
             assertTrue(line.length() < 10_000, "no runaway line: "
                     + line.substring(0, Math.min(40, line.length())) + "…");
         }
@@ -125,29 +125,29 @@ class ServiceClientMappingTest {
     void groupsJobsExperimentsPreflightMap() {
         runsOrSkip(); // skip everything when the service is down
 
-        Api.GroupResponse groups = client.groups();
+        final var groups = client.groups();
         assertNotNull(groups);
-        int allGroups = (groups.ranked() == null ? 0 : groups.ranked().size())
+        final int allGroups = (groups.ranked() == null ? 0 : groups.ranked().size())
                 + (groups.indicative() == null ? 0 : groups.indicative().size());
         Assumptions.assumeTrue(allGroups > 0, "no groups returned by the service");
-        for (Api.Group group : groups.ranked() == null ? List.<Api.Group>of() : groups.ranked()) {
+        for (final var group : groups.ranked() == null ? List.<Api.Group>of() : groups.ranked()) {
             assertNotNull(group.summary().k());
             assertNotNull(group.run_ids());
             assertFalse(group.run_ids().isEmpty());
         }
 
-        List<Api.Job> jobs = client.jobs();
-        for (Api.Job job : jobs) {
+        final var jobs = client.jobs();
+        for (final var job : jobs) {
             assertNotNull(job.status());
             assertNotNull(job.argv());
         }
 
-        List<Api.Experiment> experiments = client.experiments();
-        for (Api.Experiment experiment : experiments) {
+        final var experiments = client.experiments();
+        for (final var experiment : experiments) {
             assertNotNull(experiment.name());
         }
 
-        Api.PreflightState preflight = client.preflight();
+        final var preflight = client.preflight();
         assertNotNull(preflight);
         assertNotNull(preflight.running());
     }

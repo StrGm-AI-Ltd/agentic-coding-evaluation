@@ -21,7 +21,7 @@ public class MainLayout extends AppLayout implements BeforeEnterObserver {
     public MainLayout() {
         setPrimarySection(Section.NAVBAR);
 
-        Span brand = new Span("ACE");
+        final var brand = new Span("ACE");
         brand.getStyle().set("font-weight", "700").set("font-size", "large").set("margin-right", "24px");
 
         tab("Runs", RunsView.class, RunDetailView.class);
@@ -34,18 +34,18 @@ public class MainLayout extends AppLayout implements BeforeEnterObserver {
         addToNavbar(brand, tabs);
     }
 
-    private void tab(String label, Class<? extends Component> primary, Class<?>... alsoMapped) {
-        Tab tab = new Tab(new RouterLink(label, primary));
+    private void tab(final String label, final Class<? extends Component> primary, final Class<?>... alsoMapped) {
+        final var tab = new Tab(new RouterLink(label, primary));
         tabs.add(tab);
         tabsByView.put(primary, tab);
-        for (Class<?> view : alsoMapped) {
+        for (final var view : alsoMapped) {
             tabsByView.put(view, tab);
         }
     }
 
     @Override
-    public void beforeEnter(BeforeEnterEvent event) {
-        Tab tab = tabsByView.get(event.getNavigationTarget());
+    public void beforeEnter(final BeforeEnterEvent event) {
+        final var tab = tabsByView.get(event.getNavigationTarget());
         if (tab != null) {
             tabs.setSelectedTab(tab);
         }

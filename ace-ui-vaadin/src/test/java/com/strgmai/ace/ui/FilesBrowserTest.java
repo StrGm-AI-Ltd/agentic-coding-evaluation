@@ -17,7 +17,7 @@ class FilesBrowserTest {
     @TempDir
     Path dir;
 
-    private void write(Path path, String content) throws IOException {
+    private void write(final Path path, final String content) throws IOException {
         Files.createDirectories(path.getParent());
         Files.writeString(path, content);
     }
@@ -30,7 +30,7 @@ class FilesBrowserTest {
         write(dir.resolve("instructions/T2.json"), "{}");
         write(dir.resolve("instructions/deep/T3.json"), "{}"); // two levels: must not appear
 
-        List<String> files = FilesBrowser.listFiles(dir.toString());
+        final var files = FilesBrowser.listFiles(dir.toString());
         assertEquals(List.of("alpha.log", "instructions/T1.json", "instructions/T2.json", "oracle.json"), files);
     }
 
@@ -40,7 +40,7 @@ class FilesBrowserTest {
         write(dir.resolve("sub/ok.txt"), "x");
         Files.createDirectory(dir.resolve("emptydir"));
 
-        List<String> files = FilesBrowser.listFiles(dir.toString());
+        final var files = FilesBrowser.listFiles(dir.toString());
         assertEquals(List.of("sub/ok.txt"), files);
         assertFalse(files.stream().anyMatch(f -> f.startsWith("workspace/")));
     }
@@ -69,7 +69,7 @@ class FilesBrowserTest {
 
     @Test
     void isText_suffixMatrix() {
-        for (String text : new String[]{".md", ".log", ".json", ".jsonl", ".txt", ".yaml", ".yml"}) {
+        for (final var text : new String[]{".md", ".log", ".json", ".jsonl", ".txt", ".yaml", ".yml"}) {
             assertTrue(FilesBrowser.isText("f" + text), text + " is viewable text");
         }
         assertFalse(FilesBrowser.isText("f.png"));

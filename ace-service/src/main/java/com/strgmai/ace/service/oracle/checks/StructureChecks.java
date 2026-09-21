@@ -20,28 +20,28 @@ public final class StructureChecks {
     static final Set<String> SKIP_DIRS = Set.of("/build/", "/.gradle/", "/node_modules/", "/.git/", "/buildSrc/", "/dist/", "/target/", "/out/");
 
     public static boolean skip(Path p) {
-        String s = p.toString() + "/";
+        final String s = p.toString() + "/";
         return SKIP_DIRS.stream().anyMatch(s::contains);
     }
 
-    public static List<CheckResult> run(Path ws) {
-        List<CheckResult> out = new ArrayList<>();
+    public static List<CheckResult> run(final Path ws) {
+        final List<CheckResult> out = new ArrayList<>();
         for (var e : Map.of(CheckId.S1, "docs/TASK_DEFINITION.md", CheckId.S2, "docs/IMPLEMENTATION_PLAN.md", CheckId.S3, "docs/PROGRESS.md").entrySet()) {
-            Path p = ws.resolve(e.getValue());
-            boolean present = Files.isRegularFile(p);
-            long size = present ? fileSize(p) : 0;
+            final Path p = ws.resolve(e.getValue());
+            final boolean present = Files.isRegularFile(p);
+            final long size = present ? fileSize(p) : 0;
             out.add(new CheckResult(e.getKey(), present && size > 200 ? CheckStatus.PASS : CheckStatus.FAIL,
                     (present ? "present" : "missing") + " " + size + "B"));
         }
-        Path compose = findCompose(ws);
+        final Path compose = findCompose(ws);
         out.add(new CheckResult(CheckId.S4, compose != null ? CheckStatus.PASS : CheckStatus.FAIL,
                 "stack file: " + (compose == null ? "none" : ws.relativize(compose).toString())));
 
         // S5: a "service" = its own build file that applies Spring Boot AND has src/main
-        List<String> svcs = new ArrayList<>();
+        final List<String> svcs = new ArrayList<>();
         for (Path bf : glob(ws, "**/build.gradle*")) {
             if (bf.getParent().equals(ws) || skip(bf)) continue;
-            String src = read(bf);
+            final String src = read(bf);
             boolean real = (src.contains("org.springframework.boot") || src.contains("spring-boot"))
                     && Files.isDirectory(bf.getParent().resolve("src/main"));
             if (real) svcs.add(ws.relativize(bf.getParent()).toString());
@@ -52,9 +52,9 @@ public final class StructureChecks {
         // S6: a REAL wrapper (script + properties) in at least one Gradle root
         List<Path> roots = gradleRoots(ws);
         if (roots.isEmpty()) roots = List.of(ws);
-        List<String> found = new ArrayList<>();
+        final List<String> found = new ArrayList<>();
         for (Path r : roots) {
-            Path gw = r.resolve("gradlew"), props = r.resolve("gradle/wrapper/gradle-wrapper.properties");
+            final Path gw = r.resolve("gradlew"), props = r.resolve("gradle/wrapper/gradle-wrapper.properties");
             if (Files.isRegularFile(gw) && fileSize(gw) > 1024 && Files.isRegularFile(props))
                 found.add(roots.size() > 1 && !r.equals(ws) ? ws.relativize(r).toString() : ".");
         }
@@ -62,14 +62,14 @@ public final class StructureChecks {
                 found.isEmpty() ? "no real gradlew+properties in any of " + roots.size() + " gradle root(s)" : "wrapper in " + found));
 
         // S7: a spec file named openapi*/api* that parses as OpenAPI (tolerant key scan)
-        List<Path> specs = new ArrayList<>();
+        final List<Path> specs = new ArrayList<>();
         for (Path p : glob(ws, "**/*.yml")) if (isSpecName(p) && !skip(p)) specs.add(p);
         for (Path p : glob(ws, "**/*.yaml")) if (isSpecName(p) && !skip(p)) specs.add(p);
         for (Path p : glob(ws, "**/*.json")) if (isSpecName(p) && !skip(p)) specs.add(p);
         specs.sort(Comparator.comparingInt((Path p) -> ws.relativize(p).getNameCount()).thenComparing(Path::toString));
         boolean ok7 = false; String det7 = "none found";
         for (Path p : specs.subList(0, Math.min(5, specs.size()))) {
-            String src = read(p);
+            final String src = read(p);
             if (Pattern.compile("(?m)^\\s*openapi\\s*:", Pattern.CASE_INSENSITIVE).matcher(src).find()
                     && Pattern.compile("(?m)^\\s*paths\\s*:", Pattern.CASE_INSENSITIVE).matcher(src).find()) {
                 ok7 = true; det7 = ws.relativize(p) + " (openapi+paths keys)"; break;
@@ -82,7 +82,7 @@ public final class StructureChecks {
         boolean ok8 = false; String det8 = "no package.json with react in dependencies";
         for (Path p : glob(ws, "**/package.json")) {
             if (skip(p)) continue;
-            String src = read(p);
+            final String src = read(p);
             if (Pattern.compile("\"dependencies\"\\s*:\\s*\\{[^}]*\"react\"\\s*:", Pattern.DOTALL).matcher(src).find()) {
                 ok8 = true; det8 = ws.relativize(p).toString(); break;
             }
@@ -95,14 +95,14 @@ public final class StructureChecks {
         return out;
     }
 
-    static boolean isSpecName(Path p) {
-        String n = p.getFileName().toString().toLowerCase();
+    static boolean isSpecName(final Path p) {
+        final String n = p.getFileName().toString().toLowerCase();
         return n.startsWith("openapi") || n.startsWith("api");
     }
 
     /** the ROOT-most compose file (a per-service compose must not shadow the stack) */
-    public static Path findCompose(Path ws) {
-        List<Path> all = new ArrayList<>();
+    public static Path findCompose(final Path ws) {
+        final List<Path> all = new ArrayList<>();
         for (String pat : List.of("docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"))
             all.addAll(glob(ws, pat));
         for (String pat : List.of("**/docker-compose.y*ml", "**/compose.y*ml"))
@@ -111,14 +111,14 @@ public final class StructureChecks {
     }
 
     /** every directory that is a Gradle project root: settings.gradle dirs, else build.gradle dirs with src/ */
-    public static List<Path> gradleRoots(Path ws) {
-        List<Path> out = new ArrayList<>();
+    public static List<Path> gradleRoots(final Path ws) {
+        final List<Path> out = new ArrayList<>();
         for (String pat : List.of("settings.gradle", "settings.gradle.kts", "**/settings.gradle*", "**/settings.gradle.kts"))
             for (Path s : glob(ws, pat)) if (!skip(s)) out.add(s.getParent());
         if (!out.isEmpty()) {
             // settings.gradle* dirs ARE the roots; drop any root nested inside another returned root
-            List<Path> roots = out.stream().distinct().sorted(Comparator.comparingInt(p -> ws.relativize(p).getNameCount())).toList();
-            List<Path> top = new ArrayList<>();
+            final List<Path> roots = out.stream().distinct().sorted(Comparator.comparingInt(p -> ws.relativize(p).getNameCount())).toList();
+            final List<Path> top = new ArrayList<>();
             for (Path r : roots) if (top.stream().noneMatch(t -> r.startsWith(t))) top.add(r);
             return top;
         }
@@ -128,10 +128,10 @@ public final class StructureChecks {
         return out.stream().distinct().sorted(Comparator.comparingInt(p -> ws.relativize(p).getNameCount())).toList();
     }
 
-    public static List<Path> glob(Path root, String pattern) {
+    public static List<Path> glob(final Path root, final String pattern) {
         // Java's glob "**/x" does not match a ROOT-level x (Python's recursive glob does) — match both
-        List<PathMatcher> matchers = new ArrayList<>();
-        String full = root.resolve(pattern).toString().replace(root.getFileSystem().getSeparator(), "/");
+        final List<PathMatcher> matchers = new ArrayList<>();
+        final String full = root.resolve(pattern).toString().replace(root.getFileSystem().getSeparator(), "/");
         matchers.add(FileSystems.getDefault().getPathMatcher("glob:" + full));
         if (pattern.startsWith("**/"))
             matchers.add(FileSystems.getDefault().getPathMatcher("glob:" + root.resolve(pattern.substring(3)).toString().replace(root.getFileSystem().getSeparator(), "/")));

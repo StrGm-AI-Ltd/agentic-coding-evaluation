@@ -13,21 +13,21 @@ public final class Forms {
     }
 
     /** A titled, vertically stacked section of wrapped field rows. */
-    public static VerticalLayout section(String title, HorizontalLayout... rows) {
-        H4 header = new H4(title);
+    public static VerticalLayout section(final String title, final HorizontalLayout... rows) {
+        final var header = new H4(title);
         header.getStyle().set("margin", "16px 0 4px 0");
-        VerticalLayout sectionLayout = new VerticalLayout(header);
+        final var sectionLayout = new VerticalLayout(header);
         sectionLayout.setPadding(false);
         sectionLayout.setSpacing(false);
-        for (HorizontalLayout row : rows) {
+        for (final var row : rows) {
             sectionLayout.add(row);
         }
         return sectionLayout;
     }
 
     /** A horizontally arranged, wrapping row of fields, aligned by their baselines. */
-    public static HorizontalLayout row(Component... fields) {
-        HorizontalLayout layout = new HorizontalLayout(fields);
+    public static HorizontalLayout row(final Component... fields) {
+        final var layout = new HorizontalLayout(fields);
         layout.getStyle().set("flex-wrap", "wrap");
         layout.setDefaultVerticalComponentAlignment(FlexComponent.Alignment.END);
         layout.setSpacing(true);

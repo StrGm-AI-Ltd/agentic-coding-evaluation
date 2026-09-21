@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -27,15 +27,15 @@ class JobEventLoopTest {
     void givesUpAfterThreeFailedConnectionsAndReportsIt() throws Exception {
         ServiceClient client = mock(ServiceClient.class);
         Mockito.doThrow(new IOException("connection reset"))
-                .when(client).streamJobEvents(anyLong(), any());
+                .when(client).streamJobEvents(anyString(), any());
         AtomicInteger lost = new AtomicInteger();
         List<SseEvent> received = new java.util.ArrayList<>();
 
-        JobEventLoop loop = new JobEventLoop(client, 30, () -> false, received::add,
+        JobEventLoop loop = new JobEventLoop(client, "30", () -> false, received::add,
                 lost::incrementAndGet, 5);
         loop.run();
 
-        verify(client, times(JobEventLoop.MAX_ATTEMPTS)).streamJobEvents(Mockito.anyLong(), any());
+        verify(client, times(JobEventLoop.MAX_ATTEMPTS)).streamJobEvents(Mockito.anyString(), any());
         assertEquals(0, received.size());
         assertEquals(1, lost.get(), "the give-up is reported exactly once");
         assertTrue(loop.isConnectionLost());
@@ -54,10 +54,10 @@ class JobEventLoopTest {
             consumer.accept(EVENT);
             consumer.accept(EVENT); // the second accept hits the stop flag
             return null;
-        }).when(client).streamJobEvents(anyLong(), any());
+        }).when(client).streamJobEvents(anyString(), any());
         AtomicInteger lost = new AtomicInteger();
 
-        JobEventLoop loop = new JobEventLoop(client, 30, detached::get, event -> {
+        JobEventLoop loop = new JobEventLoop(client, "30", detached::get, event -> {
             received.add(event);
             detached.set(true); // the view navigates away after this event
         }, lost::incrementAndGet, 5);
@@ -71,9 +71,9 @@ class JobEventLoopTest {
     void interruptionExitsQuietly() throws Exception {
         ServiceClient client = mock(ServiceClient.class);
         Mockito.doThrow(new InterruptedException("interrupted"))
-                .when(client).streamJobEvents(anyLong(), any());
+                .when(client).streamJobEvents(anyString(), any());
         AtomicReference<Runnable> lost = new AtomicReference<>();
-        JobEventLoop loop = new JobEventLoop(client, 30, () -> false, event -> { },
+        JobEventLoop loop = new JobEventLoop(client, "30", () -> false, event -> { },
                 () -> lost.set(() -> { }), 5);
         loop.run();
         assertNull(lost.get(), "interruption is not a lost connection");

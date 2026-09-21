@@ -58,7 +58,7 @@ class FmtTest {
     void json_nullMissingAndPrettyPrints() {
         assertEquals("–", Fmt.json(null));
         assertEquals("–", Fmt.json(tools.jackson.databind.node.JsonNodeFactory.instance.missingNode()));
-        String printed = Fmt.json(Json.MAPPER.readTree("{\"a\":1}"));
+        final var printed = Fmt.json(Json.MAPPER.readTree("{\"a\":1}"));
         assertEquals("""
                 {
                   "a" : 1
@@ -118,12 +118,12 @@ class FmtTest {
     void comparingTime_sortsChronologicallyAcrossFormatsWithNullsLast() {
         record Row(String t) {
         }
-        List<Row> rows = java.util.List.of(
+        final var rows = java.util.List.of(
                 new Row(null),
                 new Row("2026-09-15 03:02:30"),       // 03:02Z — naive SQL style
                 new Row("2026-09-14T23:00:00+01:00"),   // 22:00Z — the earliest despite the later local hour
                 new Row("2026-09-15T02:00:00Z"));      // 02:00Z
-        List<String> sorted = rows.stream().sorted(Fmt.comparingTime(Row::t)).map(Row::t).toList();
+        final var sorted = rows.stream().sorted(Fmt.comparingTime(Row::t)).map(Row::t).toList();
         assertEquals(java.util.Arrays.asList(
                 "2026-09-14T23:00:00+01:00",
                 "2026-09-15T02:00:00Z",

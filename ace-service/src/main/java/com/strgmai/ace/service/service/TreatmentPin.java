@@ -42,13 +42,13 @@ public class TreatmentPin {
 
     private static String compute() {
         try {
-            File source = new ApplicationHome(TreatmentPin.class).getSource();
+            final File source = new ApplicationHome(TreatmentPin.class).getSource();
             if (source == null) return "unpinned";
-            MessageDigest sha = MessageDigest.getInstance("SHA-256");
-            Path root = source.toPath();
+            final MessageDigest sha = MessageDigest.getInstance("SHA-256");
+            final Path root = source.toPath();
             if (Files.isDirectory(root)) {
                 try (Stream<Path> files = Files.walk(root)) {
-                    List<Path> sorted = files.filter(Files::isRegularFile).sorted().toList();
+                    final List<Path> sorted = files.filter(Files::isRegularFile).sorted().toList();
                     for (Path p : sorted) {
                         sha.update(root.relativize(p).toString().getBytes());
                         sha.update((byte) 0);
@@ -58,7 +58,7 @@ public class TreatmentPin {
             } else {
                 // stream the (potentially 100-300MB fat) jar in chunks instead of holding it all in a byte[]
                 try (FileInputStream in = new FileInputStream(source)) {
-                    byte[] buf = new byte[1 << 20];
+                    final byte[] buf = new byte[1 << 20];
                     int n;
                     while ((n = in.read(buf)) > 0) sha.update(buf, 0, n);
                 }

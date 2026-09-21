@@ -27,24 +27,24 @@ public class RunOracle {
     private final ObjectMapper json = new ObjectMapper();
     public static final String BUILD_IMAGE = BuildChecks.DEFAULT_IMAGE;
 
-    public Map<String, Object> score(Path ws, String task, String systemBaseUrl) throws Exception {
+    public Map<String, Object> score(final Path ws, final String task, final String systemBaseUrl) throws Exception {
         return score(ws, task, systemBaseUrl, null);
     }
 
     /** full form: the runner's manifest carries the per-phase snapshot SHAs P3 diffs (05_phases.py) */
     @SuppressWarnings("unchecked")
-    public Map<String, Object> score(Path ws, String task, String systemBaseUrl, Map<String, Object> manifest) throws Exception {
-        var ladderStream = getClass().getResourceAsStream("/tasks/ladder.json");
+    public Map<String, Object> score(final Path ws, final String task, final String systemBaseUrl, final Map<String, Object> manifest) throws Exception {
+        final var ladderStream = getClass().getResourceAsStream("/tasks/ladder.json");
         if (ladderStream == null) throw new IllegalStateException("ladder.json resource not found on classpath");
-        JsonNode ladder = json.readTree(ladderStream);
-        JsonNode rung = ladder.has(task) ? ladder.get(task) : ladder.get("L7_full_platform");
+        final JsonNode ladder = json.readTree(ladderStream);
+        final JsonNode rung = ladder.has(task) ? ladder.get(task) : ladder.get("L7_full_platform");
         if (rung == null) throw new IllegalStateException("no ladder rung for task '" + task + "' and no L7_full_platform fallback");
-        Set<CheckId> wanted = new LinkedHashSet<>();
+        final Set<CheckId> wanted = new LinkedHashSet<>();
         if (rung.get("checks").isTextual() && rung.get("checks").asText().equals("all"))
             wanted.addAll(EnumSet.allOf(CheckId.class));
         else for (JsonNode c : rung.get("checks")) wanted.add(CheckId.valueOf(c.asText()));
 
-        Map<CheckId, CheckResult> got = new EnumMap<>(CheckId.class);
+        final Map<CheckId, CheckResult> got = new EnumMap<>(CheckId.class);
         List<CheckId> offline = List.of(CheckId.S1, CheckId.S2, CheckId.S3, CheckId.S4, CheckId.S5, CheckId.S6, CheckId.S7, CheckId.S8, CheckId.S9,
                 CheckId.M1, CheckId.M2, CheckId.M3, CheckId.M4, CheckId.P1, CheckId.P2, CheckId.P3);
         for (CheckId id : offline) {
@@ -54,8 +54,8 @@ public class RunOracle {
         }
         // ---- the docker-gated scripts, as one gate (the Python oracle gates per script) ----
         // P1 needs no extra exclusion: it is in `offline` above, so !offline.contains(id) already filters it
-        List<CheckId> gated = wanted.stream().filter(id -> !offline.contains(id)).toList();
-        boolean dockerOk = DockerService.sh(15, "docker", "info", "--format", "{{.ServerVersion}}").rc() == 0;
+        final List<CheckId> gated = wanted.stream().filter(id -> !offline.contains(id)).toList();
+        final boolean dockerOk = DockerService.sh(15, "docker", "info", "--format", "{{.ServerVersion}}").rc() == 0;
         if (dockerOk) {
             try {   // 03_build.py: the pinned container, the sidecar, the mutation
                 for (CheckResult r : BuildChecks.run(ws, BUILD_IMAGE))
@@ -67,7 +67,7 @@ public class RunOracle {
             }
             if (wanted.stream().anyMatch(id -> id == CheckId.C1 || id == CheckId.C2 || id.name().startsWith("F"))) {
                 try {   // 04_compose.py: build -> up -> C1/C2 -> F* (F6 grades the observed responses) -> down
-                    String base = systemBaseUrl == null || systemBaseUrl.isBlank() ? "http://localhost:8080" : systemBaseUrl;
+                    final String base = systemBaseUrl == null || systemBaseUrl.isBlank() ? "http://localhost:8080" : systemBaseUrl;
                     for (CheckResult r : ComposeChecks.run(ws, 2400, 600, wanted::contains, base, manifest == null ? ws : Path.of(String.valueOf(manifest.getOrDefault("workspace", ws)))))
                         if (wanted.contains(r.id())) got.put(r.id(), r);
                 } catch (Exception e) {
@@ -80,21 +80,21 @@ public class RunOracle {
         for (CheckId id : gated)
             if (!got.containsKey(id)) got.put(id, CheckResult.skipped(id, "docker unavailable (build/compose checks skipped; never charged to the agent)"));
         // missing => FAIL: a checker that emitted nothing can never raise the score by omission
-        List<CheckResult> records = new ArrayList<>();
+        final List<CheckResult> records = new ArrayList<>();
         for (CheckId id : wanted)
             records.add(got.getOrDefault(id, CheckResult.fail(id, "checker missing: no script produced this id")));
 
-        Map<String, Object> rep = Scorer.score(records);
+        final Map<String, Object> rep = Scorer.score(records);
         rep.put("task", task);
         rep.put("checks_subset", wanted.stream().map(Enum::name).toList());
         rep.put("workspace", ws.toString());
         rep.put("system", systemBaseUrl);
         rep.put("docker_available", dockerOk);
         rep.put("scored_at", Instant.now().toString());
-        DockerService.Sh digest = DockerService.sh(20, "docker", "image", "inspect", "--format", "{{index .RepoDigests 0}}", BUILD_IMAGE);
+        final DockerService.Sh digest = DockerService.sh(20, "docker", "image", "inspect", "--format", "{{index .RepoDigests 0}}", BUILD_IMAGE);
         // LinkedHashMap: a failed `docker image inspect` (image not pulled/pruned) leaves the digest
         // null, and Map.of would NPE and kill the whole scoring run
-        var prov = new LinkedHashMap<String, Object>();
+        final var prov = new LinkedHashMap<String, Object>();
         prov.put("build_image", BUILD_IMAGE);
         prov.put("build_image_digest", digest.rc() == 0 ? digest.out().strip() : null);
         prov.put("checks", wanted.stream().map(Enum::name).toList());
@@ -104,7 +104,7 @@ public class RunOracle {
         return rep;
     }
 
-    private void runOffline(CheckId id, Path ws, Map<String, Object> manifest, Map<CheckId, CheckResult> got) {
+    private void runOffline(final CheckId id, final Path ws, final Map<String, Object> manifest, final Map<CheckId, CheckResult> got) {
         switch (id) {
             case S1, S2, S3, S4, S5, S6, S7, S8, S9 -> StructureChecks.run(ws).forEach(r -> got.put(r.id(), r));
             case M1, M2, M3, M4 -> MoneySafetyChecks.run(ws).forEach(r -> got.put(r.id(), r));
@@ -116,14 +116,14 @@ public class RunOracle {
     }
 
     /** P2: plan subtasks have id/goal/deps/criterion — the plan parser IS the check */
-    private CheckResult p2(Path ws) {
-        Path plan = ws.resolve("docs/IMPLEMENTATION_PLAN.md");
+    private CheckResult p2(final Path ws) {
+        final Path plan = ws.resolve("docs/IMPLEMENTATION_PLAN.md");
         String planTxt;
         try { planTxt = Files.isRegularFile(plan) ? Files.readString(plan) : ""; }
         catch (java.io.IOException e) { return CheckResult.fail(CheckId.P2, "checker crashed: " + e); }
         if (planTxt.length() < 200) return CheckResult.notAttempted(CheckId.P2, "IMPLEMENTATION_PLAN.md missing or trivial");
         try {
-            var tasks = com.strgmai.ace.service.plan.PlanParser.parseFile(plan);
+            final var tasks = com.strgmai.ace.service.plan.PlanParser.parseFile(plan);
             boolean ok = tasks.stream().allMatch(t -> t.goal != null && !t.goal.isBlank() && t.deps != null
                     && t.acceptance != null && !t.acceptance.isBlank());
             return new CheckResult(CheckId.P2, ok ? CheckStatus.PASS : CheckStatus.FAIL,
@@ -145,9 +145,9 @@ public class RunOracle {
             Map.entry("money handling", java.util.regex.Pattern.compile("\\b(BigDecimal|minor units|decimal|precision|rounding)\\b", java.util.regex.Pattern.CASE_INSENSITIVE)),
             Map.entry("order states", java.util.regex.Pattern.compile("\\b(state machine|order state|status transition|NEW|FILLED|CANCEL)", java.util.regex.Pattern.CASE_INSENSITIVE)));
 
-    private CheckResult p1(Path ws) throws java.io.IOException {
-        Path td = ws.resolve("docs/TASK_DEFINITION.md");
-        String txt = Files.isRegularFile(td) ? Files.readString(td) : "";
+    private CheckResult p1(final Path ws) throws java.io.IOException {
+        final Path td = ws.resolve("docs/TASK_DEFINITION.md");
+        final String txt = Files.isRegularFile(td) ? Files.readString(td) : "";
         if (txt.length() < 200) return CheckResult.notAttempted(CheckId.P1, "TASK_DEFINITION.md missing or trivial");
         List<String> missing = REQ_SECTIONS.entrySet().stream()
                 .filter(e -> !e.getValue().matcher(txt).find()).map(Map.Entry::getKey).toList();
@@ -157,9 +157,9 @@ public class RunOracle {
 
     /** P3: no source code written during phases 0/1 — from the git snapshots the runner committed,
      *  not a scan of the final workspace (which any implemented run fails) */
-    private CheckResult p3(Path ws, Map<String, Object> manifest) {
-        Map<String, String> snaps = manifest != null && manifest.get("snapshots") instanceof Map<?, ?> m ? (Map<String, String>) m : Map.of();
-        String start = snaps.get("start"), p1 = snaps.get("p1");
+    private CheckResult p3(final Path ws, final Map<String, Object> manifest) {
+        final Map<String, String> snaps = manifest != null && manifest.get("snapshots") instanceof Map<?, ?> m ? (Map<String, String>) m : Map.of();
+        final String start = snaps.get("start"), p1 = snaps.get("p1");
         if (start == null || p1 == null)   // no snapshot pair recorded: fall back to the final-tree scan (fixture scoring)
             return p3Scan(ws);
         String diff = com.strgmai.ace.service.docker.DockerService.sh(60, "git", "-C", ws.toString(),
@@ -171,17 +171,17 @@ public class RunOracle {
                         : "code written during planning: " + code.subList(0, Math.min(5, code.size())));
     }
 
-    private CheckResult p3Scan(Path ws) {
-        List<String> code = new ArrayList<>();
+    private CheckResult p3Scan(final Path ws) {
+        final List<String> code = new ArrayList<>();
         for (String ext : List.of(".java", ".kt", ".sql", ".yml", ".yaml")) {
             for (Path p : StructureChecks.glob(ws, "**/*")) {
-                String n = p.toString();
+                final String n = p.toString();
                 if (n.endsWith(ext) && !n.contains("/task/") && !n.contains("/docs/") && !StructureChecks.skip(p)) code.add(ws.relativize(p).toString());
                 if (code.size() >= 6) break;
             }
             if (code.size() >= 6) break;
         }
-        boolean noCode = code.stream().noneMatch(c -> c.endsWith(".java") || c.endsWith(".kt"));
+        final boolean noCode = code.stream().noneMatch(c -> c.endsWith(".java") || c.endsWith(".kt"));
         return new CheckResult(CheckId.P3, noCode ? CheckStatus.PASS : CheckStatus.FAIL,
                 noCode ? "no production sources at definition time" : "sources present: " + code);
     }

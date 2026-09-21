@@ -22,7 +22,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
-import java.util.stream.Stream;
 
 /**
  * Thin typed client for agentbench-trading-service's JSON API. Blocking calls are
@@ -44,7 +43,7 @@ public class ServiceClient implements Serializable {
     private transient HttpClient sseClient;
 
     /** Production constructor: Boot's auto-configured RestClient.Builder is injected. */
-    public ServiceClient(ServiceProperties properties, RestClient.Builder builder) {
+    public ServiceClient(final ServiceProperties properties, final RestClient.Builder builder) {
         this.properties = properties;
         this.baseUrl = properties.baseUrl();
         this.http = build(properties, builder);
@@ -53,11 +52,11 @@ public class ServiceClient implements Serializable {
                 .build();
     }
 
-    private static RestClient build(ServiceProperties properties, RestClient.Builder builder) {
-        HttpClient jdk = HttpClient.newBuilder()
+    private static RestClient build(final ServiceProperties properties, final RestClient.Builder builder) {
+        final var jdk = HttpClient.newBuilder()
                 .connectTimeout(properties.connectTimeout())
                 .build();
-        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(jdk);
+        final var factory = new JdkClientHttpRequestFactory(jdk);
         factory.setReadTimeout(properties.readTimeout());
         return builder.clone() // never mutate the injected prototype (mock/test seam stays intact)
                 .baseUrl(properties.baseUrl())
@@ -71,7 +70,7 @@ public class ServiceClient implements Serializable {
                 .build();
     }
 
-    private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
+    private void readObject(final ObjectInputStream in) throws IOException, ClassNotFoundException {
         in.defaultReadObject();
         http = build(properties, RestClient.builder());
         sseClient = HttpClient.newBuilder()
@@ -83,7 +82,7 @@ public class ServiceClient implements Serializable {
         return baseUrl;
     }
 
-    public List<Api.Run> runs(String task, String model, String mode, String valid, String poolable) {
+    public List<Api.Run> runs(final String task, final String model, final String mode, final String valid, final String poolable) {
         return http.get()
                 .uri(b -> b.path("/api/runs")
                         .queryParamIfPresent("task", blankToNone(task))
@@ -97,11 +96,11 @@ public class ServiceClient implements Serializable {
                 });
     }
 
-    public Api.Run run(String runId) {
+    public Api.Run run(final String runId) {
         return http.get().uri("/api/runs/{id}", runId).retrieve().body(Api.Run.class);
     }
 
-    public Api.Job rescore(String runId) {
+    public Api.Job rescore(final String runId) {
         return http.post().uri("/api/runs/{id}/rescore", runId).retrieve().body(Api.Job.class);
     }
 
@@ -116,7 +115,7 @@ public class ServiceClient implements Serializable {
         return http.get().uri("/api/groups").retrieve().body(Api.GroupResponse.class);
     }
 
-    public Api.CompareResponse compare(Api.CompareRequest request) {
+    public Api.CompareResponse compare(final Api.CompareRequest request) {
         return http.post().uri("/api/compare")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(request)
@@ -133,16 +132,16 @@ public class ServiceClient implements Serializable {
         });
     }
 
-    public Api.Job job(long jobId) {
+    public Api.Job job(final String jobId) {
         return http.get().uri("/api/jobs/{id}", jobId).retrieve().body(Api.Job.class);
     }
 
-    public Api.Job cancel(long jobId) {
+    public Api.Job cancel(final String jobId) {
         return http.post().uri("/api/jobs/{id}/cancel", jobId).retrieve().body(Api.Job.class);
     }
 
     /** POST /api/jobs — enqueue a run; spec maps 1:1 onto the service's RunSpec (snake_case flags). */
-    public Api.Job enqueueJob(Map<String, Object> spec, int priority) {
+    public Api.Job enqueueJob(final Map<String, Object> spec, final int priority) {
         return http.post().uri("/api/jobs")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("spec", spec, "priority", priority))
@@ -150,11 +149,11 @@ public class ServiceClient implements Serializable {
                 .body(Api.Job.class);
     }
 
-    public Api.Job requeue(long jobId) {
+    public Api.Job requeue(final String jobId) {
         return http.post().uri("/api/jobs/{id}/requeue", jobId).retrieve().body(Api.Job.class);
     }
 
-    public Api.Job setPriority(long jobId, int priority) {
+    public Api.Job setPriority(final String jobId, final int priority) {
         return http.patch().uri("/api/jobs/{id}", jobId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("priority", priority))
@@ -167,13 +166,13 @@ public class ServiceClient implements Serializable {
         });
     }
 
-    public Api.Experiment experiment(long experimentId) {
+    public Api.Experiment experiment(final String experimentId) {
         return http.get().uri("/api/experiments/{id}", experimentId).retrieve().body(Api.Experiment.class);
     }
 
     /** POST /api/experiments — enqueue a whole experiment; params per template (experiments.py TEMPLATE_PARAMS). */
-    public Api.Experiment createExperiment(String name, String template, Map<String, Object> params, int k) {
-        Map<String, Object> body = new java.util.LinkedHashMap<>();
+    public Api.Experiment createExperiment(final String name, final String template, final Map<String, Object> params, final int k) {
+        final var body = new java.util.LinkedHashMap<String, Object>();
         body.put("name", name);
         body.put("template", template);
         body.put("params", params);
@@ -197,18 +196,18 @@ public class ServiceClient implements Serializable {
      * GET /runs/{runId}/files/{path} — raw file content from the run's results dir.
      * Each path segment is URL-encoded (J-1), so spaces, %, and non-ASCII are safe.
      */
-    public String runFileText(String runId, String relativePath) {
+    public String runFileText(final String runId, final String relativePath) {
         if (relativePath.matches(".*[?#].*") || relativePath.contains("..")) {
             throw new IllegalArgumentException("unsafe file path: " + relativePath);
         }
-        URI uri = URI.create(baseUrl + "/runs/" + encodeSegment(runId) + "/files/"
+        final var uri = URI.create(baseUrl + "/runs/" + encodeSegment(runId) + "/files/"
                 + encodePath(relativePath));
         return http.get().uri(uri).retrieve().body(String.class);
     }
 
-    static String encodePath(String relativePath) {
-        StringBuilder sb = new StringBuilder();
-        for (String segment : relativePath.split("/")) {
+    static String encodePath(final String relativePath) {
+        final var sb = new StringBuilder();
+        for (final var segment : relativePath.split("/")) {
             if (sb.length() > 0) {
                 sb.append('/');
             }
@@ -217,7 +216,7 @@ public class ServiceClient implements Serializable {
         return sb.toString();
     }
 
-    static String encodeSegment(String segment) {
+    static String encodeSegment(final String segment) {
         return java.net.URLEncoder.encode(segment, java.nio.charset.StandardCharsets.UTF_8)
                 .replace("+", "%20");
     }
@@ -228,17 +227,17 @@ public class ServiceClient implements Serializable {
      * returns when the server ends the stream (terminal job). Throwing from {@code onEvent}
      * aborts the connection — that is the page's detach path.
      */
-    public void streamJobEvents(long jobId, Consumer<SseEvent> onEvent) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder()
+    public void streamJobEvents(final String jobId, final Consumer<SseEvent> onEvent) throws IOException, InterruptedException {
+        final var request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/jobs/" + jobId + "/events"))
                 .header("Accept", "text/event-stream")
                 .GET()
                 .build();
-        HttpResponse<Stream<String>> response = sseClient.send(request, HttpResponse.BodyHandlers.ofLines());
-        try (Stream<String> lines = response.body()) {
-            SseParser parser = new SseParser();
+        final var response = sseClient.send(request, HttpResponse.BodyHandlers.ofLines());
+        try (var lines = response.body()) {
+            final var parser = new SseParser();
             lines.forEach(line -> {
-                SseEvent event = parser.accept(line);
+                final var event = parser.accept(line);
                 if (event != null) {
                     onEvent.accept(event); // a RuntimeException here aborts the stream/connection
                 }
@@ -247,30 +246,30 @@ public class ServiceClient implements Serializable {
     }
 
     /** Human-readable text for anything the client throws. */
-    public String errorText(Exception e) {
+    public String errorText(final Exception e) {
         if (e instanceof RestClientResponseException responseException) {
             try {
-                JsonNode body = Json.MAPPER.readTree(responseException.getResponseBodyAsString());
+                final var body = Json.MAPPER.readTree(responseException.getResponseBodyAsString());
                 if (body.has("detail")) {
-                    JsonNode detail = body.get("detail");
+                    final var detail = body.get("detail");
                     if (detail.isTextual()) {
                         return detail.asText();
                     }
                     if (detail.isArray()) { // pydantic validation errors; the field name is the LAST loc segment
-                        StringBuilder sb = new StringBuilder();
-                        for (JsonNode err : detail) {
+                        final var sb = new StringBuilder();
+                        for (final var err : detail) {
                             if (sb.length() > 0) {
                                 sb.append("\n");
                             }
-                            JsonNode loc = err.path("loc");
-                            String field = loc.isArray() && !loc.isEmpty()
+                            final var loc = err.path("loc");
+                            final var field = loc.isArray() && !loc.isEmpty()
                                     ? Fmt.textOr(loc.get(loc.size() - 1), "?") : "?";
                             sb.append(field).append(": ").append(Fmt.textOr(err.path("msg"), "invalid"));
                         }
                         return sb.toString();
                     }
                 }
-            } catch (Exception ignored) {
+            } catch (final Exception ignored) {
                 // fall through to the raw body
             }
             return responseException.getStatusCode() + ": " + responseException.getResponseBodyAsString();
@@ -282,9 +281,9 @@ public class ServiceClient implements Serializable {
         if (e instanceof RestClientException restClientException) {
             // a failed conversion carries the interesting text in its cause chain
             // (e.g. "Error while extracting response … — JsonMappingException: …"), not the wrapper
-            StringBuilder text = new StringBuilder(restClientException.getMessage() != null
+            final var text = new StringBuilder(restClientException.getMessage() != null
                     ? restClientException.getMessage() : restClientException.toString());
-            Throwable cause = restClientException.getCause();
+            var cause = restClientException.getCause();   // reassigned below - not final
             while (cause != null) {
                 text.append(" — ").append(cause.getMessage() != null ? cause.getMessage() : cause.toString());
                 cause = cause.getCause();
@@ -294,7 +293,7 @@ public class ServiceClient implements Serializable {
         return e.getMessage() != null ? e.getMessage() : e.toString();
     }
 
-    private static Optional<String> blankToNone(String value) {
+    private static Optional<String> blankToNone(final String value) {
         return value == null || value.isBlank() ? Optional.empty() : Optional.of(value);
     }
 }

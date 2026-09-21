@@ -35,7 +35,7 @@ public class ExperimentsService {
     }
 
     public static String shortName(String model) {
-        StringBuilder b = new StringBuilder();
+        final var b = new StringBuilder();
         for (char c : model.toCharArray()) if (Character.isLetterOrDigit(c)) b.append(c);
         return b.length() > 10 ? b.substring(0, 10).toString() : b.toString();
     }
@@ -46,17 +46,17 @@ public class ExperimentsService {
 
     public record ArmSpec(String arm, int repeat, RunSpec spec) {}
 
-    public List<ArmSpec> plan(String template, Map<String, Object> params, int k) {
-        String tag = defaultTag();
-        List<ArmSpec> specs = new ArrayList<>();
+    public List<ArmSpec> plan(String template, Map<String, Object> params, final int k) {
+        final String tag = defaultTag();
+        final List<ArmSpec> specs = new ArrayList<>();
         switch (template) {
             case "harness_effect" -> {
-                String model = str(params.get("model"));
-                int wall = num(params.getOrDefault("task_wall", 3600)), tokens = params.get("task_tokens") == null || "auto".equals(str(params.get("task_tokens"))) ? 60000 : num(params.get("task_tokens"));
-                List<String> arms = params.get("arms") instanceof List<?> l ? (List<String>) l : List.of("orch", "mono");
+                final String model = str(params.get("model"));
+                final int wall = num(params.getOrDefault("task_wall", 3600)), tokens = params.get("task_tokens") == null || "auto".equals(str(params.get("task_tokens"))) ? 60000 : num(params.get("task_tokens"));
+                final List<String> arms = params.get("arms") instanceof List<?> l ? (List<String>) l : List.of("orch", "mono");
                 int n = taskCount();   // the monolithic impl budget = N x task budget from the reference plan (matched, P-1)
-                String parallel = params.get("parallel") == null ? "3" : str(params.get("parallel"));
-                Integer window = contextWindow(params, model);
+                final String parallel = params.get("parallel") == null ? "3" : str(params.get("parallel"));
+                final Integer window = contextWindow(params, model);
                 for (int i = 1; i <= k; i++)
                     for (String arm : arms)
                         specs.add(new ArmSpec(arm, i, new RunSpec(RUNG, model, null, "orchestrated".equals(armMode(arm)) ? "orchestrated" : "monolithic",
@@ -65,10 +65,10 @@ public class ExperimentsService {
                                 "he-" + tag + "-" + shortName(model) + "-" + arm.replace("+", "") + "-r" + i)));
             }
             case "model_ab" -> {
-                String a = str(params.get("model_a")), b = str(params.get("model_b"));
-                int wall = num(params.getOrDefault("task_wall", 3600));
+                final String a = str(params.get("model_a")), b = str(params.get("model_b"));
+                final int wall = num(params.getOrDefault("task_wall", 3600));
                 // per arm: A and B can be different-sized models, so the window fallback must resolve per model
-                Integer windowA = contextWindow(params, a), windowB = contextWindow(params, b);
+                final Integer windowA = contextWindow(params, a), windowB = contextWindow(params, b);
                 for (int i = 1; i <= k; i++) {
                     // the arm suffix keeps A and B distinct; model-ab.sh always reviews both sides (self + trajectory)
                     specs.add(new ArmSpec("A", i, new RunSpec(RUNG, a, null, "orchestrated", "reference", wall, null, null, null, null, false,
@@ -80,10 +80,10 @@ public class ExperimentsService {
                 }
             }
             case "agent_ab" -> {
-                String model = str(params.get("model"));
-                int wall = num(params.getOrDefault("task_wall", 3600));
-                String mode = params.get("mode") == null ? "orchestrated" : str(params.get("mode"));
-                Integer window = contextWindow(params, model);
+                final String model = str(params.get("model"));
+                final int wall = num(params.getOrDefault("task_wall", 3600));
+                final String mode = params.get("mode") == null ? "orchestrated" : str(params.get("mode"));
+                final Integer window = contextWindow(params, model);
                 for (int i = 1; i <= k; i++)
                     for (String agent : List.of("ref", "pi"))   // --harness=ref|pi: the flag the comparison is ABOUT
                         specs.add(new ArmSpec(agent, i, new RunSpec(RUNG, model, agent, mode, "reference",
@@ -93,7 +93,7 @@ public class ExperimentsService {
             }
             default -> throw new IllegalArgumentException("unknown template " + template + "; known: harness_effect, model_ab, agent_ab");
         }
-        Set<String> ids = new HashSet<>();
+        final Set<String> ids = new HashSet<>();
         specs.forEach(s -> { if (!ids.add(s.spec().runId())) throw new IllegalArgumentException("duplicate run id " + s.spec().runId()); });
         return specs;
     }
@@ -112,7 +112,7 @@ public class ExperimentsService {
      *  Preflight's "target model served" check makes. Best-effort: an unreachable server means an empty
      *  map (the probe owns the window), never a crash. */
     Map<String, Integer> localModelSpecs() {
-        Map<String, Integer> out = new LinkedHashMap<>();
+        final Map<String, Integer> out = new LinkedHashMap<>();
         new com.strgmai.ace.service.runner.ContextProbe().models(props.endpoint(), props.apiKey() == null ? "" : props.apiKey())
                 .forEach((id, m) -> { if (m.hasNonNull("max_model_len")) out.put(id, m.get("max_model_len").asInt()); });
         return out;
@@ -134,10 +134,11 @@ public class ExperimentsService {
     /** the experiment row and its arms are one unit: an arm that fails to enqueue (a colliding run id,
      *  a results dir already on disk) must not leave an experiment behind that can never finish, so the
      *  whole sequence runs in one transaction and rolls back together. */
-    public Map<String, Object> enqueue(String name, String template, Map<String, Object> params, int k, String resultsDir, String runnerSha, String oracleSha) {
-        List<ArmSpec> specs = plan(template, params, k);
+    public Map<String, Object> enqueue(final String name, String template, Map<String, Object> params, final int k, final String resultsDir, final String runnerSha, final String oracleSha) {
+        final List<ArmSpec> specs = plan(template, params, k);
         return tx.execute(status -> {
             ExperimentsRecord rec = dsl.insertInto(EXPERIMENTS)
+                    .set(EXPERIMENTS.ID, UUID.randomUUID())   // no AUTOINCREMENT on a UUID PK - assigned here
                     .set(EXPERIMENTS.NAME, name)
                     .set(EXPERIMENTS.TAG, defaultTag())
                     .set(EXPERIMENTS.TEMPLATE, template)
@@ -147,11 +148,11 @@ public class ExperimentsService {
                     .set(EXPERIMENTS.PINNED_ORACLE_SHA, oracleSha)
                     .returning()
                     .fetchOne();
-            int id = rec.getId();
-            List<Object> jobs = new ArrayList<>();
+            final UUID id = rec.getId();
+            final List<Object> jobs = new ArrayList<>();
             for (ArmSpec s : specs)
                 jobs.add(queue.enqueue(s.spec(), 0, resultsDir, runnerSha, oracleSha, id, s.arm(), s.repeat()));
-            Map<String, Object> out = JsonColumns.parse(rec.intoMap());
+            final Map<String, Object> out = JsonColumns.parse(rec.intoMap());
             out.put("jobs", jobs);
             return out;
         });
@@ -159,29 +160,29 @@ public class ExperimentsService {
 
     /** port of finalize_if_done: when every job of the experiment is terminal, compute the
      *  template's comparisons from the imported runs (the runs table is the source of truth) */
-    public void finalizeIfDone(long experimentId) {
-        ExperimentsRecord exp = dsl.selectFrom(EXPERIMENTS).where(EXPERIMENTS.ID.eq((int) experimentId)).fetchOne();
+    public void finalizeIfDone(final UUID experimentId) {
+        final ExperimentsRecord exp = dsl.selectFrom(EXPERIMENTS).where(EXPERIMENTS.ID.eq(experimentId)).fetchOne();
         if (exp == null || !"queued".equals(exp.getStatus())) return;
         var jobs = dsl.select(JOBS.ARM, JOBS.RUN_ID, JOBS.STATUS).from(JOBS)
-                .where(JOBS.EXPERIMENT_ID.eq((int) experimentId)).orderBy(JOBS.REPEAT, JOBS.ARM).fetch();
+                .where(JOBS.EXPERIMENT_ID.eq(experimentId)).orderBy(JOBS.REPEAT, JOBS.ARM).fetch();
         if (jobs.stream().anyMatch(j -> !RunSpec.TERMINAL.contains(j.get(JOBS.STATUS)))) return;
-        Map<String, List<Path>> byArm = new LinkedHashMap<>();
+        final Map<String, List<Path>> byArm = new LinkedHashMap<>();
         for (var j : jobs)
             if ("succeeded".equals(j.get(JOBS.STATUS)))
                 Optional.ofNullable(dsl.select(RUNS.RESULTS_DIR).from(RUNS).where(RUNS.RUN_ID.eq(j.get(JOBS.RUN_ID))).fetchOne())
                         .ifPresent(r -> byArm.computeIfAbsent(j.get(JOBS.ARM), x -> new ArrayList<>()).add(Path.of(r.value1())));
-        Map<String, Object> params = exp.getParams() instanceof String ps ? fromJson(ps) : new LinkedHashMap<String, Object>();
-        String template = exp.getTemplate();
-        Map<String, Object> comparisons = new LinkedHashMap<>();
+        final Map<String, Object> params = exp.getParams() instanceof String ps ? fromJson(ps) : new LinkedHashMap<String, Object>();
+        final String template = exp.getTemplate();
+        final Map<String, Object> comparisons = new LinkedHashMap<>();
         for (String[] pair : templatePairs(template, params)) {
-            String label = pair[0] + "_vs_" + pair[1];
-            List<Path> a = byArm.getOrDefault(pair[0], List.of()), b = byArm.getOrDefault(pair[1], List.of());
+            final String label = pair[0] + "_vs_" + pair[1];
+            final List<Path> a = byArm.getOrDefault(pair[0], List.of()), b = byArm.getOrDefault(pair[1], List.of());
             if (a.isEmpty() || b.isEmpty()) {
                 comparisons.put(label, Map.of("error", "no succeeded, imported runs for arm " + (a.isEmpty() ? pair[0] : pair[1])));
                 continue;
             }
             try {
-                List<Double> fa = functional(a), fb = functional(b);
+                final List<Double> fa = functional(a), fb = functional(b);
                 comparisons.put(label, Map.of("result", stats.compare(fa, fb, "functional"), "printed", ""));
             } catch (Exception e) {   // stats refused (not comparable / nothing to pool): a result, not a crash
                 comparisons.put(label, Map.of("refused", String.valueOf(e)));
@@ -189,7 +190,7 @@ public class ExperimentsService {
         }
         comparisons.put("arms", jobs.stream().map(j -> Map.of("arm", j.get(JOBS.ARM), "status", j.get(JOBS.STATUS))).toList());
         dsl.update(EXPERIMENTS).set(EXPERIMENTS.STATUS, "finished").set(EXPERIMENTS.COMPARISON, toJson(comparisons))
-                .where(EXPERIMENTS.ID.eq((int) experimentId)).execute();
+                .where(EXPERIMENTS.ID.eq(experimentId)).execute();
     }
 
     /** the template's arm pairs (experiments.py: TEMPLATE_COMPARISONS) */
@@ -197,15 +198,15 @@ public class ExperimentsService {
         if ("model_ab".equals(template)) return List.<String[]>of(new String[]{"A", "B"});
         if ("agent_ab".equals(template))
             return List.<String[]>of(new String[]{String.valueOf(params.getOrDefault("agents_a", "ref")), String.valueOf(params.getOrDefault("agents_b", "pi"))});
-        List<String[]> pairs = new ArrayList<>(List.<String[]>of(new String[]{"orch", "mono"}));
-        List<String> arms = params.get("arms") instanceof List<?> l ? (List<String>) l : List.of("orch", "mono");
+        final List<String[]> pairs = new ArrayList<>(List.<String[]>of(new String[]{"orch", "mono"}));
+        final List<String> arms = params.get("arms") instanceof List<?> l ? (List<String>) l : List.of("orch", "mono");
         if (arms.contains("par")) pairs.add(new String[]{"par", "orch"});
         if (arms.contains("mono+rules")) { pairs.add(new String[]{"mono+rules", "mono"}); pairs.add(new String[]{"orch", "mono+rules"}); }
         return pairs;
     }
 
     List<Double> functional(List<Path> dirs) {
-        List<Double> out = new ArrayList<>();
+        final List<Double> out = new ArrayList<>();
         for (Path d : dirs) {
             try {
                 com.fasterxml.jackson.databind.JsonNode v = new com.fasterxml.jackson.databind.ObjectMapper()
@@ -221,7 +222,7 @@ public class ExperimentsService {
         try { return new com.fasterxml.jackson.databind.ObjectMapper().readValue(s, Map.class); } catch (Exception e) { return new LinkedHashMap<>(); }
     }
 
-    private String toJson(Object o) {
+    private String toJson(final Object o) {
         try { return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(o); }
         catch (Exception e) { return "{}"; }
     }

@@ -24,7 +24,7 @@ class ScorerTest {
 
     @Test
     void notAttemptedCountsAsFail() {
-        Map<String, Object> rep = Scorer.score(List.of(CheckResult.notAttempted(CheckId.M1, "no sources")));
+        final Map<String, Object> rep = Scorer.score(List.of(CheckResult.notAttempted(CheckId.M1, "no sources")));
         assertEquals(1, rep.get("not_attempted"));
         assertEquals(0, rep.get("points_got"));
         assertEquals(1, rep.get("denominator"));
@@ -57,7 +57,7 @@ class ScorerTest {
 
     @Test
     void aRungWithoutFChecksHasNoFunctionalScore() {
-        Map<String, Object> rep = Scorer.score(List.of(CheckResult.pass(CheckId.S1, "ok")));
+        final Map<String, Object> rep = Scorer.score(List.of(CheckResult.pass(CheckId.S1, "ok")));
         assertNull(rep.get("functional_score_pct"));
         assertNotNull(rep.get("weighted_score_pct"));
     }

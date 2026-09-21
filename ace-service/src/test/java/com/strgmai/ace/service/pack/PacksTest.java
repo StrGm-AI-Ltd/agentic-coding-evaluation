@@ -60,7 +60,7 @@ class PacksTest {
                 All money is BigDecimal.
                 `GET /accounts/{id}` returns availableBalance at 2dp.
                 """;
-        String section = Packs.contractSection(prompt);
+        final String section = Packs.contractSection(prompt);
         assertTrue(section.contains("Frozen API contract"));
         assertTrue(section.contains("BigDecimal"));
         assertFalse(section.contains("Protocol for this rung"), "the plan protocol is stripped in orchestrated mode (C-11)");
@@ -69,14 +69,14 @@ class PacksTest {
 
     @Test
     void parseSelfReviewIsTolerantOfPercentageFractionsAndSeveritySynonyms() throws Exception {
-        Path f = track(Files.createTempFile("review", ".json"));
+        final Path f = track(Files.createTempFile("review", ".json"));
         Files.writeString(f, """
                 some prose before the JSON, because models do that
                 {"score": "85%", "confidence": 0.7, "categories": {"tests": 0.9},
                  "findings": [{"severity": "CRITICAL", "file": "A.java", "line": 3, "issue": "asOf boundary is inclusive", "fix": "make it exclusive"}],
                  "would_ship": true}
                 """);
-        Map<String, Object> parsed = Packs.parseSelfReview(f);
+        final Map<String, Object> parsed = Packs.parseSelfReview(f);
         assertNotNull(parsed);
         assertEquals(85.0, parsed.get("score"), "a percentage string is 85, not 0.85 (R4 C-12)");
         assertEquals(0.7, parsed.get("confidence"));
@@ -88,7 +88,7 @@ class PacksTest {
 
     @Test
     void parseSelfReviewRejectsScorelessJson() throws Exception {
-        Path f = track(Files.createTempFile("review", ".json"));
+        final Path f = track(Files.createTempFile("review", ".json"));
         Files.writeString(f, "{\"confidence\": 0.5}");
         assertNull(Packs.parseSelfReview(f));
         assertNull(Packs.parseSelfReview(Path.of("/nonexistent")));
@@ -96,9 +96,9 @@ class PacksTest {
 
     @Test
     void parseTrajectoryReviewKeepsItsOwnFields() throws Exception {
-        Path f = track(Files.createTempFile("traj", ".json"));
+        final Path f = track(Files.createTempFile("traj", ".json"));
         Files.writeString(f, "{\"score\": 70, \"confidence\": 0.8, \"categories\": {\"efficiency\": 60}, \"findings\": [], \"wasted_turns_estimate\": 12, \"would_trust_unsupervised\": false}");
-        Map<String, Object> parsed = Packs.parseTrajectoryReview(f);
+        final Map<String, Object> parsed = Packs.parseTrajectoryReview(f);
         assertEquals(70.0, parsed.get("score"));
         assertEquals(12, parsed.get("wasted_turns_estimate"));
         assertEquals(false, parsed.get("would_trust_unsupervised"));
@@ -106,27 +106,27 @@ class PacksTest {
 
     @Test
     void parseParallelPlanNormalizesIdsAndAcceptsBareTaskWaves() throws Exception {
-        Path f = track(Files.createTempFile("pp", ".json"));
+        final Path f = track(Files.createTempFile("pp", ".json"));
         Files.writeString(f, """
                 noise before
                 {"waves": [["Task 1"], ["ST-02", "T4"], "T3"],
                  "ownership": {"Task 1": ["account-service/**"], "T2": "orders/Orders.java"},
                  "shared_files": ["settings.gradle"], "rationale": "because"}
                 """);
-        Map<String, Object> parsed = Packs.parseParallelPlan(f);
+        final Map<String, Object> parsed = Packs.parseParallelPlan(f);
         assertEquals(List.of(List.of("T1"), List.of("T2", "T4"), List.of("T3")), parsed.get("waves"));
         assertEquals(List.of("account-service/**"), ((Map<?, ?>) parsed.get("ownership")).get("T1"));
         assertEquals(List.of("orders/Orders.java"), ((Map<?, ?>) parsed.get("ownership")).get("T2"));   // a bare glob is a one-glob list
         assertEquals(List.of("settings.gradle"), parsed.get("shared_files"));
         assertNull(Packs.parseParallelPlan(Path.of("/nonexistent")));
-        Path bad = track(Files.createTempFile("pp-bad", ".json"));
+        final Path bad = track(Files.createTempFile("pp-bad", ".json"));
         Files.writeString(bad, "{\"ownership\": {}}");
         assertNull(Packs.parseParallelPlan(bad), "no waves -> no plan");
     }
 
     @Test
     void budgetSectionCarriesTheDeadlineClock() {
-        String s = Packs.budgetSection("T3", "10:00", "11:00", 60);
+        final String s = Packs.budgetSection("T3", "10:00", "11:00", 60);
         assertTrue(s.contains("hard deadline **11:00**"));
         assertTrue(s.contains("T3"));
     }

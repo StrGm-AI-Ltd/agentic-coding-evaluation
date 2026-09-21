@@ -26,53 +26,51 @@ import tools.jackson.databind.JsonNode;
 public class ExperimentDetailView extends VerticalLayout implements BeforeEnterObserver {
 
     private final ServiceClient client;
-    private long experimentId = -1;
+    private String experimentId;
 
-    public ExperimentDetailView(ServiceClient client) {
+    public ExperimentDetailView(final ServiceClient client) {
         this.client = client;
         setPadding(true);
     }
 
     @Override
-    public void beforeEnter(BeforeEnterEvent event) {
-        String raw = event.getRouteParameters().get("experimentId").orElse(null);
-        try {
-            experimentId = raw == null ? -1 : Long.parseLong(raw);
-        } catch (NumberFormatException e) {
-            experimentId = -1;
-        }
+    public void beforeEnter(final BeforeEnterEvent event) {
+        final var raw = event.getRouteParameters().get("experimentId").orElse(null);
+        experimentId = (raw == null || raw.isBlank()) ? null : raw;
         render();
     }
 
     private void render() {
         removeAll();
-        if (experimentId < 0) {
+        if (experimentId == null) {
             add(new com.vaadin.flow.component.html.H2("Experiment"), Panels.error("No valid experiment id in the URL."));
             return;
         }
-        Api.Experiment experiment;
+        final Api.Experiment experiment;
         try {
             experiment = client.experiment(experimentId);
-        } catch (Exception e) {
+        } catch (final Exception e) {
             add(new com.vaadin.flow.component.html.H2("Experiment #" + experimentId), Panels.error(client.errorText(e)));
             return;
         }
 
         add(new RouterLink("← Experiments", ExperimentsView.class));
 
-        com.vaadin.flow.component.html.H2 title = new com.vaadin.flow.component.html.H2(experiment.name());
+        final var title = new com.vaadin.flow.component.html.H2(experiment.name());
         title.getStyle().set("margin", "4px 0").set("font-size", "1.6em");
         add(title);
 
-        List<Api.ExperimentJob> jobs = experiment.jobs() == null ? List.of() : experiment.jobs();
-        String effectiveStatus = ExperimentStatuses.effective(experiment.status(),
+        // ternary combines List.of() (unconstrained) with List<Api.ExperimentJob>: without a var's
+        // target type this infers to something other than List<Api.ExperimentJob> - keep explicit
+        final List<Api.ExperimentJob> jobs = experiment.jobs() == null ? List.of() : experiment.jobs();
+        final var effectiveStatus = ExperimentStatuses.effective(experiment.status(),
                 jobs.stream().map(Api.ExperimentJob::status).toList());
-        HorizontalLayout statusLine = new HorizontalLayout(Badges.status(effectiveStatus));
+        final var statusLine = new HorizontalLayout(Badges.status(effectiveStatus));
         statusLine.setPadding(false);
         statusLine.setSpacing(true);
         statusLine.getStyle().set("margin", "4px 0");
         if (!java.util.Objects.equals(effectiveStatus, experiment.status())) {
-            Span raw = new Span("(table status: " + experiment.status() + " — derived from its jobs)");
+            final var raw = new Span("(table status: " + experiment.status() + " — derived from its jobs)");
             raw.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em");
             statusLine.add(raw);
         }
@@ -82,18 +80,18 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         add(new Span("Parameters"));
         add(Panels.mono(Fmt.json(experiment.params())));
 
-        Map<Long, String> blockedReasons = blockedReasons(client, jobs);
-        long blockedCount = jobs.stream().filter(j -> "blocked".equals(j.status())).count();
+        final var blockedReasons = blockedReasons(client, jobs);
+        final var blockedCount = jobs.stream().filter(j -> "blocked".equals(j.status())).count();
         if (blockedCount > 0) {
-            VerticalLayout blockedPanel = new VerticalLayout();
+            final var blockedPanel = new VerticalLayout();
             blockedPanel.setPadding(false);
             blockedPanel.setSpacing(false);
-            Span blockedLine = new Span(blockedCount + " blocked job" + (blockedCount == 1 ? "" : "s")
+            final var blockedLine = new Span(blockedCount + " blocked job" + (blockedCount == 1 ? "" : "s")
                     + (blockedReasons.isEmpty() ? "" : " — " + String.join("\n", new java.util.LinkedHashSet<>(blockedReasons.values()))));
             // browsers collapse \n in inline text; pre-line renders each reason on its own line
             blockedLine.getStyle().set("white-space", "pre-line");
-            Button requeueAll = new Button("Requeue all blocked", e -> {
-                String failures = requeueAllBlocked(client, jobs);
+            final var requeueAll = new Button("Requeue all blocked", e -> {
+                final var failures = requeueAllBlocked(client, jobs);
                 if (failures == null) {
                     Notification.show("Requeued " + blockedCount + " blocked job"
                             + (blockedCount == 1 ? "" : "s"), 3000, Notification.Position.BOTTOM_END);
@@ -109,7 +107,7 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
 
         add(Panels.sectionTitle("Jobs (" + jobs.size() + ")"));
 
-        Grid<Api.ExperimentJob> grid = new Grid<>(Api.ExperimentJob.class, false);
+        final var grid = new Grid<>(Api.ExperimentJob.class, false);
         grid.addColumn(Api.ExperimentJob::id).setHeader("#").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
         grid.addColumn(job -> job.arm() == null ? "–" : job.arm()).setHeader("arm").setAutoWidth(true);
         grid.addColumn(job -> job.repeat() == null ? "–" : "r" + job.repeat())
@@ -128,10 +126,10 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         addComparison(experiment);
     }
 
-    private static com.vaadin.flow.component.badge.Badge statusBadge(Api.ExperimentJob job,
-            Map<Long, String> blockedReasons) {
-        com.vaadin.flow.component.badge.Badge badge = Badges.status(job.status());
-        String reason = blockedReasons.get(job.id());
+    private static com.vaadin.flow.component.badge.Badge statusBadge(final Api.ExperimentJob job,
+            final Map<String, String> blockedReasons) {
+        final var badge = Badges.status(job.status());
+        final var reason = blockedReasons.get(job.id());
         if (reason != null) {
             badge.getElement().setAttribute("title", reason);
         }
@@ -143,17 +141,19 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
      * The per-job lookups run in parallel (the shared RestClient is thread-safe) so a large
      * arm × repeat grid does not cost one sequential network round-trip per blocked job.
      */
-    static Map<Long, String> blockedReasons(ServiceClient client, List<Api.ExperimentJob> jobs) {
-        Map<Long, String> reasons = new java.util.LinkedHashMap<>();
+    static Map<String, String> blockedReasons(final ServiceClient client, final List<Api.ExperimentJob> jobs) {
+        // empty-diamond new LinkedHashMap<>() has no target type under var - would infer
+        // <Object, Object> and fail to compile against the declared Map<String, String> return
+        final Map<String, String> reasons = new java.util.LinkedHashMap<>();
         jobs.parallelStream()
                 .filter(job -> "blocked".equals(job.status()))
                 .map(job -> {
                     try {
-                        Api.Job full = client.job(job.id());
+                        final var full = client.job(job.id());
                         if (full != null && full.blocked_reason() != null) {
                             return Map.entry(job.id(), full.blocked_reason());
                         }
-                    } catch (Exception ignored) {
+                    } catch (final Exception ignored) {
                         // the tooltip is simply absent for that job
                     }
                     return null;
@@ -164,15 +164,16 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
     }
 
     /** Requeues every blocked job; returns null on full success, or a description of the failures. */
-    static String requeueAllBlocked(ServiceClient client, List<Api.ExperimentJob> jobs) {
-        List<String> failures = new ArrayList<>();
-        for (Api.ExperimentJob job : jobs) {
+    static String requeueAllBlocked(final ServiceClient client, final List<Api.ExperimentJob> jobs) {
+        // same empty-diamond-under-var trap as above (String.join needs Iterable<? extends CharSequence>)
+        final List<String> failures = new ArrayList<>();
+        for (final var job : jobs) {
             if (!"blocked".equals(job.status())) {
                 continue;
             }
             try {
                 client.requeue(job.id());
-            } catch (Exception e) {
+            } catch (final Exception e) {
                 failures.add("job #" + job.id() + ": " + client.errorText(e));
             }
         }
@@ -188,31 +189,32 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
      * experiment_detail.html's Comparison section: error/refused callouts, the
      * A − B diff · 90 % CI · p-value · supported/not-supported verdict, or the empty case.
      */
-    static List<ComparisonCard> comparisonCards(JsonNode comparison) {
-        List<ComparisonCard> cards = new ArrayList<>();
+    static List<ComparisonCard> comparisonCards(final JsonNode comparison) {
+        // returned as List<ComparisonCard>; empty-diamond under var would infer <Object>
+        final List<ComparisonCard> cards = new ArrayList<>();
         if (comparison == null || !comparison.isObject()) {
             return cards;
         }
         comparison.propertyNames().stream().sorted().forEach(label -> {
-            JsonNode c = comparison.get(label);
-            String title = label.replace("_vs_", " vs ");
-            String printed = Fmt.textOr(c.path("printed"), null);
+            final var c = comparison.get(label);
+            final var title = label.replace("_vs_", " vs ");
+            final var printed = Fmt.textOr(c.path("printed"), null);
 
-            JsonNode error = c.path("error");
+            final var error = c.path("error");
             if (!error.isMissingNode() && !error.isNull()) {
                 cards.add(new ComparisonCard(title, "warn", Fmt.textOr(error, ""), printed));
                 return;
             }
-            JsonNode refused = c.path("refused");
+            final var refused = c.path("refused");
             if (!refused.isMissingNode() && !refused.isNull()) {
                 cards.add(new ComparisonCard(title, "error", "stats.py refused: " + Fmt.textOr(refused, ""), printed));
                 return;
             }
-            JsonNode cmp = c.path("result").path("compare");
+            final var cmp = c.path("result").path("compare");
             if (cmp.isObject()) {
-                double diff = cmp.path("diff").asDouble(0);
-                double p = cmp.path("p").asDouble(1);
-                String text = "A − B = " + Fmt.num(diff) + " " + Fmt.textOr(cmp.path("metric"), "")
+                final var diff = cmp.path("diff").asDouble(0);
+                final var p = cmp.path("p").asDouble(1);
+                final var text = "A − B = " + Fmt.num(diff) + " " + Fmt.textOr(cmp.path("metric"), "")
                         + " points · 90% CI [" + Fmt.num(cmp.path("ci90").path(0).asDouble())
                         + ", " + Fmt.num(cmp.path("ci90").path(1).asDouble()) + "] · p = "
                         + String.format(Locale.ROOT, "%.3f", p) + " · "
@@ -226,23 +228,23 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         return cards;
     }
 
-    private void addComparison(Api.Experiment experiment) {
+    private void addComparison(final Api.Experiment experiment) {
         add(Panels.sectionTitle("Comparison"));
         if (!"finished".equals(experiment.status())) {
-            Span note = new Span("Computed automatically once every job above is terminal.");
+            final var note = new Span("Computed automatically once every job above is terminal.");
             note.getStyle().set("color", "var(--lumo-secondary-text-color)");
             add(note);
             return;
         }
-        List<ComparisonCard> cards = comparisonCards(experiment.comparison());
+        final var cards = comparisonCards(experiment.comparison());
         if (cards.isEmpty()) {
-            Span note = new Span("No comparison recorded.");
+            final var note = new Span("No comparison recorded.");
             note.getStyle().set("color", "var(--lumo-secondary-text-color)");
             add(note);
             return;
         }
-        for (ComparisonCard card : cards) {
-            VerticalLayout cardLayout = new VerticalLayout();
+        for (final var card : cards) {
+            final var cardLayout = new VerticalLayout();
             cardLayout.setPadding(false);
             cardLayout.setSpacing(true);
             cardLayout.getStyle()
@@ -250,7 +252,7 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
                     .set("border-radius", "8px")
                     .set("padding", "12px 16px")
                     .set("margin", "6px 0");
-            Span header = new Span(card.label());
+            final var header = new Span(card.label());
             header.getStyle().set("font-weight", "600");
             cardLayout.add(header);
             switch (card.calloutKind()) {
@@ -268,8 +270,10 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         }
     }
 
-    private String metaLine(Api.Experiment experiment) {
-        List<String> parts = new ArrayList<>();
+    private String metaLine(final Api.Experiment experiment) {
+        // returned via String.join, which needs Iterable<? extends CharSequence> - empty-diamond
+        // under var would infer List<Object> and fail to compile there
+        final List<String> parts = new ArrayList<>();
         parts.add("#" + experiment.id());
         parts.add("tag " + experiment.tag());
         parts.add("template " + experiment.template());

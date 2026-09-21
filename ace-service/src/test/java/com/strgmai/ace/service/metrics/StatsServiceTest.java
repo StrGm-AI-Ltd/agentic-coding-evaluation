@@ -15,25 +15,25 @@ class StatsServiceTest {
     @Test
     void permutationTestIsDeterministicAndOneSided() {
         double[] a = {80.0, 82.0, 79.0, 81.0, 83.0}, b = {60.0, 62.0, 58.0, 61.0, 59.0};
-        double p1 = StatsService.permutationTest(a, b, 5000, 0);
-        double p2 = StatsService.permutationTest(a, b, 5000, 0);
+        final double p1 = StatsService.permutationTest(a, b, 5000, 0);
+        final double p2 = StatsService.permutationTest(a, b, 5000, 0);
         assertEquals(p1, p2);              // seeded: reproducible
         assertTrue(p1 < 0.05, "A consistently >> B must give a small p, got " + p1);
-        double pNull = StatsService.permutationTest(a, a.clone(), 5000, 0);
+        final double pNull = StatsService.permutationTest(a, a.clone(), 5000, 0);
         assertTrue(pNull > 0.3, "A vs itself must give a large p, got " + pNull);
     }
 
     @Test
     void bootCiBracketsTheMeanAndStaysInsideTheDataRange() {
-        List<Double> xs = List.of(10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0);
-        double[] ci = StatsService.bootCi(xs, 2000, 0.10, 0);
-        double mean = xs.stream().mapToDouble(Double::doubleValue).average().orElseThrow();
+        final var xs = List.of(10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0);
+        final double[] ci = StatsService.bootCi(xs, 2000, 0.10, 0);
+        final double mean = xs.stream().mapToDouble(Double::doubleValue).average().orElseThrow();
         assertTrue(ci[0] <= mean && ci[1] >= mean, "the CI must bracket the mean " + mean + ": [" + ci[0] + ", " + ci[1] + "]");
         assertTrue(ci[0] >= 10.0 && ci[1] <= 80.0, "a bootstrap mean cannot leave the data range");
         assertTrue(ci[0] < ci[1]);
     }
 
-    private StatsService.RunSummary run(String model, String mode, String registry, int wall, int tokens, double functional, boolean valid) {
+    private StatsService.RunSummary run(final String model, final String mode, final String registry, final int wall, final int tokens, double functional, final boolean valid) {
         return run(model, mode, registry, wall, tokens, functional, valid, Map.of());
     }
 
@@ -54,9 +54,9 @@ class StatsServiceTest {
     void runsDifferingInAKeyComponentAreRefusedWithTheCulpritNamed() {
         List<StatsService.RunSummary> mixed = List.of(run("m", "monolithic", "r1", 100, 1000, 50.0, true),
                 run("m", "orchestrated", "r1", 100, 1000, 60.0, true));
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> stats.filterRuns(mixed, false, false, "A"));
+        final IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> stats.filterRuns(mixed, false, false, "A"));
         assertTrue(e.getMessage().contains("mode"), "the differing component must be named: " + e.getMessage());
-        List<StatsService.RunSummary> pool = List.of(run("m", "monolithic", "r1", 100, 1000, 50.0, true));
+        final var pool = List.of(run("m", "monolithic", "r1", 100, 1000, 50.0, true));
         assertDoesNotThrow(() -> stats.filterRuns(pool, false, false, "A"));   // identical keys pool fine
         IllegalArgumentException e2 = assertThrows(IllegalArgumentException.class,
                 () -> stats.filterRuns(java.util.List.of(run("m1", "monolithic", "r1", 100, 1000, 50.0, true),
@@ -66,11 +66,11 @@ class StatsServiceTest {
 
     @Test
     void harnessEffectNeedsMatchedBudgets() {
-        StatsService.RunSummary a = run("m", "monolithic", "r1", 14400, 400000, 50.0, true);
-        StatsService.RunSummary b = run("m", "orchestrated", "r1", 14400, 400000, 60.0, true);
+        final StatsService.RunSummary a = run("m", "monolithic", "r1", 14400, 400000, 50.0, true);
+        final StatsService.RunSummary b = run("m", "orchestrated", "r1", 14400, 400000, 60.0, true);
         assertDoesNotThrow(() -> StatsService.requireMatchedBudgets(a, b, false));      // 2% tolerance
-        StatsService.RunSummary c = run("m", "orchestrated", "r1", 14400, 200000, 60.0, true);
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> StatsService.requireMatchedBudgets(a, c, false));
+        final StatsService.RunSummary c = run("m", "orchestrated", "r1", 14400, 200000, 60.0, true);
+        final IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> StatsService.requireMatchedBudgets(a, c, false));
         assertTrue(e.getMessage().contains("not matched"));
         assertDoesNotThrow(() -> StatsService.requireMatchedBudgets(a, c, true));       // explicitly confounded
     }
@@ -84,7 +84,7 @@ class StatsServiceTest {
                 run("m", "monolithic", "r1", 100, 1000, 90.0, true, Map.of("F1", "PASS", "F2", "FAIL", "B1", "FAIL")),
                 run("m", "monolithic", "r1", 100, 1000, 70.0, true, Map.of("F1", "PASS", "F2", "PASS", "B1", "FAIL")));
 
-        Map<String, Object> out = stats.summarize(runs);
+        final Map<String, Object> out = stats.summarize(runs);
 
         assertEquals(3, out.get("k"));
         assertEquals("L7_full_platform", out.get("task"));
@@ -113,7 +113,7 @@ class StatsServiceTest {
 
     @Test
     void compareReportsDiffCiPAndVerdict() {
-        Map<String, Object> out = stats.compare(List.of(80.0, 82.0, 79.0, 81.0, 83.0), List.of(60.0, 62.0, 58.0, 61.0, 59.0), "functional");
+        final Map<String, Object> out = stats.compare(List.of(80.0, 82.0, 79.0, 81.0, 83.0), List.of(60.0, 62.0, 58.0, 61.0, 59.0), "functional");
         assertEquals("functional", out.get("metric"));
         assertEquals(21.0, ((Number) out.get("diff")).doubleValue());
         assertTrue(((Number) out.get("p")).doubleValue() < 0.05);

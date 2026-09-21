@@ -37,7 +37,7 @@ public final class Markdown {
     private Markdown() {
     }
 
-    public static String toHtml(String markdown) {
+    public static String toHtml(final String markdown) {
         return RENDERER.render(PARSER.parse(markdown == null ? "" : markdown));
     }
 
@@ -48,13 +48,13 @@ public final class Markdown {
 
         static final class Factory implements AttributeProviderFactory {
             @Override
-            public AttributeProvider create(AttributeProviderContext context) {
+            public AttributeProvider create(final AttributeProviderContext context) {
                 return new LinkTargetProvider();
             }
         }
 
         @Override
-        public void setAttributes(Node node, String tagName, Map<String, String> attributes) {
+        public void setAttributes(final Node node, final String tagName, final Map<String, String> attributes) {
             if (node instanceof Link) {
                 attributes.put("target", "_blank");
                 attributes.put("rel", "noopener noreferrer");
@@ -64,10 +64,10 @@ public final class Markdown {
             }
         }
 
-        private static void allowHttpOnly(Map<String, String> attributes, String key) {
-            String value = attributes.get(key);
+        private static void allowHttpOnly(final Map<String, String> attributes, final String key) {
+            final var value = attributes.get(key);
             if (value != null) {
-                String scheme = value.toLowerCase(java.util.Locale.ROOT);
+                final var scheme = value.toLowerCase(java.util.Locale.ROOT);
                 if (!scheme.startsWith("http://") && !scheme.startsWith("https://")) {
                     attributes.put(key, "#");
                 }

@@ -44,9 +44,9 @@ public final class BuildChecks {
     static final Pattern MONEY_LINE = Pattern.compile("qty|quantity|amount|balance|holding|position", Pattern.CASE_INSENSITIVE);
     static final int ANCHOR_DISTANCE = 3000;
 
-    public static String infraReason(String text) {
+    public static String infraReason(final String text) {
         if (text == null) return "";
-        Matcher m = Pattern.compile(INFRA_RE, Pattern.CASE_INSENSITIVE).matcher(text);
+        final Matcher m = Pattern.compile(INFRA_RE, Pattern.CASE_INSENSITIVE).matcher(text);
         return m.find() ? m.group(0).substring(0, Math.min(80, m.group(0).length())) : "";
     }
 
@@ -79,7 +79,7 @@ public final class BuildChecks {
         }
     }
 
-    static String gradle(Path copy, String image, String task, Infra infra, int timeout) throws IOException, InterruptedException {
+    static String gradle(Path copy, final String image, final String task, Infra infra, final int timeout) throws IOException, InterruptedException {
         Files.createDirectories(CACHE);
         List<String> cmd = new ArrayList<>(List.of("docker", "run", "--rm",
                 "-v", copy + ":/w", "-v", CACHE + ":/gh", "-w", "/w",
@@ -99,7 +99,7 @@ public final class BuildChecks {
             if (Pattern.compile(": error:|^e: |error: |Could not find|What went wrong|Unresolved reference|cannot find symbol|FAILURE:").matcher(line).find())
                 return line.strip().substring(0, Math.min(160, line.strip().length()));
         }
-        String[] lines = Arrays.stream(out.strip().split("\n")).filter(s -> !s.isBlank()).toArray(String[]::new);
+        final String[] lines = Arrays.stream(out.strip().split("\n")).filter(s -> !s.isBlank()).toArray(String[]::new);
         return (lines.length == 0 ? "" : String.join(" ", Arrays.copyOfRange(lines, Math.max(0, lines.length - 2), lines.length))).substring(0, Math.min(160, Math.max(1, lines.length * 80)));
     }
 
@@ -107,7 +107,7 @@ public final class BuildChecks {
         int ex = 0, fl = 0;
         for (Path x : StructureChecks.glob(root, "**/build/test-results/**/*.xml")) {
             try {
-                Element r = javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(x.toFile()).getDocumentElement();
+                final Element r = javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(x.toFile()).getDocumentElement();
                 if (r.getTagName().equals("testsuite")) {
                     ex += Integer.parseInt(r.getAttribute("tests").isEmpty() ? "0" : r.getAttribute("tests"));
                     fl += Integer.parseInt(r.getAttribute("failures").isEmpty() ? "0" : r.getAttribute("failures"))
@@ -120,8 +120,8 @@ public final class BuildChecks {
 
     /** Replace comments (and by default string literals) with spaces, PRESERVING offsets, so a match in the
      *  masked text applies to the original at the same index. */
-    public static String mask(String src, boolean strings) {
-        char[] out = src.toCharArray();
+    public static String mask(String src, final boolean strings) {
+        final char[] out = src.toCharArray();
         int i = 0, n = src.length();
         while (i < n) {
             if (src.startsWith("//", i)) {
@@ -135,7 +135,7 @@ public final class BuildChecks {
                 if (strings) Arrays.fill(out, i + 3, Math.min(j, n), ' ');
                 i = Math.min(j + 3, n);
             } else if (src.charAt(i) == '"' || src.charAt(i) == '\'') {
-                char q = src.charAt(i); int j = i + 1;
+                final char q = src.charAt(i); int j = i + 1;
                 while (j < n && src.charAt(j) != q) { if (src.charAt(j) == '\\' && j + 1 < n) j++; j++; }
                 if (strings) Arrays.fill(out, i + 1, Math.min(j, n), ' ');
                 i = Math.min(j + 1, n);
@@ -145,18 +145,18 @@ public final class BuildChecks {
     }
 
     /** A build script that disables the TEST task or ignores its failures; scoped to test-task blocks. */
-    public static List<String> neutered(List<Path> roots, Path ws) {
-        Set<String> hits = new TreeSet<>();
-        Pattern blockStart = Pattern.compile("(?:^|\\n)\\s*(?:tasks\\.(?:named|withType)\\(\\s*['\"]?[Tt]est['\"]?[^)]*\\)|tasks\\.test|test)\\s*\\{");
+    public static List<String> neutered(List<Path> roots, final Path ws) {
+        final Set<String> hits = new TreeSet<>();
+        final Pattern blockStart = Pattern.compile("(?:^|\\n)\\s*(?:tasks\\.(?:named|withType)\\(\\s*['\"]?[Tt]est['\"]?[^)]*\\)|tasks\\.test|test)\\s*\\{");
         for (Path r : roots)
             for (Path bf : StructureChecks.glob(r, "**/build.gradle*")) {
                 String src;
                 try { src = Files.readString(bf).replaceAll("(?s)//[^\\n]*|/\\*.*?\\*/", ""); } catch (IOException e) { continue; }
-                Matcher m = blockStart.matcher(src);
+                final Matcher m = blockStart.matcher(src);
                 while (m.find()) {
                     int start = m.end(), depth = 1, i = start;
                     while (i < src.length() && depth > 0) { depth += src.charAt(i) == '{' ? 1 : src.charAt(i) == '}' ? -1 : 0; i++; }
-                    String block = src.substring(start, i);
+                    final String block = src.substring(start, i);
                     if (Pattern.compile("ignoreFailures\\s*=\\s*true|enabled\\s*=\\s*false|\\bexclude\\s*\\(?\\s*['\"]\\*\\*(?:/\\*)?(?:\\*?Tests?\\*?)?['\"]").matcher(block).find())
                         hits.add(ws.relativize(bf).toString());
                 }
@@ -169,36 +169,36 @@ public final class BuildChecks {
     public record Candidate(Path file, String name, int start, int end, String replacement, String anchor) {}
 
     /** Sell-side arithmetic candidates, NEAREST an anchor first (masked source: comments/strings never count). */
-    public static List<Candidate> pickMutations(Path copy, int limit) {
+    public static List<Candidate> pickMutations(Path copy, final int limit) {
         record Cand(int dist, Path file, String name, int start, int end, String rep, String anchor) {}
-        List<Cand> cands = new ArrayList<>();
-        List<Path> sources = new ArrayList<>(StructureChecks.glob(copy, "**/src/main/**/*.java"));
+        final List<Cand> cands = new ArrayList<>();
+        final List<Path> sources = new ArrayList<>(StructureChecks.glob(copy, "**/src/main/**/*.java"));
         sources.addAll(StructureChecks.glob(copy, "**/src/main/**/*.kt"));
         for (Path jf : sources) {
             // SEGMENTS, not substrings (see scratchCopy below): the scratch tmp dir is named
             // "ab-build-<random>", so a naive jf.toString().contains("build") would skip every
             // file under it - this was a real bug (B3 always NOT_ATTEMPTED: "no sell-side
             // arithmetic... to mutate" even when the source plainly had it).
-            List<String> segs = Arrays.asList(jf.toString().split("/"));
+            final List<String> segs = Arrays.asList(jf.toString().split("/"));
             if (SKIP_DIRS.stream().anyMatch(segs::contains)) continue;
             String src;
             try { src = Files.readString(jf); } catch (IOException e) { continue; }
-            String m = mask(src, true), mKeep = mask(src, false);
+            final String m = mask(src, true), mKeep = mask(src, false);
             List<int[]> anchors = new ArrayList<>();   // [pos, labelIdx]
-            List<String> labels = new ArrayList<>();
-            Matcher a = ANCHOR.matcher(mKeep);
+            final List<String> labels = new ArrayList<>();
+            final Matcher a = ANCHOR.matcher(mKeep);
             while (a.find()) { anchors.add(new int[]{a.start(), labels.size()}); labels.add(a.group(1)); }
-            Matcher p = PIT_DEF.matcher(mKeep);
+            final Matcher p = PIT_DEF.matcher(mKeep);
             while (p.find()) { anchors.add(new int[]{p.start(), labels.size()}); labels.add("def " + p.group(1)); }
-            String hint = FILE_HINT.matcher(jf.getFileName().toString()).find() ? jf.getFileName().toString() : null;
+            final String hint = FILE_HINT.matcher(jf.getFileName().toString()).find() ? jf.getFileName().toString() : null;
             if (anchors.isEmpty() && hint == null) continue;
             for (Mutant mu : MUTANTS) {
-                Matcher x = mu.rx().matcher(m);
+                final Matcher x = mu.rx().matcher(m);
                 while (x.find()) {
                     if (mu.moneyOnly()) {
-                        int ls = m.lastIndexOf('\n', x.start() - 1) + 1;
-                        int le = m.indexOf('\n', x.end());
-                        String line = m.substring(ls, le < 0 ? m.length() : le);
+                        final int ls = m.lastIndexOf('\n', x.start() - 1) + 1;
+                        final int le = m.indexOf('\n', x.end());
+                        final String line = m.substring(ls, le < 0 ? m.length() : le);
                         if (!MONEY_LINE.matcher(line).find()) continue;
                     }
                     int bestDist = Integer.MAX_VALUE; int bestLab = -1;
@@ -211,19 +211,19 @@ public final class BuildChecks {
             }
         }
         cands.sort(Comparator.comparingInt((Cand c) -> c.dist).thenComparing(c -> c.name).thenComparing(c -> c.file.toString()));
-        List<Candidate> out = new ArrayList<>();
+        final List<Candidate> out = new ArrayList<>();
         for (Cand c : cands.subList(0, Math.min(limit, cands.size())))
             out.add(new Candidate(c.file(), c.name(), c.start(), c.end(), c.rep(), c.anchor()));
         return out;
     }
 
     /** the scratch copy: build outputs and caches never ride into the pinned container (one artefact definition) */
-    static Path scratchCopy(Path ws, Path tmp) throws IOException {
-        Path copy = tmp.resolve("w");
+    static Path scratchCopy(final Path ws, Path tmp) throws IOException {
+        final Path copy = tmp.resolve("w");
         try (var walk = Files.walk(ws)) {
             for (Path p : walk.filter(Files::isRegularFile).toList()) {
-                String rel = ws.relativize(p).toString();
-                String[] segs = rel.split("/");
+                final String rel = ws.relativize(p).toString();
+                final String[] segs = rel.split("/");
                 if (SKIP_DIRS.stream().anyMatch(d -> Arrays.asList(segs).contains(d))) continue;   // SEGMENTS, not substrings: "build.gradle" is not "build/"
                 if (List.of(".jar", ".class", ".war").stream().anyMatch(rel::endsWith)
                         && !rel.endsWith("gradle/wrapper/gradle-wrapper.jar")) continue;   // the wrapper is source, not a build artefact (R5 C-2)
@@ -234,29 +234,29 @@ public final class BuildChecks {
         return copy;
     }
 
-    public static List<CheckResult> run(Path ws, String image) throws Exception {
-        List<CheckResult> out = new ArrayList<>();
-        List<Path> roots = StructureChecks.gradleRoots(ws);
+    public static List<CheckResult> run(final Path ws, final String image) throws Exception {
+        final List<CheckResult> out = new ArrayList<>();
+        final List<Path> roots = StructureChecks.gradleRoots(ws);
         if (roots.isEmpty()) {
             for (CheckId c : List.of(CheckId.B1, CheckId.B2, CheckId.B3))
                 out.add(CheckResult.notAttempted(c, "no Gradle project (no settings.gradle*/build.gradle* outside build dirs)"));
             return out;
         }
-        Infra infra = new Infra("abnet" + ProcessHandle.current().pid()).up();
-        Path tmp = Files.createTempDirectory("ab-build-");
+        final var infra = new Infra("abnet" + ProcessHandle.current().pid()).up();
+        final var tmp = Files.createTempDirectory("ab-build-");
         try {
-            Path copy = scratchCopy(ws, tmp);
-            List<Path> croots = roots.stream().map(r -> r.equals(ws) ? copy : copy.resolve(ws.relativize(r))).toList();
-            List<String> names = roots.stream().map(r -> ws.relativize(r).toString().isEmpty() ? "." : ws.relativize(r).toString()).toList();
+            final Path copy = scratchCopy(ws, tmp);
+            final List<Path> croots = roots.stream().map(r -> r.equals(ws) ? copy : copy.resolve(ws.relativize(r))).toList();
+            final List<String> names = roots.stream().map(r -> ws.relativize(r).toString().isEmpty() ? "." : ws.relativize(r).toString()).toList();
 
             // ---- B1: every root assembles
-            List<String> fails = new ArrayList<>(), infraHits = new ArrayList<>();
+            final List<String> fails = new ArrayList<>(), infraHits = new ArrayList<>();
             for (int i = 0; i < croots.size(); i++) {
-                String[] res = gradle(croots.get(i), image, "assemble", infra, GRADLE_TIMEOUT).split("\n", 2);
-                int rc = Integer.parseInt(res[0]);
-                String output = res.length > 1 ? res[1] : "";
+                final String[] res = gradle(croots.get(i), image, "assemble", infra, GRADLE_TIMEOUT).split("\n", 2);
+                final int rc = Integer.parseInt(res[0]);
+                final String output = res.length > 1 ? res[1] : "";
                 if (rc != 0) {
-                    String reason = infraReason(output);
+                    final String reason = infraReason(output);
                     (reason.isEmpty() ? fails : infraHits).add(names.get(i) + ": " + (reason.isEmpty() ? firstError(output) : reason));
                 }
             }
@@ -277,17 +277,17 @@ public final class BuildChecks {
             }
 
             // ---- B2: tests executed AND green, verified from XML, across roots; a neutered test task is caught too
-            List<String> neut = neutered(roots, ws);
+            final List<String> neut = neutered(roots, ws);
             int ex = 0, fl = 0;
-            List<Integer> rcs = new ArrayList<>(); infraHits.clear();
+            final List<Integer> rcs = new ArrayList<>(); infraHits.clear();
             for (int i = 0; i < croots.size(); i++) {
                 infra.resetDb();
-                String[] res = gradle(croots.get(i), image, "test", infra, GRADLE_TIMEOUT).split("\n", 2);
-                int rc = Integer.parseInt(res[0]);
-                String output = res.length > 1 ? res[1] : "";
+                final String[] res = gradle(croots.get(i), image, "test", infra, GRADLE_TIMEOUT).split("\n", 2);
+                final int rc = Integer.parseInt(res[0]);
+                final String output = res.length > 1 ? res[1] : "";
                 rcs.add(rc);
                 if (rc != 0 && !infraReason(output).isEmpty()) infraHits.add(names.get(i) + ": " + infraReason(output));
-                int[] st = testStats(croots.get(i));
+                final int[] st = testStats(croots.get(i));
                 ex += st[0]; fl += st[1];
             }
             if (!infraHits.isEmpty() && ex == 0) {
@@ -304,26 +304,26 @@ public final class BuildChecks {
 
             // ---- B3: seed ONE mutation into the sell-side arithmetic; the suite MUST fail
             if (b2 != CheckStatus.PASS) { out.add(CheckResult.notAttempted(CheckId.B3, "mutation testing needs a green suite (B2 did not pass)")); return out; }
-            List<Candidate> cands = pickMutations(copy, 4);
+            final List<Candidate> cands = pickMutations(copy, 4);
             if (cands.isEmpty()) {
                 out.add(CheckResult.notAttempted(CheckId.B3, "no sell-side arithmetic (.subtract/.negate/-qty/-=/.minus near a SELL/BUY/Side token, a point-in-time method or in a holdings/position/ledger file) in src/main to mutate"));
                 return out;
             }
-            List<String> tried = new ArrayList<>();
+            final List<String> tried = new ArrayList<>();
             for (Candidate c : cands) {
-                String src = Files.readString(c.file());
+                final String src = Files.readString(c.file());
                 Files.writeString(c.file(), src.substring(0, c.start()) + c.replacement() + src.substring(c.end()));
-                Path rootOf = croots.stream().filter(r -> c.file().startsWith(r) && !r.equals(copy)).findFirst().orElse(copy);
+                final Path rootOf = croots.stream().filter(r -> c.file().startsWith(r) && !r.equals(copy)).findFirst().orElse(copy);
                 for (Path x : StructureChecks.glob(rootOf, "**/build/test-results/**/*.xml")) Files.deleteIfExists(x);
                 infra.resetDb();
-                String[] res = gradle(rootOf, image, "test", infra, GRADLE_TIMEOUT).split("\n", 2);
+                final String[] res = gradle(rootOf, image, "test", infra, GRADLE_TIMEOUT).split("\n", 2);
                 int rc = Integer.parseInt(res[0]);
-                String output = res.length > 1 ? res[1] : "";
-                int[] st = testStats(rootOf);
+                final String output = res.length > 1 ? res[1] : "";
+                final int[] st = testStats(rootOf);
                 Files.writeString(c.file(), src);   // restore for the next candidate
                 if (rc != 0 && st[0] == 0 && !infraReason(output).isEmpty()) { out.add(new CheckResult(CheckId.B3, CheckStatus.INFRA, infraReason(output))); return out; }
                 if (st[0] == 0) { tried.add(c.name() + "@" + copy.relativize(c.file()) + ": did not compile"); continue; }   // invalid mutant
-                boolean caught = st[1] > 0;
+                final boolean caught = st[1] > 0;
                 out.add(new CheckResult(CheckId.B3, caught ? CheckStatus.PASS : CheckStatus.FAIL,
                         "mutant " + c.name() + " in " + copy.relativize(c.file()) + " (anchor " + c.anchor() + "): " + st[0] + " run, " + st[1] + " failed, rc=" + rc
                                 + " -> " + (caught ? "suite CAUGHT it" : "suite did NOT notice inverted sell arithmetic")

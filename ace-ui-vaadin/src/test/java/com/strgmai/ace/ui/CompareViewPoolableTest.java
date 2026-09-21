@@ -10,7 +10,7 @@ class CompareViewPoolableTest {
 
     @Test
     void onlyPoolableRunsOffered() {
-        List<String> ids = CompareView.poolableRunIds(List.of(
+        final var ids = CompareView.poolableRunIds(List.of(
                 ApiFixtures.run("b-run", true),
                 ApiFixtures.run("a-run", true),
                 ApiFixtures.run("c-run", false),   // not poolable: stats.py would 404 it

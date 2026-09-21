@@ -8,17 +8,17 @@ public final class Panels {
     private Panels() {
     }
 
-    public static Div error(String text) {
+    public static Div error(final String text) {
         return panel(text, "var(--lumo-error-color)", "var(--lumo-error-color-10pct)");
     }
 
-    public static Div warn(String text) {
+    public static Div warn(final String text) {
         return panel(text, "var(--lumo-warning-color)", "var(--lumo-warning-color-10pct)");
     }
 
     /** A callout container (same chrome as warn/error) holding arbitrary children (C-5). */
-    public static Div callout(String edgeColor, String backgroundColor, com.vaadin.flow.component.Component... children) {
-        Div div = new Div();
+    public static Div callout(final String edgeColor, final String backgroundColor, final com.vaadin.flow.component.Component... children) {
+        final var div = new Div();
         div.add(children);
         div.getStyle()
                 .set("border-left", "4px solid " + edgeColor)
@@ -30,14 +30,14 @@ public final class Panels {
     }
 
     /** The one section-title helper (m15): consistent H3 rhythm across the app. */
-    public static com.vaadin.flow.component.html.H3 sectionTitle(String title) {
-        com.vaadin.flow.component.html.H3 header = new com.vaadin.flow.component.html.H3(title);
+    public static com.vaadin.flow.component.html.H3 sectionTitle(final String title) {
+        final var header = new com.vaadin.flow.component.html.H3(title);
         header.getStyle().set("margin", "16px 0 4px 0");
         return header;
     }
 
-    private static Div panel(String text, String edge, String background) {
-        Div div = new Div();
+    private static Div panel(final String text, final String edge, final String background) {
+        final var div = new Div();
         div.setText(text);
         div.getStyle()
                 .set("border-left", "4px solid " + edge)
@@ -50,8 +50,8 @@ public final class Panels {
     }
 
     /** Monospaced block, like a <pre>. */
-    public static Div mono(String text) {
-        Div div = new Div();
+    public static Div mono(final String text) {
+        final var div = new Div();
         div.setText(text == null || text.isBlank() ? "–" : text);
         div.getStyle()
                 .set("font-family", "ui-monospace, 'SF Mono', Menlo, monospace")

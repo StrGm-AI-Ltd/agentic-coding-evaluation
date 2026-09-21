@@ -36,14 +36,14 @@ class SelftestIT {
 
     private static final Path FIXTURES = Path.of("fixtures");
 
-    private static Path copyFixture(String name) throws IOException {
-        Path src = FIXTURES.resolve(name);
+    private static Path copyFixture(final String name) throws IOException {
+        final Path src = FIXTURES.resolve(name);
         assertTrue(Files.isDirectory(src), "fixture missing: " + src.toAbsolutePath());
-        Path dst = Files.createTempDirectory("selftest-" + name.replace('/', '-'));
+        final var dst = Files.createTempDirectory("selftest-" + name.replace('/', '-'));
         try (Stream<Path> walk = Files.walk(src)) {
             for (Path p : (Iterable<Path>) walk::iterator) {
-                Path rel = src.relativize(p);
-                Path target = dst.resolve(rel);
+                final Path rel = src.relativize(p);
+                final Path target = dst.resolve(rel);
                 if (Files.isDirectory(p)) Files.createDirectories(target);
                 else { Files.createDirectories(target.getParent()); Files.copy(p, target, StandardCopyOption.COPY_ATTRIBUTES); }
             }
@@ -51,7 +51,7 @@ class SelftestIT {
         return dst;
     }
 
-    private static void deleteRecursive(Path dir) {
+    private static void deleteRecursive(final Path dir) {
         if (dir == null || !Files.exists(dir)) return;
         try {
             Files.walkFileTree(dir, new SimpleFileVisitor<>() {
@@ -63,10 +63,10 @@ class SelftestIT {
 
     @Test
     void positiveControlPassesEveryRequiredCheck() throws Exception {
-        Path ws = copyFixture("positive");
+        final Path ws = copyFixture("positive");
         try {
-            Map<String, Object> rep = new RunOracle().score(ws, "L7_full_platform", null);
-            Map<String, CheckStatus> status = statusById(rep);
+            final Map<String, Object> rep = new RunOracle().score(ws, "L7_full_platform", null);
+            final Map<String, CheckStatus> status = statusById(rep);
             // offline must_pass (EXPECTATIONS.json positive_control.must_pass)
             for (CheckId id : new CheckId[]{CheckId.S1, CheckId.S2, CheckId.S3, CheckId.S4, CheckId.S5, CheckId.S6, CheckId.S7,
                     CheckId.S8, CheckId.S9, CheckId.P1, CheckId.P2, CheckId.M1, CheckId.M2, CheckId.M3, CheckId.M4})
@@ -76,7 +76,7 @@ class SelftestIT {
                     CheckId.F1, CheckId.F2, CheckId.F3, CheckId.F4, CheckId.F5, CheckId.F6, CheckId.F7, CheckId.F8, CheckId.F9})
                 assertEquals(CheckStatus.PASS, status.get(id.name()), id + " should PASS on the positive control: " + detailOf(rep, id));
             // P3 is deliberately excluded (no runner manifest here - see class javadoc and RunOracle.p3Scan)
-            Object pct = rep.get("weighted_score_pct");
+            final Object pct = rep.get("weighted_score_pct");
             assertNotNull(pct, "expected a full (non-partial) score - got: " + rep.get("note"));
             assertTrue(((Number) pct).doubleValue() >= 95.0, "positive control scored only " + pct + "% - " + rep.get("by_category"));
         } finally { deleteRecursive(ws); }
@@ -104,10 +104,10 @@ class SelftestIT {
 
     @Test
     void cheatDirNamedJavaDoesNotCrashTheCheckerOrFalselyPass() throws Exception {
-        Path ws = copyFixture("adversarial/cheatD_dir_named_java");
+        final Path ws = copyFixture("adversarial/cheatD_dir_named_java");
         try {
-            Map<String, Object> rep = new RunOracle().score(ws, "L7_full_platform", null);
-            Map<String, CheckStatus> status = statusById(rep);
+            final Map<String, Object> rep = new RunOracle().score(ws, "L7_full_platform", null);
+            final Map<String, CheckStatus> status = statusById(rep);
             assertNotEquals(CheckStatus.PASS, status.get("M1"), "M1 must not silently PASS on this fixture: " + detailOf(rep, CheckId.M1));
             assertLowScore(rep);
         } finally { deleteRecursive(ws); }
@@ -115,48 +115,48 @@ class SelftestIT {
 
     @Test
     void cheatPrebuiltJarFailsComposeOnHostBuiltArtifact() throws Exception {
-        Path ws = copyFixture("adversarial/cheatF_prebuilt_jar");
+        final Path ws = copyFixture("adversarial/cheatF_prebuilt_jar");
         try {
-            Map<String, Object> rep = new RunOracle().score(ws, "L6_compose_health", null);
-            Map<String, CheckStatus> status = statusById(rep);
+            final Map<String, Object> rep = new RunOracle().score(ws, "L6_compose_health", null);
+            final Map<String, CheckStatus> status = statusById(rep);
             assertEquals(CheckStatus.FAIL, status.get("C2"), "C2 should FAIL a compose build that ships a host-built jar: " + detailOf(rep, CheckId.C2));
-            String detail = detailOf(rep, CheckId.C2);
+            final String detail = detailOf(rep, CheckId.C2);
             assertTrue(detail != null && detail.contains("host-built artefact"), "C2's detail should name the offence, was: " + detail);
         } finally { deleteRecursive(ws); }
     }
 
-    private static void assertCheatFails(String fixture, String task, Map<CheckId, CheckStatus> mustHave) throws Exception {
-        Path ws = copyFixture(fixture);
+    private static void assertCheatFails(final String fixture, final String task, final Map<CheckId, CheckStatus> mustHave) throws Exception {
+        final Path ws = copyFixture(fixture);
         try {
-            Map<String, Object> rep = new RunOracle().score(ws, task, null);
-            Map<String, CheckStatus> status = statusById(rep);
+            final Map<String, Object> rep = new RunOracle().score(ws, task, null);
+            final Map<String, CheckStatus> status = statusById(rep);
             mustHave.forEach((id, expected) -> assertEquals(expected, status.get(id.name()), id + ": " + detailOf(rep, id)));
             assertLowScore(rep);
         } finally { deleteRecursive(ws); }
     }
 
     @SuppressWarnings("unchecked")
-    private static void assertLowScore(Map<String, Object> rep) {
-        Object weighted = rep.get("weighted_score_pct");
-        Object partial = rep.get("partial_score_pct");
-        double pct = weighted != null ? ((Number) weighted).doubleValue() : partial != null ? ((Number) partial).doubleValue() : 0.0;
+    private static void assertLowScore(final Map<String, Object> rep) {
+        final Object weighted = rep.get("weighted_score_pct");
+        final Object partial = rep.get("partial_score_pct");
+        final double pct = weighted != null ? ((Number) weighted).doubleValue() : partial != null ? ((Number) partial).doubleValue() : 0.0;
         assertTrue(pct < 70.0, "a cheat fixture should not score anywhere near a passing implementation, got " + pct + "%: " + rep.get("by_category"));
     }
 
     @SuppressWarnings("unchecked")
-    private static Map<String, CheckStatus> statusById(Map<String, Object> rep) {
-        var out = new java.util.LinkedHashMap<String, CheckStatus>();
+    private static Map<String, CheckStatus> statusById(final Map<String, Object> rep) {
+        final var out = new java.util.LinkedHashMap<String, CheckStatus>();
         for (Object o : (Iterable<Object>) rep.get("results")) {
-            Map<String, Object> r = (Map<String, Object>) o;
+            final Map<String, Object> r = (Map<String, Object>) o;
             out.put((String) r.get("id"), CheckStatus.valueOf((String) r.get("status")));
         }
         return out;
     }
 
     @SuppressWarnings("unchecked")
-    private static String detailOf(Map<String, Object> rep, CheckId id) {
+    private static String detailOf(final Map<String, Object> rep, final CheckId id) {
         for (Object o : (Iterable<Object>) rep.get("results")) {
-            Map<String, Object> r = (Map<String, Object>) o;
+            final Map<String, Object> r = (Map<String, Object>) o;
             if (id.name().equals(r.get("id"))) return String.valueOf(r.get("detail"));
         }
         return null;

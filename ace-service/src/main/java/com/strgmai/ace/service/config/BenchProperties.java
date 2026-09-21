@@ -27,7 +27,7 @@ public record BenchProperties(
     public static final int RESULT_SCHEMA = 3;                   // port of registry.RESULT_SCHEMA
 
     /** budgets per phase, wall seconds — port of cfg["budgets"] */
-    public int phaseWall(String phase) {
+    public int phaseWall(final String phase) {
         return switch (phase) {
             case "p0_definition", "p1_plan" -> 3600;
             case "p2_implementation" -> 14400;
@@ -36,7 +36,7 @@ public record BenchProperties(
     }
 
     /** completion-token budgets per phase, enforced by the recording proxy — port of cfg["token_budgets"] */
-    public int phaseTokens(String phase) {
+    public int phaseTokens(final String phase) {
         return switch (phase) {
             case "p0_definition", "p1_plan" -> 60000;
             default -> 400000;

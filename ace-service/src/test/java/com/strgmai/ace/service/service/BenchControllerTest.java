@@ -17,6 +17,7 @@ import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.UUID;
 
 import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
 import static com.strgmai.ace.service.jooq.Tables.RUNS;
@@ -45,7 +46,7 @@ class BenchControllerTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        var ds = new org.sqlite.SQLiteDataSource();
+        final var ds = new org.sqlite.SQLiteDataSource();
         ds.setUrl("jdbc:sqlite:" + Files.createTempFile("ace-benchcontroller-test", ".db") + "?foreign_keys=on");
         Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
         dsl = DSL.using(ds, SQLDialect.SQLITE);
@@ -53,11 +54,11 @@ class BenchControllerTest {
         importer = mock(ImporterService.class);
         experiments = mock(ExperimentsService.class);
         stats = mock(StatsService.class);
-        WorkerService worker = mock(WorkerService.class);
+        final WorkerService worker = mock(WorkerService.class);
         props = mock(BenchProperties.class);
-        Preflight preflight = mock(Preflight.class);
-        TreatmentPin pin = mock(TreatmentPin.class);
-        BenchController controller = new BenchController(dsl, queue, importer, experiments, stats, worker, props, preflight, pin);
+        final Preflight preflight = mock(Preflight.class);
+        final TreatmentPin pin = mock(TreatmentPin.class);
+        final var controller = new BenchController(dsl, queue, importer, experiments, stats, worker, props, preflight, pin);
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ApiExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter())
@@ -66,7 +67,7 @@ class BenchControllerTest {
 
     @Test
     void jsonbColumnsComeBackAsRealNestedJsonNotAStringOnJobsList() throws Exception {
-        Map<String, Object> job = new java.util.LinkedHashMap<>();
+        final Map<String, Object> job = new java.util.LinkedHashMap<>();
         job.put("id", 1);
         job.put("run_id", "run-1");
         job.put("argv", new com.fasterxml.jackson.databind.ObjectMapper().readTree("[\"--task=L3p\",\"--model=m\"]"));
@@ -83,6 +84,7 @@ class BenchControllerTest {
     @Test
     void jsonbObjectColumnAlsoComesBackNestedOnExperimentsList() throws Exception {
         dsl.insertInto(EXPERIMENTS)
+                .set(EXPERIMENTS.ID, UUID.randomUUID())   // no AUTOINCREMENT on a UUID PK - the real service always assigns one
                 .set(EXPERIMENTS.NAME, "exp").set(EXPERIMENTS.TAG, "t").set(EXPERIMENTS.TEMPLATE, "harness_effect")
                 .set(EXPERIMENTS.PARAMS, "{\"model\":\"m\",\"nested\":{\"a\":1}}").set(EXPERIMENTS.K, 1)
                 .execute();
@@ -126,11 +128,16 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.skipped[0]").value("run-c"));
     }
 
+    private static final UUID JOB_1 = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    private static final UUID JOB_7 = UUID.fromString("00000000-0000-0000-0000-000000000007");
+    private static final UUID JOB_42 = UUID.fromString("00000000-0000-0000-0000-000000000042");
+    private static final UUID JOB_99 = UUID.fromString("00000000-0000-0000-0000-000000000099");
+
     @Test
     void jobByIdReturnsTheJob() throws Exception {
-        when(queue.get(1L)).thenReturn(Map.of("id", 1, "run_id", "run-1", "status", "queued"));
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "queued"));
 
-        mvc.perform(get("/api/jobs/1"))
+        mvc.perform(get("/api/jobs/" + JOB_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.run_id").value("run-1"))
                 .andExpect(jsonPath("$.status").value("queued"));
@@ -139,9 +146,9 @@ class BenchControllerTest {
     @Test
     void jobByIdMapsTheMissingJobTo404() throws Exception {
         // JobQueue.get() already throws this for a missing row; the endpoint was simply never wired
-        when(queue.get(99L)).thenThrow(new org.springframework.dao.EmptyResultDataAccessException(1));
+        when(queue.get(JOB_99)).thenThrow(new org.springframework.dao.EmptyResultDataAccessException(1));
 
-        mvc.perform(get("/api/jobs/99")).andExpect(status().isNotFound());
+        mvc.perform(get("/api/jobs/" + JOB_99)).andExpect(status().isNotFound());
     }
 
     @Test
@@ -155,23 +162,23 @@ class BenchControllerTest {
 
     @Test
     void noSuchElementExceptionMapsTo404WithDetailBody() throws Exception {
-        doThrow(new NoSuchElementException("job 42 does not exist")).when(queue).setPriority(42L, 5);
+        doThrow(new NoSuchElementException("job 42 does not exist")).when(queue).setPriority(JOB_42, 5);
 
-        mvc.perform(post("/api/jobs/42/priority").contentType(MediaType.APPLICATION_JSON).content("{\"priority\": 5}"))
+        mvc.perform(post("/api/jobs/" + JOB_42 + "/priority").contentType(MediaType.APPLICATION_JSON).content("{\"priority\": 5}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.detail").value("job 42 does not exist"));
     }
 
     @Test
     void illegalStateExceptionMapsTo409WithDetailBody() throws Exception {
-        when(queue.cancel(7L)).thenThrow(new IllegalStateException("job 7 is already succeeded"));
+        when(queue.cancel(JOB_7)).thenThrow(new IllegalStateException("job 7 is already succeeded"));
 
-        mvc.perform(post("/api/jobs/7/cancel"))
+        mvc.perform(post("/api/jobs/" + JOB_7 + "/cancel"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.detail").value("job 7 is already succeeded"));
     }
 
-    private void runRow(String task, String model, String keyHash, String runId) {
+    private void runRow(final String task, String model, final String keyHash, final String runId) {
         dsl.insertInto(RUNS)
                 .set(RUNS.RUN_ID, runId).set(RUNS.RESULTS_DIR, "/results/" + runId)
                 .set(RUNS.TASK, task).set(RUNS.MODEL, model).set(RUNS.MODE, "monolithic")
@@ -191,17 +198,17 @@ class BenchControllerTest {
         // stats.load(path) tags each summary with the model its results_dir belongs to, so the
         // summarize() stub below can tell the three groups apart without inspecting real files
         when(stats.load(any())).thenAnswer(inv -> {
-            String dir = inv.getArgument(0).toString();
-            String model = dir.contains("runA") ? "low-scorer" : dir.contains("runB") ? "too-few" : "high-scorer";
+            final String dir = inv.getArgument(0).toString();
+            final String model = dir.contains("runA") ? "low-scorer" : dir.contains("runB") ? "too-few" : "high-scorer";
             return new StatsService.RunSummary(dir, "L3p_point_in_time", model, "monolithic", null, null, null, null,
                     true, List.of(), false, true, 0, 0, Map.of(), List.of(), Map.of());
         });
         when(stats.filterRuns(any(), eq(false), eq(false), any())).thenAnswer(inv -> inv.getArgument(0));
         when(stats.summarize(any())).thenAnswer(inv -> {
             @SuppressWarnings("unchecked") List<StatsService.RunSummary> runs = (List<StatsService.RunSummary>) inv.getArgument(0);
-            Map<String, Object> out = new java.util.LinkedHashMap<>();
+            final Map<String, Object> out = new java.util.LinkedHashMap<>();
             out.put("k", runs.size());
-            double mean = switch (runs.get(0).model()) { case "low-scorer" -> 40.0; case "high-scorer" -> 90.0; default -> 10.0; };
+            final double mean = switch (runs.get(0).model()) { case "low-scorer" -> 40.0; case "high-scorer" -> 90.0; default -> 10.0; };
             out.put("functional", Map.of("mean", mean));
             return out;
         });

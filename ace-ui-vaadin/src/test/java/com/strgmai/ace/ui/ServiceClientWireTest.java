@@ -61,7 +61,7 @@ class ServiceClientWireTest {
              ]}""";
 
     private static final String JOB_JSON = """
-            {"id":5,"experiment_id":null,"arm":null,"repeat":null,"kind":"run","run_id":"r1",
+            {"id":"5","experiment_id":null,"arm":null,"repeat":null,"kind":"run","run_id":"r1",
              "argv":["--task=L1"],"status":"queued","blocked_reason":null,"priority":0,
              "pid":null,"exit_code":null,"cancel_requested":false,"stdout_path":"/tmp/x.log",
              "result_line":null,"enqueued_at":"2026-09-15 23:57:00","started_at":null,"finished_at":null}""";
@@ -75,11 +75,11 @@ class ServiceClientWireTest {
              "indicative":[]}""";
 
     private static final String EXPERIMENT_JSON = """
-            {"id":7,"name":"he test","tag":"20260916-0000","template":"harness_effect",
+            {"id":"7","name":"he test","tag":"20260916-0000","template":"harness_effect",
              "params":{"arms":["orch","mono"]},"k":3,"status":"queued","comparison":null,
              "created_at":"2026-09-15 23:57:00","pinned_runner_sha":null,"pinned_oracle_sha":null,
-             "jobs":[{"id":5,"arm":"orch","repeat":1,"run_id":"r1","status":"queued","result_line":null},
-                     {"id":6,"arm":"mono","repeat":1,"run_id":"r2","status":"queued","result_line":null}]}""";
+             "jobs":[{"id":"5","arm":"orch","repeat":1,"run_id":"r1","status":"queued","result_line":null},
+                     {"id":"6","arm":"mono","repeat":1,"run_id":"r2","status":"queued","result_line":null}]}""";
 
     private static final String PREFLIGHT_JSON = """
             {"running":false,"started_at":"2026-09-15 23:57:00","finished_at":"2026-09-15 23:58:00",
@@ -249,7 +249,7 @@ class ServiceClientWireTest {
         Api.Job job = client.rescore("r1");
         assertEquals("POST", last().method());
         assertEquals("/api/runs/r1/rescore", last().uri());
-        assertEquals(5, job.id());
+        assertEquals("5", job.id());
         assertEquals("run", job.kind(), "fixture carries the kind");
     }
 
@@ -264,7 +264,7 @@ class ServiceClientWireTest {
         assertTrue(body.path("spec").path("manage_docker").asBoolean());
         assertEquals(2, body.path("priority").asInt());
         assertEquals(3, body.path("spec").size(), "only the keys we sent travel the wire");
-        assertEquals(5, job.id());
+        assertEquals("5", job.id());
     }
 
     @Test
@@ -280,25 +280,25 @@ class ServiceClientWireTest {
         assertEquals("orch", body.path("params").path("arms").get(0).asText());
         assertEquals(3, body.path("params").path("parallel").asInt());
         assertEquals(3, body.path("k").asInt());
-        assertEquals(7, experiment.id());
+        assertEquals("7", experiment.id());
         assertEquals(2, experiment.jobs().size());
         assertEquals("orch", experiment.jobs().get(0).arm());
     }
 
     @Test
     void setPriority_patchesJobsIdWithPriority() {
-        Api.Job job = client.setPriority(5, 2);
+        Api.Job job = client.setPriority("5", 2);
         assertEquals("PATCH", last().method());
         assertEquals("/api/jobs/5", last().uri());
         assertEquals(2, Json.MAPPER.readTree(last().body()).path("priority").asInt());
-        assertEquals(5, job.id());
+        assertEquals("5", job.id());
     }
 
     @Test
     void cancelAndRequeue_postCorrectPaths() {
-        assertEquals("cancelled", client.cancel(5).status());
+        assertEquals("cancelled", client.cancel("5").status());
         assertEquals("POST /api/jobs/5/cancel", last().method() + " " + last().uri());
-        assertEquals("queued", client.requeue(5).status());
+        assertEquals("queued", client.requeue("5").status());
         assertEquals("POST /api/jobs/5/requeue", last().method() + " " + last().uri());
     }
 
@@ -355,7 +355,7 @@ class ServiceClientWireTest {
         assertEquals(1, jobs.size());
         assertEquals(List.of("--task=L1"), jobs.get(0).argv());
         assertFalse(jobs.get(0).cancel_requested());
-        assertEquals("queued", client.job(5).status());
+        assertEquals("queued", client.job("5").status());
     }
 
     @Test
@@ -363,8 +363,8 @@ class ServiceClientWireTest {
         List<Api.Experiment> experiments = client.experiments();
         assertEquals(1, experiments.size());
         assertNull(experiments.get(0).jobs(), "the list endpoint carries no jobs");
-        Api.Experiment detail = client.experiment(7);
-        assertEquals(7, detail.id());
+        Api.Experiment detail = client.experiment("7");
+        assertEquals("7", detail.id());
         assertEquals(2, detail.jobs().size());
         assertEquals("mono", detail.jobs().get(1).arm());
     }
@@ -419,7 +419,7 @@ class ServiceClientWireTest {
     @Test
     void streamJobEvents_deliversParsedEventsUntilStreamEnd() throws Exception {
         List<SseEvent> received = new java.util.ArrayList<>();
-        client.streamJobEvents(30, received::add); // returns when the stub stream ends
+        client.streamJobEvents("30", received::add); // returns when the stub stream ends
         assertEquals(4, received.size());
         assertEquals("step_started", received.get(0).type());
         assertEquals("T1", received.get(0).data().path("step").asText());
@@ -433,7 +433,7 @@ class ServiceClientWireTest {
     @Test
     void streamJobEvents_throwingFromTheConsumerAbortsTheConnection() {
         List<SseEvent> seen = new java.util.ArrayList<>();
-        assertThrows(RuntimeException.class, () -> client.streamJobEvents(30, event -> {
+        assertThrows(RuntimeException.class, () -> client.streamJobEvents("30", event -> {
             seen.add(event);
             throw new IllegalStateException("view detached");
         }));
@@ -444,7 +444,7 @@ class ServiceClientWireTest {
     @Test
     void streamJobEvents_skipsMalformedBlockInsideStream() throws Exception {
         List<SseEvent> received = new java.util.ArrayList<>();
-        client.streamJobEvents(31, received::add);
+        client.streamJobEvents("31", received::add);
         assertEquals(1, received.size(), "only the well-formed block is delivered");
         assertEquals("status", received.get(0).type());
         assertEquals(7, received.get(0).data().path("pid").intValue());

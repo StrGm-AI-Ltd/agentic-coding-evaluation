@@ -22,20 +22,20 @@ public final class Badges {
     private Badges() {
     }
 
-    public static Badge status(String status) {
-        Badge badge = new Badge(status == null ? "?" : status);
+    public static Badge status(final String status) {
+        final var badge = new Badge(status == null ? "?" : status);
         badge.setThemeName(theme(status));
         return badge;
     }
 
-    public static Badge text(String label, String theme) {
-        Badge badge = new Badge(label);
+    public static Badge text(final String label, final String theme) {
+        final var badge = new Badge(label);
         badge.setThemeName(theme);
         return badge;
     }
 
-    public static String theme(String status) {
-        String s = status == null ? "" : status.toLowerCase();
+    public static String theme(final String status) {
+        final var s = status == null ? "" : status.toLowerCase();
         return switch (s) {
             case "pass", "succeeded", "finished", "true" -> SUCCESS;
             case "fail", "failed", "error", "false" -> ERROR;

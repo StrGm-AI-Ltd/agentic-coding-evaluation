@@ -28,13 +28,13 @@ public class JobsView extends VerticalLayout {
     private final Span running = new Span();
     private final Span emptyState = new Span();
 
-    public JobsView(ServiceClient client) {
+    public JobsView(final ServiceClient client) {
         this.client = client;
         setPadding(true);
 
-        Button refresh = new Button(VaadinIcon.REFRESH.create(), e -> load());
+        final var refresh = new Button(VaadinIcon.REFRESH.create(), e -> load());
         refresh.getElement().setAttribute("aria-label", "refresh the queue");
-        Button newJob = new Button("New job", VaadinIcon.PLUS.create(),
+        final var newJob = new Button("New job", VaadinIcon.PLUS.create(),
                 e -> getUI().ifPresent(ui -> ui.navigate("jobs/new")));
         running.getStyle().set("color", "var(--lumo-secondary-text-color)");
         error.getStyle().set("color", "var(--lumo-error-color)");
@@ -65,12 +65,12 @@ public class JobsView extends VerticalLayout {
     }
 
     /** Status badge with the blocked reason inline (keyboard/touch discoverable, not tooltip-only). */
-    private com.vaadin.flow.component.html.Div statusCell(Api.Job job) {
-        com.vaadin.flow.component.html.Div cell = new com.vaadin.flow.component.html.Div();
-        com.vaadin.flow.component.badge.Badge badge = Badges.status(job.status());
+    private com.vaadin.flow.component.html.Div statusCell(final Api.Job job) {
+        final var cell = new com.vaadin.flow.component.html.Div();
+        final var badge = Badges.status(job.status());
         if ("blocked".equals(job.status()) && job.blocked_reason() != null) {
             badge.getElement().setAttribute("title", job.blocked_reason());
-            Span reason = new Span(job.blocked_reason());
+            final var reason = new Span(job.blocked_reason());
             reason.getStyle().set("color", "var(--lumo-secondary-text-color)")
                     .set("font-size", "0.75em").set("white-space", "normal");
             cell.add(badge, reason);
@@ -80,8 +80,8 @@ public class JobsView extends VerticalLayout {
         return cell;
     }
 
-    private HorizontalLayout actions(Api.Job job) {
-        HorizontalLayout layout = new HorizontalLayout();
+    private HorizontalLayout actions(final Api.Job job) {
+        final var layout = new HorizontalLayout();
         layout.setPadding(false);
         layout.setSpacing(true);
 
@@ -93,7 +93,7 @@ public class JobsView extends VerticalLayout {
         }
         // priority only reorders the queue: meaningless for running/terminal jobs
         if (!JobStatuses.isTerminal(job.status()) && !"running".equals(job.status())) {
-            Button raise = new Button(VaadinIcon.ARROW_UP.create(),
+            final var raise = new Button(VaadinIcon.ARROW_UP.create(),
                     e -> act(() -> client.setPriority(job.id(), job.priority() == null ? 1 : job.priority() + 1), job));
             raise.getElement().setAttribute("aria-label", "raise priority");
             layout.add(raise);
@@ -101,23 +101,23 @@ public class JobsView extends VerticalLayout {
         return layout;
     }
 
-    private void act(Supplier<Api.Job> action, Api.Job job) {
+    private void act(final Supplier<Api.Job> action, final Api.Job job) {
         try {
-            Api.Job updated = action.get();
+            final var updated = action.get();
             Notification.show("job #" + job.id() + " → " + updated.status(),
                     3000, Notification.Position.BOTTOM_END);
             load();
-        } catch (Exception e) {
+        } catch (final Exception e) {
             Notification.show(client.errorText(e), 6000, Notification.Position.BOTTOM_END);
         }
     }
 
     private void load() {
-        List<Api.Job> jobs;
+        final List<Api.Job> jobs;   // assigned exactly once below; a legal blank final
         try {
             jobs = client.jobs();
             error.setText("");
-        } catch (Exception e) {
+        } catch (final Exception e) {
             grid.setItems(List.of());
             error.setText(client.errorText(e));
             emptyState.setVisible(false);
@@ -126,8 +126,8 @@ public class JobsView extends VerticalLayout {
         grid.setItems(jobs);
         emptyState.setText("The queue is empty — queue a run with “New job” or an experiment.");
         emptyState.setVisible(jobs.isEmpty());
-        long runningNow = jobs.stream().filter(j -> "running".equals(j.status())).count();
-        long blocked = jobs.stream().filter(j -> "blocked".equals(j.status())).count();
+        final var runningNow = jobs.stream().filter(j -> "running".equals(j.status())).count();
+        final var blocked = jobs.stream().filter(j -> "blocked".equals(j.status())).count();
         running.setText(jobs.size() + " jobs · " + runningNow + " running"
                 + (blocked > 0 ? " · " + blocked + " blocked" : ""));
     }

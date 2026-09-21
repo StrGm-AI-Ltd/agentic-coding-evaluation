@@ -33,7 +33,7 @@ import java.util.List;
 public class JobDetailView extends VerticalLayout implements BeforeEnterObserver {
 
     private final ServiceClient client;
-    private long jobId = -1;
+    private String jobId;
     private Api.Job currentJob;
     private String lastStatus;
     private Boolean runImported; // one probe per navigation (plus on terminal transition), cached across polls
@@ -75,7 +75,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     private String lastActionsSignature;
     private String lastBlockedReason;
 
-    public JobDetailView(ServiceClient client) {
+    public JobDetailView(final ServiceClient client) {
         this.client = client;
         setPadding(true);
 
@@ -84,10 +84,10 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 pollRegistration.remove();
                 pollRegistration = null;
             }
-            UI ui = event.getUI();
+            final var ui = event.getUI();
             pollRegistration = ui.addPollListener(e -> refresh());
             ui.setPollInterval(JobStatuses.isTerminal(status()) ? -1 : 2000);
-            if (jobId >= 0 && !JobStatuses.isTerminal(status())) {
+            if (jobId != null && !JobStatuses.isTerminal(status())) {
                 ensureSse(ui);
             }
         });
@@ -106,30 +106,26 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     @Override
-    public void beforeEnter(BeforeEnterEvent event) {
-        String raw = event.getRouteParameters().get("jobId").orElse(null);
-        try {
-            jobId = raw == null ? -1 : Long.parseLong(raw);
-        } catch (NumberFormatException e) {
-            jobId = -1;
-        }
-        if (jobId < 0) {
+    public void beforeEnter(final BeforeEnterEvent event) {
+        final var raw = event.getRouteParameters().get("jobId").orElse(null);
+        jobId = (raw == null || raw.isBlank()) ? null : raw;
+        if (jobId == null) {
             add(new H3("Job"), Panels.error("No valid job id in the URL."));
             chromeBuilt = true; // nothing else to build
             return;
         }
         try {
-            Api.Job job = client.job(jobId);
+            final var job = client.job(jobId);
             buildChrome(job);   // once per navigation
             update(job);
-        } catch (Exception e) {
+        } catch (final Exception e) {
             add(new H3("Job #" + jobId), Panels.error(client.errorText(e)));
             chromeBuilt = true;
         }
     }
 
     /** The static chrome, built once — every later cycle only updates fields. */
-    private void buildChrome(Api.Job job) {
+    private void buildChrome(final Api.Job job) {
         if (chromeBuilt) {
             return;
         }
@@ -137,7 +133,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
         add(new RouterLink("← Queue", JobsView.class));
 
-        H2 title = new H2(job.run_id());
+        final var title = new H2(job.run_id());
         title.getStyle().set("margin", "4px 0").set("font-size", "1.6em");
         add(title);
 
@@ -163,7 +159,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         liveSection.setPadding(false);
         liveSection.setSpacing(false);
         liveSection.getStyle().set("margin-top", "16px");
-        H3 liveTitle = new H3("Live");
+        final var liveTitle = new H3("Live");
         liveTitle.getStyle().set("margin", "0 0 4px 0");
         liveSection.add(liveTitle, stepLine, sessionsLine, requestsLine, lostNotice, terminalNote,
                 requestsGrid, logTail);
@@ -183,23 +179,23 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
     /** Poll cycle: fetch the job row and update fields in place. */
     private void refresh() {
-        if (jobId < 0 || !chromeBuilt) {
+        if (jobId == null || !chromeBuilt) {
             return;
         }
         try {
             update(client.job(jobId));
             errorLine.setText("");
-        } catch (Exception e) {
+        } catch (final Exception e) {
             // transient fetch errors never kill the SSE loop (m5); the next poll retries
             errorLine.setText(client.errorText(e));
         }
     }
 
-    private void update(Api.Job job) {
-        String previousStatus = lastStatus;
+    private void update(final Api.Job job) {
+        final var previousStatus = lastStatus;
         currentJob = job;
         lastStatus = job.status();
-        boolean terminal = JobStatuses.isTerminal(job.status());
+        final var terminal = JobStatuses.isTerminal(job.status());
 
         getUI().ifPresent(ui -> {
             ui.setPollInterval(terminal ? -1 : 2000);
@@ -227,9 +223,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         }
     }
 
-    private void updateStatus(Api.Job job) {
+    private void updateStatus(final Api.Job job) {
         statusHolder.removeAll();
-        HorizontalLayout line = new HorizontalLayout(Badges.status(job.status()));
+        final var line = new HorizontalLayout(Badges.status(job.status()));
         line.setPadding(false);
         line.setSpacing(true);
         if (job.cancel_requested() && !JobStatuses.isTerminal(job.status())) {
@@ -242,15 +238,15 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     /** Rebuilt only when the offered actions change — focus is preserved between cycles. */
-    private void updateActions(Api.Job job) {
-        String signature = job.status() + "|" + job.cancel_requested() + "|" + runImported
+    private void updateActions(final Api.Job job) {
+        final var signature = job.status() + "|" + job.cancel_requested() + "|" + runImported
                 + "|" + (job.stdout_path() != null) + "|" + (job.run_id() != null);
         if (signature.equals(lastActionsSignature)) {
             return;
         }
         lastActionsSignature = signature;
 
-        HorizontalLayout actions = new HorizontalLayout();
+        final var actions = new HorizontalLayout();
         actions.setPadding(false);
         actions.setSpacing(true);
         if (JobStatuses.canCancel(job.status(), job.cancel_requested())) {
@@ -258,7 +254,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 try {
                     client.cancel(job.id());
                     refresh();
-                } catch (Exception ex) {
+                } catch (final Exception ex) {
                     Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
                 }
             }));
@@ -268,7 +264,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 try {
                     client.requeue(job.id());
                     refresh();
-                } catch (Exception ex) {
+                } catch (final Exception ex) {
                     Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
                 }
             }));
@@ -277,12 +273,12 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             actions.add(new Button("Open run detail", e ->
                     getUI().ifPresent(ui -> ui.navigate("runs/" + job.run_id()))));
         } else if (job.run_id() != null) {
-            Span hint = new Span(runNotImportedHint(job.status()));
+            final var hint = new Span(runNotImportedHint(job.status()));
             hint.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em");
             actions.add(hint);
         }
         if (job.stdout_path() != null) {
-            Anchor rawLog = new Anchor(client.baseUrl() + "/jobs/" + job.id() + "/log", "raw log");
+            final var rawLog = new Anchor(client.baseUrl() + "/jobs/" + job.id() + "/log", "raw log");
             rawLog.getElement().setAttribute("target", "_blank");
             rawLog.getElement().setAttribute("rel", "noopener noreferrer");
             actions.add(rawLog);
@@ -292,7 +288,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     private void updateLive() {
-        boolean terminal = currentJob != null && JobStatuses.isTerminal(currentJob.status());
+        final var terminal = currentJob != null && JobStatuses.isTerminal(currentJob.status());
         lostNotice.setVisible(sseThread != null && !sseThread.isAlive()
                 && !terminal && !sseStopped);
         terminalNote.setVisible(terminal);
@@ -301,7 +297,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         requestsLine.setVisible(!terminal);
 
         if (terminal) {
-            String result = currentJob.result_line();
+            final var result = currentJob.result_line();
             if (result != null && !result.isBlank()) {
                 logTail.setText(result);
                 logTail.setVisible(true);
@@ -313,29 +309,29 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         }
 
         stepLine.setText("current step: " + (live.currentStep() == null ? "–" : live.currentStep()));
-        List<String> sessions = live.sessions();
+        final var sessions = live.sessions();
         sessionsLine.setText("sessions: " + (sessions.isEmpty() ? "–" : String.join(", ", sessions)));
         requestsLine.setText("requests: " + (live.requestCount() == 0 ? "–"
                 : live.requestCount() + (live.lastTokens() == null ? "" : " · last completion tokens "
                 + Fmt.count(live.lastTokens()))));
 
-        List<JobLiveState.RequestRow> recent = live.recentRequests();
+        final var recent = live.recentRequests();
         requestsGrid.setVisible(!recent.isEmpty());
         requestsGrid.setItems(recent);
 
-        String tail = live.logTail() != null ? live.logTail()
+        final var tail = live.logTail() != null ? live.logTail()
                 : (currentJob != null ? currentJob.result_line() : null);
         logTail.setVisible(tail != null && !tail.isBlank());
         logTail.setText(tail == null ? "" : tail);
     }
 
     /** The SSE loop: events mutate the live state and update the fields under the session lock. */
-    private void ensureSse(UI ui) {
+    private void ensureSse(final UI ui) {
         if (sseThread != null && sseThread.isAlive()) {
             return;
         }
         sseStopped = false;
-        JobEventLoop loop = new JobEventLoop(client, jobId, () -> sseStopped,
+        final var loop = new JobEventLoop(client, jobId, () -> sseStopped,
                 event -> ui.access(() -> {   // M1: apply + update share the session lock
                     live.apply(event);
                     updateLive();
@@ -351,7 +347,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     private static Grid<JobLiveState.RequestRow> buildRequestsGrid() {
-        Grid<JobLiveState.RequestRow> requests = new Grid<>(JobLiveState.RequestRow.class, false);
+        final var requests = new Grid<>(JobLiveState.RequestRow.class, false);
         requests.addColumn(r -> Fmt.when(r.ts())).setHeader("ts").setAutoWidth(true)
                 .setComparator(REQUESTS_BY_TS);
         requests.addColumn(r -> r.status() == null ? "–" : r.status()).setHeader("status").setAutoWidth(true)
@@ -375,7 +371,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      * Why there is no run link, in the job's own terms: in progress, blocked, ended
      * without a score, or (rarely) succeeded but failed to import.
      */
-    static String runNotImportedHint(String status) {
+    static String runNotImportedHint(final String status) {
         return switch (status == null ? "" : status) {
             case "queued", "waiting_lock", "running" ->
                     "the run is still in progress — its results appear here automatically "
@@ -393,13 +389,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     /** The runs table only holds imported runs: 404 means the job has not produced a scored result yet. */
-    static boolean isRunImported(ServiceClient client, String runId) {
+    static boolean isRunImported(final ServiceClient client, final String runId) {
         try {
             client.run(runId);
             return true;
-        } catch (RestClientResponseException e) {
+        } catch (final RestClientResponseException e) {
             return e.getStatusCode().value() != 404;
-        } catch (Exception e) {
+        } catch (final Exception e) {
             return false;
         }
     }
@@ -408,15 +404,17 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      * Probe once per navigation, and again on the transition into a terminal state —
      * a job that just finished may have had its run imported by the worker.
      */
-    static boolean shouldProbeRun(Boolean probed, String previousStatus, String currentStatus) {
+    static boolean shouldProbeRun(final Boolean probed, final String previousStatus, final String currentStatus) {
         if (probed == null) {
             return true;
         }
         return JobStatuses.isTerminal(currentStatus) && !JobStatuses.isTerminal(previousStatus == null ? "" : previousStatus);
     }
 
-    private String metaLine(Api.Job job) {
-        List<String> parts = new ArrayList<>();
+    private String metaLine(final Api.Job job) {
+        // returned via String.join, which needs Iterable<? extends CharSequence> - empty-diamond
+        // under var would infer List<Object> and fail to compile there
+        final List<String> parts = new ArrayList<>();
         if (job.priority() != null) parts.add("priority " + job.priority());
         if (job.pid() != null) parts.add("pid " + job.pid());
         if (job.exit_code() != null) parts.add("exit " + job.exit_code());

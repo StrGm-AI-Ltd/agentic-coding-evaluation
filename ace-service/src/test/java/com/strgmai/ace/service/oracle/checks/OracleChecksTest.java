@@ -28,7 +28,7 @@ class OracleChecksTest {
 
     @Test
     void moneyAsDoubleFailsM1AndM2PassesWithBigDecimal() throws Exception {
-        Path ws = Files.createTempDirectory("ws");
+        final var ws = Files.createTempDirectory("ws");
         Files.createDirectories(ws.resolve("src/main/java/app"));
         Files.writeString(ws.resolve("src/main/java/app/Bad.java"), """
                 package app;
@@ -45,12 +45,12 @@ class OracleChecksTest {
                     public BigDecimal getBalance() { return amount; }
                 }
                 """);
-        Map<CheckId, CheckResult> r = runMoney(ws);
+        final Map<CheckId, CheckResult> r = runMoney(ws);
         assertEquals(CheckStatus.FAIL, r.get(CheckId.M1).status());
         assertTrue(r.get(CheckId.M1).detail().contains("Bad.java:price"));
         assertEquals(CheckStatus.PASS, r.get(CheckId.M2).status());
 
-        Path clean = Files.createTempDirectory("ws2");
+        final var clean = Files.createTempDirectory("ws2");
         Files.createDirectories(clean.resolve("src/main/java/app"));
         Files.writeString(clean.resolve("src/main/java/app/Good.java"), """
                 package app;
@@ -62,7 +62,7 @@ class OracleChecksTest {
 
     @Test
     void equalsOnMoneyFailsM3() throws Exception {
-        Path ws = Files.createTempDirectory("ws");
+        final var ws = Files.createTempDirectory("ws");
         Files.createDirectories(ws.resolve("src/main/java/app"));
         Files.writeString(ws.resolve("src/main/java/app/Trap.java"), """
                 package app;
@@ -79,7 +79,7 @@ class OracleChecksTest {
 
     @Test
     void aReplayWithoutSubtractionFailsM4AndASubtractingOnePasses() throws Exception {
-        Path ws = Files.createTempDirectory("ws");
+        final var ws = Files.createTempDirectory("ws");
         Files.createDirectories(ws.resolve("src/main/java/app"));
         Files.writeString(ws.resolve("src/main/java/app/Ledger.java"), """
                 package app;
@@ -93,14 +93,14 @@ class OracleChecksTest {
                 """);
         assertEquals(CheckStatus.FAIL, runMoney(ws).get(CheckId.M4).status());
 
-        Path ok = Files.createTempDirectory("ws2");
+        final var ok = Files.createTempDirectory("ws2");
         Files.createDirectories(ok.resolve("src/main/java/app"));
         Files.writeString(ok.resolve("src/main/java/app/Ledger.java"), """
                 package app;
                 import java.math.BigDecimal;
                 import java.time.Instant;
                 public class Ledger {
-                    public BigDecimal holdingsAt(Instant asOf) {
+                    public BigDecimal holdingsAt(final Instant asOf) {
                         BigDecimal h = BigDecimal.ZERO;
                         if (side.equals("BUY")) h = h.add(qty); else h = h.subtract(qty);   // sells subtract
                         return h;
@@ -114,7 +114,7 @@ class OracleChecksTest {
     void sqlCaseWhenElseFormIsNoLongerAFalseNegativeForM4() throws Exception {
         // the sign is carried via ELSE (BUY branch positive, ELSE negative), not an explicit SELL
         // branch with a minus sign - this is the false negative the SQL_PIT fix closes
-        Path ws = Files.createTempDirectory("ws");
+        final var ws = Files.createTempDirectory("ws");
         Files.createDirectories(ws.resolve("src/main/java/app"));
         Files.writeString(ws.resolve("src/main/java/app/HoldingRepository.java"), """
                 package app;
@@ -128,7 +128,7 @@ class OracleChecksTest {
 
         // a look-alike that must stay undetected: two aliased SUM()s cannot be told apart from source
         // without false-positives, so buys-minus-sells via separate SUMs is deliberately not credited here
-        Path lookAlike = Files.createTempDirectory("ws2");
+        final var lookAlike = Files.createTempDirectory("ws2");
         Files.createDirectories(lookAlike.resolve("src/main/java/app"));
         Files.writeString(lookAlike.resolve("src/main/java/app/HoldingRepository.java"), """
                 package app;
@@ -143,14 +143,14 @@ class OracleChecksTest {
 
     @Test
     void noSourcesMeansNotAttemptedNotFail() throws Exception {
-        Map<CheckId, CheckResult> r = runMoney(Files.createTempDirectory("empty"));
+        final Map<CheckId, CheckResult> r = runMoney(Files.createTempDirectory("empty"));
         for (CheckId c : List.of(CheckId.M1, CheckId.M2, CheckId.M3, CheckId.M4))
             assertEquals(CheckStatus.NOT_ATTEMPTED, r.get(c).status());   // the feature simply is not there
     }
 
     @Test
     void structureChecksScoreARealWorkspace() throws Exception {
-        Path ws = Files.createTempDirectory("ws");
+        final var ws = Files.createTempDirectory("ws");
         Files.createDirectories(ws.resolve("docs"));
         Files.writeString(ws.resolve("docs/TASK_DEFINITION.md"), "x".repeat(300));
         Files.writeString(ws.resolve("docs/IMPLEMENTATION_PLAN.md"), "x".repeat(300));
@@ -161,7 +161,7 @@ class OracleChecksTest {
         Files.writeString(ws.resolve("gradlew"), "#!/bin/sh\n" + "x".repeat(2000));
         Files.writeString(ws.resolve("gradle/wrapper/gradle-wrapper.properties"), "distributionUrl=x\n");
         for (String svc : List.of("orders", "accounts", "quotes")) {
-            Path d = ws.resolve(svc);
+            final Path d = ws.resolve(svc);
             Files.createDirectories(d.resolve("src/main/java"));
             Files.writeString(d.resolve("build.gradle"), "plugins { id 'org.springframework.boot' }\n");
         }
@@ -169,7 +169,7 @@ class OracleChecksTest {
         Files.createDirectories(ws.resolve("db/migration"));
         Files.writeString(ws.resolve("db/migration/V1__init.sql"), "CREATE TABLE t(id int);\n");
 
-        Map<CheckId, CheckResult> r = runStructure(ws);
+        final Map<CheckId, CheckResult> r = runStructure(ws);
         for (CheckId c : List.of(CheckId.S1, CheckId.S2, CheckId.S3, CheckId.S4, CheckId.S5, CheckId.S6, CheckId.S7, CheckId.S9))
             assertEquals(CheckStatus.PASS, r.get(c).status(), c + ": " + r.get(c).detail());
         assertEquals(CheckStatus.FAIL, r.get(CheckId.S8).status());   // no package.json with react
@@ -177,9 +177,9 @@ class OracleChecksTest {
 
     @Test
     void aOneLineBuildGradleStubIsNotAService() throws Exception {
-        Path ws = Files.createTempDirectory("ws");
+        final var ws = Files.createTempDirectory("ws");
         for (String svc : List.of("a", "b", "c")) {
-            Path d = ws.resolve(svc);
+            final Path d = ws.resolve(svc);
             Files.createDirectories(d);   // build file but NO src/main: not a real service
             Files.writeString(d.resolve("build.gradle"), "plugins { id 'org.springframework.boot' }\n");
         }

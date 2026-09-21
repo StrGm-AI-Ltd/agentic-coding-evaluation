@@ -13,7 +13,7 @@ class MarkdownTest {
 
     @Test
     void headingsAndInlineMarkup() {
-        String html = Markdown.toHtml("# Title\n\nSome **bold** and *em* and `code`.\n");
+        final var html = Markdown.toHtml("# Title\n\nSome **bold** and *em* and `code`.\n");
         assertTrue(html.contains("<h1>Title</h1>"), html);
         assertTrue(html.contains("<strong>bold</strong>"));
         assertTrue(html.contains("<em>em</em>"));
@@ -22,7 +22,7 @@ class MarkdownTest {
 
     @Test
     void gfmTableRendersLikeTheRealPlanFiles() {
-        String html = Markdown.toHtml("""
+        final var html = Markdown.toHtml("""
                 | Wave | Tasks |
                 |------|-------|
                 | 1 | **T1** — skeleton |
@@ -37,7 +37,7 @@ class MarkdownTest {
 
     @Test
     void listsOrderedAndNested() {
-        String html = Markdown.toHtml("- one\n- two\n\n3. third\n4. fourth\n");
+        final var html = Markdown.toHtml("- one\n- two\n\n3. third\n4. fourth\n");
         assertTrue(html.contains("<ul>\n<li>one</li>"), html);
         assertTrue(html.contains("<ol start=\"3\">"), "the ordered list keeps its start number");
         assertTrue(html.contains("<li>third</li>"));
@@ -45,7 +45,7 @@ class MarkdownTest {
 
     @Test
     void fencedCodeRendersEscaped() {
-        String html = Markdown.toHtml("```\n<b>&amp;</b>\n```\n");
+        final var html = Markdown.toHtml("```\n<b>&amp;</b>\n```\n");
         assertTrue(html.contains("<pre><code>"), html);
         assertTrue(html.contains("&lt;b&gt;&amp;amp;&lt;/b&gt;"), "code content is escaped");
         assertFalse(html.contains("<b>&amp;"), "no raw tags leak from the fence");
@@ -54,7 +54,7 @@ class MarkdownTest {
     /** Run files are authored by the agent under test — raw HTML renders as text, never executes. */
     @Test
     void rawHtmlIsEscapedNotPassedThrough() {
-        String html = Markdown.toHtml("before\n\n<script>alert(1)</script>\n\nx <img src=x onerror=steal> y\n");
+        final var html = Markdown.toHtml("before\n\n<script>alert(1)</script>\n\nx <img src=x onerror=steal> y\n");
         assertFalse(html.contains("<script>"), "the script tag is escaped");
         assertTrue(html.contains("&lt;script&gt;"), "its source stays visible as text");
         assertFalse(html.contains("<img src=x"), "the onerror img is escaped too");
@@ -65,7 +65,7 @@ class MarkdownTest {
 
     @Test
     void unsafeLinkProtocolsAreSanitized() {
-        String html = Markdown.toHtml("[site](https://example.com/x?a=1) and [bad](javascript:alert(1))\n");
+        final var html = Markdown.toHtml("[site](https://example.com/x?a=1) and [bad](javascript:alert(1))\n");
         assertTrue(html.contains("href=\"https://example.com/x?a=1\""), "http(s) links survive");
         assertFalse(html.contains("javascript:"), "unsafe protocols are sanitized away");
         assertTrue(html.contains(">bad</a>"), "the link label stays clickable text");
@@ -73,14 +73,14 @@ class MarkdownTest {
 
     @Test
     void linksOpenInANewTab() {
-        String html = Markdown.toHtml("[site](https://example.com)\n");
+        final var html = Markdown.toHtml("[site](https://example.com)\n");
         assertTrue(html.contains("target=\"_blank\""), html);
         assertTrue(html.contains("rel=\"noopener noreferrer\""));
     }
 
     @Test
     void blockquoteAndThematicBreak() {
-        String html = Markdown.toHtml("> quoted words\n\n---\n");
+        final var html = Markdown.toHtml("> quoted words\n\n---\n");
         assertTrue(html.contains("<blockquote>"), html);
         assertTrue(html.contains("quoted words"));
         assertTrue(html.contains("<hr />"));
@@ -89,7 +89,7 @@ class MarkdownTest {
     /** Completing the security matrix: scheme smuggling and content vectors the base tests miss. */
     @Test
     void dataUriLinkIsSanitized() {
-        String html = Markdown.toHtml("[x](data:text/html,<b>hi</b>)\n");
+        final var html = Markdown.toHtml("[x](data:text/html,<b>hi</b>)\n");
         assertFalse(html.contains("href=\"data:"), "data: URIs never become hrefs: " + html);
         assertTrue(html.contains("href=\"#\""), "the scheme allowlist blanks anything non-http(s)");
         assertTrue(html.contains(">x</a>"), "the label survives as inert text");
@@ -97,21 +97,21 @@ class MarkdownTest {
 
     @Test
     void javascriptImageDestinationIsSanitized() {
-        String html = Markdown.toHtml("![boom](javascript:alert(1))\n");
+        final var html = Markdown.toHtml("![boom](javascript:alert(1))\n");
         assertFalse(html.contains("javascript:"), "image destinations are sanitized too");
         assertFalse(html.contains("src=\"javascript:"));
     }
 
     @Test
     void uppercaseSchemeIsSanitized() {
-        String html = Markdown.toHtml("[x](JAVASCRIPT:alert(1))\n");
+        final var html = Markdown.toHtml("[x](JAVASCRIPT:alert(1))\n");
         assertFalse(html.toLowerCase().contains("href=\"javascript:"),
                 "scheme checks are case-insensitive: " + html);
     }
 
     @Test
     void htmlInsideTableCellIsEscaped() {
-        String html = Markdown.toHtml("""
+        final var html = Markdown.toHtml("""
                 | a | b |
                 |---|---|
                 | <script>alert(1)</script> | <img src=x onerror=y> |

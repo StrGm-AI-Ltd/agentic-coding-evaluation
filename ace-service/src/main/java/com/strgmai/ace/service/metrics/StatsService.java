@@ -29,11 +29,11 @@ public final class StatsService {
     public static final List<String> SHARED_WITH_MODEL_AB = List.of("task", "step", "registry", "run_oracle", "contract", "task_prompt");
 
     /** port of load(): oracle.json + manifest.json -> a comparable run summary */
-    public RunSummary load(Path runDir) throws Exception {
-        JsonNode o = json.readTree(runDir.resolve("oracle.json").toFile());
-        JsonNode m = Files.exists(runDir.resolve("manifest.json")) ? json.readTree(runDir.resolve("manifest.json").toFile()) : json.createObjectNode();
-        Map<String, Object> key = new LinkedHashMap<>();
-        JsonNode prov = o.path("provenance");
+    public RunSummary load(final Path runDir) throws Exception {
+        final JsonNode o = json.readTree(runDir.resolve("oracle.json").toFile());
+        final JsonNode m = Files.exists(runDir.resolve("manifest.json")) ? json.readTree(runDir.resolve("manifest.json").toFile()) : json.createObjectNode();
+        final Map<String, Object> key = new LinkedHashMap<>();
+        final JsonNode prov = o.path("provenance");
         for (String k : KEY_FIELDS) {
             String v = switch (k) {
                 case "task" -> o.path("task").asText(null);
@@ -54,7 +54,7 @@ public final class StatsService {
         }
         boolean poolable = o.path("schema_version").asInt(-1) == com.strgmai.ace.service.config.BenchProperties.RESULT_SCHEMA
                 && !o.path("weighted_score_pct").isNull() && o.path("weighted_score_pct") != null && o.has("weighted_score_pct");
-        Map<String, String> checkStatus = new LinkedHashMap<>();
+        final Map<String, String> checkStatus = new LinkedHashMap<>();
         for (JsonNode r : o.path("results")) checkStatus.put(r.path("id").asText(), r.path("status").asText());
         return new RunSummary(runDir.toString(), o.path("task").asText(),
                 m.path("provenance").path("model").asText(null), m.path("mode").asText("monolithic"),
@@ -71,19 +71,19 @@ public final class StatsService {
     }
 
     /** port of filter_runs: refuse to pool non-comparable runs, name the culprit */
-    public List<RunSummary> filterRuns(List<RunSummary> runs, boolean allowPartial, boolean includeInvalid, String label) {
+    public List<RunSummary> filterRuns(final List<RunSummary> runs, final boolean allowPartial, final boolean includeInvalid, final String label) {
         for (String k : KEY_FIELDS) {
-            Set<String> vals = new HashSet<>();
+            final Set<String> vals = new HashSet<>();
             runs.forEach(r -> vals.add(String.valueOf(r.key().get(k))));
             if (vals.size() > 1)
                 throw new IllegalArgumentException(label + ": runs are not comparable; differing component: " + k + " = " + vals);
         }
-        Set<String> models = new HashSet<>();
+        final Set<String> models = new HashSet<>();
         runs.forEach(r -> models.add(String.valueOf(r.model())));
         if (models.size() > 1) throw new IllegalArgumentException(label + ": runs mix models " + models + "; one model per side");
-        List<RunSummary> kept = new ArrayList<>();
+        final List<RunSummary> kept = new ArrayList<>();
         for (RunSummary r : runs) {
-            List<String> why = new ArrayList<>();
+            final List<String> why = new ArrayList<>();
             if (r.score() == null && !allowPartial) why.add("partial (docker skipped/infra)");
             if (!r.valid() && !includeInvalid) why.add("invalid");
             if (!why.isEmpty()) System.out.println("  excluded " + Path.of(r.dir()).getFileName() + ": " + String.join("; ", why));
@@ -93,12 +93,12 @@ public final class StatsService {
     }
 
     /** port of boot_ci: bootstrap CI for the mean (seeded, reproducible) */
-    public static double[] bootCi(List<Double> xs, int n, double alpha, long seed) {
-        List<Double> clean = xs.stream().filter(Objects::nonNull).toList();
+    public static double[] bootCi(List<Double> xs, final int n, double alpha, final long seed) {
+        final List<Double> clean = xs.stream().filter(Objects::nonNull).toList();
         if (clean.isEmpty()) return new double[]{Double.NaN, Double.NaN};
         if (clean.size() < 2) return new double[]{clean.get(0), clean.get(0)};
-        Random rnd = new Random(seed);
-        List<Double> means = new ArrayList<>();
+        final var rnd = new Random(seed);
+        final List<Double> means = new ArrayList<>();
         for (int i = 0; i < n; i++) {
             double s = 0;
             for (int j = 0; j < clean.size(); j++) s += clean.get(rnd.nextInt(clean.size()));
@@ -109,10 +109,10 @@ public final class StatsService {
     }
 
     /** port of permutation_test: UNPAIRED ONE-SIDED two-sample permutation test; p-value for mean(a) > mean(b) */
-    public static double permutationTest(double[] a, double[] b, int n, long seed) {
-        Random rnd = new Random(seed);
-        double obs = mean(a) - mean(b);
-        double[] pool = new double[a.length + b.length];
+    public static double permutationTest(final double[] a, final double[] b, final int n, final long seed) {
+        final var rnd = new Random(seed);
+        final double obs = mean(a) - mean(b);
+        final double[] pool = new double[a.length + b.length];
         System.arraycopy(a, 0, pool, 0, a.length);
         System.arraycopy(b, 0, pool, a.length, b.length);
         int ge = 0;
@@ -126,8 +126,8 @@ public final class StatsService {
     }
 
     /** port of the harness-effect budget matching: the total WORK budget must be matched (P-1) */
-    public static void requireMatchedBudgets(RunSummary a, RunSummary b, boolean allowMismatch) {
-        String msg = "implementation budgets A=" + a.implWall() + "s/" + a.implTokens() + " tok vs B=" + b.implWall() + "s/" + b.implTokens() + " tok";
+    public static void requireMatchedBudgets(final RunSummary a, final RunSummary b, final boolean allowMismatch) {
+        final String msg = "implementation budgets A=" + a.implWall() + "s/" + a.implTokens() + " tok vs B=" + b.implWall() + "s/" + b.implTokens() + " tok";
         if (Math.abs(a.implWall() - b.implWall()) > 0.02 * Math.max(a.implWall(), b.implWall())
                 || Math.abs(a.implTokens() - b.implTokens()) > 0.02 * Math.max(a.implTokens(), b.implTokens())) {
             if (!allowMismatch) throw new IllegalArgumentException("harness-effect comparison refused: " + msg + " are not matched (pass allow-budget-mismatch to compare anyway, confounded)");
@@ -138,8 +138,8 @@ public final class StatsService {
     /** port of summarize(): k, mean scores with bootstrap 90% CI, and the pass^k matrix (# = passes
      *  in every run, + = flaky, . = never - here as pass_rate/pass_k, not the printed glyphs). Callers
      *  must pass already-comparable runs (filterRuns, or a DB group by key_hash which guarantees it). */
-    public Map<String, Object> summarize(List<RunSummary> runs) {
-        Map<String, Object> out = new LinkedHashMap<>();
+    public Map<String, Object> summarize(final List<RunSummary> runs) {
+        final Map<String, Object> out = new LinkedHashMap<>();
         out.put("k", runs.size());
         if (runs.isEmpty()) return out;
         out.put("task", runs.get(0).task());
@@ -147,22 +147,22 @@ public final class StatsService {
                 Map.entry("composite", (java.util.function.Function<RunSummary, Double>) RunSummary::score),
                 Map.entry("partial", (java.util.function.Function<RunSummary, Double>) RunSummary::partial),
                 Map.entry("agent_result", (java.util.function.Function<RunSummary, Double>) RunSummary::agentResult))) {
-            List<Double> xs = runs.stream().map(metric.getValue()).filter(Objects::nonNull).toList();
+            final List<Double> xs = runs.stream().map(metric.getValue()).filter(Objects::nonNull).toList();
             if (xs.isEmpty()) continue;
-            double[] ci = bootCi(xs, 4000, 0.10, 0);
-            Map<String, Object> entry = new LinkedHashMap<>();
+            final double[] ci = bootCi(xs, 4000, 0.10, 0);
+            final Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("mean", round1(xs.stream().mapToDouble(Double::doubleValue).sum() / xs.size()));
             entry.put("ci90", List.of(ci[0], ci[1]));
             entry.put("n", xs.size());
             out.put(metric.getKey(), entry);
         }
-        Set<String> ids = new TreeSet<>();
+        final Set<String> ids = new TreeSet<>();
         runs.forEach(r -> ids.addAll(r.checkStatus().keySet()));
-        Map<String, Object> matrix = new LinkedHashMap<>();
+        final Map<String, Object> matrix = new LinkedHashMap<>();
         for (String id : ids) {
-            List<String> col = runs.stream().map(r -> r.checkStatus().get(id)).toList();
-            long passes = col.stream().filter(s -> "PASS".equals(s)).count();
-            Map<String, Object> cell = new LinkedHashMap<>();
+            final List<String> col = runs.stream().map(r -> r.checkStatus().get(id)).toList();
+            final long passes = col.stream().filter(s -> "PASS".equals(s)).count();
+            final Map<String, Object> cell = new LinkedHashMap<>();
             cell.put("pass_rate", Math.round(100.0 * passes / col.size()) / 100.0);
             cell.put("pass_k", passes == col.size());
             cell.put("col", col);
@@ -173,11 +173,11 @@ public final class StatsService {
     }
 
     /** the compare verdict: diff, CI, one-sided p, and the minimum-detectable-difference warning */
-    public Map<String, Object> compare(List<Double> a, List<Double> b, String metric) {
-        double obs = mean(a.stream().mapToDouble(Double::doubleValue).toArray()) - mean(b.stream().mapToDouble(Double::doubleValue).toArray());
-        double p = permutationTest(a.stream().mapToDouble(Double::doubleValue).toArray(), b.stream().mapToDouble(Double::doubleValue).toArray(), 10000, 0);
-        Random rnd = new Random(0);
-        List<Double> ds = new ArrayList<>();
+    public Map<String, Object> compare(final List<Double> a, final List<Double> b, final String metric) {
+        final double obs = mean(a.stream().mapToDouble(Double::doubleValue).toArray()) - mean(b.stream().mapToDouble(Double::doubleValue).toArray());
+        final double p = permutationTest(a.stream().mapToDouble(Double::doubleValue).toArray(), b.stream().mapToDouble(Double::doubleValue).toArray(), 10000, 0);
+        final var rnd = new Random(0);
+        final List<Double> ds = new ArrayList<>();
         for (int i = 0; i < 4000; i++) {
             double sa = 0, sb = 0;
             for (int j = 0; j < a.size(); j++) sa += a.get(rnd.nextInt(a.size()));
@@ -185,9 +185,9 @@ public final class StatsService {
             ds.add(sa / a.size() - sb / b.size());
         }
         Collections.sort(ds);
-        double lo = round1(ds.get((int) (4000 * 0.05))), hi = round1(ds.get((int) (4000 * 0.95)));
-        int mdd = Math.min(a.size(), b.size()) < 6 ? 20 : 12;
-        Map<String, Object> out = new LinkedHashMap<>();
+        final double lo = round1(ds.get((int) (4000 * 0.05))), hi = round1(ds.get((int) (4000 * 0.95)));
+        final int mdd = Math.min(a.size(), b.size()) < 6 ? 20 : 12;
+        final Map<String, Object> out = new LinkedHashMap<>();
         out.put("metric", metric);
         out.put("diff", round1(obs));
         out.put("ci90", List.of(lo, hi));

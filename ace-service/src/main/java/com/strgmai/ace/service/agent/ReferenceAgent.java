@@ -56,7 +56,7 @@ public class ReferenceAgent {
     /** maps a session name (a phase id like "p0_definition"/"p1_plan"/"p2_implementation", a task id
      *  like "T3", or a suffixed continuation like "T3-wrapup"/"T3-handoff"/"T3-fix") to a
      *  DEFAULT_REASONING key. Unrecognised names (plain task ids) default to "implement". */
-    static String reasoningKind(String name) {
+    static String reasoningKind(final String name) {
         if (name.endsWith("-continue")) return reasoningKind(name.substring(0, name.length() - "-continue".length()));
         if (name.endsWith("-wrapup")) return "status";
         if (name.endsWith("-handoff")) return "handoff";
@@ -123,10 +123,10 @@ public class ReferenceAgent {
     public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
                              Path sessionDir, String sessionId, boolean continueSession,
                              String appendSystem, String cwd, String proxyBase, String model, Map<String, String> extraEnv) throws Exception {
-        long t0 = System.nanoTime();
-        Instant start = Instant.now();
-        String reasoningEffort = DEFAULT_REASONING.getOrDefault(reasoningKind(name), "medium");
-        AgentSession session = new AgentSession(sessionDir, sessionId, continueSession);
+        final long t0 = System.nanoTime();
+        final var start = Instant.now();
+        final String reasoningEffort = DEFAULT_REASONING.getOrDefault(reasoningKind(name), "medium");
+        final var session = new AgentSession(sessionDir, sessionId, continueSession);
         List<ChatMessage> msgs;
         if (continueSession && session.exists()) {
             msgs = session.loadMessages();
@@ -147,7 +147,7 @@ public class ReferenceAgent {
                 .timeout(Duration.ofSeconds(3600))
                 .defaultRequestParameters(OpenAiChatRequestParameters.builder().reasoningEffort(reasoningEffort).build())
                 .build();
-        List<ToolSpecification> specs = toolSpecs();
+        final List<ToolSpecification> specs = toolSpecs();
         // the run's SCRUBBED environment (fresh HOME, docker shim, pinned JAVA_HOME, AB_RUN_ID) is the
         // base for every tool call; extraEnv null = a bare unit-test context
         Map<String, String> env = extraEnv != null ? new LinkedHashMap<>(extraEnv)
@@ -158,10 +158,10 @@ public class ReferenceAgent {
         int turns = 0, toolErrors = 0, compactions = 0, lastPrompt = 0;
         String finish = null; int rc = 0;
         final int MAX_TURNS = 400;
-        long deadline = System.currentTimeMillis() + wallSec * 1000;
+        final long deadline = System.currentTimeMillis() + wallSec * 1000;
         while (turns < MAX_TURNS) {
             if (lastPrompt > 0 && lastPrompt > props.compactionTrigger()) {
-                int n = AgentSession.compact(msgs, props.keepRecentTurns());
+                final int n = AgentSession.compact(msgs, props.keepRecentTurns());
                 if (n > 0) { compactions++; session.compaction(n, lastPrompt); }
             }
             ChatResponse resp;
@@ -176,7 +176,7 @@ public class ReferenceAgent {
                 return result(name, 2, t0, finish, turns, toolErrors, compactions, session, start);
             }
             turns++;
-            AiMessage ai = resp.aiMessage();
+            final AiMessage ai = resp.aiMessage();
             finish = resp.metadata() == null || resp.metadata().finishReason() == null ? finish
                     : resp.metadata().finishReason().name().toLowerCase();
             Integer promptTokens = resp.metadata() == null || resp.metadata().tokenUsage() == null || resp.metadata().tokenUsage().inputTokenCount() == null
@@ -184,7 +184,7 @@ public class ReferenceAgent {
             if (promptTokens != null) lastPrompt = promptTokens;
             Integer completion = resp.metadata() == null || resp.metadata().tokenUsage() == null || resp.metadata().tokenUsage().outputTokenCount() == null
                     ? null : resp.metadata().tokenUsage().outputTokenCount();
-            List<ToolExecutionRequest> calls = ai.hasToolExecutionRequests() ? ai.toolExecutionRequests() : List.of();
+            final List<ToolExecutionRequest> calls = ai.hasToolExecutionRequests() ? ai.toolExecutionRequests() : List.of();
             session.assistant(ai.text(), calls, finish, Map.of("input", promptTokens == null ? 0 : promptTokens,
                     "output", completion == null ? 0 : completion, "cached", 0));
             msgs.add(ai);
@@ -196,7 +196,7 @@ public class ReferenceAgent {
                 Map<String, Object> args;
                 try { args = MAPPER.readValue(c.arguments(), Map.class); }
                 catch (Exception e) { args = Map.of(); }
-                AgentTools.Outcome out = executeTool(c.name(), args, cwd, env);
+                final AgentTools.Outcome out = executeTool(c.name(), args, cwd, env);
                 if (out.isError()) toolErrors++;
                 msgs.add(ToolExecutionResultMessage.from(c, out.output()));
                 session.toolResult(c.id(), c.name(), out.output(), out.isError());
@@ -209,12 +209,12 @@ public class ReferenceAgent {
         return result(name, rc, t0, finish, turns, toolErrors, compactions, session, start);
     }
 
-    private SessionResult result(String id, int rc, long t0, String finish, int turns, int toolErrors, int compactions, AgentSession s, Instant start) {
-        double secs = (System.nanoTime() - t0) / 1e9;
+    private SessionResult result(final String id, final int rc, final long t0, final String finish, final int turns, final int toolErrors, final int compactions, final AgentSession s, final Instant start) {
+        final double secs = (System.nanoTime() - t0) / 1e9;
         return new SessionResult(id, rc, Math.round(secs * 10) / 10.0, finish, turns, toolErrors, compactions, s.path(), start, Instant.now());
     }
 
-    private AgentTools.Outcome executeTool(String name, Map<String, Object> args, String cwd, Map<String, String> env) {
+    private AgentTools.Outcome executeTool(final String name, final Map<String, Object> args, final String cwd, final Map<String, String> env) {
         try {
             return switch (name) {
                 case "read" -> AgentTools.read(cwd, args);
@@ -234,7 +234,7 @@ public class ReferenceAgent {
      *  AuthenticationException, 404 -> ModelNotFoundException, 408 -> TimeoutException, 429 ->
      *  RateLimitException, other 4xx -> InvalidRequestException) under RetriableException /
      *  NonRetriableException. Status codes, not substrings, decide here. */
-    static ChatResponse chatWithRetry(ChatModel model, ChatRequest req, long deadline) {
+    static ChatResponse chatWithRetry(final ChatModel model, final ChatRequest req, final long deadline) {
         RuntimeException last = null;
         long delay = 2000;
         for (int attempt = 0; attempt < 4; attempt++) {
@@ -242,7 +242,7 @@ public class ReferenceAgent {
             catch (RuntimeException e) {
                 last = e;
                 if (isBudgetRefusal(e)) throw new BudgetExhausted(e);
-                Integer status = httpStatus(e);
+                final Integer status = httpStatus(e);
                 boolean clientError = status != null ? status >= 400 && status < 500 && status != 429
                         : hasCause(e, dev.langchain4j.exception.NonRetriableException.class);
                 if (clientError) throw new TransientError(e);   // final client errors
@@ -266,8 +266,8 @@ public class ReferenceAgent {
      *  only as the exception message. */
     static final String BUDGET_REFUSAL = "ace-service: phase output-token budget exhausted";
 
-    static boolean isBudgetRefusal(Throwable e) {
-        Integer status = httpStatus(e);
+    static boolean isBudgetRefusal(final Throwable e) {
+        final Integer status = httpStatus(e);
         if (status != null && status != 429) return false;
         for (Throwable t = e; t != null && t != t.getCause(); t = t.getCause())
             if (t.getMessage() != null && t.getMessage().contains(BUDGET_REFUSAL)) return true;
@@ -275,13 +275,13 @@ public class ReferenceAgent {
     }
 
     /** the HTTP status LangChain4j saw, when it kept one (HttpException anywhere in the cause chain) */
-    static Integer httpStatus(Throwable e) {
+    static Integer httpStatus(final Throwable e) {
         for (Throwable t = e; t != null && t != t.getCause(); t = t.getCause())
             if (t instanceof dev.langchain4j.exception.HttpException h) return h.statusCode();
         return null;
     }
 
-    static boolean hasCause(Throwable e, Class<? extends Throwable> type) {
+    static boolean hasCause(final Throwable e, final Class<? extends Throwable> type) {
         for (Throwable t = e; t != null && t != t.getCause(); t = t.getCause())
             if (type.isInstance(t)) return true;
         return false;

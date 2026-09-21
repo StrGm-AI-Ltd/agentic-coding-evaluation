@@ -51,7 +51,7 @@ class RunBenchTest {
     void promptResourcePrefersTheTaskSOwnPrompt() throws Exception {
         try (InputStream in = runBench().promptResource("L3p_point_in_time")) {
             assertNotNull(in, "tasks/L3p_point_in_time/PROMPT.md must be vendored as a resource");
-            String text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            final var text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
             assertTrue(text.contains("point-in-time") || text.contains("point in time") || text.length() > 100,
                     "a real, task-specific prompt, not empty: " + text.substring(0, Math.min(200, text.length())));
         }
@@ -71,7 +71,7 @@ class RunBenchTest {
     void setUpTaskPromptCreatesTheTaskDirectoryItselfNotJustItsParent() throws Exception {
         Path ws = track(Files.createTempDirectory("ws"));   // a bare, empty workspace dir - nothing pre-created under it
 
-        String text = runBench().setUpTaskPrompt(ws, "L3p_point_in_time");
+        final String text = runBench().setUpTaskPrompt(ws, "L3p_point_in_time");
 
         assertTrue(Files.isRegularFile(ws.resolve("task/PROMPT.md")), "task/PROMPT.md must exist under the workspace");
         assertFalse(text.isBlank());
@@ -88,8 +88,8 @@ class RunBenchTest {
                  InputStream generic = RunBenchTest.class.getResourceAsStream("/tasks/PROMPT.md")) {
                 assertNotNull(perTask, task + " must resolve to a vendored prompt");
                 assertNotNull(generic, "the generic tasks/PROMPT.md must be vendored");   // a missing resource is a clear message, not an NPE
-                String taskText = new String(perTask.readAllBytes(), StandardCharsets.UTF_8);
-                String genericText = new String(generic.readAllBytes(), StandardCharsets.UTF_8);
+                final var taskText = new String(perTask.readAllBytes(), StandardCharsets.UTF_8);
+                final var genericText = new String(generic.readAllBytes(), StandardCharsets.UTF_8);
                 assertNotEquals(genericText, taskText, task + " must not silently fall back to the generic prompt");
             }
         }

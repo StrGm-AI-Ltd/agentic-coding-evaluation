@@ -42,11 +42,11 @@ class RoutesReflectionTest {
             java.util.Set.of(FileViewerView.class);
 
     private static Set<Class<?>> scanRouteClasses() throws ClassNotFoundException {
-        ClassPathScanningCandidateComponentProvider scanner =
+        final var scanner =
                 new ClassPathScanningCandidateComponentProvider(false);
         scanner.addIncludeFilter(new AnnotationTypeFilter(Route.class));
-        Set<Class<?>> views = new HashSet<>();
-        for (BeanDefinition candidate : scanner.findCandidateComponents("com.strgmai.ace.ui")) {
+        final var views = new HashSet<Class<?>>();
+        for (final var candidate : scanner.findCandidateComponents("com.strgmai.ace.ui")) {
             views.add(Class.forName(candidate.getBeanClassName()));
         }
         return views;
@@ -54,10 +54,10 @@ class RoutesReflectionTest {
 
     @Test
     void allRouteClassesRegisteredWithExpectedValues() throws Exception {
-        Map<String, Class<?>> found = new HashMap<>();
-        for (Class<?> view : scanRouteClasses()) {
-            Route route = view.getAnnotation(Route.class);
-            Class<? extends com.vaadin.flow.router.RouterLayout> expectedLayout =
+        final var found = new HashMap<String, Class<?>>();
+        for (final var view : scanRouteClasses()) {
+            final var route = view.getAnnotation(Route.class);
+            final Class<? extends com.vaadin.flow.router.RouterLayout> expectedLayout =
                     STANDALONE.contains(view) ? com.vaadin.flow.component.UI.class : MainLayout.class;
             assertEquals(expectedLayout, route.layout(), view + " layout mismatch");
             found.put(route.value(), view);

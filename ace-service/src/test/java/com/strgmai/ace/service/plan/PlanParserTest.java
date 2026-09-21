@@ -25,7 +25,7 @@ class PlanParserTest {
                 Dependencies: T1
                 Acceptance: /orders returns 201
                 """;
-        List<PlanTask> tasks = PlanParser.parse(md);
+        final List<PlanTask> tasks = PlanParser.parse(md);
         assertEquals(List.of("T1", "T2"), tasks.stream().map(t -> t.id).toList());
         assertEquals("create the entities", tasks.get(0).goal);
         assertEquals(List.of("T1"), tasks.get(1).deps);
@@ -34,8 +34,8 @@ class PlanParserTest {
 
     @Test
     void aTableRowIsATask() {
-        String md = "| T1 | model the schema | migration-service | - | tables exist |\n| T2 | implement the API | api-service | T1 | /orders returns 201 |\n";
-        List<PlanTask> tasks = PlanParser.parse(md);
+        final String md = "| T1 | model the schema | migration-service | - | tables exist |\n| T2 | implement the API | api-service | T1 | /orders returns 201 |\n";
+        final List<PlanTask> tasks = PlanParser.parse(md);
         assertEquals(2, tasks.size());
         assertEquals("model the schema", tasks.get(0).goal);
         assertEquals(List.of("T1"), tasks.get(1).deps);
@@ -43,7 +43,7 @@ class PlanParserTest {
 
     @Test
     void orderIsTopologicalTiesByIdNumber() {
-        List<PlanTask> tasks = PlanParser.parse("## T10 depends on T2\n- Goal: a\n- Dependencies: T2\n## T2\n- Goal: b\n- Dependencies: T1\n## T1\n- Goal: c\n");
+        final List<PlanTask> tasks = PlanParser.parse("## T10 depends on T2\n- Goal: a\n- Dependencies: T2\n## T2\n- Goal: b\n- Dependencies: T1\n## T1\n- Goal: c\n");
         assertEquals(List.of("T1", "T2", "T10"), tasks.stream().map(t -> t.id).toList());
         assertEquals(List.of(List.of("T1"), List.of("T2"), List.of("T10")),
                 PlanParser.waves(tasks).stream().map(w -> w.stream().map(t -> t.id).toList()).toList());
@@ -73,7 +73,7 @@ class PlanParserTest {
                 - Goal: the detailed goal
                 - Acceptance: tests are green
                 """;
-        List<PlanTask> tasks = PlanParser.parse(md);
+        final List<PlanTask> tasks = PlanParser.parse(md);
         assertEquals(1, tasks.size());
         assertEquals("the detailed goal", tasks.get(0).goal);
     }
@@ -93,7 +93,7 @@ class PlanParserTest {
 
     @Test
     void parallelPlanEvaluationValidDepthsAndErrors() {
-        List<PlanTask> tasks = PlanParser.parse("## T1\n- Goal: a\n## T2\n- Goal: b\n- Dependencies: T1\n");
+        final List<PlanTask> tasks = PlanParser.parse("## T1\n- Goal: a\n## T2\n- Goal: b\n- Dependencies: T1\n");
         var valid = PlanParser.evaluateParallelPlan(java.util.Map.of("waves", java.util.List.of(
                 java.util.List.of("T1"), java.util.List.of("T2"))), tasks);
         assertEquals(Boolean.TRUE, valid.get("valid"));

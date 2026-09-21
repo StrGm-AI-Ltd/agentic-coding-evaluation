@@ -28,15 +28,15 @@ class JournalFactsTest {
         temps.clear();
     }
 
-    private static String chat(String ts, String topExtra, String respExtra, String requestJson) {
+    private static String chat(final String ts, final String topExtra, final String respExtra, final String requestJson) {
         return chat(ts, 200, topExtra, respExtra, requestJson);
     }
 
     // an explicit status overrides the template's 200 - the old topExtra-only way produced a DUPLICATE
     // "status" key (RFC 8259: members SHOULD be unique; the test passed only by last-wins parsing luck)
-    private static String chat(String ts, int status, String topExtra, String respExtra, String requestJson) {
-        String usage = respExtra.contains("\"usage\"") ? "" : "\"usage\": {\"completion_tokens\": 2, \"prompt_tokens\": 50}";
-        String respSep = (respExtra.isBlank() || usage.isBlank()) ? "" : ",";
+    private static String chat(final String ts, final int status, final String topExtra, final String respExtra, final String requestJson) {
+        final String usage = respExtra.contains("\"usage\"") ? "" : "\"usage\": {\"completion_tokens\": 2, \"prompt_tokens\": 50}";
+        final String respSep = (respExtra.isBlank() || usage.isBlank()) ? "" : ",";
         return "{\"ts\": \"" + ts + "\", \"path\": \"/v1/chat/completions\", \"status\": " + status + topExtra
                 + ", \"request\": " + requestJson + ", \"response\": {" + respExtra + respSep + usage + "}}\n";
     }
@@ -45,13 +45,13 @@ class JournalFactsTest {
 
     @Test
     void windowsFilterTheCachedEntries() throws Exception {
-        Path j = track(Files.createTempFile("j", ".jsonl"));
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
         Files.writeString(j, chat("2026-09-14T10:00:00Z", "", "", REQ)
                 + "{\"ts\": \"2026-09-14T10:05:00Z\", \"path\": \"/v1/models\", \"status\": 200}\n"    // not a chat completion: never counted
                 + chat("2026-09-14T11:00:00Z", "", "", REQ));
         assertEquals(2, ((Number) JournalFacts.facts(j.toString(), null, null, null, null, null).get("requests")).intValue());
         assertEquals(2, ((Number) JournalFacts.facts(j.toString(), null, null, null, null, null).get("requests")).intValue());   // served from the cache
-        Map<String, Object> w = JournalFacts.facts(j.toString(), "2026-09-14T10:30:00Z", null, null, null, null);
+        final Map<String, Object> w = JournalFacts.facts(j.toString(), "2026-09-14T10:30:00Z", null, null, null, null);
         assertEquals(1, ((Number) w.get("requests")).intValue());
         assertEquals(2L, w.get("completion_tokens"));
         assertEquals(1, ((Number) ((Map<?, ?>) w.get("sampler_effective")).get("temperature")).intValue());    // the first IN-WINDOW request's params
@@ -60,7 +60,7 @@ class JournalFactsTest {
 
     @Test
     void appendsAreSeenAndARewriteRebuildsTheCache() throws Exception {
-        Path j = track(Files.createTempFile("j", ".jsonl"));
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
         Files.writeString(j, chat("2026-09-14T10:00:00Z", "", "", REQ));
         assertEquals(1, ((Number) JournalFacts.facts(j.toString(), null, null, null, null, null).get("requests")).intValue());
         Files.writeString(j, chat("2026-09-14T11:00:00Z", "", "", REQ), java.nio.file.StandardOpenOption.APPEND);
@@ -71,16 +71,16 @@ class JournalFactsTest {
 
     @Test
     void budgetRefusalsCountSeparatelyFromErrors() throws Exception {
-        Path j = track(Files.createTempFile("j", ".jsonl"));
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
         Files.writeString(j, chat("2026-09-14T10:00:00Z", 429, ", \"budget_exceeded\": true", "", REQ));
-        Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null);
+        final Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null);
         assertEquals(1, ((Number) f.get("budget_refusals")).intValue());
         assertEquals(0, ((Number) f.get("errors")).intValue());
     }
 
     @Test
     void foreignWorkspaceRefsNeedNormaliseToBeJudged() throws Exception {
-        Path j = track(Files.createTempFile("j", ".jsonl"));
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
         Files.writeString(j, "{\"ts\": \"2026-09-14T10:00:00Z\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
                 + "\"request\": {\"messages\": [{\"role\": \"user\", \"content\": \"see /tmp/agentbench-ws/run2/workspace/x\"}]}, "
                 + "\"response\": {\"usage\": {\"completion_tokens\": 1}}}\n");
@@ -93,7 +93,7 @@ class JournalFactsTest {
 
     @Test
     void tagFiltersParallelTasksRecords() throws Exception {
-        Path j = track(Files.createTempFile("j", ".jsonl"));
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
         Files.writeString(j, chat("2026-09-14T10:00:00Z", ", \"task\": \"T1\"", "", REQ) + chat("2026-09-14T10:01:00Z", ", \"task\": \"T2\"", "", REQ));
         assertEquals(2, ((Number) JournalFacts.facts(j.toString(), null, null, null, null, null).get("requests")).intValue());
         assertEquals(1, ((Number) JournalFacts.facts(j.toString(), null, null, null, null, "T1").get("requests")).intValue());
@@ -101,9 +101,9 @@ class JournalFactsTest {
 
     @Test
     void reasoningEffortsAreCounted() throws Exception {
-        Path j = track(Files.createTempFile("j", ".jsonl"));
-        String hi = "{\"messages\": [], \"tools\": [], \"chat_template_kwargs\": {\"reasoning_effort\": \"high\"}}";
-        String med = "{\"messages\": [], \"tools\": [], \"chat_template_kwargs\": {\"reasoning_effort\": \"medium\"}}";
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
+        final String hi = "{\"messages\": [], \"tools\": [], \"chat_template_kwargs\": {\"reasoning_effort\": \"high\"}}";
+        final String med = "{\"messages\": [], \"tools\": [], \"chat_template_kwargs\": {\"reasoning_effort\": \"medium\"}}";
         Files.writeString(j, chat("2026-09-14T10:00:00Z", "", "", hi) + chat("2026-09-14T10:01:00Z", "", "", med)
                 + chat("2026-09-14T10:02:00Z", "", "", med) + chat("2026-09-14T10:03:00Z", "", "", REQ));
         assertEquals(Map.of("high", 1, "medium", 2, "none", 1), JournalFacts.facts(j.toString(), null, null, null, null, null).get("reasoning_efforts"));
@@ -111,7 +111,7 @@ class JournalFactsTest {
 
     @Test
     void lastFinishAndLastPromptTokensSeeTheLatestInWindow() throws Exception {
-        Path j = track(Files.createTempFile("j", ".jsonl"));
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
         Files.writeString(j, chat("2026-09-14T10:00:00Z", "", "\"finish_reason\": \"tool_calls\", \"usage\": {\"completion_tokens\": 1, \"prompt_tokens\": 100}", REQ)
                 + chat("2026-09-14T11:00:00Z", "", "\"finish_reason\": \"length\", \"usage\": {\"completion_tokens\": 1, \"prompt_tokens\": 42000}", REQ));
         assertEquals("length", JournalFacts.lastFinish(j.toString(), "2026-09-14T10:30:00Z"));

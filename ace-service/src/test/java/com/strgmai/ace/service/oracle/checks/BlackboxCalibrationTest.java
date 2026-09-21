@@ -18,15 +18,15 @@ class BlackboxCalibrationTest {
     @AfterEach
     void stop() { if (server != null) server.stop(); }
 
-    private BlackboxScenarios scenarios(String... bugs) throws Exception {
+    private BlackboxScenarios scenarios(final String... bugs) throws Exception {
         server = new ReferenceServer(Set.of(bugs));
-        int port = server.start(0);
+        final int port = server.start(0);
         return new BlackboxScenarios("http://127.0.0.1:" + port);
     }
 
     @Test
     void theReferenceServerPassesEveryScenario() throws Exception {
-        BlackboxScenarios b = scenarios();
+        final BlackboxScenarios b = scenarios();
         assertAll("correct by default",
                 () -> assertTrue(b.f1BuyThenSellRestoresHoldings(), b.notes.toString()),
                 () -> assertTrue(b.f2PointInTimeBetweenBuyAndSell(), b.notes.toString()),
@@ -46,7 +46,7 @@ class BlackboxCalibrationTest {
                 new Case("inclusive", "F8"), new Case("noidem", "F9"), new Case("asym", "F1"),
                 new Case("selladd", "F1"), new Case("hollow", "F1"));
         for (Case c : cases) {
-            BlackboxScenarios b = scenarios(c.bug());
+            final BlackboxScenarios b = scenarios(c.bug());
             boolean f1 = b.f1BuyThenSellRestoresHoldings(), f2 = b.f2PointInTimeBetweenBuyAndSell();
             boolean f3 = b.f3InsufficientBalanceRejectedWith422(), f4 = b.f4IllegalTransitionRejectedWith409();
             boolean f5 = b.f5DecimalAmountsRoundTripExactly(), f7 = b.f7DepositsRoundHalfEven();

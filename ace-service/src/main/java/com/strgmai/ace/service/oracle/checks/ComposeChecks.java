@@ -35,19 +35,19 @@ public final class ComposeChecks {
     static final Set<CheckId> IDS = new LinkedHashSet<>(List.of(CheckId.C1, CheckId.C2, CheckId.F1, CheckId.F2, CheckId.F3, CheckId.F4,
             CheckId.F5, CheckId.F6, CheckId.F7, CheckId.F8, CheckId.F9));
 
-    static DockerService.Sh compose(String proj, Path cf, int timeout, String... args) {
-        List<String> cmd = new ArrayList<>(List.of("docker", "compose", "-p", proj, "-f", cf.toString()));
+    static DockerService.Sh compose(String proj, Path cf, final int timeout, final String... args) {
+        final List<String> cmd = new ArrayList<>(List.of("docker", "compose", "-p", proj, "-f", cf.toString()));
         cmd.addAll(List.of(args));
         return DockerService.sh(timeout, cmd.toArray(String[]::new));
     }
 
     static List<Map<String, Object>> ps(String proj, Path cf) {
-        List<Map<String, Object>> rows = new ArrayList<>();
-        String out = compose(proj, cf, 60, "ps", "-a", "--format", "json").out();
+        final List<Map<String, Object>> rows = new ArrayList<>();
+        final String out = compose(proj, cf, 60, "ps", "-a", "--format", "json").out();
         for (String line : out.split("\n")) {
             if (line.isBlank()) continue;
             try {
-                JsonNode n = JSON.readTree(line.strip());
+                final JsonNode n = JSON.readTree(line.strip());
                 if (n.isArray()) for (JsonNode x : n) rows.add(JSON.convertValue(x, Map.class));
                 else if (n.isObject()) rows.add(JSON.convertValue(n, Map.class));
             } catch (Exception ignore) {}
@@ -57,11 +57,11 @@ public final class ComposeChecks {
 
     /** tear down benchmark stacks a killed oracle left behind (they hold :8080) */
     static void sweepStale() {
-        DockerService.Sh ls = DockerService.sh(60, "docker", "compose", "ls", "-a", "--format", "json");
+        final DockerService.Sh ls = DockerService.sh(60, "docker", "compose", "ls", "-a", "--format", "json");
         if (ls.rc() != 0) return;
         try {
             for (JsonNode p : JSON.readTree(ls.out().isEmpty() ? "[]" : ls.out())) {
-                String name = p.path("Name").asText("");
+                final String name = p.path("Name").asText("");
                 if (name.startsWith("ab") && name.length() > 2 && name.substring(2).chars().allMatch(Character::isDigit))
                     // --rmi local too (R4 C-24): without it, a killed oracle leaves the stale stack's
                     // images behind forever - this sweep is the only chance to remove them, since the
@@ -71,19 +71,19 @@ public final class ComposeChecks {
         } catch (Exception ignore) {}
     }
 
-    static boolean isDb(Map<String, Object> row) {
-        String svc = String.valueOf(row.getOrDefault("Service", row.getOrDefault("Name", "")));
+    static boolean isDb(final Map<String, Object> row) {
+        final String svc = String.valueOf(row.getOrDefault("Service", row.getOrDefault("Name", "")));
         return DB_HINTS.stream().anyMatch(h -> svc.toLowerCase().contains(h));
     }
 
     record Classified(List<Map<String, Object>> svc, List<Map<String, Object>> healthy, List<Map<String, Object>> bad) {}
 
     static Classified classify(List<Map<String, Object>> rows) {
-        List<Map<String, Object>> svc = rows.stream().filter(r -> !isDb(r)).toList();
-        List<Map<String, Object>> bad = new ArrayList<>(), healthy = new ArrayList<>();
+        final List<Map<String, Object>> svc = rows.stream().filter(r -> !isDb(r)).toList();
+        final List<Map<String, Object>> bad = new ArrayList<>(), healthy = new ArrayList<>();
         for (Map<String, Object> r : svc) {   // database rows are never "bad" (C-12): a slow Postgres shows up as unhealthy services
-            String state = String.valueOf(r.getOrDefault("State", "")).toLowerCase();
-            String health = String.valueOf(r.getOrDefault("Health", "")).toLowerCase();
+            final String state = String.valueOf(r.getOrDefault("State", "")).toLowerCase();
+            final String health = String.valueOf(r.getOrDefault("Health", "")).toLowerCase();
             if (List.of("dead", "restarting").contains(state) || health.equals("unhealthy")) bad.add(r);
             else if (state.equals("exited") && !List.of("0", "None", "", "null").contains(String.valueOf(r.get("ExitCode")))) bad.add(r);   // exit 0 = one-shot job, neutral
             if (health.equals("healthy")) healthy.add(r);
@@ -94,16 +94,16 @@ public final class ComposeChecks {
     /** Dockerfiles that COPY/ADD a host-built artefact from the build context without `--from=`: the
      *  image would depend on something a clean checkout does not contain. */
     static List<String> prebuiltArtefactCopies(Path ws) {
-        List<String> hits = new ArrayList<>();
+        final List<String> hits = new ArrayList<>();
         // COPY --from=<stage> reads from a build STAGE, not the context: a legitimate multi-stage build (R5 C-1)
-        Pattern copy = Pattern.compile("(?im)^\\s*(?:COPY|ADD)\\s+(?!--from)(?:--\\S+\\s+)*(\\S+)");
-        Pattern artefactSrc = Pattern.compile("(?i)(^|/)(build|target|dist|out)/|[\\w.-]+\\.(jar|war|ear|class)$");
+        final Pattern copy = Pattern.compile("(?im)^\\s*(?:COPY|ADD)\\s+(?!--from)(?:--\\S+\\s+)*(\\S+)");
+        final Pattern artefactSrc = Pattern.compile("(?i)(^|/)(build|target|dist|out)/|[\\w.-]+\\.(jar|war|ear|class)$");
         for (Path df : StructureChecks.glob(ws, "**/Dockerfile*")) {
             String src;
             try { src = Files.readString(df); } catch (IOException e) { continue; }
-            java.util.regex.Matcher m = copy.matcher(src);
+            final java.util.regex.Matcher m = copy.matcher(src);
             while (m.find()) {
-                String s = m.group(1);
+                final String s = m.group(1);
                 if (artefactSrc.matcher(s).find() && !s.contains("gradle-wrapper.jar"))
                     hits.add(ws.relativize(df) + ": COPY " + s);
             }
@@ -113,8 +113,8 @@ public final class ComposeChecks {
 
     /** `context:`/`dockerfile:` or bind-mount sources given as absolute paths escape the source-only
      *  copy the oracle builds from. */
-    static List<String> absoluteComposePaths(Path composeFile) {
-        List<String> hits = new ArrayList<>();
+    static List<String> absoluteComposePaths(final Path composeFile) {
+        final List<String> hits = new ArrayList<>();
         String txt;
         try { txt = Files.readString(composeFile); } catch (IOException e) { return hits; }
         for (var m : Pattern.compile("(?m)^\\s*(?:context|dockerfile)\\s*:\\s*(/\\S+)", Pattern.CASE_INSENSITIVE).matcher(txt).results().toList())
@@ -132,17 +132,17 @@ public final class ComposeChecks {
 
     public static List<CheckResult> run(Path wsOrig, int buildTimeout, int healthTimeout,
                                         java.util.function.Predicate<CheckId> wanted, String base, Path wsForSpec) throws Exception {
-        List<CheckResult> out = new ArrayList<>();
+        final List<CheckResult> out = new ArrayList<>();
         Set<CheckId> emitted = new LinkedHashSet<>();   // ids already emitted are never overwritten by a late crash
-        Path cfOrig = StructureChecks.findCompose(wsOrig);
+        final Path cfOrig = StructureChecks.findCompose(wsOrig);
         if (cfOrig == null) {
             for (CheckId c : IDS) if (wanted.test(c)) out.add(CheckResult.notAttempted(c, "no docker-compose / compose file"));
             return out;
         }
-        Path tmp = Files.createTempDirectory("ab-compose-");
-        String proj = "ab" + (System.currentTimeMillis() / 1000);
+        final var tmp = Files.createTempDirectory("ab-compose-");
+        final String proj = "ab" + (System.currentTimeMillis() / 1000);
         Path ws = BuildChecks.scratchCopy(wsOrig, tmp);   // source-only copy (R4 C-1)
-        Path cf = StructureChecks.findCompose(ws);
+        final Path cf = StructureChecks.findCompose(ws);
         try {
             List<String> pre = prebuiltArtefactCopies(ws);   // R5 C-1: say WHY before the build fails without the host-built jar
             if (!pre.isEmpty()) {
@@ -160,35 +160,35 @@ public final class ComposeChecks {
                 return out;
             }
             // ---- build (its own budget) ----
-            DockerService.Sh b = compose(proj, cf, buildTimeout, "build", "--quiet");
+            final DockerService.Sh b = compose(proj, cf, buildTimeout, "build", "--quiet");
             if (b.rc() != 0) {
-                String txt = b.out().strip();
+                final String txt = b.out().strip();
                 if (b.rc() == 124) { rest(out, emitted, wanted, CheckStatus.FAIL, "compose build exceeded " + buildTimeout + "s"); return out; }
-                String reason = BuildChecks.infraReason(txt);
+                final String reason = BuildChecks.infraReason(txt);
                 if (!reason.isEmpty()) { rest(out, emitted, wanted, CheckStatus.INFRA, "compose build infrastructure: " + reason); return out; }
                 rest(out, emitted, wanted, CheckStatus.FAIL, "compose build rc=" + b.rc() + ": " + lastLine(txt, 150));
                 return out;
             }
             // ---- up + health (its own budget) ----
-            DockerService.Sh u = compose(proj, cf, healthTimeout, "up", "-d", "--no-build", "--quiet-pull");
+            final DockerService.Sh u = compose(proj, cf, healthTimeout, "up", "-d", "--no-build", "--quiet-pull");
             if (u.rc() != 0) {
-                String txt = u.out().strip();
-                String reason = BuildChecks.infraReason(txt);
+                final String txt = u.out().strip();
+                final String reason = BuildChecks.infraReason(txt);
                 if (!reason.isEmpty()) { rest(out, emitted, wanted, CheckStatus.INFRA, "compose up infrastructure: " + reason); return out; }
                 rest(out, emitted, wanted, CheckStatus.FAIL, "compose up rc=" + u.rc() + ": " + lastLine(txt, 150));
                 return out;
             }
             // a rung without C1 (L2/L3/L3p: one service) must not idle for the whole budget (C-9)
-            int need = wanted.test(CheckId.C1) ? 3 : 1;
-            long deadline = System.currentTimeMillis() + healthTimeout * 1000L;
+            final int need = wanted.test(CheckId.C1) ? 3 : 1;
+            final long deadline = System.currentTimeMillis() + healthTimeout * 1000L;
             List<Map<String, Object>> rows = List.of();
             while (System.currentTimeMillis() < deadline) {
                 rows = ps(proj, cf);
-                Classified c = classify(rows);
+                final Classified c = classify(rows);
                 if ((c.healthy().size() >= need || (!c.svc().isEmpty() && c.healthy().size() == c.svc().size())) && c.bad().isEmpty()) break;
                 Thread.sleep(10_000);
             }
-            Classified c = classify(rows);
+            final Classified c = classify(rows);
             List<String> nohc = c.svc().stream().filter(r -> String.valueOf(r.getOrDefault("Health", "")).isEmpty())
                     .map(r -> String.valueOf(r.get("Service"))).limit(3).toList();
             out.add(new CheckResult(CheckId.C1, emitted.add(CheckId.C1) && c.healthy().size() >= 3 && c.bad().isEmpty() ? CheckStatus.PASS : CheckStatus.FAIL,
@@ -207,7 +207,7 @@ public final class ComposeChecks {
             }
             out.add(new CheckResult(CheckId.C2, emitted.add(CheckId.C2) && ok2 ? CheckStatus.PASS : CheckStatus.FAIL, det));
             // ---- F* while the stack is up; system not reachable -> NOT_ATTEMPTED, never FAIL ----
-            BlackboxScenarios suite = new BlackboxScenarios(base);
+            final var suite = new BlackboxScenarios(base);
             if (!suite.up()) {
                 for (CheckId id : IDS)
                     if (id.name().startsWith("F") && wanted.test(id)) out.add(CheckResult.notAttempted(id, "system not reachable at " + base + "/health"));
@@ -239,13 +239,13 @@ public final class ComposeChecks {
         }
     }
 
-    static void rest(List<CheckResult> out, Set<CheckId> emitted, java.util.function.Predicate<CheckId> wanted, CheckStatus status, String detail) {
+    static void rest(final List<CheckResult> out, final Set<CheckId> emitted, final java.util.function.Predicate<CheckId> wanted, final CheckStatus status, final String detail) {
         for (CheckId c : IDS) if (wanted.test(c) && emitted.add(c)) out.add(new CheckResult(c, status, detail));
     }
 
     static String head(String s, int n) { return s == null ? "" : s.substring(0, Math.min(n, s.length())); }
-    static String lastLine(String txt, int n) {
-        String[] lines = Arrays.stream(txt.split("\n")).filter(l -> !l.isBlank()).toArray(String[]::new);
+    static String lastLine(final String txt, final int n) {
+        final String[] lines = Arrays.stream(txt.split("\n")).filter(l -> !l.isBlank()).toArray(String[]::new);
         return lines.length == 0 ? "" : head(lines[lines.length - 1], n);
     }
 }

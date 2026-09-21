@@ -67,18 +67,18 @@ public class RecordingProxy {
         server = null;
     }
 
-    private void forward(com.sun.net.httpserver.HttpExchange x) throws Exception {
+    private void forward(final com.sun.net.httpserver.HttpExchange x) throws Exception {
         byte[] body = x.getRequestBody().readAllBytes();
-        String path = x.getRequestURI().getPath();
-        ObjectNode rec = json.createObjectNode();
+        final String path = x.getRequestURI().getPath();
+        final ObjectNode rec = json.createObjectNode();
         rec.put("ts", Instant.now().toString());
         rec.put("method", x.getRequestMethod());
         rec.put("path", path);
         JsonNode req = null;
         try { if (body.length > 0) req = json.readTree(body); } catch (Exception ignore) {}
-        boolean isChat = path.startsWith("/v1/chat/completions") && req != null && req.isObject();
+        final boolean isChat = path.startsWith("/v1/chat/completions") && req != null && req.isObject();
         if (isChat) {
-            ObjectNode r = (ObjectNode) req;
+            final ObjectNode r = (ObjectNode) req;
             if (props.temperature() != null) r.put("temperature", props.temperature());
             if (props.topP() != null) r.put("top_p", props.topP());
             if (props.seed() != null) r.put("seed", props.seed());
@@ -96,19 +96,19 @@ public class RecordingProxy {
                 return;
             }
         }
-        long t0 = System.nanoTime();
+        final long t0 = System.nanoTime();
         HttpRequest.Builder ub = HttpRequest.newBuilder(URI.create(props.upstreamBase() + path))
                 .method(x.getRequestMethod(), HttpRequest.BodyPublishers.ofByteArray(body.length > 0 ? body : new byte[0]));
         x.getRequestHeaders().forEach((k, v) -> { if (!List.of("Host", "Content-length", "Connection").contains(k)) ub.header(k, v.get(0)); });
         if (body.length > 0 && x.getRequestHeaders().getFirst("Content-Type") == null) ub.header("Content-Type", "application/json");
         try {
-            HttpResponse<InputStream> up = http.send(ub.build(), HttpResponse.BodyHandlers.ofInputStream());
+            final HttpResponse<InputStream> up = http.send(ub.build(), HttpResponse.BodyHandlers.ofInputStream());
             inflight.add(up);
-            String ctype = up.headers().firstValue("Content-Type").orElse("");
+            final String ctype = up.headers().firstValue("Content-Type").orElse("");
             if (ctype.contains("text/event-stream")) {
                 streamSse(x, up, rec, req, isChat, t0);
             } else {
-                byte[] out = up.body().readAllBytes();
+                final byte[] out = up.body().readAllBytes();
                 reply(x, up.statusCode(), out);
                 JsonNode resp = null;
                 try { if (isChat) resp = json.readTree(out); } catch (Exception ignore) {}
@@ -126,20 +126,20 @@ public class RecordingProxy {
 
     private void streamSse(com.sun.net.httpserver.HttpExchange x, HttpResponse<InputStream> up,
                            ObjectNode rec, JsonNode req, boolean isChat, long t0) throws Exception {
-        List<byte[]> chunks = new CopyOnWriteArrayList<>();
+        final List<byte[]> chunks = new CopyOnWriteArrayList<>();
         x.getResponseHeaders().set("Content-Type", "text/event-stream");
         x.sendResponseHeaders(up.statusCode(), 0);
         boolean clientAborted = false, drainAborted = false;
         try (InputStream in = up.body(); OutputStream out = x.getResponseBody()) {
-            byte[] buf = new byte[8192]; int n; StringBuilder line = new StringBuilder();
+            final byte[] buf = new byte[8192]; int n; StringBuilder line = new StringBuilder();
             while ((n = in.read(buf)) >= 0) {
-                String s = new String(buf, 0, n, StandardCharsets.UTF_8);
+                final var s = new String(buf, 0, n, StandardCharsets.UTF_8);
                 int start = 0;
                 while (start <= s.length()) {
-                    int nl = s.indexOf('\n', start);
+                    final int nl = s.indexOf('\n', start);
                     if (nl < 0) { line.append(s, start, s.length()); break; }
                     line.append(s, start, nl + 1);
-                    byte[] c = line.toString().getBytes(StandardCharsets.UTF_8);
+                    final byte[] c = line.toString().getBytes(StandardCharsets.UTF_8);
                     line.setLength(0);
                     chunks.add(c);
                     out.write(c); out.flush();
@@ -150,8 +150,8 @@ public class RecordingProxy {
             out.flush();
         } catch (Exception e) { clientAborted = true; }
         if (stopping) drainAborted = true;
-        SseAssembler.Assembled asm = isChat ? SseAssembler.parse(chunks) : null;
-        ObjectNode resp = json.createObjectNode();
+        final SseAssembler.Assembled asm = isChat ? SseAssembler.parse(chunks) : null;
+        final ObjectNode resp = json.createObjectNode();
         if (asm != null) {
             resp.put("content", asm.content()); resp.put("reasoning", asm.reasoning()); resp.put("finish_reason", asm.finishReason());
             resp.set("tool_calls", json.valueToTree(asm.toolCalls()));
@@ -166,10 +166,10 @@ public class RecordingProxy {
         inflight.remove(up);
     }
 
-    private ObjectNode estimatedUsage(SseAssembler.Assembled asm) {
+    private ObjectNode estimatedUsage(final SseAssembler.Assembled asm) {
         int chars = asm.content().length() + asm.reasoning().length();
         for (Map<String, Object> t : asm.toolCalls()) chars += String.valueOf(t.get("arguments")).length();
-        ObjectNode u = json.createObjectNode();
+        final ObjectNode u = json.createObjectNode();
         u.put("completion_tokens", (int) (chars / CHARS_PER_TOKEN));
         u.put("estimated", true);
         return u;
@@ -177,7 +177,7 @@ public class RecordingProxy {
 
     private static double elapsed(long t0) { return Math.round((System.nanoTime() - t0) / 1e7) / 100.0; }
 
-    private void reply(com.sun.net.httpserver.HttpExchange x, int status, byte[] out) throws Exception {
+    private void reply(final com.sun.net.httpserver.HttpExchange x, final int status, final byte[] out) throws Exception {
         try {
             x.getResponseHeaders().set("Content-Type", "application/json");
             x.sendResponseHeaders(status, out.length == 0 ? -1 : out.length);
@@ -186,12 +186,12 @@ public class RecordingProxy {
         } finally { try { x.close(); } catch (Exception ignore) {} }
     }
 
-    private synchronized void journalRecord(ObjectNode rec, JsonNode req, JsonNode resp) {
+    private synchronized void journalRecord(final ObjectNode rec, final JsonNode req, final JsonNode resp) {
         try {
             if (req != null) rec.set("request", req);
             if (resp != null) rec.set("response", resp);
             if (tag != null) rec.put("task", tag);
-            JsonNode u = resp == null ? null : resp.get("usage");
+            final JsonNode u = resp == null ? null : resp.get("usage");
             if (u != null && u.hasNonNull("completion_tokens")) spent.addAndGet(u.get("completion_tokens").asLong());
             rec.put("budget_spent_completion_tokens", spent.get());
             rec.put("seq", seq.incrementAndGet());

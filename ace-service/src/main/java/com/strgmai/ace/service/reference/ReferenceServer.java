@@ -27,7 +27,7 @@ public final class ReferenceServer {
     public ReferenceServer(java.util.Set<String> bugs) { this(new TradingService(bugs)); }
     public ReferenceServer() { this(new TradingService()); }
 
-    public int start(int port) throws Exception {
+    public int start(final int port) throws Exception {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", port == 0 ? 0 : port), 0);
         server.createContext("/", x -> { try { route(x); } catch (Exception e) { try { x.close(); } catch (Exception ignore) {} } });
         executor = Executors.newCachedThreadPool();   // cached: the pool is shut down explicitly in stop()
@@ -41,34 +41,34 @@ public final class ReferenceServer {
         if (executor != null) executor.shutdownNow();   // without this the pool waits out its 60s keep-alive before dying
     }
 
-    private void route(HttpExchange x) throws Exception {
-        String p = x.getRequestURI().getPath();
-        String q = x.getRequestURI().getQuery() == null ? "" : x.getRequestURI().getQuery();
-        String raw = new String(x.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-        JsonNode body = raw.isBlank() ? JSON.createObjectNode() : JSON.readTree(raw);
-        String method = x.getRequestMethod();
+    private void route(final HttpExchange x) throws Exception {
+        final String p = x.getRequestURI().getPath();
+        final String q = x.getRequestURI().getQuery() == null ? "" : x.getRequestURI().getQuery();
+        final var raw = new String(x.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        final JsonNode body = raw.isBlank() ? JSON.createObjectNode() : JSON.readTree(raw);
+        final String method = x.getRequestMethod();
         try {
             if (p.equals("/health")) { reply(x, 200, Map.of("status", "UP")); return; }
-            String[] parts = p.replaceAll("^/|/$", "").split("/");
+            final String[] parts = p.replaceAll("^/|/$", "").split("/");
             if (method.equals("GET") && parts[0].equals("prices") && parts.length == 2) {
                 Map<String, Object> r = svc.price(parts[1]);
                 reply(x, r == null ? 404 : 200, r == null ? Map.of("error", "unknown symbol") : r);
             } else if (method.equals("POST") && p.equals("/accounts")) {
                 reply(x, 201, svc.createAccount(body.path("currency").asText(null)));
             } else if (method.equals("GET") && parts[0].equals("accounts") && parts.length >= 2) {
-                Map<String, Object> a = svc.account(parts[1]);
+                final Map<String, Object> a = svc.account(parts[1]);
                 if (a == null) { reply(x, 404, Map.of("error", "no account")); return; }
                 if (parts.length == 2) { reply(x, 200, a); return; }
                 if (parts[2].equals("holdings")) {
-                    String asOf = param(q, "asOf");
-                    Instant as = asOf == null ? null : parseAsOf(asOf);
+                    final String asOf = param(q, "asOf");
+                    final Instant as = asOf == null ? null : parseAsOf(asOf);
                     reply(x, 200, svc.holdings(parts[1], as));
                 } else {
                     // without this reply() is never called and the client hangs until timeout
                     reply(x, 404, Map.of("error", "not found"));
                 }
             } else if (method.equals("POST") && parts.length == 3 && parts[2].equals("deposits")) {
-                Map<String, Object> r = svc.deposit(parts[1], body.path("amount").asText("0"));
+                final Map<String, Object> r = svc.deposit(parts[1], body.path("amount").asText("0"));
                 if (r == null) reply(x, 404, Map.of("error", "no account"));
                 else if (r.containsKey("error")) reply(x, 400, r);
                 else reply(x, 200, r);
@@ -78,10 +78,10 @@ public final class ReferenceServer {
                         x.getRequestHeaders().getFirst("Idempotency-Key"));
                 reply(x, o.status(), o.body());
             } else if (method.equals("GET") && parts[0].equals("orders") && parts.length == 2) {
-                Map<String, Object> o = svc.order(parts[1]);
+                final Map<String, Object> o = svc.order(parts[1]);
                 reply(x, o == null ? 404 : 200, o == null ? Map.of("error", "no order") : o);
             } else if (method.equals("POST") && parts.length == 3 && parts[2].equals("cancel")) {
-                TradingService.CancelOutcome c = svc.cancel(parts[1]);
+                final TradingService.CancelOutcome c = svc.cancel(parts[1]);
                 reply(x, c.status(), c.body());
             } else reply(x, 404, Map.of("error", "not found"));
         } catch (IllegalArgumentException e) {
@@ -89,7 +89,7 @@ public final class ReferenceServer {
         }
     }
 
-    private static String param(String query, String name) {
+    private static String param(final String query, final String name) {
         // URL-decode: getQuery() is still percent-encoded, so asOf=2024-01-15T10%3A30%3A00Z would fail Instant.parse
         for (String kv : query.split("&")) if (kv.startsWith(name + "=")) return URLDecoder.decode(kv.substring(name.length() + 1), StandardCharsets.UTF_8);
         return null;
@@ -97,13 +97,13 @@ public final class ReferenceServer {
 
     /** Instant.parse throws DateTimeParseException (a RuntimeException, NOT an IllegalArgumentException),
      *  which would bypass the 400 catch and leave the client with a connection reset. */
-    private static Instant parseAsOf(String s) {
+    private static Instant parseAsOf(final String s) {
         try { return Instant.parse(s); }
         catch (java.time.format.DateTimeParseException e) { throw new IllegalArgumentException("bad asOf: " + s); }
     }
 
-    private static void reply(HttpExchange x, int status, Object body) throws Exception {
-        byte[] out = body == null ? new byte[0] : JSON.writeValueAsBytes(body);
+    private static void reply(final HttpExchange x, final int status, final Object body) throws Exception {
+        final byte[] out = body == null ? new byte[0] : JSON.writeValueAsBytes(body);
         x.getResponseHeaders().set("Content-Type", "application/json");
         x.sendResponseHeaders(status, out.length == 0 ? -1 : out.length);
         try (OutputStream os = x.getResponseBody()) { os.write(out); os.flush(); }

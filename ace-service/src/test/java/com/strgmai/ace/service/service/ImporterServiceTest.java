@@ -21,39 +21,39 @@ import static org.junit.jupiter.api.Assertions.*;
 class ImporterServiceTest {
 
     private DSLContext dsl() throws Exception {
-        var ds = new org.sqlite.SQLiteDataSource();
+        final var ds = new org.sqlite.SQLiteDataSource();
         ds.setUrl("jdbc:sqlite:" + Files.createTempFile("ace-importer-test", ".db") + "?foreign_keys=on");
         Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
         return DSL.using(ds, SQLDialect.SQLITE);
     }
 
-    private static void write(Path dir, String name, String json) throws Exception {
+    private static void write(Path dir, final String name, final String json) throws Exception {
         Files.writeString(dir.resolve(name), json);
     }
 
     @Test
     void insertingARunSucceeds() throws Exception {
-        DSLContext db = dsl();
-        Path dir = Files.createTempDirectory("run");
+        final DSLContext db = dsl();
+        final var dir = Files.createTempDirectory("run");
         write(dir, "oracle.json", """
                 {"task": "L3p_point_in_time", "schema_version": 3, "weighted_score_pct": 80.0,
                  "functional_score_pct": 90.0, "functional_points_got": 9, "functional_denominator": 10,
                  "points_got": 8, "denominator": 10, "partial_score_pct": 75.0,
                  "results": [{"id": "S1", "status": "pass", "detail": null}]}""");
-        ImporterService importer = new ImporterService(db);
+        final var importer = new ImporterService(db);
 
         importer.importRun(dir, null);   // must not throw (was #1: column-count mismatch)
 
-        var run = db.selectFrom(RUNS).where(RUNS.RUN_ID.eq(dir.getFileName().toString())).fetchOne();
+        final var run = db.selectFrom(RUNS).where(RUNS.RUN_ID.eq(dir.getFileName().toString())).fetchOne();
         assertEquals(80.0, run.getWeightedScorePct(), 0.001);
         assertEquals(1, db.fetchCount(CHECK_RESULTS, CHECK_RESULTS.RUN_ID.eq(dir.getFileName().toString())));
     }
 
     @Test
     void reimportRefreshesEveryColumnTheInsertSets() throws Exception {
-        DSLContext db = dsl();
-        Path dir = Files.createTempDirectory("run");
-        ImporterService importer = new ImporterService(db);
+        final DSLContext db = dsl();
+        final var dir = Files.createTempDirectory("run");
+        final var importer = new ImporterService(db);
 
         write(dir, "oracle.json", """
                 {"task": "L3p_point_in_time", "schema_version": 3, "weighted_score_pct": 50.0,
@@ -80,8 +80,8 @@ class ImporterServiceTest {
                 {"leaderboard": {"total_wall_sec": 250.5, "completion_tokens": 2500}}""");
         importer.importRun(dir, null);
 
-        String runId = dir.getFileName().toString();
-        var run = db.selectFrom(RUNS).where(RUNS.RUN_ID.eq(runId)).fetchOne();
+        final String runId = dir.getFileName().toString();
+        final var run = db.selectFrom(RUNS).where(RUNS.RUN_ID.eq(runId)).fetchOne();
         assertEquals(1, db.fetchCount(RUNS, RUNS.RUN_ID.eq(runId)), "an upsert, never a duplicate row");
         assertEquals(99.0, run.getWeightedScorePct(), 0.001);
         assertEquals(95.0, run.getFunctionalScorePct(), 0.001);
@@ -107,9 +107,9 @@ class ImporterServiceTest {
      *  from Integer") because importAll() here returned {"imported": N, "skipped": M} instead. */
     @Test
     void importAllReturnsRunIdListsNotCounts() throws Exception {
-        DSLContext db = dsl();
-        Path resultsDir = Files.createTempDirectory("results");
-        Path scored = resultsDir.resolve("run-scored");
+        final DSLContext db = dsl();
+        final var resultsDir = Files.createTempDirectory("results");
+        final Path scored = resultsDir.resolve("run-scored");
         Files.createDirectories(scored);
         write(scored, "oracle.json", """
                 {"task": "L3p_point_in_time", "schema_version": 3, "weighted_score_pct": 80.0,
@@ -117,7 +117,7 @@ class ImporterServiceTest {
                  "points_got": 8, "denominator": 10, "partial_score_pct": 75.0, "results": []}""");
         Files.createDirectories(resultsDir.resolve("run-unscored"));   // no oracle.json: not yet finished
 
-        Map<String, List<String>> result = new ImporterService(db).importAll(resultsDir);
+        final Map<String, List<String>> result = new ImporterService(db).importAll(resultsDir);
 
         assertEquals(List.of("run-scored"), result.get("imported"));
         assertEquals(List.of("run-unscored"), result.get("skipped"));

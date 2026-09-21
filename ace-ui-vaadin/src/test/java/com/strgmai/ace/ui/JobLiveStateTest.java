@@ -20,7 +20,7 @@ class JobLiveStateTest {
 
     @Test
     void stepsAccumulateWithContinuationMarks() {
-        JobLiveState state = new JobLiveState();
+        final var state = new JobLiveState();
         SseParser.parseAll(STEP + "\n\n" + STEP_CONT + "\n\n").forEach(state::apply);
         assertEquals(List.of("T1", "T1 (continued)"), state.steps());
         assertEquals("T1 (continued)", state.currentStep());
@@ -28,7 +28,7 @@ class JobLiveStateTest {
 
     @Test
     void sessionsShowShortIdAndEffort() {
-        JobLiveState state = new JobLiveState();
+        final var state = new JobLiveState();
         SseParser.parseAll("""
                 event: session_started
                 data: {"session_id": "755478fc-f323-565e-92f8-1a5b10584e41", "reasoning_effort": "high"}
@@ -39,8 +39,8 @@ class JobLiveStateTest {
 
     @Test
     void requestsCountTokensAndCapAt20NewestFirst() {
-        JobLiveState state = new JobLiveState();
-        StringBuilder stream = new StringBuilder();
+        final var state = new JobLiveState();
+        final var stream = new StringBuilder();
         for (int i = 1; i <= 25; i++) {
             stream.append("event: request\ndata: {\"type\": \"request\", \"seq\": ").append(i)
                     .append(", \"ts\": \"t").append(i)
@@ -53,7 +53,7 @@ class JobLiveStateTest {
         assertEquals(25, state.requestCount());
         assertEquals(250L, state.lastTokens());
 
-        List<JobLiveState.RequestRow> recent = state.recentRequests();
+        final var recent = state.recentRequests();
         assertEquals(JobLiveState.MAX_RECENT_REQUESTS, recent.size());
         assertEquals("t25", recent.get(0).ts(), "newest first");
         assertEquals("t6", recent.get(recent.size() - 1).ts(), "the 20 newest survive the cap");
@@ -63,7 +63,7 @@ class JobLiveStateTest {
 
     @Test
     void statusEventsCarryTheLogTail() {
-        JobLiveState state = new JobLiveState();
+        final var state = new JobLiveState();
         SseParser.parseAll("""
                 event: status
                 data: {"status": "running", "pid": 82544, "result_line": "step 2 running"}
@@ -81,7 +81,7 @@ class JobLiveStateTest {
 
     @Test
     void unknownEventsAreIgnored() {
-        JobLiveState state = new JobLiveState();
+        final var state = new JobLiveState();
         SseParser.parseAll("""
                 event: verification_ran
                 data: {"type": "verification_ran", "task": "T1"}
@@ -95,11 +95,11 @@ class JobLiveStateTest {
     /** The M1 race, pinned: concurrent bursts + snapshots must never throw, and no event is lost. */
     @Test
     void concurrentApplyAndSnapshotNeverThrows() throws Exception {
-        JobLiveState state = new JobLiveState();
-        java.util.concurrent.atomic.AtomicReference<Throwable> failure = new java.util.concurrent.atomic.AtomicReference<>();
-        int events = 5_000;
+        final var state = new JobLiveState();
+        final var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        final int events = 5_000;
 
-        Thread writer = new Thread(() -> {
+        final var writer = new Thread(() -> {
             try {
                 for (int i = 0; i < events; i++) {
                     if (i % 10 == 0) {
@@ -119,7 +119,7 @@ class JobLiveStateTest {
             }
         }, "live-state-writer");
 
-        Thread reader = new Thread(() -> {
+        final var reader = new Thread(() -> {
             try {
                 for (int i = 0; i < 5_000; i++) {
                     state.currentStep();
@@ -152,14 +152,14 @@ class JobLiveStateTest {
     /** Degenerate payloads the tailer can deliver mid-write — no field is guaranteed. */
     @Test
     void requestEventWithMissingOrNullFieldsBuildsNullRow() {
-        JobLiveState state = new JobLiveState();
+        final var state = new JobLiveState();
         SseParser.parseAll("""
                 event: request
                 data: {"type": "request", "seq": 1}
 
                 """).forEach(state::apply);
         assertEquals(1, state.requestCount());
-        JobLiveState.RequestRow row = state.recentRequests().get(0);
+        final var row = state.recentRequests().get(0);
         assertNull(row.ts());
         assertNull(row.status());
         assertNull(row.latencySec());
@@ -171,7 +171,7 @@ class JobLiveStateTest {
 
     @Test
     void statusEventWithNullResultLineKeepsPreviousTail() {
-        JobLiveState state = new JobLiveState();
+        final var state = new JobLiveState();
         SseParser.parseAll("""
                 event: status
                 data: {"status": "running", "result_line": "step 2 running"}
@@ -187,7 +187,7 @@ class JobLiveStateTest {
 
     @Test
     void sessionEventWithoutIdRendersBare() {
-        JobLiveState state = new JobLiveState();
+        final var state = new JobLiveState();
         SseParser.parseAll("""
                 event: session_started
                 data: {"reasoning_effort": null}
@@ -196,7 +196,7 @@ class JobLiveStateTest {
         assertEquals(List.of("?"), state.sessions(), "missing ids render as ? without throwing");
     }
 
-    private static SseEvent event(String json) {
+    private static SseEvent event(final String json) {
         return new SseEvent(null, Json.MAPPER.readTree(json));
     }
 }

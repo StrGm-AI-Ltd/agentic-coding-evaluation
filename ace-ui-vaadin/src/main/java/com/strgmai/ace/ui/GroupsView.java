@@ -14,7 +14,7 @@ public class GroupsView extends VerticalLayout {
 
     private final ServiceClient client;
 
-    public GroupsView(ServiceClient client) {
+    public GroupsView(final ServiceClient client) {
         this.client = client;
         setPadding(true);
         // @Route views are cached per session — reload on every navigation, like ExperimentsView/JobsView
@@ -26,16 +26,18 @@ public class GroupsView extends VerticalLayout {
         add(new H2("Groups — pooled by task · model · key"));
         add(new Span("A leaderboard entry needs k ≥ 5 comparable valid runs; smaller groups are indicative and never ranked."));
 
-        Api.GroupResponse groups;
+        final Api.GroupResponse groups;   // assigned exactly once below; a legal blank final
         try {
             groups = client.groups();
-        } catch (Exception e) {
+        } catch (final Exception e) {
             add(Panels.error(client.errorText(e)));
             return;
         }
 
-        List<Api.Group> ranked = groups == null || groups.ranked() == null ? List.of() : groups.ranked();
-        List<Api.Group> indicative = groups == null || groups.indicative() == null ? List.of() : groups.indicative();
+        // ternary combines List.of() (unconstrained) with List<Api.Group>: without a var's
+        // target type this infers to something other than List<Api.Group> - keep explicit
+        final List<Api.Group> ranked = groups == null || groups.ranked() == null ? List.of() : groups.ranked();
+        final List<Api.Group> indicative = groups == null || groups.indicative() == null ? List.of() : groups.indicative();
 
         add(new H3("Ranked — k ≥ 5"));
         if (ranked.isEmpty()) {
@@ -50,7 +52,7 @@ public class GroupsView extends VerticalLayout {
         if (indicative.isEmpty()) {
             add(new Span("none"));
         } else {
-            for (Api.Group group : indicative) {
+            for (final var group : indicative) {
                 add(new GroupCard(group, 0));
             }
         }

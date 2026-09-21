@@ -32,17 +32,17 @@ public final class JournalFacts {
 
     public static Map<String, Object> facts(String path, String sinceIso, String untilIso,
                                             List<String[]> exclude, List<String> normalise, String tag) {
-        Map<String, Object> f = new LinkedHashMap<>();
+        final Map<String, Object> f = new LinkedHashMap<>();
         f.put("requests", 0); f.put("errors", 0); f.put("budget_refusals", 0); f.put("upstream_errors", 0);
         f.put("client_aborts", 0); f.put("drain_aborted", 0); f.put("truncated", 0);
         f.put("estimated_completion_tokens", 0L); f.put("completion_tokens", 0L); f.put("foreign_workspace_refs", 0);
         if (path == null || !Files.isRegularFile(Path.of(path))) return f;
-        OffsetDateTime lo = sinceIso == null ? null : OffsetDateTime.parse(sinceIso);
-        OffsetDateTime hi = untilIso == null ? null : OffsetDateTime.parse(untilIso);
-        List<String[]> ex = exclude == null ? List.of() : exclude;
-        String wsRoot = normalise == null ? null : normalise.stream().filter(n -> n != null && n.contains("agentbench-ws")).findFirst().orElse(null);
-        String own = wsRoot == null ? null : Path.of(wsRoot).getParent().getFileName().toString();
-        boolean window = lo != null || hi != null || !ex.isEmpty();
+        final OffsetDateTime lo = sinceIso == null ? null : OffsetDateTime.parse(sinceIso);
+        final OffsetDateTime hi = untilIso == null ? null : OffsetDateTime.parse(untilIso);
+        final List<String[]> ex = exclude == null ? List.of() : exclude;
+        final String wsRoot = normalise == null ? null : normalise.stream().filter(n -> n != null && n.contains("agentbench-ws")).findFirst().orElse(null);
+        final String own = wsRoot == null ? null : Path.of(wsRoot).getParent().getFileName().toString();
+        final boolean window = lo != null || hi != null || !ex.isEmpty();
         for (Entry e : entries(Path.of(path))) {
             if (tag != null && !Objects.equals(e.task(), tag)) continue;          // a parallel task's own records
             if (window) {
@@ -66,17 +66,17 @@ public final class JournalFacts {
                 eff.merge(e.effort(), 1, Integer::sum);
             }
             if (!f.containsKey("sampler_effective") && e.reqDict()) {
-                JsonNode req = requestAt(Path.of(path), e.off());
+                final JsonNode req = requestAt(Path.of(path), e.off());
                 // the normalised system-prompt hash: run-specific strings replaced, dates folded (R4 C-6) - comparable across runs
                 if (req.path("messages").isArray()) {
-                    StringBuilder sysm = new StringBuilder("[");
+                    final var sysm = new StringBuilder("[");
                     for (JsonNode m : req.get("messages"))
                         if ("system".equals(m.path("role").asText())) sysm.append(m.path("content").isTextual() ? jsonQuote(m.path("content").asText()) : m.path("content").toString()).append(',');
                     String raw = sysm.append("]").toString();
                     for (String n : normalise == null ? List.<String>of() : normalise) if (n != null && !n.isBlank()) raw = raw.replace(n, "<run>");
                     f.put("system_prompt_sha", sha(raw.replaceAll("\\d{4}-\\d{2}-\\d{2}", "<date>")));
                 }
-                Map<String, Object> sampler = new LinkedHashMap<>();
+                final Map<String, Object> sampler = new LinkedHashMap<>();
                 for (String k : List.of("temperature", "top_p", "seed", "max_tokens", "max_completion_tokens"))
                     sampler.put(k, req.path(k).isNumber() ? req.path(k).numberValue() : req.path(k).isTextual() ? req.path(k).asText() : null);
                 f.put("sampler_effective", sampler);
@@ -89,18 +89,18 @@ public final class JournalFacts {
 
     private static String jsonOf(JsonNode n) { return n == null || n.isMissingNode() ? "[]" : n.toString(); }
 
-    static List<Entry> entries(Path p) {
+    static List<Entry> entries(final Path p) {
         try {
-            long size = Files.size(p), mtime = Files.getLastModifiedTime(p).toMillis();
+            final long size = Files.size(p), mtime = Files.getLastModifiedTime(p).toMillis();
             Cache c = CACHE.get(p.toString());
             if (c != null && (size < c.consumed() || mtime != c.mtimeNs())) c = null;      // truncated or rewritten: reparse
             long start = c == null ? 0 : c.consumed();
-            List<Entry> entries = c == null ? new ArrayList<>() : new ArrayList<>(c.entries());
+            final List<Entry> entries = c == null ? new ArrayList<>() : new ArrayList<>(c.entries());
             if (size > start) {
                 try (RandomAccessFile raf = new RandomAccessFile(p.toFile(), "r")) {
                     raf.seek(start);
-                    byte[] data = new byte[(int) (size - start)];
-                    int read = raf.read(data);
+                    final byte[] data = new byte[(int) (size - start)];
+                    final int read = raf.read(data);
                     if (read > 0) {
                         int lastNl = -1;
                         for (int i = read - 1; i >= 0; i--) if (data[i] == '\n') { lastNl = i; break; }   // BYTE index
@@ -110,7 +110,7 @@ public final class JournalFacts {
                             for (int i = 0; i <= lastNl; i++) {
                                 if (data[i] == '\n') {
                                     if (i > lineStart) {
-                                        Entry e = parseEntry(new String(data, lineStart, i - lineStart, StandardCharsets.UTF_8), off);
+                                        final Entry e = parseEntry(new String(data, lineStart, i - lineStart, StandardCharsets.UTF_8), off);
                                         if (e != null) entries.add(e);
                                     }
                                     off += (i - lineStart) + 1;   // byte-exact: offsets stay in BYTES whatever the encoding
@@ -127,13 +127,13 @@ public final class JournalFacts {
         } catch (IOException e) { return List.of(); }
     }
 
-    static Entry parseEntry(String line, long off) {
+    static Entry parseEntry(String line, final long off) {
         JsonNode r;
         try { r = JSON.readTree(line); } catch (Exception e) { return null; }
         if (!r.isObject() || !r.path("path").asText("").startsWith("/v1/chat/completions")) return null;
-        JsonNode resp = r.get("response");
-        JsonNode u = resp != null && resp.isObject() && resp.path("usage").isObject() ? resp.get("usage") : null;
-        JsonNode req = r.get("request");
+        final JsonNode resp = r.get("response");
+        final JsonNode u = resp != null && resp.isObject() && resp.path("usage").isObject() ? resp.get("usage") : null;
+        final JsonNode req = r.get("request");
         OffsetDateTime ts = null;
         try { ts = r.hasNonNull("ts") ? OffsetDateTime.parse(r.get("ts").asText()) : null; } catch (Exception ignore) {}
         List<String> ws = line.contains("agentbench-ws/")
@@ -152,19 +152,19 @@ public final class JournalFacts {
                 effort, req != null && req.isObject(), ws);
     }
 
-    static JsonNode requestAt(Path p, long off) {
+    static JsonNode requestAt(final Path p, final long off) {
         try (RandomAccessFile raf = new RandomAccessFile(p.toFile(), "r")) {
             raf.seek(off);
-            String line = raf.readLine();
-            JsonNode r = JSON.readTree(new String(line.getBytes(StandardCharsets.ISO_8859_1), StandardCharsets.UTF_8));
+            final String line = raf.readLine();
+            final JsonNode r = JSON.readTree(new String(line.getBytes(StandardCharsets.ISO_8859_1), StandardCharsets.UTF_8));
             return r.path("request");
         } catch (Exception e) { return JSON.createObjectNode(); }
     }
 
     /** port of last_finish: the finish_reason of the last chat completion after sinceIso */
-    public static String lastFinish(String journal, String sinceIso) {
+    public static String lastFinish(final String journal, final String sinceIso) {
         if (journal == null || !Files.isRegularFile(Path.of(journal))) return null;
-        OffsetDateTime since = OffsetDateTime.parse(sinceIso);
+        final OffsetDateTime since = OffsetDateTime.parse(sinceIso);
         String fin = null;
         for (Entry e : entries(Path.of(journal)))
             if (e.ts() != null && !e.ts().isBefore(since) && e.fin() != null) fin = e.fin();
@@ -172,9 +172,9 @@ public final class JournalFacts {
     }
 
     /** port of last_prompt_tokens: how full the context was when the session ended */
-    public static Long lastPromptTokens(String journal, String sinceIso) {
+    public static Long lastPromptTokens(final String journal, final String sinceIso) {
         if (journal == null || !Files.isRegularFile(Path.of(journal))) return null;
-        OffsetDateTime since = OffsetDateTime.parse(sinceIso);
+        final OffsetDateTime since = OffsetDateTime.parse(sinceIso);
         Long pt = null;
         for (Entry e : entries(Path.of(journal)))
             if (e.ts() != null && !e.ts().isBefore(since) && e.pt() instanceof Long l) pt = l;
@@ -183,7 +183,7 @@ public final class JournalFacts {
 
     static String jsonQuote(String t) { return "\"" + t.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""; }
 
-    static String sha(String s) {
+    static String sha(final String s) {
         try { return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8))).substring(0, 16); }
         catch (Exception e) { return null; }
     }

@@ -18,7 +18,7 @@ class ServiceClientErrorTextTest {
             new ServiceProperties("http://127.0.0.1:8765", Duration.ofSeconds(1), Duration.ofSeconds(1)),
             RestClient.builder());
 
-    private static RestClientResponseException response(int status, String body) {
+    private static RestClientResponseException response(final int status, final String body) {
         return new RestClientResponseException("boom", status, "status", new HttpHeaders(),
                 body.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
     }
@@ -32,7 +32,7 @@ class ServiceClientErrorTextTest {
     /** The S-2 regression: nested loc ["body","spec","harness"] must show "harness", not "spec". */
     @Test
     void fastApi422NestedLocShowsFieldName() {
-        String body = """
+        final var body = """
                 {"detail": [
                   {"type": "literal_error", "loc": ["body", "spec", "harness"],
                    "msg": "Input should be 'ref' or 'pi'", "input": "x"},
@@ -47,27 +47,27 @@ class ServiceClientErrorTextTest {
 
     @Test
     void fastApi422TopLevelLocStillWorks() {
-        String body = """
+        final var body = """
                 {"detail": [{"type": "string_type", "loc": ["body", "task"], "msg": "should be a string"}]}""";
         assertEquals("task: should be a string", CLIENT.errorText(response(422, body)));
     }
 
     @Test
     void nonJsonBodyFallsBackToStatusAndRawBody() {
-        String text = CLIENT.errorText(response(404, "{oops"));
+        final var text = CLIENT.errorText(response(404, "{oops"));
         assertTrue(text.contains("404"));
         assertTrue(text.contains("{oops"));
     }
 
     @Test
     void detailObjectFallsBack() {
-        String text = CLIENT.errorText(response(500, "{\"detail\": {\"nested\": true}}"));
+        final var text = CLIENT.errorText(response(500, "{\"detail\": {\"nested\": true}}"));
         assertTrue(text.contains("500"));
     }
 
     @Test
     void resourceAccessExceptionGivesFriendlyHint() {
-        String text = CLIENT.errorText(new ResourceAccessException("refused"));
+        final var text = CLIENT.errorText(new ResourceAccessException("refused"));
         assertTrue(text.contains("127.0.0.1:8765"), "should name the configured base URL");
         assertTrue(text.contains("uv run agentbench-service"), "should name the start command");
     }
@@ -75,12 +75,12 @@ class ServiceClientErrorTextTest {
     /** A failed response conversion hides the real cause in the exception chain; surface it. */
     @Test
     void decodingFailureSurfacesRootCauseChain() {
-        org.springframework.web.client.RestClientException e =
+        final var e =
                 new org.springframework.web.client.RestClientException(
                         "Error while extracting response for type [com.strgmai.ace.ui.Api$ImportResult] "
                                 + "and content type [application/json]",
                         new RuntimeException("Unexpected token (STRING), expected VALUE_INT"));
-        String text = CLIENT.errorText(e);
+        final var text = CLIENT.errorText(e);
         assertTrue(text.contains("Error while extracting response"), "the wrapper message stays visible");
         assertTrue(text.contains("Unexpected token (STRING), expected VALUE_INT"),
                 "the root cause is appended so the operator can diagnose the wire mismatch");

@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -24,32 +25,34 @@ class WorkerServiceTest {
 
     private static WorkerService worker(JobQueue queue, Preflight preflight, TreatmentPin pin) {
         when(queue.list()).thenReturn(List.of());   // reconcile() runs in the constructor
-        BenchProperties props = mock(BenchProperties.class);
+        final BenchProperties props = mock(BenchProperties.class);
         return new WorkerService(queue, mock(RunBench.class), mock(ImporterService.class),
                 mock(ExperimentsService.class), preflight, pin, props);
     }
 
-    private static JobQueue.Job job(String pinnedRunnerSha) {
-        return new JobQueue.Job(1, null, "orch", 1, "run", "run-1", List.of("--task=L3p_point_in_time", "--model=m"),
+    private static final UUID JOB_1 = UUID.fromString("00000000-0000-0000-0000-000000000001");
+
+    private static JobQueue.Job job(final String pinnedRunnerSha) {
+        return new JobQueue.Job(JOB_1, null, "orch", 1, "run", "run-1", List.of("--task=L3p_point_in_time", "--model=m"),
                 "queued", null, 0, null, null, false, null, null, pinnedRunnerSha, pinnedRunnerSha);
     }
 
-    private static String withFakeHome(String tmpHome, java.util.concurrent.Callable<String> body) throws Exception {
-        String realHome = System.getProperty("user.home");
+    private static String withFakeHome(String tmpHome, final java.util.concurrent.Callable<String> body) throws Exception {
+        final String realHome = System.getProperty("user.home");
         System.setProperty("user.home", tmpHome);
         try { return body.call(); } finally { System.setProperty("user.home", realHome); }
     }
 
     @Test
     void treatmentPinMismatchIsBlockedBeforeTouchingTheRunLock() throws Exception {
-        JobQueue queue = mock(JobQueue.class);
-        TreatmentPin pin = mock(TreatmentPin.class);
+        final JobQueue queue = mock(JobQueue.class);
+        final TreatmentPin pin = mock(TreatmentPin.class);
         when(pin.current()).thenReturn("build-xyz999");
-        WorkerService ws = worker(queue, mock(Preflight.class), pin);
+        final WorkerService ws = worker(queue, mock(Preflight.class), pin);
 
         // pinnedRunnerSha differs from the running build's digest: the arms of an experiment must not
         // straddle a redeploy silently
-        String result = withFakeHome("/nonexistent-should-never-be-touched", () -> ws.guard(job("build-abc123")));
+        final String result = withFakeHome("/nonexistent-should-never-be-touched", () -> ws.guard(job("build-abc123")));
 
         assertNotNull(result);
         assertTrue(result.startsWith("treatment: job was enqueued against build build-abc123"), result);
@@ -58,23 +61,23 @@ class WorkerServiceTest {
 
     @Test
     void runLockHeldYieldsANonNullRefusalThatMapsToWaitingLock() throws Exception {
-        Path tmpHome = Files.createTempDirectory("fake-home");
-        Path lockPath = tmpHome.resolve(".cache/agentbench/run.lock");
+        final var tmpHome = Files.createTempDirectory("fake-home");
+        final Path lockPath = tmpHome.resolve(".cache/agentbench/run.lock");
         Files.createDirectories(lockPath.getParent());
-        FileChannel holder = FileChannel.open(lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+        final FileChannel holder = FileChannel.open(lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
         try {
             assertNotNull(holder.tryLock(), "test setup: this test must hold the lock itself");
 
-            JobQueue queue = mock(JobQueue.class);
-            TreatmentPin pin = mock(TreatmentPin.class);
+            final JobQueue queue = mock(JobQueue.class);
+            final TreatmentPin pin = mock(TreatmentPin.class);
             when(pin.current()).thenReturn("build-abc123");
-            WorkerService ws = worker(queue, mock(Preflight.class), pin);
+            final WorkerService ws = worker(queue, mock(Preflight.class), pin);
 
             // a second FileChannel on the SAME file within THIS JVM throws OverlappingFileLockException
             // rather than tryLock() returning null (that null path is what a genuinely different
             // process/JVM gets); guard()'s catch-all still turns either into a non-null refusal, and
             // poll() maps any non-"preflight"/non-"treatment" refusal to waiting_lock (see WorkerService.poll())
-            String result = withFakeHome(tmpHome.toString(), () -> ws.guard(job(null)));
+            final String result = withFakeHome(tmpHome.toString(), () -> ws.guard(job(null)));
 
             assertNotNull(result);
             assertTrue(result.startsWith("run.lock"), result);
@@ -92,45 +95,45 @@ class WorkerServiceTest {
      *  exactly like the ones that crashed, and asserts it finishes "succeeded", not "failed". */
     @Test
     void reviewFlagsWithoutAnExplicitReviewerModelDoNotCrashTheWorker() throws Exception {
-        Path tmpHome = Files.createTempDirectory("fake-home");
-        Path resultsDir = Files.createTempDirectory("results");
-        JobQueue queue = mock(JobQueue.class);
+        final var tmpHome = Files.createTempDirectory("fake-home");
+        final var resultsDir = Files.createTempDirectory("results");
+        final JobQueue queue = mock(JobQueue.class);
         when(queue.list()).thenReturn(List.of());   // reconcile() runs in the constructor
-        TreatmentPin pin = mock(TreatmentPin.class);
+        final TreatmentPin pin = mock(TreatmentPin.class);
         when(pin.current()).thenReturn("build-abc123");
-        Preflight preflight = mock(Preflight.class);
+        final Preflight preflight = mock(Preflight.class);
         when(preflight.check(any())).thenReturn(new Preflight.Report(List.of(), false));
-        BenchProperties props = mock(BenchProperties.class);
+        final BenchProperties props = mock(BenchProperties.class);
         when(props.resultsDir()).thenReturn(resultsDir.toString());
         when(props.workspaceRoot()).thenReturn(Files.createTempDirectory("ws").toString());
         when(props.model()).thenReturn("m");
 
-        JobQueue.Job job = new JobQueue.Job(1, null, "A", 1, "run", "run-1",
+        JobQueue.Job job = new JobQueue.Job(JOB_1, null, "A", 1, "run", "run-1",
                 List.of("--task=L3p_point_in_time", "--model=m", "--mode=orchestrated", "--self-review", "--trajectory-review"),
                 "queued", null, 0, null, null, false, null, null, "build-abc123", "build-abc123");
         when(queue.claim()).thenReturn(job);
-        when(queue.get(1L)).thenReturn(Map.of("cancel_requested", false));
+        when(queue.get(JOB_1)).thenReturn(Map.of("cancel_requested", false));
 
         WorkerService ws = new WorkerService(queue, mock(RunBench.class), mock(ImporterService.class),
                 mock(ExperimentsService.class), preflight, pin, props);
         withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
 
-        verify(queue, timeout(3000)).finish(eq(1L), eq("succeeded"), eq(0), anyString());
-        verify(queue, never()).finish(eq(1L), eq("failed"), anyInt(), anyString());
+        verify(queue, timeout(3000)).finish(eq(JOB_1), eq("succeeded"), eq(0), anyString());
+        verify(queue, never()).finish(eq(JOB_1), eq("failed"), anyInt(), anyString());
     }
 
     @Test
     void fatalPreflightCheckIsBlocked() throws Exception {
-        Path tmpHome = Files.createTempDirectory("fake-home");
-        JobQueue queue = mock(JobQueue.class);
-        TreatmentPin pin = mock(TreatmentPin.class);
+        final var tmpHome = Files.createTempDirectory("fake-home");
+        final JobQueue queue = mock(JobQueue.class);
+        final TreatmentPin pin = mock(TreatmentPin.class);
         when(pin.current()).thenReturn("build-abc123");
-        Preflight preflight = mock(Preflight.class);
-        Preflight.Check fatal = new Preflight.Check("model server", false, "connection refused", true);
+        final Preflight preflight = mock(Preflight.class);
+        final var fatal = new Preflight.Check("model server", false, "connection refused", true);
         when(preflight.check(any())).thenReturn(new Preflight.Report(List.of(fatal), true));
-        WorkerService ws = worker(queue, preflight, pin);
+        final WorkerService ws = worker(queue, preflight, pin);
 
-        String result = withFakeHome(tmpHome.toString(), () -> ws.guard(job(null)));
+        final String result = withFakeHome(tmpHome.toString(), () -> ws.guard(job(null)));
 
         assertEquals("preflight: connection refused", result);
     }

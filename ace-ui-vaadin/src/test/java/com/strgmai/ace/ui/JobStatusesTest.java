@@ -10,10 +10,10 @@ class JobStatusesTest {
 
     @Test
     void canCancel_matrix() {
-        for (String status : new String[]{"queued", "waiting_lock", "running", "blocked"}) {
+        for (final var status : new String[]{"queued", "waiting_lock", "running", "blocked"}) {
             assertTrue(JobStatuses.canCancel(status, false), status + " must be cancelable");
         }
-        for (String status : new String[]{"succeeded", "failed", "cancelled"}) {
+        for (final var status : new String[]{"succeeded", "failed", "cancelled"}) {
             assertFalse(JobStatuses.canCancel(status, false), status + " is terminal, not cancelable");
         }
         assertFalse(JobStatuses.canCancel("running", true), "already-cancel-requested must not offer Cancel");
@@ -22,10 +22,10 @@ class JobStatusesTest {
 
     @Test
     void canRequeue_matrix() {
-        for (String status : new String[]{"failed", "cancelled", "blocked"}) {
+        for (final var status : new String[]{"failed", "cancelled", "blocked"}) {
             assertTrue(JobStatuses.canRequeue(status), status + " must be requeueable (queue.requeue accepts it)");
         }
-        for (String status : new String[]{"succeeded", "queued", "waiting_lock", "running"}) {
+        for (final var status : new String[]{"succeeded", "queued", "waiting_lock", "running"}) {
             assertFalse(JobStatuses.canRequeue(status), status + " must not be requeueable");
         }
     }

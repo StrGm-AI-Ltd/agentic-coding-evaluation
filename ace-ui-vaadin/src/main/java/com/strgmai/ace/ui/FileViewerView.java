@@ -25,30 +25,30 @@ public class FileViewerView extends VerticalLayout implements BeforeEnterObserve
 
     private final ServiceClient client;
 
-    public FileViewerView(ServiceClient client) {
+    public FileViewerView(final ServiceClient client) {
         this.client = client;
         setPadding(true);
         setSizeFull();
     }
 
     @Override
-    public void beforeEnter(BeforeEnterEvent event) {
-        Location location = event.getLocation();
-        String runId = queryParam(location, "run");
-        String path = queryParam(location, "path");
+    public void beforeEnter(final BeforeEnterEvent event) {
+        final var location = event.getLocation();
+        final var runId = queryParam(location, "run");
+        final var path = queryParam(location, "path");
         render(runId, path);
     }
 
-    private void render(String runId, String path) {
+    private void render(final String runId, final String path) {
         removeAll();
         if (runId == null || runId.isBlank() || path == null || path.isBlank()) {
             add(new com.vaadin.flow.component.html.H2("File viewer"), Panels.error("URL needs ?run=<run id>&path=<file>"));
             return;
         }
         try {
-            String content = client.runFileText(runId, path);
+            final var content = client.runFileText(runId, path);
             add(new FileViewerContent(runId, path, content));
-        } catch (Exception e) {
+        } catch (final Exception e) {
             add(new com.vaadin.flow.component.html.H2(runId + " — " + path));
             add(Panels.error(client.errorText(e)));
         }
@@ -56,27 +56,27 @@ public class FileViewerView extends VerticalLayout implements BeforeEnterObserve
 
     /** The content block: header with a raw link back to the service, then the (formatted) file. */
     private final class FileViewerContent extends VerticalLayout {
-        FileViewerContent(String runId, String path, String content) {
+        FileViewerContent(final String runId, final String path, final String content) {
             setPadding(false);
             setSpacing(false);
             setSizeFull();
 
-            com.vaadin.flow.component.html.H2 title = new com.vaadin.flow.component.html.H2(runId + " — " + path);
+            final var title = new com.vaadin.flow.component.html.H2(runId + " — " + path);
             title.getStyle().set("margin", "0 0 4px 0").set("font-size", "1.2em");
             add(title);
 
-            Anchor raw = new Anchor(Links.rawFileUrl(client.baseUrl(), runId, path),
+            final var raw = new Anchor(Links.rawFileUrl(client.baseUrl(), runId, path),
                     "raw (unformatted) at the service");
             raw.getElement().setAttribute("target", "_blank");
             raw.getElement().setAttribute("rel", "noopener noreferrer");
             raw.getStyle().set("font-size", "0.85em");
             add(raw);
 
-            Span spacer = new Span();
+            final var spacer = new Span();
             spacer.getStyle().set("flex", "0 0 8px");
             add(spacer);
 
-            Div contentDiv;
+            final Div contentDiv;   // assigned exactly once below (either branch); a legal blank final
             if (isMarkdown(path)) {
                 contentDiv = new Div();
                 contentDiv.add(new com.vaadin.flow.component.Html(
@@ -91,7 +91,7 @@ public class FileViewerView extends VerticalLayout implements BeforeEnterObserve
     }
 
     /** Markdown files get the rendered treatment; everything else the mono block. */
-    static boolean isMarkdown(String path) {
+    static boolean isMarkdown(final String path) {
         return path != null && path.toLowerCase(java.util.Locale.ROOT).endsWith(".md");
     }
 
@@ -100,17 +100,19 @@ public class FileViewerView extends VerticalLayout implements BeforeEnterObserve
      * (all-or-nothing — one non-JSON line keeps the whole file verbatim); everything
      * else renders verbatim.
      */
-    static String format(String content) {
-        JsonNode whole = readOrNull(content);
+    static String format(final String content) {
+        final var whole = readOrNull(content);
         if (whole != null) {
             return pretty(whole);
         }
-        List<JsonNode> records = new ArrayList<>();
-        for (String line : content.lines().toList()) {
+        // element type JsonNode is required below (pretty(JsonNode)); empty-diamond under var
+        // would infer List<Object> and break that
+        final List<JsonNode> records = new ArrayList<>();
+        for (final var line : content.lines().toList()) {
             if (line.isBlank()) {
                 continue;
             }
-            JsonNode record = readOrNull(line);
+            final var record = readOrNull(line);
             if (record == null) {
                 return content; // a non-blank line is not JSON: not a JSONL file
             }
@@ -119,8 +121,8 @@ public class FileViewerView extends VerticalLayout implements BeforeEnterObserve
         if (records.isEmpty()) {
             return content;
         }
-        StringBuilder formatted = new StringBuilder();
-        for (JsonNode record : records) {
+        final var formatted = new StringBuilder();
+        for (final var record : records) {
             if (formatted.length() > 0) {
                 formatted.append('\n');
             }
@@ -129,21 +131,21 @@ public class FileViewerView extends VerticalLayout implements BeforeEnterObserve
         return formatted.toString();
     }
 
-    private static JsonNode readOrNull(String text) {
+    private static JsonNode readOrNull(final String text) {
         try {
-            JsonNode node = Json.MAPPER.readTree(text);
+            final var node = Json.MAPPER.readTree(text);
             return node == null || node.isMissingNode() ? null : node; // Jackson 3: empty input yields no node
-        } catch (Exception e) {
+        } catch (final Exception e) {
             return null;
         }
     }
 
-    private static String pretty(JsonNode node) {
+    private static String pretty(final JsonNode node) {
         return Json.MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(node);
     }
 
     /** First value of a query parameter, null when absent. */
-    static String queryParam(Location location, String name) {
+    static String queryParam(final Location location, final String name) {
         return location.getQueryParameters().getSingleParameter(name).orElse(null);
     }
 }

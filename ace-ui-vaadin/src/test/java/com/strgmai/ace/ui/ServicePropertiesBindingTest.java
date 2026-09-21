@@ -19,7 +19,7 @@ class ServicePropertiesBindingTest {
         new ApplicationContextRunner()
                 .withUserConfiguration(PropertiesConfiguration.class)
                 .run(context -> {
-                    ServiceProperties properties = context.getBean(ServiceProperties.class);
+                    final var properties = context.getBean(ServiceProperties.class);
                     assertEquals("http://127.0.0.1:8765", properties.baseUrl());
                     assertEquals(Duration.ofSeconds(2), properties.connectTimeout());
                     assertEquals(Duration.ofSeconds(15), properties.readTimeout());
@@ -35,7 +35,7 @@ class ServicePropertiesBindingTest {
                         "ace.service.connect-timeout=5s",
                         "ace.service.read-timeout=30s")
                 .run(context -> {
-                    ServiceProperties properties = context.getBean(ServiceProperties.class);
+                    final var properties = context.getBean(ServiceProperties.class);
                     assertEquals("http://10.0.0.5:9000", properties.baseUrl());
                     assertEquals(Duration.ofSeconds(5), properties.connectTimeout());
                     assertEquals(Duration.ofSeconds(30), properties.readTimeout());

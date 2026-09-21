@@ -17,10 +17,10 @@ public final class RunBenchSupport {
     private RunBenchSupport() {}
 
     /** one benchmark run at a time on this machine */
-    public static FileChannel acquireLock(Path lockPath) {
+    public static FileChannel acquireLock(final Path lockPath) {
         try {
             Files.createDirectories(lockPath.toAbsolutePath().getParent());
-            FileChannel ch = FileChannel.open(lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            final FileChannel ch = FileChannel.open(lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
             if (ch.tryLock() == null) {
                 ch.close();
                 throw new IllegalStateException("another run holds " + lockPath + "; refusing to start a concurrent run");
@@ -29,10 +29,10 @@ public final class RunBenchSupport {
         } catch (IOException e) { throw new IllegalStateException("cannot lock " + lockPath + ": " + e, e); }
     }
 
-    public static Map<String, String> scrubbedEnv(String home, String runId, String javaHome) {
-        Map<String, String> env = new LinkedHashMap<>();
+    public static Map<String, String> scrubbedEnv(final String home, final String runId, final String javaHome) {
+        final Map<String, String> env = new LinkedHashMap<>();
         for (String k : List.of("PATH", "LANG", "LC_ALL", "TERM", "TMPDIR", "SHELL")) {   // PATH/LANG/TMPDIR only - no operator tokens
-            String v = System.getenv(k);
+            final String v = System.getenv(k);
             if (v != null) env.put(k, v);
         }
         env.put("HOME", home);
@@ -52,7 +52,7 @@ public final class RunBenchSupport {
     }
 
     /** commit + tag; returns the commit SHA. Build outputs never enter a snapshot. */
-    public static String snapshot(Path ws, String tag) throws IOException, InterruptedException {
+    public static String snapshot(final Path ws, final String tag) throws IOException, InterruptedException {
         if (!Files.exists(ws.resolve(".git"))) {   // a worktree has a .git FILE pointing at the main repo: it is already initialised
             runGit(ws, "init", "-q");
             runGit(ws, "config", "user.email", "bench@local");
@@ -68,26 +68,26 @@ public final class RunBenchSupport {
         return gitOut(ws, "rev-parse", "HEAD");
     }
 
-    public static String gitOut(Path ws, String... args) throws IOException, InterruptedException {
-        Process p = git(ws, args);
-        String out = new String(p.getInputStream().readAllBytes()).strip();
+    public static String gitOut(final Path ws, final String... args) throws IOException, InterruptedException {
+        final Process p = git(ws, args);
+        final var out = new String(p.getInputStream().readAllBytes()).strip();
         if (p.waitFor() != 0) throw new IOException("git " + args[0] + " failed: " + new String(p.getErrorStream().readAllBytes()));   // like runGit, don't return partial output on failure
         return out;
     }
 
-    static void runGit(Path ws, String... args) throws IOException, InterruptedException {
-        Process p = git(ws, args);
+    static void runGit(final Path ws, final String... args) throws IOException, InterruptedException {
+        final Process p = git(ws, args);
         if (p.waitFor() != 0) throw new IOException("git " + args[0] + " failed: " + new String(p.getErrorStream().readAllBytes()));
     }
 
-    private static Process git(Path ws, String... args) throws IOException {
-        List<String> cmd = new ArrayList<>(List.of("git", "-C", ws.toString()));
+    private static Process git(final Path ws, final String... args) throws IOException {
+        final List<String> cmd = new ArrayList<>(List.of("git", "-C", ws.toString()));
         cmd.addAll(List.of(args));
         return new ProcessBuilder(cmd).start();
     }
 
     public static Optional<String> javaHome() {
-        String jh = System.getenv("AB_JAVA_HOME");
+        final String jh = System.getenv("AB_JAVA_HOME");
         if (jh != null && Files.isRegularFile(Paths.get(jh, "bin/java"))) return Optional.of(jh);
         return Optional.empty();
     }

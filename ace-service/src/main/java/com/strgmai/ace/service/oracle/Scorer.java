@@ -10,21 +10,21 @@ import java.util.*;
 public final class Scorer {
     private Scorer() {}
 
-    public static Map<String, Object> score(Collection<CheckResult> records) {
-        List<CheckResult> all = new ArrayList<>(records);
-        List<CheckResult> counted = all.stream().filter(r -> !r.status().unscored()).toList();
-        List<String> unscored = all.stream().filter(r -> r.status().unscored()).map(r -> r.id().name()).toList();
-        int denom = counted.stream().mapToInt(r -> r.id().weight).sum();
-        int got = counted.stream().filter(r -> r.status() == CheckStatus.PASS).mapToInt(r -> r.id().weight).sum();
-        int fullDenom = all.stream().mapToInt(r -> r.id().weight).sum();
-        List<CheckResult> fAll = all.stream().filter(r -> CheckId.functional().contains(r.id())).toList();
-        List<CheckResult> fCounted = fAll.stream().filter(r -> !r.status().unscored()).toList();
-        int fDenom = fCounted.stream().mapToInt(r -> r.id().weight).sum();
-        int fGot = fCounted.stream().filter(r -> r.status() == CheckStatus.PASS).mapToInt(r -> r.id().weight).sum();
+    public static Map<String, Object> score(final Collection<CheckResult> records) {
+        final List<CheckResult> all = new ArrayList<>(records);
+        final List<CheckResult> counted = all.stream().filter(r -> !r.status().unscored()).toList();
+        final List<String> unscored = all.stream().filter(r -> r.status().unscored()).map(r -> r.id().name()).toList();
+        final int denom = counted.stream().mapToInt(r -> r.id().weight).sum();
+        final int got = counted.stream().filter(r -> r.status() == CheckStatus.PASS).mapToInt(r -> r.id().weight).sum();
+        final int fullDenom = all.stream().mapToInt(r -> r.id().weight).sum();
+        final List<CheckResult> fAll = all.stream().filter(r -> CheckId.functional().contains(r.id())).toList();
+        final List<CheckResult> fCounted = fAll.stream().filter(r -> !r.status().unscored()).toList();
+        final int fDenom = fCounted.stream().mapToInt(r -> r.id().weight).sum();
+        final int fGot = fCounted.stream().filter(r -> r.status() == CheckStatus.PASS).mapToInt(r -> r.id().weight).sum();
 
-        Map<String, Map<String, Object>> byCat = new LinkedHashMap<>();
+        final Map<String, Map<String, Object>> byCat = new LinkedHashMap<>();
         for (CheckResult r : all) {
-            Map<String, Object> d = byCat.computeIfAbsent(r.id().category, x -> new LinkedHashMap<>());
+            final Map<String, Object> d = byCat.computeIfAbsent(r.id().category, x -> new LinkedHashMap<>());
             d.merge("pass", r.status() == CheckStatus.PASS ? 1 : 0, (a, b) -> (int) a + (int) b);
             d.merge("fail", r.status() != CheckStatus.PASS && !r.status().unscored() ? 1 : 0, (a, b) -> (int) a + (int) b);
             d.merge("unscored", r.status().unscored() ? 1 : 0, (a, b) -> (int) a + (int) b);
@@ -32,7 +32,7 @@ public final class Scorer {
             d.merge("weight_got", r.status() == CheckStatus.PASS ? r.id().weight : 0, (a, b) -> (int) a + (int) b);
         }
 
-        Map<String, Object> rep = new LinkedHashMap<>();
+        final Map<String, Object> rep = new LinkedHashMap<>();
         rep.put("schema_version", com.strgmai.ace.service.config.BenchProperties.RESULT_SCHEMA);   // poolable runs are recognised by it
         rep.put("checks_expected", all.size());
         rep.put("checks_reported", all.size());
@@ -51,7 +51,7 @@ public final class Scorer {
         rep.put("functional_full_denominator", fAll.stream().mapToInt(r -> r.id().weight).sum());
         rep.put("by_category", byCat);
         double pct = denom > 0 ? round1(100.0 * got / denom) : 0.0;   // Python round(x, 1) is banker's rounding
-        Double fpct = fDenom > 0 ? round1(100.0 * fGot / fDenom) : null;
+        final Double fpct = fDenom > 0 ? round1(100.0 * fGot / fDenom) : null;
         if (!unscored.isEmpty()) {
             rep.put("partial_score_pct", pct);
             rep.put("weighted_score_pct", null);
@@ -66,13 +66,13 @@ public final class Scorer {
         return rep;
     }
 
-    static double round1(double x) {
+    static double round1(final double x) {
         return java.math.BigDecimal.valueOf(x).setScale(1, java.math.RoundingMode.HALF_EVEN).doubleValue();
     }
 
     /** convenience for callers holding one record per id of a subset */
-    public static List<CheckResult> missingAsFail(List<CheckId> owned, Map<CheckId, CheckResult> got, String why) {
-        List<CheckResult> out = new ArrayList<>();
+    public static List<CheckResult> missingAsFail(final List<CheckId> owned, final Map<CheckId, CheckResult> got, final String why) {
+        final List<CheckResult> out = new ArrayList<>();
         for (CheckId id : owned)
             out.add(got.containsKey(id) ? got.get(id) : CheckResult.fail(id, "checker missing/crashed: " + why));
         return out;

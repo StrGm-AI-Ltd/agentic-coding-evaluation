@@ -17,8 +17,8 @@ public class TradingController {
 
     @GetMapping("/health") public Map<String, String> health() { return Map.of("status", "UP"); }
 
-    @GetMapping("/prices/{symbol}") public ResponseEntity<?> price(@PathVariable String symbol) {
-        Map<String, Object> p = svc.price(symbol);
+    @GetMapping("/prices/{symbol}") public ResponseEntity<?> price(final @PathVariable String symbol) {
+        final Map<String, Object> p = svc.price(symbol);
         return p == null ? ResponseEntity.status(404).body(Map.of("error", "unknown symbol")) : ResponseEntity.ok(p);
     }
 
@@ -26,14 +26,14 @@ public class TradingController {
         return ResponseEntity.status(201).body(svc.createAccount(body == null ? null : body.get("currency")));
     }
 
-    @GetMapping("/accounts/{id}") public ResponseEntity<?> account(@PathVariable String id) {
-        Map<String, Object> a = svc.account(id);
+    @GetMapping("/accounts/{id}") public ResponseEntity<?> account(final @PathVariable String id) {
+        final Map<String, Object> a = svc.account(id);
         return a == null ? ResponseEntity.status(404).body(Map.of("error", "no account")) : ResponseEntity.ok(a);
     }
 
     @PostMapping("/accounts/{id}/deposits")
-    public ResponseEntity<?> deposit(@PathVariable String id, @RequestBody Map<String, String> body) {
-        Map<String, Object> r = svc.deposit(id, body == null ? null : body.get("amount"));
+    public ResponseEntity<?> deposit(final @PathVariable String id, final @RequestBody Map<String, String> body) {
+        final Map<String, Object> r = svc.deposit(id, body == null ? null : body.get("amount"));
         if (r == null) return ResponseEntity.status(404).body(Map.of("error", "no account"));
         if (r.containsKey("error")) return ResponseEntity.status(400).body(r);
         return ResponseEntity.ok(r);
@@ -46,7 +46,7 @@ public class TradingController {
             try { as = Instant.parse(asOf.replace(' ', 'T').endsWith("Z") ? asOf.replace(' ', 'T') : asOf.replace(' ', 'T') + "Z"); }
             catch (Exception e) { return ResponseEntity.status(400).body(Map.of("error", "bad asOf")); }
         }
-        Map<String, Object> h = svc.holdings(id, as);
+        final Map<String, Object> h = svc.holdings(id, as);
         return h == null ? ResponseEntity.status(404).body(Map.of("error", "no account")) : ResponseEntity.ok(h);
     }
 
@@ -59,14 +59,14 @@ public class TradingController {
         return ResponseEntity.status(o.status()).body(o.body());
     }
 
-    @GetMapping("/orders/{id}") public ResponseEntity<?> order(@PathVariable String id) {
-        Map<String, Object> o = svc.order(id);
+    @GetMapping("/orders/{id}") public ResponseEntity<?> order(final @PathVariable String id) {
+        final Map<String, Object> o = svc.order(id);
         return o == null ? ResponseEntity.status(404).body(Map.of("error", "no order")) : ResponseEntity.ok(o);
     }
 
     @PostMapping("/orders/{id}/cancel")
-    public ResponseEntity<?> cancel(@PathVariable String id) {
-        CancelOutcome c = svc.cancel(id);
+    public ResponseEntity<?> cancel(final @PathVariable String id) {
+        final CancelOutcome c = svc.cancel(id);
         return ResponseEntity.status(c.status()).body(c.body());
     }
 }

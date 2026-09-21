@@ -30,7 +30,7 @@ public class CompareView extends VerticalLayout {
     private final Checkbox allowBudgetMismatch = new Checkbox("allow budget mismatch");
     private final VerticalLayout result = new VerticalLayout();
 
-    public CompareView(ServiceClient client) {
+    public CompareView(final ServiceClient client) {
         this.client = client;
         setPadding(true);
 
@@ -43,14 +43,14 @@ public class CompareView extends VerticalLayout {
         metric.setItems("functional", "score", "agent_result");
         metric.setValue("functional");
 
-        HorizontalLayout row1 = new HorizontalLayout(groupA, groupB, metric);
+        final var row1 = new HorizontalLayout(groupA, groupB, metric);
         row1.getStyle().set("flex-wrap", "wrap");
 
-        VerticalLayout options = new VerticalLayout(modelAb, allowPartial, includeInvalid, allowBudgetMismatch);
+        final var options = new VerticalLayout(modelAb, allowPartial, includeInvalid, allowBudgetMismatch);
         options.setPadding(false);
         options.setSpacing(false);
 
-        Button run = new Button("Compare", e -> compare());
+        final var run = new Button("Compare", e -> compare());
 
         add(row1, options, run, result);
 
@@ -59,33 +59,33 @@ public class CompareView extends VerticalLayout {
 
     private void loadRunIds() {
         try {
-            List<Api.Run> runs = client.runs(null, null, null, null, null);
-            List<String> ids = poolableRunIds(runs);
+            final var runs = client.runs(null, null, null, null, null);
+            final var ids = poolableRunIds(runs);
             groupA.setItems(ids);
             groupB.setItems(ids);
-        } catch (Exception e) {
+        } catch (final Exception e) {
             result.removeAll();
             result.add(Panels.error(client.errorText(e)));
         }
     }
 
     /** Only poolable runs can be compared (stats.py pools them; the rest 404 — V-5). */
-    static List<String> poolableRunIds(List<Api.Run> runs) {
+    static List<String> poolableRunIds(final List<Api.Run> runs) {
         return runs.stream().filter(Api.Run::poolable).map(Api.Run::run_id).sorted().distinct().toList();
     }
 
     private void compare() {
         result.removeAll();
-        List<String> a = new ArrayList<>(groupA.getValue());
-        List<String> b = new ArrayList<>(groupB.getValue());
+        final var a = new ArrayList<>(groupA.getValue());
+        final var b = new ArrayList<>(groupB.getValue());
         if (a.isEmpty() || b.isEmpty()) {
             Notification.show("Pick at least one run id on each side.", 3000, Notification.Position.BOTTOM_END);
             return;
         }
-        Api.CompareRequest request = new Api.CompareRequest(a, b, metric.getValue(), modelAb.getValue(),
+        final var request = new Api.CompareRequest(a, b, metric.getValue(), modelAb.getValue(),
                 allowPartial.getValue(), includeInvalid.getValue(), allowBudgetMismatch.getValue());
         try {
-            Api.CompareResponse response = client.compare(request);
+            final var response = client.compare(request);
             if (response.refused() != null) {
                 result.add(Panels.warn("stats.py refused: " + response.refused()));
                 result.add(new Details("stats.py output", Panels.mono(response.printed())));
@@ -93,7 +93,7 @@ public class CompareView extends VerticalLayout {
             }
             result.add(new Details("stats.py output", Panels.mono(response.printed())));
             result.add(new Details("result JSON", Panels.mono(Fmt.json(response.result()))));
-        } catch (Exception e) {
+        } catch (final Exception e) {
             result.add(Panels.error(client.errorText(e)));
         }
     }

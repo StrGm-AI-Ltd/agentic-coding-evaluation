@@ -15,8 +15,8 @@ class TailerTest {
 
     @Test
     void invalidUtf8InTheJournalDoesNotLoseSubsequentLines() throws Exception {
-        Path runDir = Files.createTempDirectory("tailer");
-        Path interactions = runDir.resolve("interactions.jsonl");
+        final var runDir = Files.createTempDirectory("tailer");
+        final Path interactions = runDir.resolve("interactions.jsonl");
         // line 1 carries two invalid bytes (0xFF 0xFE): replacing them and re-encoding to count the offset would
         // advance past what was actually consumed, so the next line would start mid-way and be lost
         byte[] firstTwo = concat(concat(
@@ -24,9 +24,9 @@ class TailerTest {
                 new byte[]{(byte) 0xFF, (byte) 0xFE, (byte) ' ', (byte) 'b', (byte) 'r', (byte) 'o', (byte) 'k', (byte) 'e', (byte) 'n', (byte) 'u', (byte) 't', (byte) 'f', (byte) '8', (byte) '\"', (byte) '}', (byte) '\n'}),
                 "{\"seq\": 2, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200}\n".getBytes());
         Files.write(interactions, firstTwo);
-        Tailer tailer = new Tailer();
+        final var tailer = new Tailer();
 
-        List<Object> seqs = new java.util.ArrayList<>();
+        final List<Object> seqs = new java.util.ArrayList<>();
         tailer.poll(runDir).stream().filter(e -> "request".equals(e.get("type"))).forEach(e -> seqs.add(e.get("seq")));
         Files.write(interactions, concat(firstTwo,
                 "{\"seq\": 3, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200}\n".getBytes()));
@@ -35,8 +35,8 @@ class TailerTest {
         assertEquals(List.of(1, 2, 3), seqs);
     }
 
-    private static byte[] concat(byte[] a, byte[] b) {
-        byte[] out = new byte[a.length + b.length];
+    private static byte[] concat(final byte[] a, final byte[] b) {
+        final byte[] out = new byte[a.length + b.length];
         System.arraycopy(a, 0, out, 0, a.length);
         System.arraycopy(b, 0, out, a.length, b.length);
         return out;
@@ -45,12 +45,12 @@ class TailerTest {
     @Test
     void aPartiallyWrittenLineWaitsForTheNextPoll() throws Exception {
         Path runDir = Files.createTempDirectory("tailer");
-        Path interactions = runDir.resolve("interactions.jsonl");
+        final Path interactions = runDir.resolve("interactions.jsonl");
         Files.writeString(interactions, "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/c");   // no newline yet
-        Tailer tailer = new Tailer();
+        final var tailer = new Tailer();
         assertTrue(tailer.poll(runDir).isEmpty());
         Files.writeString(interactions, "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200}\n");
-        List<Map<String, Object>> events = tailer.poll(runDir).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        final List<Map<String, Object>> events = tailer.poll(runDir).stream().filter(e -> "request".equals(e.get("type"))).toList();
         assertEquals(1, events.size());
         assertTrue(tailer.poll(runDir).isEmpty());   // a no-op poll reports nothing new
     }
@@ -62,12 +62,12 @@ class TailerTest {
 
     @Test
     void stepsAreReportedFromPackAndInstructionFiles() throws Exception {
-        Path runDir = Files.createTempDirectory("tailer");
+        final var runDir = Files.createTempDirectory("tailer");
         Files.createDirectories(runDir.resolve("packs"));
         Files.writeString(runDir.resolve("packs/T1.md"), "pack");
         Files.writeString(runDir.resolve("packs/T1-continue.md"), "cont");
         Files.writeString(runDir.resolve("packs/stable.md"), "the persistent pack, not a step");
-        List<Map<String, Object>> events = new Tailer().poll(runDir);
+        final List<Map<String, Object>> events = new Tailer().poll(runDir);
         assertEquals(2, events.size());   // T1 and its continuation; stable is not a step
         assertTrue(events.stream().anyMatch(e -> "T1".equals(e.get("step")) && Boolean.TRUE.equals(e.get("continuation"))));
     }

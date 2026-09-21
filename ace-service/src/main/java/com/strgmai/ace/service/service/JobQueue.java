@@ -27,14 +27,14 @@ public class JobQueue {
 
     public JobQueue(DSLContext dsl) { this.dsl = dsl; }
 
-    public record Job(Integer id, Integer experimentId, String arm, Integer repeat, String kind, String runId,
+    public record Job(UUID id, UUID experimentId, String arm, Integer repeat, String kind, String runId,
                       List<String> argv, String status, String blockedReason, int priority, Integer pid,
                       Integer exitCode, boolean cancelRequested, String stdoutPath, String resultLine,
                       String pinnedRunnerSha, String pinnedOracleSha) {}
 
     public Map<String, Object> enqueue(RunSpec spec, int priority, String resultsDir, String runnerSha, String oracleSha,
-                                       Integer experimentId, String arm, Integer repeat) {
-        String runId = spec.runId() != null ? spec.runId() : RunSpec.defaultRunId("svc");
+                                       UUID experimentId, String arm, Integer repeat) {
+        final String runId = spec.runId() != null ? spec.runId() : RunSpec.defaultRunId("svc");
         if (java.nio.file.Path.of(resultsDir, runId).toFile().exists())
             throw new IllegalArgumentException("results/" + runId + " already exists; choose another run id");
         if (dsl.fetchCount(JOBS, JOBS.KIND.eq("run").and(JOBS.RUN_ID.eq(runId))) > 0)
@@ -44,6 +44,7 @@ public class JobQueue {
                 .and(JOBS.STATUS.notIn("succeeded", "failed", "cancelled"))) > 0)
             throw new IllegalArgumentException(runId + " already has a pending job");
         JobsRecord rec = dsl.insertInto(JOBS)
+                .set(JOBS.ID, UUID.randomUUID())   // no AUTOINCREMENT on a UUID PK - assigned here
                 .set(JOBS.EXPERIMENT_ID, experimentId)
                 .set(JOBS.ARM, arm)
                 .set(JOBS.REPEAT, repeat)
@@ -60,9 +61,10 @@ public class JobQueue {
 
     /** claim the next runnable job */
     public Job claim() {
+        // FIFO tie-break is enqueued_at, not id: a UUID primary key carries no ordering of its own
         var candidate = dsl.select(JOBS.ID).from(JOBS)
                 .where(JOBS.STATUS.in("queued", "waiting_lock"))
-                .orderBy(JOBS.PRIORITY.desc(), JOBS.ID.asc())
+                .orderBy(JOBS.PRIORITY.desc(), JOBS.ENQUEUED_AT.asc())
                 .limit(1);
         JobsRecord rec = dsl.update(JOBS)
                 .set(JOBS.STATUS, "running")
@@ -73,29 +75,29 @@ public class JobQueue {
         return rec == null ? null : toJob(rec);
     }
 
-    public void setStatus(long jobId, String status, String reason) {
+    public void setStatus(final UUID jobId, final String status, final String reason) {
         dsl.update(JOBS).set(JOBS.STATUS, status).set(JOBS.BLOCKED_REASON, reason)
-                .setNull(JOBS.PID).setNull(JOBS.STARTED_AT).where(JOBS.ID.eq((int) jobId)).execute();
+                .setNull(JOBS.PID).setNull(JOBS.STARTED_AT).where(JOBS.ID.eq(jobId)).execute();
     }
 
-    public void started(long jobId, int pid, String stdoutPath) {
+    public void started(final UUID jobId, final int pid, final String stdoutPath) {
         dsl.update(JOBS).set(JOBS.PID, pid).set(JOBS.STDOUT_PATH, stdoutPath).set(JOBS.STARTED_AT, now())
-                .where(JOBS.ID.eq((int) jobId)).execute();
+                .where(JOBS.ID.eq(jobId)).execute();
     }
 
-    public void finish(long jobId, String status, Integer exitCode, String resultLine) {
+    public void finish(final UUID jobId, final String status, final Integer exitCode, final String resultLine) {
         dsl.update(JOBS).set(JOBS.STATUS, status).set(JOBS.EXIT_CODE, exitCode).set(JOBS.RESULT_LINE, resultLine)
-                .set(JOBS.FINISHED_AT, now()).setNull(JOBS.PID).where(JOBS.ID.eq((int) jobId)).execute();
+                .set(JOBS.FINISHED_AT, now()).setNull(JOBS.PID).where(JOBS.ID.eq(jobId)).execute();
     }
 
-    public void setPriority(long jobId, int priority) {
-        if (dsl.update(JOBS).set(JOBS.PRIORITY, priority).where(JOBS.ID.eq((int) jobId)).execute() == 0)
+    public void setPriority(final UUID jobId, final int priority) {
+        if (dsl.update(JOBS).set(JOBS.PRIORITY, priority).where(JOBS.ID.eq(jobId)).execute() == 0)
             throw new NoSuchElementException("job " + jobId + " does not exist");
     }
 
     /** port of cancel: a RUNNING job gets the flag (the worker stops it); anything queued is cancelled outright */
-    public Map<String, Object> cancel(long jobId) {
-        Map<String, Object> job = get(jobId);
+    public Map<String, Object> cancel(final UUID jobId) {
+        final Map<String, Object> job = get(jobId);
         if (RunSpec.TERMINAL.contains(job.get("status")))
             throw new IllegalStateException("job " + jobId + " is already " + job.get("status"));
         // status guard in the WHERE: a concurrent finish() between the get() above and this UPDATE
@@ -104,15 +106,15 @@ public class JobQueue {
                 .set(JOBS.CANCEL_REQUESTED, true)
                 .set(JOBS.STATUS, org.jooq.impl.DSL.when(JOBS.STATUS.eq("running"), JOBS.STATUS).otherwise("cancelled"))
                 .set(JOBS.FINISHED_AT, org.jooq.impl.DSL.when(JOBS.STATUS.eq("running"), JOBS.FINISHED_AT).otherwise(now()))
-                .where(JOBS.ID.eq((int) jobId).and(JOBS.STATUS.notIn("succeeded", "failed", "cancelled")))
+                .where(JOBS.ID.eq(jobId).and(JOBS.STATUS.notIn("succeeded", "failed", "cancelled")))
                 .execute();
         if (updated == 0)
             throw new IllegalStateException("job " + jobId + " transitioned to a terminal state concurrently");
         return get(jobId);
     }
 
-    public Map<String, Object> requeue(long jobId, String resultsDir) {
-        Map<String, Object> job = get(jobId);
+    public Map<String, Object> requeue(final UUID jobId, final String resultsDir) {
+        final Map<String, Object> job = get(jobId);
         if (!List.of("failed", "cancelled", "blocked").contains(job.get("status")))
             throw new IllegalStateException("job " + jobId + " is " + job.get("status") + "; only failed, cancelled or blocked jobs can be requeued");
         if ("run".equals(job.get("kind")) && java.nio.file.Path.of(resultsDir, String.valueOf(job.get("run_id"))).toFile().exists())
@@ -123,15 +125,15 @@ public class JobQueue {
                 .set(JOBS.STATUS, "queued").set(JOBS.CANCEL_REQUESTED, false).setNull(JOBS.BLOCKED_REASON)
                 .setNull(JOBS.PID).setNull(JOBS.EXIT_CODE).setNull(JOBS.RESULT_LINE)
                 .setNull(JOBS.STARTED_AT).setNull(JOBS.FINISHED_AT).set(JOBS.ENQUEUED_AT, now())
-                .where(JOBS.ID.eq((int) jobId).and(JOBS.STATUS.in("failed", "cancelled", "blocked")))
+                .where(JOBS.ID.eq(jobId).and(JOBS.STATUS.in("failed", "cancelled", "blocked")))
                 .execute();
         if (updated == 0)
             throw new IllegalStateException("job " + jobId + " status changed concurrently; re-try the requeue");
         return get(jobId);
     }
 
-    public Map<String, Object> get(long jobId) {
-        JobsRecord rec = dsl.selectFrom(JOBS).where(JOBS.ID.eq((int) jobId)).fetchOne();
+    public Map<String, Object> get(final UUID jobId) {
+        final JobsRecord rec = dsl.selectFrom(JOBS).where(JOBS.ID.eq(jobId)).fetchOne();
         if (rec == null) throw new org.springframework.dao.EmptyResultDataAccessException("job " + jobId, 1);
         return JsonColumns.parse(rec.intoMap());
     }
@@ -139,8 +141,9 @@ public class JobQueue {
     public List<Map<String, Object>> list() {
         var order = org.jooq.impl.DSL.case_(JOBS.STATUS)
                 .when("running", 0).when("waiting_lock", 1).when("queued", 2).when("blocked", 3).otherwise(4);
+        // newest-first tie-break is enqueued_at, not id: a UUID primary key carries no ordering of its own
         return JsonColumns.parseAll(dsl.selectFrom(JOBS)
-                .orderBy(order, JOBS.PRIORITY.desc(), JOBS.ID.desc())
+                .orderBy(order, JOBS.PRIORITY.desc(), JOBS.ENQUEUED_AT.desc())
                 .limit(200)
                 .fetch()
                 .intoMaps());

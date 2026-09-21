@@ -25,12 +25,12 @@ class RunDetailViewMetricsTest {
 
     @Test
     void perTaskRows_mapsAllFieldsSortedWithFallbacks() {
-        List<RunDetailView.PerTaskRow> rows =
+        final var rows =
                 RunDetailView.perTaskRows(Json.MAPPER.readTree(METRICS));
         assertEquals(List.of("T1", "T2"), rows.stream().map(RunDetailView.PerTaskRow::tid).toList(),
                 "tasks sort by id");
 
-        RunDetailView.PerTaskRow t2 = rows.get(1);
+        final var t2 = rows.get(1);
         assertEquals("ok", t2.reported());
         assertEquals("true", t2.doneVerified());
         assertEquals(10L, t2.requests());
@@ -40,7 +40,7 @@ class RunDetailViewMetricsTest {
         assertEquals("2", t2.filesChanged());
         assertEquals("", t2.overBudget());
 
-        RunDetailView.PerTaskRow t1 = rows.get(0);
+        final var t1 = rows.get(0);
         assertEquals("–", t1.reported(), "missing reported falls back");
         assertEquals("false", t1.doneVerified());
         assertEquals("–", t1.filesChanged(), "non-number files_changed falls back");
@@ -58,7 +58,7 @@ class RunDetailViewMetricsTest {
 
     @Test
     void stepRows_measureFlags() {
-        List<RunDetailView.StepRow> rows = RunDetailView.stepRows(Json.MAPPER.readTree(METRICS));
+        final var rows = RunDetailView.stepRows(Json.MAPPER.readTree(METRICS));
         assertEquals(2, rows.size());
         assertEquals("definition", rows.get(0).sid());
         assertEquals(100.0, rows.get(0).scorePct());

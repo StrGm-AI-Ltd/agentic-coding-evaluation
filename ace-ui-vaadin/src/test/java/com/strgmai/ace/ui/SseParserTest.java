@@ -13,7 +13,7 @@ class SseParserTest {
 
     @Test
     void parsesTheServiceBlocks() {
-        List<SseEvent> events = SseParser.parseAll("""
+        final var events = SseParser.parseAll("""
                 event: step_started
                 data: {"type": "step_started", "step": "T1", "continuation": false, "source": "packs"}
 
@@ -31,34 +31,34 @@ class SseParserTest {
 
     @Test
     void incrementalFeedEmitsAtBlankLines() {
-        SseParser parser = new SseParser();
+        final var parser = new SseParser();
         assertNull(parser.accept("event: status"));
         assertNull(parser.accept("data: {\"status\": \"running\", \"pid\": 1}"));
-        SseEvent first = parser.accept("");
+        final var first = parser.accept("");
         assertEquals("status", first.type());
         assertEquals("running", first.data().path("status").asText());
 
         assertNull(parser.accept("event: status"));
         assertNull(parser.accept("data: {\"status\": \"succeeded\"}"));
-        SseEvent second = parser.accept("");
+        final var second = parser.accept("");
         assertEquals("succeeded", second.data().path("status").asText(),
                 "the parser resets between blocks");
     }
 
     @Test
     void commentsAndKeepAliveLinesIgnored() {
-        SseParser parser = new SseParser();
+        final var parser = new SseParser();
         assertNull(parser.accept(": heartbeat"));
         assertNull(parser.accept("id: 42"));
         assertNull(parser.accept("event: request"));
         assertNull(parser.accept("data: {\"seq\": 2}"));
-        SseEvent event = parser.accept("");
+        final var event = parser.accept("");
         assertEquals("request", event.type());
     }
 
     @Test
     void malformedDataIsSkippedNotFatal() {
-        List<SseEvent> events = SseParser.parseAll("""
+        final var events = SseParser.parseAll("""
                 event: broken
                 data: {not json
 
@@ -73,7 +73,7 @@ class SseParserTest {
 
     @Test
     void nullAndBlankLinesAreSafe() {
-        SseParser parser = new SseParser();
+        final var parser = new SseParser();
         assertNull(parser.accept(null));
         assertNull(parser.accept(""));
     }

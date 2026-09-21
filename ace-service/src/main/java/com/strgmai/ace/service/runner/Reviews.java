@@ -29,16 +29,16 @@ public class Reviews {
 
     /** files `git status` reports as changed, minus build artefacts and the given prefixes (a
      *  reviewer that runs the tests changes build/test-results, which is not code — R4 C-11) */
-    static List<String> changedSources(Path ws, String... excludePrefixes) {
-        List<String> out = new ArrayList<>();
-        DockerService.Sh st = DockerService.sh(20, "git", "-C", ws.toString(), "status", "--porcelain");
+    static List<String> changedSources(final Path ws, final String... excludePrefixes) {
+        final List<String> out = new ArrayList<>();
+        final DockerService.Sh st = DockerService.sh(20, "git", "-C", ws.toString(), "status", "--porcelain");
         for (String l : st.out().split("\n")) {
             if (l.isBlank()) continue;
-            String path = l.length() > 3 ? l.substring(3).strip().replaceAll("^\"|\"$", "") : "";
-            boolean excluded = Arrays.stream(excludePrefixes).anyMatch(path::startsWith);
+            final String path = l.length() > 3 ? l.substring(3).strip().replaceAll("^\"|\"$", "") : "";
+            final boolean excluded = Arrays.stream(excludePrefixes).anyMatch(path::startsWith);
             // segment membership (like BuildChecks) instead of "/dir/": a file directly under a TOP-LEVEL
             // skip dir (build/Foo.java) has no leading slash and would be wrongly reported as code
-            boolean skipDir = java.util.Arrays.stream(path.split("/")).anyMatch(com.strgmai.ace.service.oracle.checks.BuildChecks.SKIP_DIRS::contains);
+            final boolean skipDir = java.util.Arrays.stream(path.split("/")).anyMatch(com.strgmai.ace.service.oracle.checks.BuildChecks.SKIP_DIRS::contains);
             if (excluded || skipDir) continue;
             if (List.of(".jar", ".class", ".war").stream().anyMatch(path::endsWith)) continue;
             out.add(path);
@@ -56,30 +56,30 @@ public class Reviews {
                                           String reviewerModel, boolean blind) throws Exception {
         String reviewer = reviewerModel == null || reviewerModel.isBlank()
                 ? "omlx/" + cfg.getOrDefault("model", props.model()) : reviewerModel;
-        boolean external = !reviewer.startsWith("omlx/");
+        final boolean external = !reviewer.startsWith("omlx/");
         // only one local model fits: a second local reviewer falls back to the run's own model
         if (!external && !reviewer.equals("omlx/" + cfg.getOrDefault("model", props.model()))) reviewer = "omlx/" + cfg.getOrDefault("model", props.model());
-        Path pre = Path.of(RunBenchSupport.snapshot(ws, "phase/pre-review"));
+        final var pre = Path.of(RunBenchSupport.snapshot(ws, "phase/pre-review"));
         manifestMap(manifest, "snapshots").put("pre-review", pre.toString());
-        Path verifyLog = rd.resolve("verify/pre-review.log");
+        final Path verifyLog = rd.resolve("verify/pre-review.log");
         Files.createDirectories(verifyLog.getParent());
-        String verified = VerifyTask.verifyText(VerifyTask.verify(ws, cfg, verifyLog));
-        Path sysPath = rd.resolve("packs/review_system.md");
+        final String verified = VerifyTask.verifyText(VerifyTask.verify(ws, cfg, verifyLog));
+        final Path sysPath = rd.resolve("packs/review_system.md");
         Files.createDirectories(sysPath.getParent());
         Files.writeString(sysPath, Packs.reviewSystem(promptText));
-        Path packPath = rd.resolve("packs/REVIEW.md");
+        final Path packPath = rd.resolve("packs/REVIEW.md");
         Files.writeString(packPath, Packs.reviewPack(ws, tasks, verified, blind));
         manifestMap(manifest, "review_config").putAll(Map.of("model", reviewer, "external", external, "blind", blind));
         Files.createDirectories(ws.resolve("review"));
-        ReferenceAgent.SessionResult rec = runReviewerSession(cfg, "REVIEW", packPath, sysPath, reviewer, external, ws, rd, manifest, proxies, rd.resolve("review.log"));
+        final ReferenceAgent.SessionResult rec = runReviewerSession(cfg, "REVIEW", packPath, sysPath, reviewer, external, ws, rd, manifest, proxies, rd.resolve("review.log"));
         // the code is frozen: anything the reviewer changed outside review/ is reverted and recorded
-        List<String> changed = changedSources(ws, "review/");
+        final List<String> changed = changedSources(ws, "review/");
         if (!changed.isEmpty()) {
             DockerService.sh(60, "git", "-C", ws.toString(), "checkout", pre.toString(), "--", ".");
             DockerService.sh(60, "git", "-C", ws.toString(), "clean", "-fdq", "-e", "review/", "-e", "build/", "-e", ".gradle/");
         }
-        Map<String, Object> parsed = Packs.parseSelfReview(ws.resolve("review/self_review.json"));
-        Map<String, Object> out = new LinkedHashMap<>();
+        final Map<String, Object> parsed = Packs.parseSelfReview(ws.resolve("review/self_review.json"));
+        final Map<String, Object> out = new LinkedHashMap<>();
         out.put("reviewer_model", reviewer);
         out.put("external", external);
         out.put("blind", blind);
@@ -100,7 +100,7 @@ public class Reviews {
         if (parsed != null) out.putAll(parsed);
         manifestCompute(manifest, "review_windows").add(List.of(rec.start().toString(), rec.end().toString()));
         for (String f : List.of("SELF_REVIEW.md", "self_review.json")) {
-            Path src = ws.resolve("review").resolve(f);
+            final Path src = ws.resolve("review").resolve(f);
             if (Files.isRegularFile(src)) Files.copy(src, rd.resolve(f), StandardCopyOption.REPLACE_EXISTING);
         }
         manifestMap(manifest, "snapshots").put("review", RunBenchSupport.snapshot(ws, "phase/review"));
@@ -113,30 +113,30 @@ public class Reviews {
                                                  String reviewerModel, RecordingProxyFactory proxies) throws Exception {
         String reviewer = reviewerModel == null || reviewerModel.isBlank()
                 ? "omlx/" + cfg.getOrDefault("model", props.model()) : reviewerModel;
-        boolean external = !reviewer.startsWith("omlx/");
+        final boolean external = !reviewer.startsWith("omlx/");
         if (!external && !reviewer.equals("omlx/" + cfg.getOrDefault("model", props.model()))) reviewer = "omlx/" + cfg.getOrDefault("model", props.model());
-        Path tdir = ws.resolve("trajectory");
+        final Path tdir = ws.resolve("trajectory");
         Files.createDirectories(tdir);
         // render the trajectory as of now (before the reviewer adds its own requests to the journal)
         Files.writeString(rd.resolve("manifest.json"), JSON.writerWithDefaultPrettyPrinter().writeValueAsString(manifest));
-        Map<String, Object> summary = renderTrajectory(rd, manifest);
+        final Map<String, Object> summary = renderTrajectory(rd, manifest);
         Files.writeString(tdir.resolve("summary.json"), JSON.writerWithDefaultPrettyPrinter().writeValueAsString(summary));
-        String head = Files.isRegularFile(tdir.resolve("TRAJECTORY.md")) ? Files.readString(tdir.resolve("TRAJECTORY.md")) : "";
-        Path packPath = rd.resolve("packs/TRAJECTORY_REVIEW.md");
+        final String head = Files.isRegularFile(tdir.resolve("TRAJECTORY.md")) ? Files.readString(tdir.resolve("TRAJECTORY.md")) : "";
+        final Path packPath = rd.resolve("packs/TRAJECTORY_REVIEW.md");
         Files.writeString(packPath, Packs.trajectoryReviewPack(summary, head));
-        Path sysPath = rd.resolve("packs/trajectory_review_system.md");
+        final Path sysPath = rd.resolve("packs/trajectory_review_system.md");
         Files.writeString(sysPath, Packs.TRAJ_ROLE);
         Files.createDirectories(ws.resolve("review"));
-        Path pre = Path.of(RunBenchSupport.snapshot(ws, "phase/pre-trajectory-review"));
-        ReferenceAgent.SessionResult rec = runReviewerSession(cfg, "TRAJECTORY_REVIEW", packPath, sysPath, reviewer, external, ws, rd, manifest, proxies, rd.resolve("review.log"));
+        final var pre = Path.of(RunBenchSupport.snapshot(ws, "phase/pre-trajectory-review"));
+        final ReferenceAgent.SessionResult rec = runReviewerSession(cfg, "TRAJECTORY_REVIEW", packPath, sysPath, reviewer, external, ws, rd, manifest, proxies, rd.resolve("review.log"));
         manifestCompute(manifest, "review_windows").add(List.of(rec.start().toString(), rec.end().toString()));
-        List<String> changed = changedSources(ws, "review/", "trajectory/");
+        final List<String> changed = changedSources(ws, "review/", "trajectory/");
         if (!changed.isEmpty()) {
             DockerService.sh(60, "git", "-C", ws.toString(), "checkout", pre.toString(), "--", ".");
             DockerService.sh(60, "git", "-C", ws.toString(), "clean", "-fdq", "-e", "review/", "-e", "trajectory/", "-e", "build/", "-e", ".gradle/");
         }
-        Map<String, Object> parsed = Packs.parseTrajectoryReview(ws.resolve("review/trajectory_review.json"));
-        Map<String, Object> out = new LinkedHashMap<>();
+        final Map<String, Object> parsed = Packs.parseTrajectoryReview(ws.resolve("review/trajectory_review.json"));
+        final Map<String, Object> out = new LinkedHashMap<>();
         out.put("reviewer_model", reviewer);
         out.put("external", external);
         out.put("seconds", rec.seconds());
@@ -156,7 +156,7 @@ public class Reviews {
         out.put("md_present", Files.isRegularFile(ws.resolve("review/TRAJECTORY_REVIEW.md")));
         if (parsed != null) out.putAll(parsed);
         for (String f : List.of("TRAJECTORY_REVIEW.md", "trajectory_review.json")) {
-            Path src = ws.resolve("review").resolve(f);
+            final Path src = ws.resolve("review").resolve(f);
             if (Files.isRegularFile(src)) Files.copy(src, rd.resolve(f), StandardCopyOption.REPLACE_EXISTING);
         }
         return out;
@@ -164,17 +164,17 @@ public class Reviews {
 
     /** render the journal into trajectory/TRAJECTORY.md + the summary (the raw journal is megabytes) */
     @SuppressWarnings("unchecked")
-    public Map<String, Object> renderTrajectory(Path rd, Map<String, Object> manifest) throws Exception {
-        Path journal = rd.resolve("interactions.jsonl");
-        List<Map<String, Object>> recs = new ArrayList<>();
+    public Map<String, Object> renderTrajectory(final Path rd, final Map<String, Object> manifest) throws Exception {
+        final Path journal = rd.resolve("interactions.jsonl");
+        final List<Map<String, Object>> recs = new ArrayList<>();
         if (Files.isRegularFile(journal))
             for (String line : Files.readAllLines(journal)) {
                 if (line.isBlank()) continue;
                 try { recs.add(JSON.readValue(line, Map.class)); } catch (Exception ignore) {}
             }
-        List<Trajectory.Turn> turns = Trajectory.turnsFromProxy(recs);
-        Map<String, Object> derived = manifest.get("derived") instanceof Map<?, ?> d ? (Map<String, Object>) d : Map.of();
-        List<Map<String, Object>> dockerWindows = manifest.get("docker_windows") instanceof List<?> l ? (List<Map<String, Object>>) l : null;
+        final List<Trajectory.Turn> turns = Trajectory.turnsFromProxy(recs);
+        final Map<String, Object> derived = manifest.get("derived") instanceof Map<?, ?> d ? (Map<String, Object>) d : Map.of();
+        final List<Map<String, Object>> dockerWindows = manifest.get("docker_windows") instanceof List<?> l ? (List<Map<String, Object>>) l : null;
         // exclude review sessions from the agent's trajectory (they are the reviewer's, not the agent's) BEFORE any analysis
         List<Trajectory.Turn> agentTurns = turns;
         if (manifest.get("review_windows") instanceof List<?> rw && !rw.isEmpty()) {
@@ -182,9 +182,9 @@ public class Reviews {
             for (Trajectory.Turn t : turns) {
                 boolean inReview = false;
                 if (t.ts() != null) {
-                    OffsetDateTimeHolder ts = parseTs(t.ts());
+                    final OffsetDateTimeHolder ts = parseTs(t.ts());
                     for (Object w0 : rw) {
-                        List<String> w = (List<String>) w0;
+                        final List<String> w = (List<String>) w0;
                         if (!ts.v.isBefore(parseTs(w.get(0)).v) && !ts.v.isAfter(parseTs(w.get(1)).v)) { inReview = true; break; }
                     }
                 }
@@ -193,16 +193,16 @@ public class Reviews {
         }
         // one analysis over the correct (possibly filtered) turn list - analyzing all turns first was double work
         // over a megabyte-sized journal for the only case that mattered (review windows present)
-        Map<String, Object> s = Trajectory.analyze(agentTurns, derived, dockerWindows);
-        var idx = Trajectory.objectiveIndex(s, manifest);
+        final Map<String, Object> s = Trajectory.analyze(agentTurns, derived, dockerWindows);
+        final var idx = Trajectory.objectiveIndex(s, manifest);
         s.put("harness_trajectory_pct", idx.getKey());
         s.put("harness_trajectory_penalties", idx.getValue());
-        Path traj = rd.resolve("trajectory/TRAJECTORY.md");
+        final Path traj = rd.resolve("trajectory/TRAJECTORY.md");
         Files.createDirectories(traj.getParent());
-        Map<String, String[]> windows = new LinkedHashMap<>();
+        final Map<String, String[]> windows = new LinkedHashMap<>();
         if (manifest.get("tasks") instanceof List<?> tasks)
             for (Object t0 : tasks) {
-                Map<String, Object> t = (Map<String, Object>) t0;
+                final Map<String, Object> t = (Map<String, Object>) t0;
                 if (t.get("start_iso") != null && t.get("end_iso") != null) windows.put(String.valueOf(t.get("id")), new String[]{String.valueOf(t.get("start_iso")), String.valueOf(t.get("end_iso"))});
             }
         Files.writeString(traj, Trajectory.transcript(recs, turns, windows.isEmpty() ? null : windows));
@@ -217,11 +217,11 @@ public class Reviews {
     ReferenceAgent.SessionResult runReviewerSession(Map<String, Object> cfg, String name, Path packPath, Path sysPath,
                                                      String reviewer, boolean external, Path ws, Path rd,
                                                      Map<String, Object> manifest, RecordingProxyFactory proxies, Path log) throws Exception {
-        Map<String, Object> reviewCfg = cfg.get("review") instanceof Map<?, ?> r ? (Map<String, Object>) r : Map.of();
-        long tokens = ((Number) reviewCfg.getOrDefault("tokens", 12000)).longValue();
-        String model = reviewer.startsWith("omlx/") ? reviewer.substring("omlx/".length()) : reviewer.substring(reviewer.indexOf('/') + 1);
-        RecordingProxyFactory.ProxySession proxy = external ? null : proxies.start(rd.resolve("interactions.jsonl"), tokens, null);
-        Map<String, String> extraEnv = external ? externalCredentials(reviewCfg) : null;
+        final Map<String, Object> reviewCfg = cfg.get("review") instanceof Map<?, ?> r ? (Map<String, Object>) r : Map.of();
+        final long tokens = ((Number) reviewCfg.getOrDefault("tokens", 12000)).longValue();
+        final String model = reviewer.startsWith("omlx/") ? reviewer.substring("omlx/".length()) : reviewer.substring(reviewer.indexOf('/') + 1);
+        final RecordingProxyFactory.ProxySession proxy = external ? null : proxies.start(rd.resolve("interactions.jsonl"), tokens, null);
+        final Map<String, String> extraEnv = external ? externalCredentials(reviewCfg) : null;
         try {
             ReferenceAgent.SessionResult res = agent.run(name, Files.readString(packPath) + "\n\n" + (name.equals("REVIEW") ? Packs.REVIEW_INSTRUCTION : Packs.TRAJ_INSTRUCTION),
                     ((Number) reviewCfg.getOrDefault("wall_sec", 900)).longValue(), tokens, rd.resolve("sessions"),
@@ -236,7 +236,7 @@ public class Reviews {
     }
 
     Map<String, String> externalCredentials(Map<String, Object> reviewCfg) {
-        Map<String, String> extra = new LinkedHashMap<>();
+        final Map<String, String> extra = new LinkedHashMap<>();
         for (String k : (List<String>) reviewCfg.getOrDefault("credential_env", List.of("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY")))
             if (System.getenv(k) != null) extra.put(k, System.getenv(k));
         return extra;
@@ -244,7 +244,7 @@ public class Reviews {
 
     /** external providers bypass the proxy (their credentials and endpoints are their own) */
     String externalBase(String reviewer, Map<String, Object> cfg) {
-        String provider = reviewer.substring(0, reviewer.indexOf('/'));
+        final String provider = reviewer.substring(0, reviewer.indexOf('/'));
         return switch (provider) {
             case "openai" -> "https://api.openai.com/v1";
             case "openrouter" -> "https://openrouter.ai/api/v1";
@@ -256,13 +256,13 @@ public class Reviews {
     }
 
     @SuppressWarnings("unchecked")
-    static <K, V> Map<K, V> manifestMap(Map<String, Object> manifest, String key) {
+    static <K, V> Map<K, V> manifestMap(final Map<String, Object> manifest, final String key) {
         if (!(manifest.get(key) instanceof Map<?, ?>)) manifest.put(key, new LinkedHashMap<K, V>());
         return (Map<K, V>) manifest.get(key);
     }
 
     @SuppressWarnings("unchecked")
-    static <T> List<T> manifestCompute(Map<String, Object> manifest, String key) {
+    static <T> List<T> manifestCompute(final Map<String, Object> manifest, final String key) {
         if (!(manifest.get(key) instanceof List<?>)) manifest.put(key, new ArrayList<T>());
         return (List<T>) manifest.get(key);
     }

@@ -1,6 +1,5 @@
 package com.strgmai.ace.ui;
 
-import com.vaadin.flow.component.badge.Badge;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -33,13 +32,13 @@ class BadgesTest {
 
     @Test
     void status_nullRendersQuestionMark() {
-        Badge badge = Badges.status(null);
+        final var badge = Badges.status(null);
         assertEquals("?", badge.getElement().getText());
     }
 
     @Test
     void textCarriesTheme() {
-        Badge badge = Badges.text("INVALID", Badges.ERROR);
+        final var badge = Badges.text("INVALID", Badges.ERROR);
         assertTrue(badge.getElement().getAttribute("theme").contains("error"));
     }
 }

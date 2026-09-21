@@ -27,8 +27,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
 
     public static final Set<String> TERMINAL = Set.of("succeeded", "failed", "cancelled");
 
-    public List<String> argv(String resolvedRunId) {
-        List<String> args = new ArrayList<>(List.of("--run-id=" + resolvedRunId, "--task=" + task));
+    public List<String> argv(final String resolvedRunId) {
+        final List<String> args = new ArrayList<>(List.of("--run-id=" + resolvedRunId, "--task=" + task));
         if (model != null) args.add("--model=" + model);
         if (harness != null) args.add("--harness=" + harness);
         if (mode != null) args.add("--mode=" + mode);
@@ -49,7 +49,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         return args;
     }
 
-    public static String defaultRunId(String prefix) {
+    public static String defaultRunId(final String prefix) {
         return prefix + "-" + java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.now());
     }
 }

@@ -16,7 +16,7 @@ class ServiceClientPathGuardTest {
 
     @Test
     void rejectsTraversalAndQueryFragment() {
-        for (String path : new String[]{"../x", "a/../b", "f?x", "f#y"}) {
+        for (final var path : new String[]{"../x", "a/../b", "f?x", "f#y"}) {
             // the guard throws before any HTTP traffic, so no server is needed
             assertThrows(IllegalArgumentException.class, () -> CLIENT.runFileText("r1", path), path);
         }

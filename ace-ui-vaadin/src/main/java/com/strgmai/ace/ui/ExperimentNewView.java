@@ -63,14 +63,14 @@ public class ExperimentNewView extends VerticalLayout {
     private final VerticalLayout modelAbSection = new VerticalLayout();
     private final VerticalLayout agentAbSection = new VerticalLayout();
 
-    private static NumberField weightField(String label) {
-        NumberField field = new NumberField(label);
+    private static NumberField weightField(final String label) {
+        final var field = new NumberField(label);
         field.setMin(0);
         field.setMax(1);
         return field;
     }
 
-    public ExperimentNewView(ServiceClient client) {
+    public ExperimentNewView(final ServiceClient client) {
         this.client = client;
         setPadding(true);
 
@@ -97,7 +97,7 @@ public class ExperimentNewView extends VerticalLayout {
         agentMode.setValue("orchestrated");
         agentA.setLabel("agent A");
         agentB.setLabel("agent B");
-        for (Select<String> agent : List.of(agentA, agentB)) {
+        for (final var agent : List.of(agentA, agentB)) {
             agent.setItems("ref", "pi");
         }
         agentA.setValue("ref");
@@ -145,7 +145,7 @@ public class ExperimentNewView extends VerticalLayout {
         template.addValueChangeListener(e -> updateVisibility());
         par.addValueChangeListener(e -> parallel.setEnabled(par.getValue()));
 
-        Button submit = new Button("Enqueue experiment", e -> submit());
+        final var submit = new Button("Enqueue experiment", e -> submit());
         submit.getStyle().set("margin-top", "12px");
         add(submit);
 
@@ -163,7 +163,7 @@ public class ExperimentNewView extends VerticalLayout {
                 "nebius/nvidia/Nemotron-3-Ultra-550b-a55b", "nebius/zai-org/GLM-5.3");
     }
 
-    private static String templateLabel(String template) {
+    private static String templateLabel(final String template) {
         return switch (template) {
             case "model_ab" -> "model_ab — model A vs model B, same harness/budgets";
             case "agent_ab" -> "agent_ab — reference agent vs Pi, same model/budgets";
@@ -171,8 +171,10 @@ public class ExperimentNewView extends VerticalLayout {
         };
     }
 
-    private static ComboBox<String> modelPicker(String label) {
-        ComboBox<String> picker = new ComboBox<>(label);
+    private static ComboBox<String> modelPicker(final String label) {
+        // returned as ComboBox<String>; the constructor arg doesn't fix the diamond's type
+        // parameter, so empty-diamond under var would infer ComboBox<Object> and fail on return
+        final ComboBox<String> picker = new ComboBox<>(label);
         picker.setAllowCustomValue(true);
         if (label.startsWith("reviewer") || label.startsWith("trajectory")) {
             picker.setPlaceholder("provider/model — " + reviewerSuggestions().get(0) + "…");
@@ -183,7 +185,7 @@ public class ExperimentNewView extends VerticalLayout {
     }
 
     private void updateVisibility() {
-        String value = template.getValue();
+        final var value = template.getValue();
         model.setVisible(modelPickerVisible(value)); // shared by harness_effect and agent_ab
         harnessEffectSection.setVisible("harness_effect".equals(value));
         modelAbSection.setVisible("model_ab".equals(value));
@@ -191,39 +193,40 @@ public class ExperimentNewView extends VerticalLayout {
     }
 
     /** The single model picker serves every template except model_ab (A/B pair). */
-    static boolean modelPickerVisible(String template) {
+    static boolean modelPickerVisible(final String template) {
         return !"model_ab".equals(template);
     }
 
     private void loadSuggestions() {
         try {
-            List<Api.Run> runs = client.runs(null, null, null, null, null);
-            List<String> models = Links.distinctRuns(runs, Api.Run::model);
+            final var runs = client.runs(null, null, null, null, null);
+            final var models = Links.distinctRuns(runs, Api.Run::model);
             model.setItems(models);
             modelA.setItems(models);
             modelB.setItems(models);
             reviewerModel.setItems(reviewerSuggestions());
             trajectoryReviewerModel.setItems(reviewerSuggestions());
-        } catch (Exception ignored) {
+        } catch (final Exception ignored) {
             // suggestions are optional; the server still validates
         }
         try {
             // the model server's own list, merged in on top of past-run models (GET /api/models) -
             // a cold backend with zero run history still gets a useful picker, not an empty one
-            List<String> live = client.models();
-            List<String> merged = Stream.concat(model.getGenericDataView().getItems(), live.stream())
+            final var live = client.models();
+            final var merged = Stream.concat(model.getGenericDataView().getItems(), live.stream())
                     .distinct().sorted().toList();
             model.setItems(merged);
             modelA.setItems(merged);
             modelB.setItems(merged);
-        } catch (Exception ignored) {
+        } catch (final Exception ignored) {
             // the model server may be unreachable; past-run suggestions (if any) still stand
         }
     }
 
     /** Raw field values by param key, normalized by ExperimentParams.build (unit-tested). */
-    private Map<String, Object> rawValues(String currentTemplate) {
-        Map<String, Object> raw = new LinkedHashMap<>();
+    private Map<String, Object> rawValues(final String currentTemplate) {
+        // returned as Map<String, Object>; empty-diamond under var would infer <Object, Object>
+        final Map<String, Object> raw = new LinkedHashMap<>();
         raw.put("task_wall", taskWall.getValue());
         raw.put("task_tokens", taskTokens.getValue());
         raw.put("context_window", contextWindow.getValue());
@@ -237,7 +240,7 @@ public class ExperimentNewView extends VerticalLayout {
         switch (currentTemplate) {
             case "harness_effect" -> {
                 raw.put("model", model.getValue());
-                List<String> arms = new ArrayList<>();
+                final var arms = new ArrayList<String>();
                 if (orch.getValue()) arms.add("orch");
                 if (mono.getValue()) arms.add("mono");
                 if (Boolean.TRUE.equals(monoRules.getValue())) arms.add("mono+rules");
@@ -260,27 +263,27 @@ public class ExperimentNewView extends VerticalLayout {
 
     private void submit() {
         errors.removeAll();
-        String currentTemplate = template.getValue();
-        Map<String, Object> params;
+        final var currentTemplate = template.getValue();
+        final Map<String, Object> params;   // assigned exactly once below; a legal blank final
         try {
             params = ExperimentParams.build(currentTemplate, rawValues(currentTemplate));
-        } catch (IllegalArgumentException e) {
+        } catch (final IllegalArgumentException e) {
             errors.add(Panels.error(e.getMessage()));
             return;
         }
 
-        String experimentName = name.getValue() == null || name.getValue().isBlank()
+        final var experimentName = name.getValue() == null || name.getValue().isBlank()
                 ? currentTemplate + " " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
                 : name.getValue();
 
         try {
-            Api.Experiment experiment = client.createExperiment(experimentName, currentTemplate, params,
+            final var experiment = client.createExperiment(experimentName, currentTemplate, params,
                     k.getValue() == null ? 3 : k.getValue());
             Notification.show("Queued experiment #" + experiment.id() + " with "
                     + (experiment.jobs() == null ? 0 : experiment.jobs().size()) + " jobs",
                     4000, Notification.Position.BOTTOM_END);
             getUI().ifPresent(ui -> ui.navigate("experiments/" + experiment.id()));
-        } catch (Exception e) {
+        } catch (final Exception e) {
             errors.add(Panels.error(client.errorText(e)));
         }
     }

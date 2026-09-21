@@ -21,15 +21,15 @@ public class ExperimentsView extends VerticalLayout {
     private final ServiceClient client;
 
     private final Grid<Api.Experiment> grid = new Grid<>(Api.Experiment.class, false);
-    private final Map<Long, List<String>> jobStatusesByExperiment = new HashMap<>();
+    private final Map<String, List<String>> jobStatusesByExperiment = new HashMap<>();
     private final Span error = new Span();
     private final Span emptyState = new Span();
 
-    public ExperimentsView(ServiceClient client) {
+    public ExperimentsView(final ServiceClient client) {
         this.client = client;
         setPadding(true);
 
-        Button newExperiment = new Button("New experiment", com.vaadin.flow.component.icon.VaadinIcon.PLUS.create(),
+        final var newExperiment = new Button("New experiment", com.vaadin.flow.component.icon.VaadinIcon.PLUS.create(),
                 e -> getUI().ifPresent(ui -> ui.navigate("experiments/new")));
         error.getStyle().set("color", "var(--lumo-error-color)");
         emptyState.getStyle().set("color", "var(--lumo-secondary-text-color)");
@@ -63,10 +63,10 @@ public class ExperimentsView extends VerticalLayout {
      * The table status stays 'queued' mid-flight (the service never sets 'running' on
      * experiments) — derive it from the jobs, with the raw value as the tooltip.
      */
-    private com.vaadin.flow.component.badge.Badge statusBadge(Api.Experiment experiment) {
-        String effective = ExperimentStatuses.effective(experiment.status(),
+    private com.vaadin.flow.component.badge.Badge statusBadge(final Api.Experiment experiment) {
+        final var effective = ExperimentStatuses.effective(experiment.status(),
                 jobStatusesByExperiment.get(experiment.id()));
-        com.vaadin.flow.component.badge.Badge badge = Badges.status(effective);
+        final var badge = Badges.status(effective);
         if (!java.util.Objects.equals(effective, experiment.status())) {
             badge.getElement().setAttribute("title",
                     "table status: " + experiment.status() + " (derived from its jobs)");
@@ -76,24 +76,24 @@ public class ExperimentsView extends VerticalLayout {
 
     private void load() {
         try {
-            List<Api.Experiment> experiments = client.experiments();
+            final var experiments = client.experiments();
             jobStatusesByExperiment.clear();
             try {
-                for (Api.Job job : client.jobs()) {
+                for (final var job : client.jobs()) {
                     if (job.experiment_id() != null) {
                         jobStatusesByExperiment
                                 .computeIfAbsent(job.experiment_id(), id -> new ArrayList<>())
                                 .add(job.status());
                     }
                 }
-            } catch (Exception ignored) {
+            } catch (final Exception ignored) {
                 // without the jobs list, the table status is shown as-is
             }
             grid.setItems(experiments);
             error.setText("");
             emptyState.setText("No experiments yet — queue one with “New experiment”.");
             emptyState.setVisible(experiments.isEmpty());
-        } catch (Exception ex) {
+        } catch (final Exception ex) {
             grid.setItems(List.of());
             error.setText(client.errorText(ex));
             emptyState.setVisible(false);

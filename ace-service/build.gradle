@@ -130,15 +130,29 @@ tasks.register('dockerTest', Test) {
 // itself (not the forked test JVM) survives those.
 abstract class DockerCleanupTask extends DefaultTask {
     @javax.inject.Inject abstract org.gradle.process.ExecOperations getExecOps()
+
+    // Gradle's ExecOperations does not resolve a bare "docker" against PATH the way ProcessBuilder
+    // (what DockerService.proc/sh use elsewhere) does - on this machine it fails with ENOENT even
+    // though /usr/local/bin/docker exists and `docker` works fine from any shell. Resolve an
+    // absolute path ourselves, same candidate list DockerService.dockerTools already checks.
+    static String dockerBinary() {
+        for (String p : ['/usr/local/bin/docker', '/opt/homebrew/bin/docker',
+                          '/Applications/Docker.app/Contents/Resources/bin/docker']) {
+            if (new File(p).canExecute()) return p
+        }
+        return 'docker'   // fall back to PATH lookup in case none of the above match
+    }
+
     @TaskAction
     void run() {
+        String docker = dockerBinary()
         def ls = new ByteArrayOutputStream()
-        execOps.exec { commandLine 'docker', 'compose', 'ls', '-a', '--format', 'json'; standardOutput = ls; ignoreExitValue = true }
+        execOps.exec { commandLine docker, 'compose', 'ls', '-a', '--format', 'json'; standardOutput = ls; ignoreExitValue = true }
         def projects = ls.toString().isBlank() ? [] : new groovy.json.JsonSlurper().parseText(ls.toString())
         projects.findAll { it.Name ==~ /ab\d+/ }.each { p ->
-            execOps.exec { commandLine 'docker', 'compose', '-p', p.Name, 'down', '-v', '--remove-orphans', '--rmi', 'local'; ignoreExitValue = true }
+            execOps.exec { commandLine docker, 'compose', '-p', p.Name, 'down', '-v', '--remove-orphans', '--rmi', 'local'; ignoreExitValue = true }
         }
-        execOps.exec { commandLine 'docker', 'image', 'prune', '-f'; ignoreExitValue = true }
+        execOps.exec { commandLine docker, 'image', 'prune', '-f'; ignoreExitValue = true }
     }
 }
 tasks.register('dockerCleanup', DockerCleanupTask) {

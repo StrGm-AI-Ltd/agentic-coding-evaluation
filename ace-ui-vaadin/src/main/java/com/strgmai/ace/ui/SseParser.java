@@ -14,7 +14,7 @@ public final class SseParser {
     private final StringBuilder data = new StringBuilder();
 
     /** Feeds one line; returns the completed event at block end, null otherwise. */
-    public SseEvent accept(String line) {
+    public SseEvent accept(final String line) {
         if (line == null) {
             return null;
         }
@@ -36,8 +36,8 @@ public final class SseParser {
     }
 
     private SseEvent emit() {
-        String payload = data.toString();
-        String type = eventType;
+        final var payload = data.toString();
+        final var type = eventType;
         eventType = null;
         data.setLength(0);
         if (payload.isBlank()) {
@@ -45,17 +45,18 @@ public final class SseParser {
         }
         try {
             return new SseEvent(type, Json.MAPPER.readTree(payload));
-        } catch (Exception e) {
+        } catch (final Exception e) {
             return null; // malformed data is skipped, not fatal to the stream
         }
     }
 
     /** Splits a whole SSE payload (for tests and one-shot reads). */
-    static List<SseEvent> parseAll(String sseText) {
-        List<SseEvent> events = new ArrayList<>();
-        SseParser parser = new SseParser();
-        for (String line : sseText.split("\n", -1)) {
-            SseEvent event = parser.accept(line.endsWith("\r") ? line.substring(0, line.length() - 1) : line);
+    static List<SseEvent> parseAll(final String sseText) {
+        // returned as List<SseEvent>; empty-diamond under var would infer <Object>
+        final List<SseEvent> events = new ArrayList<>();
+        final var parser = new SseParser();
+        for (final var line : sseText.split("\n", -1)) {
+            final var event = parser.accept(line.endsWith("\r") ? line.substring(0, line.length() - 1) : line);
             if (event != null) {
                 events.add(event);
             }

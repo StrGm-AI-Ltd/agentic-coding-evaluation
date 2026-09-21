@@ -10,7 +10,7 @@ import com.vaadin.flow.router.Route;
 public class RootView extends Div implements BeforeEnterObserver {
 
     @Override
-    public void beforeEnter(BeforeEnterEvent event) {
+    public void beforeEnter(final BeforeEnterEvent event) {
         event.forwardTo("runs");
     }
 }

@@ -19,7 +19,7 @@ public final class Api {
     public record Run(
             String run_id,
             String results_dir,
-            Long job_id,
+            String job_id,
             String task,
             String mode,
             String model,
@@ -108,8 +108,8 @@ public final class Api {
 
     /** One queue job — GET /api/jobs, /api/jobs/{id}, and the job-mutating endpoints. */
     public record Job(
-            Long id,
-            Long experiment_id,
+            String id,
+            String experiment_id,
             String arm,
             Integer repeat,
             String kind,
@@ -130,7 +130,7 @@ public final class Api {
 
     /** One experiment — GET /api/experiments and /api/experiments/{id} (detail adds jobs). */
     public record Experiment(
-            Long id,
+            String id,
             String name,
             String tag,
             String template,
@@ -144,7 +144,7 @@ public final class Api {
             List<ExperimentJob> jobs) {
     }
 
-    public record ExperimentJob(Long id, String arm, Integer repeat, String run_id, String status, String result_line) {
+    public record ExperimentJob(String id, String arm, Integer repeat, String run_id, String status, String result_line) {
     }
 
     /** GET/POST /api/preflight. */

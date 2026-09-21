@@ -33,8 +33,8 @@ public final class Packs {
     /** the task-start checkpoint (stable pack + task pack) must fit the setup's window: every cap
      *  scales with it (floor pack_scale_min); `floors` gives sections that must never be truncated
      *  (the contract: R5 C-25) their real size as a minimum. */
-    public static Map<String, Integer> setScale(double scale, Map<String, Integer> floors) {
-        double s = Math.max(0.25, Math.min(1.0, scale));
+    public static Map<String, Integer> setScale(final double scale, final Map<String, Integer> floors) {
+        final double s = Math.max(0.25, Math.min(1.0, scale));
         for (Map.Entry<String, Integer> e : BASE_CAPS.entrySet())
             CAPS.put(e.getKey(), Math.max("tree diffstat test_tail".contains(e.getKey()) ? 10 : 200,
                     Math.max((int) (e.getValue() * s), floors.getOrDefault(e.getKey(), 0))));
@@ -54,7 +54,7 @@ public final class Packs {
     private static String HYGIENE = HYGIENE_TEMPLATE.replace("{window}", "65");
 
     /** the working rules name the run's measured window (R5 C-16); byte-stable within a run. */
-    public static String setWindow(int usableContext) {
+    public static String setWindow(final int usableContext) {
         HYGIENE = HYGIENE_TEMPLATE.replace("{window}", String.valueOf(Math.max(1, usableContext / 1000)));
         return HYGIENE;
     }
@@ -67,8 +67,8 @@ public final class Packs {
     /** keep the NEWEST part (PROGRESS.md grows at the bottom — C-15) */
     static String capTail(String text, int n) { return text.length() <= n ? text : "… [" + (text.length() - n) + " older chars omitted]\n" + text.substring(text.length() - n); }
 
-    static String linesCap(String text, int n) {
-        String[] ls = text.split("\n", -1);
+    static String linesCap(final String text, final int n) {
+        final String[] ls = text.split("\n", -1);
         return String.join("\n", Arrays.asList(ls).subList(0, Math.min(n, ls.length)))
                 + (ls.length > n ? "\n… [" + (ls.length - n) + " more lines]" : "");
     }
@@ -77,18 +77,18 @@ public final class Packs {
      *  whole prompt when it has no such heading. The rung's PLANNING protocol is stripped: in
      *  orchestrated mode the plan already exists and is read-only (C-11); the rung's monolithic
      *  budget text is dropped (it contradicts the per-task Budget block — R4 C-20). */
-    public static String contractSection(String promptText) {
-        int i = promptText.indexOf("## Frozen API contract");
+    public static String contractSection(final String promptText) {
+        final int i = promptText.indexOf("## Frozen API contract");
         String txt = i >= 0 ? promptText.substring(i) : promptText;
-        StringBuilder out = new StringBuilder();
+        final var out = new StringBuilder();
         for (String l : txt.split("\n"))
             if (!(l.contains("Protocol for this rung") || (l.contains("IMPLEMENTATION_PLAN.md") && !l.contains("read-only")))) out.append(l).append('\n');
         txt = Pattern.compile("^(#[^\\n]*?)\\s*\\((?:total )?budget[^)]*\\)", Pattern.MULTILINE).matcher(out.toString()).replaceFirst("$1");
         return cap(txt, CAPS.get("contract"));
     }
 
-    public static String planOutline(List<PlanTask> tasks) {
-        StringBuilder b = new StringBuilder();
+    public static String planOutline(final List<PlanTask> tasks) {
+        final var b = new StringBuilder();
         for (PlanTask t : tasks) {
             b.append("- ").append(t.id).append(" — ").append(t.title).append(": ")
                     .append(t.goal == null ? "" : t.goal.substring(0, Math.min(160, t.goal.length())));
@@ -98,7 +98,7 @@ public final class Packs {
         return cap(b.toString(), CAPS.get("plan"));
     }
 
-    public static String stablePack(String promptText, List<PlanTask> tasks) {
+    public static String stablePack(final String promptText, final List<PlanTask> tasks) {
         return String.join("\n\n", List.of(
                 "# Benchmark context (identical for every task of this run)",
                 "You are implementing ONE task of a multi-task plan at a time. Other tasks are done in separate sessions; do not start them. The plan in docs/IMPLEMENTATION_PLAN.md already exists and is READ-ONLY: do not rewrite it. Everything you need to know about the system is below; the current task follows in the user message.",
@@ -107,12 +107,12 @@ public final class Packs {
                 HYGIENE));
     }
 
-    public static String repoTree(Path ws, int depth) {
-        List<String> out = new ArrayList<>();
+    public static String repoTree(final Path ws, final int depth) {
+        final List<String> out = new ArrayList<>();
         try (var walk = Files.walk(ws, depth)) {
             walk.forEach(p -> {
                 if (p.equals(ws)) return;
-                Path rel = ws.relativize(p);
+                final Path rel = ws.relativize(p);
                 if (rel.getNameCount() > 0 && (SKIP.contains(rel.getName(0).toString()) || rel.getName(0).toString().startsWith("."))) return;
                 if (rel.getNameCount() > 0 && rel.getName(rel.getNameCount() - 1).toString().startsWith(".")) return;
                 out.add(rel.toString());
@@ -127,20 +127,20 @@ public final class Packs {
     /** public surface of a source file: package, type headers, public members. Migrations and
      *  OpenAPI are interfaces and go whole; build scripts and config are summarised to their
      *  plugin/dependency/port lines. */
-    public static String signatures(String path, String text) {
-        String low = path.toLowerCase();
+    public static String signatures(final String path, final String text) {
+        final String low = path.toLowerCase();
         if (low.endsWith(".sql") || low.contains("openapi") || (low.endsWith(".yaml") || low.endsWith(".yml")) && path.toLowerCase().contains("api"))
             return cap(text, CAPS.get("iface_file"));
         if (low.endsWith(".gradle") || low.endsWith(".kts") || low.endsWith(".properties") || low.endsWith(".yaml") || low.endsWith(".yml") || low.endsWith(".json")) {
-            List<String> keep = new ArrayList<>();
+            final List<String> keep = new ArrayList<>();
             for (String l : text.split("\n"))
                 if (Pattern.compile("plugins|id ['\"]|implementation|runtimeOnly|testImplementation|version|include|rootProject|server:|port:|datasource|url:|flyway|distributionUrl").matcher(l).find())
                     keep.add(l.stripTrailing());
             return cap(String.join("\n", keep.subList(0, Math.min(40, keep.size()))), CAPS.get("iface_file") / 4);
         }
-        List<String> keep = new ArrayList<>();
+        final List<String> keep = new ArrayList<>();
         for (String line : text.split("\n")) {
-            String s = line.strip();
+            final String s = line.strip();
             if (s.startsWith("package ") || List.of("@Entity", "@Table", "@RestController", "@RequestMapping", "@GetMapping", "@PostMapping", "@Service", "@Repository").stream().anyMatch(s::startsWith)) keep.add(s);
             else if (SIG_RE.matcher(line).find() && !(s.startsWith("private") || s.startsWith("//") || s.startsWith("*") || s.startsWith("/*")))
                 keep.add(line.stripTrailing().replaceAll("\\s*\\{\\s*$", ""));
@@ -150,34 +150,34 @@ public final class Packs {
     }
 
     /** files changed by the task's dependencies (from their snapshot diffs) -> public surface only */
-    public static String dependencyInterfaces(Path ws, PlanTask task, Map<String, String[]> snapshots, Set<String> done) {
-        List<String> files = new ArrayList<>();
+    public static String dependencyInterfaces(final Path ws, final PlanTask task, final Map<String, String[]> snapshots, final Set<String> done) {
+        final List<String> files = new ArrayList<>();
         for (String d : task.deps == null ? List.<String>of() : task.deps) {
             if (!done.contains(d) || !snapshots.containsKey(d)) continue;
-            String[] s = snapshots.get(d);
+            final String[] s = snapshots.get(d);
             for (String f : git(ws, "diff", "--name-only", s[0] + ".." + s[1]).split("\n"))
                 if (!f.isBlank() && Files.isRegularFile(ws.resolve(f)) && !files.contains(f)) files.add(f);
         }
         for (String pat : List.of("**/openapi*.y*ml", "**/api*.y*ml", "**/db/migration/*.sql"))   // canonical order (R4 C-21)
             for (Path p : com.strgmai.ace.service.oracle.checks.StructureChecks.glob(ws, pat)) {
-                String rel = ws.relativize(p).toString();
+                final String rel = ws.relativize(p).toString();
                 if (!files.contains(rel)) files.add(rel);
             }
-        boolean hasSnapDeps = task.deps != null && task.deps.stream().anyMatch(snapshots::containsKey);
+        final boolean hasSnapDeps = task.deps != null && task.deps.stream().anyMatch(snapshots::containsKey);
         if (task.deps != null && !task.deps.isEmpty() && !hasSnapDeps)
             for (Path p : com.strgmai.ace.service.oracle.checks.StructureChecks.glob(ws, "**/src/main/**/*.*")) {
-                String rel = ws.relativize(p).toString();
+                final String rel = ws.relativize(p).toString();
                 if (!files.contains(rel)) files.add(rel);
             }
-        StringBuilder parts = new StringBuilder();
+        final var parts = new StringBuilder();
         int total = 0;
         for (String f : files) {
             if (!List.of(".java", ".kt", ".kts", ".gradle", ".yaml", ".yml", ".sql", ".json", ".properties").stream().anyMatch(f::endsWith)) continue;
             String txt;
             try { txt = Files.readString(ws.resolve(f)); } catch (IOException e) { continue; }
-            String sig = signatures(f, txt);
+            final String sig = signatures(f, txt);
             if (sig.isBlank()) continue;
-            String block = "### " + f + "\n```\n" + sig + "\n```";
+            final String block = "### " + f + "\n```\n" + sig + "\n```";
             if (total + block.length() > CAPS.get("iface_total")) { parts.append("… [").append(files.size()).append(" more files omitted by the interface cap]"); break; }
             parts.append(block).append('\n');
             total += block.length();
@@ -185,11 +185,11 @@ public final class Packs {
         return parts.isEmpty() ? "(no dependency files yet)" : parts.toString();
     }
 
-    static String git(Path ws, String... args) {
+    static String git(final Path ws, final String... args) {
         try {
-            List<String> cmd = new ArrayList<>(List.of("git", "-C", ws.toString()));
+            final List<String> cmd = new ArrayList<>(List.of("git", "-C", ws.toString()));
             cmd.addAll(List.of(args));
-            Process p = new ProcessBuilder(cmd).start();
+            final Process p = new ProcessBuilder(cmd).start();
             return p.waitFor() == 0 ? new String(p.getInputStream().readAllBytes()) : "";
         } catch (Exception e) { return ""; }
     }
@@ -198,25 +198,25 @@ public final class Packs {
 
     /** the LAST test/build run the agent made in a session, green or red, as (label, tail). Tool
      *  results are paired with their tool call by id (a `read` of a test file is not a test run — C-7). */
-    public static String[] lastTestOutput(Path sessionPath) {
+    public static String[] lastTestOutput(final Path sessionPath) {
         if (sessionPath == null || !Files.isRegularFile(sessionPath)) return new String[]{"", ""};
-        Map<String, String> cmds = new HashMap<>();
+        final Map<String, String> cmds = new HashMap<>();
         String[] last = {"", ""};
         try {
             for (String line : Files.readAllLines(sessionPath)) {
                 if (line.isBlank()) continue;
                 JsonNode r;
                 try { r = JSON.readTree(line); } catch (Exception e) { continue; }
-                JsonNode msg = r.path("message");
+                final JsonNode msg = r.path("message");
                 if (!"message".equals(r.path("type").asText())) continue;
                 if ("assistant".equals(msg.path("role").asText()))
                     for (JsonNode c : msg.path("content"))
                         if ("toolCall".equals(c.path("type").asText()) && "bash".equals(c.path("name").asText()))
                             cmds.put(c.path("id").asText(), c.path("arguments").path("command").asText(""));
                 else if ("toolResult".equals(msg.path("role").asText()) && "bash".equals(msg.path("toolName").asText())) {
-                    String cmd = cmds.getOrDefault(msg.path("toolCallId").asText(), "");
+                    final String cmd = cmds.getOrDefault(msg.path("toolCallId").asText(), "");
                     if (!TEST_CMD.matcher(cmd).find()) continue;
-                    String txt = msg.path("content").path(0).path("text").asText("");
+                    final String txt = msg.path("content").path(0).path("text").asText("");
                     boolean red = Pattern.compile("FAILED|BUILD FAILED|error:|Exception|tests? failed").matcher(txt).find()
                             || msg.path("isError").asBoolean(false);
                     last = new String[]{red ? "red" : "green", linesCap(txt.strip(), CAPS.get("test_tail"))};
@@ -231,7 +231,7 @@ public final class Packs {
     public static String taskPack(Path ws, PlanTask t, List<PlanTask> tasks, Map<String, String[]> snapshots, Set<String> done,
                                   String prevTask, Path prevSession, List<String[]> handoffs, String verified,
                                   List<String[]> mergeConflicts, List<String> parallelWith) {
-        StringBuilder entry = new StringBuilder();
+        final var entry = new StringBuilder();
         for (String k : List.of("id", "title", "goal", "services", "acceptance"))
             entry.append("- ").append(k).append(": ").append(field(t, k)).append('\n');
         entry.append(t.deps == null || t.deps.isEmpty() ? "- depends on: nothing" : "- depends on: " + String.join(", ", t.deps));
@@ -244,37 +244,37 @@ public final class Packs {
             parts.add("## Working in parallel\nTasks " + String.join(", ", parallelWith) + " are being implemented AT THE SAME TIME by other sessions in separate copies of this repository; "
                     + "the harness merges all copies afterwards. Touch only the files your task needs, do not edit files that belong to those tasks, and do not rename or move shared files (build scripts, migrations, application config) — add to them at the end.");
         if (mergeConflicts != null && !mergeConflicts.isEmpty()) {
-            TreeSet<String> files = new TreeSet<>();
+            final var files = new TreeSet<String>();
             mergeConflicts.forEach(c -> files.add(c[1]));
             parts.add("## Merge conflicts to resolve\nThe harness merged parallel tasks and kept their conflicts with `<<<<<<<`/`>>>>>>>` markers in: "
                     + String.join(", ", files.stream().limit(20).toList()) + ". Resolve them first (the build fails until you do).");
         }
         if (prevTask != null && snapshots.containsKey(prevTask)) {
-            String[] s = snapshots.get(prevTask);
+            final String[] s = snapshots.get(prevTask);
             parts.add("## Previous task (" + prevTask + ") changed\n```\n" + linesCap(git(ws, "diff", "--stat", s[0] + ".." + s[1]), CAPS.get("diffstat")).strip() + "\n```");
             if (verified != null) parts.add("## Harness verification after " + prevTask + "\n" + verified);
-            String[] lt = lastTestOutput(prevSession);
+            final String[] lt = lastTestOutput(prevSession);
             if (!lt[1].isBlank()) parts.add("## Last test/build run the agent made in " + prevTask + " (" + lt[0] + ")\n```\n" + lt[1] + "\n```");
         } else if (verified != null) parts.add("## Harness verification\n" + verified);
         if (handoffs != null && !handoffs.isEmpty()) {
-            StringBuilder blocks = new StringBuilder();
+            final var blocks = new StringBuilder();
             int total = 0;
             for (String[] h : handoffs) {
-                String b = "### Handoff from " + h[0] + "\n" + cap(h[1], CAPS.get("handoff_each"));
+                final String b = "### Handoff from " + h[0] + "\n" + cap(h[1], CAPS.get("handoff_each"));
                 if (total + b.length() > CAPS.get("handoff_total")) break;
                 blocks.append(b).append('\n');
                 total += b.length();
             }
             parts.add("## Notes left by earlier tasks\n" + blocks);
         }
-        Path pp = ws.resolve("docs/PROGRESS.md");
+        final Path pp = ws.resolve("docs/PROGRESS.md");
         if (Files.exists(pp)) { try { parts.add("## docs/PROGRESS.md\n" + capTail(Files.readString(pp), CAPS.get("progress"))); } catch (IOException ignore) {} }
         return String.join("\n\n", parts);
     }
 
     private static JsonNode t0node(JsonNode n) { return n; }
 
-    static String field(PlanTask t, String k) {
+    static String field(final PlanTask t, String k) {
         return switch (k) {
             case "id" -> t.id; case "title" -> t.title == null ? "" : t.title; case "goal" -> t.goal == null ? "" : t.goal;
             case "services" -> t.services == null ? "" : t.services; case "acceptance" -> t.acceptance == null ? "" : t.acceptance;
@@ -283,7 +283,7 @@ public final class Packs {
     }
 
     // ---- the instruction texts (verbatim ports)
-    public static String taskInstruction(String id) {
+    public static String taskInstruction(final String id) {
         return "Implement task " + id + " only. Do not start other tasks. Write tests that prove its acceptance criterion and run them; "
                 + "your tests must use DISCRIMINATING inputs - non-default values a hardcoded or ignored-input implementation would get "
                 + "wrong (e.g., POST a non-USD currency and assert THAT currency echoes back, not the default; assert a non-zero, "
@@ -292,12 +292,12 @@ public final class Packs {
                 + "Before you stop, append exactly one line to docs/PROGRESS.md: `" + id + " | done | <how verified>` when the acceptance "
                 + "criterion holds, `" + id + " | partial | <what works, what remains>` when it does not yet, or `" + id + " | blocked | <why>`.";
     }
-    public static String wrapupInstruction(String id) {
+    public static String wrapupInstruction(final String id) {
         return "Time is up for " + id + ". Do NOT write or edit any more code and do not run builds or tests. Append exactly one line to "
                 + "docs/PROGRESS.md: `" + id + " | done | <how verified>` if the acceptance criterion holds, otherwise "
                 + "`" + id + " | partial | <what works, what remains, last test result>` or `" + id + " | blocked | <why>`. Then stop.";
     }
-    public static String fallbackStatus(String id, String tail) {
+    public static String fallbackStatus(final String id, final String tail) {
         return id + " | unfinished | budget exhausted before a status was written" + (tail == null || tail.isBlank() ? "" : tail);
     }
     public static final String MONO_STATUS_INSTRUCTION = "Before you stop, append a final section `## Status` to docs/PROGRESS.md with one line per plan subtask: "
@@ -313,7 +313,7 @@ public final class Packs {
             + "memory): do NOT keep retrying, run `open -a Docker`, or spawn your own backend - write the Dockerfile/compose.yml from your "
             + "own knowledge, verify behaviour against the provided SPRING_DATASOURCE_*/H2 datasource, and rely on the grader (it builds "
             + "and runs the containers on a clean checkout after your session).";
-    public static String budgetSection(String taskId, String startLocal, String deadlineLocal, int minutes) {
+    public static String budgetSection(final String taskId, final String startLocal, final String deadlineLocal, final int minutes) {
         return "## Budget for " + taskId + "\n- Started " + startLocal + ", hard deadline **" + deadlineLocal + "** (local time, " + minutes
                 + " min). The harness stops the session at the deadline.\n- Run `date` between steps. When fewer than 5 minutes remain, stop coding and write the docs/PROGRESS.md status line described in the instruction.";
     }
@@ -325,7 +325,7 @@ public final class Packs {
             + "host-built jar fails). Stop when everything is green OR when your budget is nearly spent (see the Budget section; "
             + "check `date`). Before you stop, append exactly one line to docs/PROGRESS.md: `INTEGRATION | done | <evidence>` "
             + "or `INTEGRATION | partial | <what remains>`.";
-    public static String handoffInstruction(String id) {
+    public static String handoffInstruction(final String id) {
         return "Write the file handoff/" + id + ".md for a colleague who will implement the remaining tasks in a fresh session: the "
                 + "decisions you made, gotchas, conventions, and facts they need (endpoints, class names, config keys). At most "
                 + "600 words, no code listings. Then stop.";
@@ -360,17 +360,17 @@ public final class Packs {
             Write the JSON with a heredoc or the write tool; validate it parses. Then stop.""";
 
     /** blind=true: no implementer claims and no harness verdict — the anchoring control for reviewer validation (R4 K-1) */
-    public static String reviewPack(Path ws, List<PlanTask> tasks, String verificationText, boolean blind) {
-        List<String> parts = new ArrayList<>(List.of("# Code under review", "## Repository tree\n```\n" + repoTree(ws, 8) + "\n```"));
+    public static String reviewPack(final Path ws, final List<PlanTask> tasks, final String verificationText, final boolean blind) {
+        final List<String> parts = new ArrayList<>(List.of("# Code under review", "## Repository tree\n```\n" + repoTree(ws, 8) + "\n```"));
         if (tasks != null && !tasks.isEmpty()) parts.add("## The plan the code was built from\n" + planOutline(tasks));
         if (blind) return String.join("\n\n", parts);
         if (verificationText != null) parts.add("## Harness verification (the tests in the repository, run by the harness)\n" + verificationText);
-        Path pp = ws.resolve("docs/PROGRESS.md");
+        final Path pp = ws.resolve("docs/PROGRESS.md");
         if (Files.exists(pp)) { try { parts.add("## What the implementer claimed (docs/PROGRESS.md)\n" + capTail(Files.readString(pp), CAPS.get("progress"))); } catch (IOException ignore) {} }
         return String.join("\n\n", parts);
     }
 
-    public static String reviewSystem(String promptText) {
+    public static String reviewSystem(final String promptText) {
         return REVIEW_ROLE + "\n\n## Specification and frozen contract (what the code must satisfy)\n" + contractSection(promptText);
     }
 
@@ -394,8 +394,8 @@ public final class Packs {
             Map.entry("M3", Pattern.compile("\\.equals\\(|equals on")),
             Map.entry("M4", Pattern.compile("sells? (are|is) (not )?subtract|adding replay", Pattern.CASE_INSENSITIVE)));
 
-    public static List<String> findingCheckIds(String issue) {
-        List<String> out = new ArrayList<>();
+    public static List<String> findingCheckIds(final String issue) {
+        final List<String> out = new ArrayList<>();
         for (Map.Entry<String, Pattern> e : FINDING_KEYWORDS.entrySet())
             if (e.getValue().matcher(issue == null ? "" : issue).find()) out.add(e.getKey());
         Collections.sort(out);
@@ -404,50 +404,50 @@ public final class Packs {
 
     /** tolerant parse of review/self_review.json -> normalised fields, or null ("85%" is 85, a
      *  fraction 0-1 is a percentage in disguise — R4 C-12; severity synonyms collapse to HIGH). */
-    public static Map<String, Object> parseSelfReview(Path path) {
+    public static Map<String, Object> parseSelfReview(final Path path) {
         return parseReviewShape(path, false);
     }
 
-    static Map<String, Object> parseReviewShape(Path path, boolean trajectory) {
+    static Map<String, Object> parseReviewShape(final Path path, final boolean trajectory) {
         if (path == null || !Files.isRegularFile(path)) return null;
         String txt;
         try { txt = Files.readString(path); } catch (IOException e) { return null; }
         JsonNode d;
         try { d = JSON.readTree(txt); } catch (Exception e) {
-            Matcher m = Pattern.compile("\\{.*\\}", Pattern.DOTALL).matcher(txt);
+            final Matcher m = Pattern.compile("\\{.*\\}", Pattern.DOTALL).matcher(txt);
             if (!m.find()) return null;
             try { d = JSON.readTree(m.group(0)); } catch (Exception e2) { return null; }
         }
         if (!d.isObject()) return null;
-        Double score = pct(d.path("score"));
+        final Double score = pct(d.path("score"));
         if (score == null) return null;
-        Map<String, Object> out = new LinkedHashMap<>();
+        final Map<String, Object> out = new LinkedHashMap<>();
         out.put("score", score);
         out.put("confidence", num(d.path("confidence"), 0, 1));
-        Map<String, Double> cats = new LinkedHashMap<>();
+        final Map<String, Double> cats = new LinkedHashMap<>();
         d.path("categories").fields().forEachRemaining(e -> { Double v = pct(e.getValue()); if (v != null) cats.put(e.getKey(), v); });
         out.put("categories", cats);
         out.put("would_ship", d.path("would_ship").isBoolean() ? d.path("would_ship").asBoolean() : null);
-        List<Map<String, Object>> findings = new ArrayList<>();
+        final List<Map<String, Object>> findings = new ArrayList<>();
         for (JsonNode f : d.path("findings")) {
             if (!f.isObject()) continue;
             String sev = f.path("severity").asText("").toUpperCase();
             sev = List.of("CRITICAL", "BLOCKER", "SEVERE").contains(sev) ? "HIGH" : List.of("HIGH", "MEDIUM", "LOW").contains(sev) ? sev : "LOW";
-            Map<String, Object> fd = new LinkedHashMap<>();
+            final Map<String, Object> fd = new LinkedHashMap<>();
             fd.put("severity", sev);
             fd.put("file", head(f.path("file").asText(""), 200));
             fd.put("line", f.path("line").isInt() ? f.path("line").asInt() : null);
             fd.put("issue", head(f.path("issue").asText(""), 300));
             fd.put("fix", head(f.path("fix").asText(""), 300));
             if (trajectory && f.path("turns").isArray()) {
-                List<Integer> turns = new ArrayList<>();
+                final List<Integer> turns = new ArrayList<>();
                 f.path("turns").forEach(t -> turns.add(t.asInt()));
                 fd.put("turns", turns);
             }
             findings.add(fd);
         }
         out.put("findings", findings);
-        Map<String, Long> bySev = new LinkedHashMap<>();
+        final Map<String, Long> bySev = new LinkedHashMap<>();
         for (String s : List.of("HIGH", "MEDIUM", "LOW")) bySev.put(s, findings.stream().filter(f -> s.equals(f.get("severity"))).count());
         out.put("findings_by_severity", bySev);
         if (trajectory) {
@@ -457,13 +457,13 @@ public final class Packs {
         return out;
     }
 
-    static Double pct(JsonNode v) {
+    static Double pct(final JsonNode v) {
         if (v == null || v.isMissingNode() || v.isNull()) return null;
-        Double x = num(v, 0, 100);
+        final Double x = num(v, 0, 100);
         if (x != null && x > 0 && x <= 1 && !v.isTextual()) return x * 100;   // a fraction 0-1 is a percentage in disguise
         return x;
     }
-    static Double num(JsonNode v, double lo, double hi) {
+    static Double num(final JsonNode v, final double lo, final double hi) {
         double x;
         if (v.isNumber()) x = v.asDouble();
         else if (v.isTextual()) { try { x = Double.parseDouble(v.asText().strip().replaceAll("%$", "")); } catch (NumberFormatException e) { return null; } }
@@ -494,8 +494,8 @@ public final class Packs {
             {"score": <0-100>, "confidence": <0.0-1.0>, "categories": {...}, "findings": [{"severity": "...", "turns": [...], "issue": "...", "better": "..."}], "wasted_turns_estimate": <int>, "would_trust_unsupervised": <true|false>}
             Validate it parses. Then stop.""";
 
-    public static String trajectoryReviewPack(Map<String, Object> summary, String transcriptHead) {
-        Map<String, Object> facts = new LinkedHashMap<>();
+    public static String trajectoryReviewPack(final Map<String, Object> summary, final String transcriptHead) {
+        final Map<String, Object> facts = new LinkedHashMap<>();
         for (String k : List.of("turns", "completion_tokens_total", "tool_calls_total", "tool_profile", "identical_calls_repeated", "edit_read_pingpong",
                 "http_errors", "stalled_turns_gt600s", "prompt_tokens_max", "context_drops_gt30pct", "reasoning_share_pct", "first_artifact_turn", "flags", "per_task"))
             if (summary.containsKey(k)) facts.put(k, summary.get(k));
@@ -508,7 +508,7 @@ public final class Packs {
                         + cap(transcriptHead == null ? "" : transcriptHead, CAPS.get("transcript_head"))));
     }
 
-    public static Map<String, Object> parseTrajectoryReview(Path path) {
+    public static Map<String, Object> parseTrajectoryReview(final Path path) {
         return parseReviewShape(path, true);
     }
 
@@ -527,46 +527,46 @@ public final class Packs {
             Every task id of the plan appears exactly once; a task may only be in a wave AFTER all the tasks it depends on; ownership paths are
             repository-relative globs. Validate the JSON parses. Then stop.""";
 
-    public static String parallelPlanPack(List<PlanTask> tasks) {
+    public static String parallelPlanPack(final List<PlanTask> tasks) {
         return "# Tasks of the plan (ids, goals, declared dependencies)\n" + planOutline(tasks);
     }
 
     /** tolerant parse of docs/parallel_plan.json -> {waves, ownership, shared_files} or null */
-    public static Map<String, Object> parseParallelPlan(Path path) {
+    public static Map<String, Object> parseParallelPlan(final Path path) {
         if (path == null || !Files.isRegularFile(path)) return null;
         String txt;
         try { txt = Files.readString(path); } catch (IOException e) { return null; }
         JsonNode d;
         try { d = JSON.readTree(txt); } catch (Exception e) {
-            Matcher m = Pattern.compile("\\{.*\\}", Pattern.DOTALL).matcher(txt);
+            final Matcher m = Pattern.compile("\\{.*\\}", Pattern.DOTALL).matcher(txt);
             if (!m.find()) return null;
             try { d = JSON.readTree(m.group(0)); } catch (Exception e2) { return null; }
         }
         if (!d.isObject() || !d.path("waves").isArray()) return null;
-        Pattern idNorm = Pattern.compile("^(?:T|ST|Task|Subtask)[- ]?0*(\\d+)$", Pattern.CASE_INSENSITIVE);
-        List<List<String>> waves = new ArrayList<>();
+        final Pattern idNorm = Pattern.compile("^(?:T|ST|Task|Subtask)[- ]?0*(\\d+)$", Pattern.CASE_INSENSITIVE);
+        final List<List<String>> waves = new ArrayList<>();
         for (JsonNode w : d.get("waves")) {
-            List<String> wv = new ArrayList<>();
+            final List<String> wv = new ArrayList<>();
             for (JsonNode t : (w.isArray() ? w : List.of(w))) {   // a bare task id counts as a one-task wave
-                Matcher m = idNorm.matcher(t.asText().strip());
+                final Matcher m = idNorm.matcher(t.asText().strip());
                 wv.add(m.find() ? "T" + Integer.parseInt(m.group(1)) : t.asText().strip());
             }
             waves.add(wv);
         }
-        Map<String, List<String>> own = new LinkedHashMap<>();
+        final Map<String, List<String>> own = new LinkedHashMap<>();
         d.path("ownership").fields().forEachRemaining(e -> {
             if (e.getKey() != null) {
-                Matcher m = idNorm.matcher(e.getKey().strip());
-                String k = m.find() ? "T" + Integer.parseInt(m.group(1)) : e.getKey();
-                List<String> globs = new ArrayList<>();
+                final Matcher m = idNorm.matcher(e.getKey().strip());
+                final String k = m.find() ? "T" + Integer.parseInt(m.group(1)) : e.getKey();
+                final List<String> globs = new ArrayList<>();
                 if (e.getValue().isArray()) e.getValue().forEach(g -> globs.add(g.asText()));
                 else if (e.getValue().isTextual()) globs.add(e.getValue().asText());   // a bare glob is a one-glob list
                 own.put(k, globs);
             }
         });
-        List<String> shared = new ArrayList<>();
+        final List<String> shared = new ArrayList<>();
         d.path("shared_files").forEach(s -> shared.add(s.asText()));
-        Map<String, Object> out = new LinkedHashMap<>();
+        final Map<String, Object> out = new LinkedHashMap<>();
         out.put("waves", waves);
         out.put("ownership", own);
         out.put("shared_files", shared.subList(0, Math.min(50, shared.size())));
@@ -575,26 +575,26 @@ public final class Packs {
     }
 
     /** what the merge of a parallel wave broke, for the dedicated fix session */
-    public static String fixPack(Path ws, Map<String, Object> problems) {
-        List<String> parts = new ArrayList<>(List.of("# Problems after merging a parallel wave"));
+    public static String fixPack(final Path ws, final Map<String, Object> problems) {
+        final List<String> parts = new ArrayList<>(List.of("# Problems after merging a parallel wave"));
         if (problems.get("conflicts") instanceof List<?> cs && !cs.isEmpty()) {
-            StringBuilder b = new StringBuilder();
+            final var b = new StringBuilder();
             cs.forEach(c -> b.append("- ").append(((String[]) c)[0]).append(": ").append(((String[]) c)[1]).append('\n'));
             parts.add("## Merge conflicts (markers `<<<<<<<`/`>>>>>>>` left in place)\n" + b);
         }
         if (problems.get("verification") != null) parts.add("## Harness verification of the merged tree\n" + problems.get("verification"));
         if (problems.get("overlaps") instanceof List<?> os && !os.isEmpty()) {
-            StringBuilder b = new StringBuilder();
+            final var b = new StringBuilder();
             os.forEach(o -> { Object[] x = (Object[]) o; b.append("- ").append(x[0]).append(": ").append(x[1]).append('\n'); });
             parts.add("## Files edited by more than one task in the same wave\n" + b);
         }
         if (problems.get("ownership_violations") instanceof List<?> vs && !vs.isEmpty()) {
-            StringBuilder b = new StringBuilder();
+            final var b = new StringBuilder();
             vs.stream().limit(30).forEach(v -> { Object[] x = (Object[]) v; b.append("- ").append(x[0]).append(": ").append(x[1]).append('\n'); });
             parts.add("## Files a task edited outside the ownership it declared\n" + b);
         }
         parts.add("## Repository tree\n```\n" + repoTree(ws, 8) + "\n```");
-        Path pp = ws.resolve("docs/PROGRESS.md");
+        final Path pp = ws.resolve("docs/PROGRESS.md");
         if (Files.exists(pp)) { try { parts.add("## docs/PROGRESS.md\n" + capTail(Files.readString(pp), CAPS.get("progress"))); } catch (IOException ignore) {} }
         return String.join("\n\n", parts);
     }

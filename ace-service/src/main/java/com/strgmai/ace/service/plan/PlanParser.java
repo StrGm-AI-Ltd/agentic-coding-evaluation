@@ -26,7 +26,7 @@ public final class PlanParser {
 
     public static String normId(String n) { return "T" + Integer.parseInt(n); }
 
-    public static List<PlanTask> parseFile(java.nio.file.Path path) {
+    public static List<PlanTask> parseFile(final java.nio.file.Path path) {
         try {
             return parse(java.nio.file.Files.readString(path));
         } catch (java.io.IOException e) {
@@ -34,18 +34,18 @@ public final class PlanParser {
         }
     }
 
-    public static List<PlanTask> parse(String text) {
-        List<List<String>> blocks = splitBlocks(text);
-        Map<String, PlanTask> tasks = new LinkedHashMap<>();
+    public static List<PlanTask> parse(final String text) {
+        final List<List<String>> blocks = splitBlocks(text);
+        final Map<String, PlanTask> tasks = new LinkedHashMap<>();
         for (List<String> block : blocks) {
-            String head = block.get(0);
-            Matcher m = ID_RE.matcher(head);
+            final String head = block.get(0);
+            final Matcher m = ID_RE.matcher(head);
             if (!m.find()) continue;
-            String tid = normId(m.group(1));
-            PlanTask t = new PlanTask(tid, titleOf(head, tid));
-            boolean table = head.strip().startsWith("|");
+            final String tid = normId(m.group(1));
+            final var t = new PlanTask(tid, titleOf(head, tid));
+            final boolean table = head.strip().startsWith("|");
             if (table) {
-                List<String> cells = new ArrayList<>();
+                final List<String> cells = new ArrayList<>();
                 for (String c : head.strip().replaceAll("^\\||\\|$", "").split("\\|")) cells.add(c.strip());
                 if (cells.size() >= 2) t.goal = cells.get(1);
                 if (cells.size() >= 3) t.services = cells.get(2);
@@ -53,21 +53,21 @@ public final class PlanParser {
                 if (cells.size() >= 5) t.acceptance = cells.get(4);
             }
             // fields may sit on the head line, on labelled lines, or under field sub-headings (C-8)
-            List<String> lines = new ArrayList<>(block);
+            final List<String> lines = new ArrayList<>(block);
             for (int i = 0; i < lines.size(); i++) {
-                Matcher fh = FIELD_HEADING.matcher(lines.get(i));
+                final Matcher fh = FIELD_HEADING.matcher(lines.get(i));
                 if (fh.find()) {
-                    StringBuilder val = new StringBuilder();
+                    final var val = new StringBuilder();
                     for (int j = i + 1; j < lines.size() && !lines.get(j).matches("\\s{0,3}#{1,6}\\s.*"); j++)
                         val.append(lines.get(j).strip()).append(' ');
                     lines.set(i, fh.group(1) + ": " + val.toString().strip());
                 }
             }
-            List<String> segs = new ArrayList<>();
+            final List<String> segs = new ArrayList<>();
             for (String line : lines) for (String seg : SEGMENT.split(line)) if (!seg.strip().isEmpty()) segs.add(seg);
             for (String seg : segs) {
                 for (var e : FIELD_RE.entrySet()) {
-                    Matcher mm = e.getValue().matcher(seg);
+                    final Matcher mm = e.getValue().matcher(seg);
                     if (mm.find()) {
                         String val = mm.group(2).strip();
                         if (val.endsWith(".")) val = val.substring(0, val.length() - 1);
@@ -91,14 +91,14 @@ public final class PlanParser {
                 t.goal = (body.isEmpty() ? t.title : body.substring(0, Math.min(body.length(), 300)));
             }
             if (t.deps == null) {
-                String body = String.join("\n", block.subList(1, block.size()));
-                Set<String> mentioned = new TreeSet<>(Comparator.comparingInt(x -> Integer.parseInt(x.substring(1))));
+                final String body = String.join("\n", block.subList(1, block.size()));
+                final Set<String> mentioned = new TreeSet<>(Comparator.comparingInt(x -> Integer.parseInt(x.substring(1))));
                 for (var dm : ID_RE.matcher(body).results().toList()) { String x = normId(dm.group(1)); if (!x.equals(tid)) mentioned.add(x); }
                 t.deps = (!mentioned.isEmpty() && Pattern.compile("\\b(depend|after|requires|prereq|blocked)", Pattern.CASE_INSENSITIVE).matcher(body).find())
                         ? List.copyOf(mentioned) : List.of();
             }
             t.dedupScore = t.score() + (table ? 0 : 1);   // a detailed section beats an overview row
-            PlanTask prev = tasks.get(tid);
+            final PlanTask prev = tasks.get(tid);
             if (prev == null || t.dedupScore > prev.dedupScore) tasks.put(tid, t);
         }
         if (tasks.isEmpty()) throw new PlanError("no tasks found (expected headings/list items/table rows carrying ids like T1, ST-01, Task 3)");
@@ -107,23 +107,23 @@ public final class PlanParser {
         return topological(tasks);
     }
 
-    private static String titleOf(String head, String tid) {
+    private static String titleOf(final String head, final String tid) {
         String s = head.replaceFirst("^[\\s#*|\\-.\\d)]+", "").strip().replaceFirst("^\\|", "").strip();
         s = s.replaceFirst("^(?:T|ST|Task|Subtask)[- ]?\\d+\\s*[—:\\-–.]*\\s*", "").strip();
         return (s.isEmpty() ? tid : s).substring(0, Math.min(s.isEmpty() ? tid.length() : s.length(), 120));
     }
 
-    static List<String> parseDeps(String s) {
+    static List<String> parseDeps(final String s) {
         if (Pattern.compile("\\b(none|n/a|-|—|no dependencies|nothing)\\b", Pattern.CASE_INSENSITIVE).matcher(s.strip()).find() && !ID_RE.matcher(s).find())
             return List.of();
-        Set<String> ids = new TreeSet<>(Comparator.comparingInt(x -> Integer.parseInt(x.substring(1))));
+        final Set<String> ids = new TreeSet<>(Comparator.comparingInt(x -> Integer.parseInt(x.substring(1))));
         for (var m : ID_RE.matcher(s).results().toList()) ids.add(normId(m.group(1)));
         return List.copyOf(ids);
     }
 
     /** blocks start at a heading/list item/table row that carries a task id; a non-task, non-field heading ends the task */
-    static List<List<String>> splitBlocks(String text) {
-        List<List<String>> blocks = new ArrayList<>();
+    static List<List<String>> splitBlocks(final String text) {
+        final List<List<String>> blocks = new ArrayList<>();
         List<String> cur = null;
         for (String line : text.split("\n", -1)) {
             boolean starts = (line.matches("\\s{0,3}#{1,6}\\s.*") && ID_RE.matcher(line).find())
@@ -139,15 +139,15 @@ public final class PlanParser {
         return blocks;
     }
 
-    private static List<PlanTask> topological(Map<String, PlanTask> tasks) {
-        List<PlanTask> order = new ArrayList<>();
-        Set<String> done = new HashSet<>(), visiting = new HashSet<>();
+    private static List<PlanTask> topological(final Map<String, PlanTask> tasks) {
+        final List<PlanTask> order = new ArrayList<>();
+        final Set<String> done = new HashSet<>(), visiting = new HashSet<>();
         for (String tid : tasks.keySet().stream().sorted(Comparator.comparingInt(x -> Integer.parseInt(x.substring(1)))).toList())
             visit(tid, tasks, new ArrayDeque<>(), done, visiting, order);
         return order;
     }
 
-    private static void visit(String tid, Map<String, PlanTask> tasks, Deque<String> chain, Set<String> done, Set<String> visiting, List<PlanTask> order) {
+    private static void visit(final String tid, final Map<String, PlanTask> tasks, final Deque<String> chain, final Set<String> done, final Set<String> visiting, final List<PlanTask> order) {
         if (done.contains(tid)) return;
         if (visiting.contains(tid)) { chain.add(tid); throw new PlanError("dependency cycle: " + String.join(" -> ", chain)); }
         visiting.add(tid); chain.add(tid);
@@ -156,46 +156,46 @@ public final class PlanParser {
     }
 
     /** topological levels: wave k holds the tasks whose dependencies are all in earlier waves */
-    public static List<List<PlanTask>> waves(List<PlanTask> tasks) {
-        Map<String, Integer> level = new HashMap<>();
+    public static List<List<PlanTask>> waves(final List<PlanTask> tasks) {
+        final Map<String, Integer> level = new HashMap<>();
         for (PlanTask t : tasks) {
-            int max = t.deps.stream().filter(level::containsKey).mapToInt(level::get).max().orElse(-1);
+            final int max = t.deps.stream().filter(level::containsKey).mapToInt(level::get).max().orElse(-1);
             level.put(t.id, 1 + max);
         }
-        Map<Integer, List<PlanTask>> out = new TreeMap<>();
+        final Map<Integer, List<PlanTask>> out = new TreeMap<>();
         for (PlanTask t : tasks) out.computeIfAbsent(level.get(t.id), x -> new ArrayList<>()).add(t);
         return out.values().stream().toList();
     }
 
     /** port of evaluate_parallel_plan: valid = every task exactly once, never before/beside a dependency;
      *  parallelism_pct = how much of the available parallelism the schedule captures. */
-    public static Map<String, Object> evaluateParallelPlan(Map<String, Object> pp, List<PlanTask> tasks) {
-        List<String> errors = new ArrayList<>();
-        List<String> ids = tasks.stream().map(t -> t.id).toList();
-        Map<String, Set<String>> deps = new HashMap<>();
+    public static Map<String, Object> evaluateParallelPlan(final Map<String, Object> pp, final List<PlanTask> tasks) {
+        final List<String> errors = new ArrayList<>();
+        final List<String> ids = tasks.stream().map(t -> t.id).toList();
+        final Map<String, Set<String>> deps = new HashMap<>();
         tasks.forEach(t -> deps.put(t.id, new HashSet<>(t.deps == null ? List.of() : t.deps)));
-        int minWaves = waves(tasks).size();
+        final int minWaves = waves(tasks).size();
         if (pp == null || !(pp.get("waves") instanceof List<?> ws) || ws.isEmpty())
             return Map.of("valid", false, "errors", List.of("no parallelisation plan"), "n_tasks", ids.size(), "min_waves", minWaves, "parallelism_pct", 0.0);
-        List<List<String>> planWaves = new ArrayList<>();
+        final List<List<String>> planWaves = new ArrayList<>();
         ws.forEach(w -> planWaves.add(((List<?>) w).stream().map(String::valueOf).toList()));
-        List<String> flat = planWaves.stream().flatMap(List::stream).toList();
-        List<String> missing = ids.stream().filter(i -> !flat.contains(i)).toList();
-        List<String> unknown = flat.stream().filter(i -> !ids.contains(i)).toList();
-        List<String> dup = flat.stream().filter(i -> Collections.frequency(flat, i) > 1).distinct().toList();
+        final List<String> flat = planWaves.stream().flatMap(List::stream).toList();
+        final List<String> missing = ids.stream().filter(i -> !flat.contains(i)).toList();
+        final List<String> unknown = flat.stream().filter(i -> !ids.contains(i)).toList();
+        final List<String> dup = flat.stream().filter(i -> Collections.frequency(flat, i) > 1).distinct().toList();
         if (!missing.isEmpty()) errors.add("tasks missing from the schedule: " + missing);
         if (!unknown.isEmpty()) errors.add("unknown task ids: " + unknown);
         if (!dup.isEmpty()) errors.add("tasks scheduled more than once: " + dup);
-        Set<String> seen = new HashSet<>();
+        final Set<String> seen = new HashSet<>();
         for (int i = 0; i < planWaves.size(); i++) {
             for (String t : planWaves.get(i))
                 for (String d : deps.getOrDefault(t, Set.of()))
                     if (!seen.contains(d)) errors.add(t + " in wave " + (i + 1) + " before/beside its dependency " + d);
             seen.addAll(planWaves.get(i));   // per-wave, exactly as the Python original: only earlier waves count as seen
         }
-        int n = ids.size(), wPlan = (int) planWaves.stream().filter(w -> !w.isEmpty()).count();
-        double par = n <= minWaves ? 100.0 : Math.max(0, Math.min(100, 100.0 * (n - wPlan) / (n - minWaves)));
-        Map<String, Object> out = new LinkedHashMap<>();
+        final int n = ids.size(), wPlan = (int) planWaves.stream().filter(w -> !w.isEmpty()).count();
+        final double par = n <= minWaves ? 100.0 : Math.max(0, Math.min(100, 100.0 * (n - wPlan) / (n - minWaves)));
+        final Map<String, Object> out = new LinkedHashMap<>();
         out.put("valid", errors.isEmpty());
         out.put("errors", errors);
         out.put("n_tasks", n);

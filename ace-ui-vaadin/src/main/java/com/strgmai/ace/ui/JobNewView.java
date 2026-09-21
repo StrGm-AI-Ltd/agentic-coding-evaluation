@@ -66,14 +66,14 @@ public class JobNewView extends VerticalLayout {
     private final Checkbox skipDocker = new Checkbox("skip_docker");
     private final VerticalLayout errors = new VerticalLayout();
 
-    public JobNewView(ServiceClient client) {
+    public JobNewView(final ServiceClient client) {
         this.client = client;
         setPadding(true);
 
         task.setAllowCustomValue(true);
         task.setRequired(true);
         task.setPlaceholder("L1…L7 rung");
-        for (ComboBox<String> picker : List.of(model, reviewerModel, trajectoryReviewerModel)) {
+        for (final var picker : List.of(model, reviewerModel, trajectoryReviewerModel)) {
             picker.setAllowCustomValue(true);
         }
         reviewerModel.setPlaceholder("provider/model — openrouter/…, gpt-5, claude-opus-5…");
@@ -127,14 +127,14 @@ public class JobNewView extends VerticalLayout {
                 Forms.row(javaHome, config, noContextProbe, contextProbeFresh, keepWorkspace),
                 Forms.row(manageDocker, skipDocker, priority)));
 
-        Button submit = new Button("Enqueue job", e -> submit());
+        final var submit = new Button("Enqueue job", e -> submit());
         submit.getStyle().set("margin-top", "12px");
         add(submit);
 
         addAttachListener(e -> loadSuggestions());
     }
 
-    private static void configureSelect(Select<String> select, String... options) {
+    private static void configureSelect(final Select<String> select, final String... options) {
         select.setItems(options);
         select.setValue(options[0]);
         select.setItemLabelGenerator(value -> value.isEmpty() ? "—" : value);
@@ -142,19 +142,20 @@ public class JobNewView extends VerticalLayout {
 
     private void loadSuggestions() {
         try {
-            List<Api.Run> runs = client.runs(null, null, null, null, null);
+            final var runs = client.runs(null, null, null, null, null);
             task.setItems(Links.distinctRuns(runs, Api.Run::task));
             model.setItems(Links.distinctRuns(runs, Api.Run::model));
             reviewerModel.setItems(ExperimentNewView.reviewerSuggestions());
             trajectoryReviewerModel.setItems(ExperimentNewView.reviewerSuggestions());
-        } catch (Exception ignored) {
+        } catch (final Exception ignored) {
             // suggestions are optional; the server still validates
         }
     }
 
     /** Collects the raw field values by RunSpec key, exactly as the server's own form does. */
     private Map<String, Object> rawValues() {
-        Map<String, Object> raw = new LinkedHashMap<>();
+        // returned as Map<String, Object>; empty-diamond under var would infer <Object, Object>
+        final Map<String, Object> raw = new LinkedHashMap<>();
         raw.put("model", model.getValue());
         raw.put("harness", harness.getValue());
         raw.put("mode", mode.getValue());
@@ -194,19 +195,19 @@ public class JobNewView extends VerticalLayout {
 
     private void submit() {
         errors.removeAll();
-        Map<String, Object> spec;
+        final Map<String, Object> spec;   // assigned exactly once below; a legal blank final
         try {
             spec = JobSpecs.build(task.getValue(), rawValues());
-        } catch (IllegalArgumentException e) {
+        } catch (final IllegalArgumentException e) {
             errors.add(Panels.error(e.getMessage()));
             return;
         }
         try {
-            Api.Job job = client.enqueueJob(spec, priority.getValue() == null ? 0 : priority.getValue());
+            final var job = client.enqueueJob(spec, priority.getValue() == null ? 0 : priority.getValue());
             Notification.show("Queued job #" + job.id() + " for " + job.run_id(),
                     4000, Notification.Position.BOTTOM_END);
             getUI().ifPresent(ui -> ui.navigate("jobs"));
-        } catch (Exception e) {
+        } catch (final Exception e) {
             errors.add(Panels.error(client.errorText(e)));
         }
     }

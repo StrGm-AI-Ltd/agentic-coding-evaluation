@@ -36,11 +36,11 @@ public final class JobLiveState implements Serializable {
     private Long lastTokens;
     private String logTail;
 
-    public synchronized void apply(SseEvent event) {
-        JsonNode data = event.data();
+    public synchronized void apply(final SseEvent event) {
+        final var data = event.data();
         switch (event.payloadType()) {
             case "step_started" -> {
-                String label = Fmt.textOr(data.path("step"), "?");
+                var label = Fmt.textOr(data.path("step"), "?");   // reassigned below - not final
                 if (data.path("continuation").asBoolean(false)) {
                     label += " (continued)";
                 }
@@ -74,10 +74,10 @@ public final class JobLiveState implements Serializable {
         }
     }
 
-    private static String sessionLabel(JsonNode data) {
-        String id = Fmt.textOr(data.path("session_id"), "");
-        String effort = Fmt.textOr(data.path("reasoning_effort"), null);
-        String shortId = id.isBlank() ? "?" : (id.length() > 8 ? id.substring(0, 8) : id);
+    private static String sessionLabel(final JsonNode data) {
+        final var id = Fmt.textOr(data.path("session_id"), "");
+        final var effort = Fmt.textOr(data.path("reasoning_effort"), null);
+        final var shortId = id.isBlank() ? "?" : (id.length() > 8 ? id.substring(0, 8) : id);
         return effort == null || effort.isBlank() ? shortId : shortId + " (" + effort + ")";
     }
 

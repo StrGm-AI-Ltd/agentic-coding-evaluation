@@ -6,7 +6,7 @@ package com.strgmai.ace.service.oracle;
 public enum CheckStatus { PASS, FAIL, NOT_ATTEMPTED, SKIPPED, INFRA;
 
     public boolean unscored() { return this == SKIPPED || this == INFRA; }
-    public static CheckStatus parse(String s) {
+    public static CheckStatus parse(final String s) {
         if (s == null) return FAIL;   // a null status is a FAIL like any unknown one, never an NPE
         try { return valueOf(s.toUpperCase().trim()); }
         catch (IllegalArgumentException e) { return FAIL; }   // an unknown status from a checker is a FAIL, never silence

@@ -17,7 +17,7 @@ public class PreflightView extends VerticalLayout {
     private String startError;
     private Registration pollRegistration;
 
-    public PreflightView(ServiceClient client) {
+    public PreflightView(final ServiceClient client) {
         this.client = client;
         setPadding(true);
 
@@ -41,11 +41,11 @@ public class PreflightView extends VerticalLayout {
     private void render() {
         removeAll();
 
-        Button start = new Button("Run preflight", e -> {
+        final var start = new Button("Run preflight", e -> {
             try {
                 client.startPreflight();
                 startError = null;
-            } catch (Exception ex) {
+            } catch (final Exception ex) {
                 startError = client.errorText(ex); // C-10: never swallow the start failure silently
             }
             render();
@@ -58,10 +58,10 @@ public class PreflightView extends VerticalLayout {
             add(Panels.warn("Starting the preflight failed: " + startError));
         }
 
-        Api.PreflightState state;
+        final Api.PreflightState state;   // assigned exactly once below; a legal blank final
         try {
             state = client.preflight();
-        } catch (Exception e) {
+        } catch (final Exception e) {
             add(Panels.error(client.errorText(e)));
             // the early return would otherwise leave the previous interval in place; back off
             // to a slower cadence so a downed service is not hammered, but auto-recovery works
@@ -72,7 +72,7 @@ public class PreflightView extends VerticalLayout {
         start.setEnabled(!state.running());
         add(start);
 
-        HorizontalLayout statusLine = new HorizontalLayout(
+        final var statusLine = new HorizontalLayout(
                 Badges.text(state.running() ? "running" : "idle",
                         state.running() ? Badges.PRIMARY : Badges.CONTRAST));
         statusLine.setPadding(false);
@@ -87,7 +87,7 @@ public class PreflightView extends VerticalLayout {
             add(Panels.error(state.error()));
         }
         if (state.results() != null && !state.results().isNull() && !state.results().isMissingNode()) {
-            H3 results = new H3("Results");
+            final var results = new H3("Results");
             results.getStyle().set("margin", "16px 0 4px 0");
             add(results);
             add(Panels.mono(Fmt.json(state.results())));

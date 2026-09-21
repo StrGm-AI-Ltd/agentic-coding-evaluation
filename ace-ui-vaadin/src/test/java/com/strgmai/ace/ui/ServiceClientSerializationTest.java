@@ -27,28 +27,28 @@ class ServiceClientSerializationTest {
     void serializeThenDeserializeRebuildsWireHandles() throws Exception {
         // in-process stub (like ServiceClientWireTest): the restored client must survive a
         // real round-trip, not merely be non-null
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        final var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/api/models", exchange -> {
-            byte[] bytes = "[\"m1\",\"m2\"]".getBytes(StandardCharsets.UTF_8);
+            final var bytes = "[\"m1\",\"m2\"]".getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, bytes.length);
             exchange.getResponseBody().write(bytes);
             exchange.close();
         });
         server.start();
-        String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+        final var baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
 
-        ServiceClient original = new ServiceClient(
+        final var original = new ServiceClient(
                 new ServiceProperties(baseUrl, Duration.ofSeconds(1), Duration.ofSeconds(2)),
                 RestClient.builder());
 
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        try (ObjectOutputStream out = new ObjectOutputStream(bytes)) {
+        final var bytes = new ByteArrayOutputStream();
+        try (final var out = new ObjectOutputStream(bytes)) {
             out.writeObject(original);
         }
 
-        ServiceClient restored;
-        try (ObjectInputStream in = new ObjectInputStream(new ByteArrayInputStream(bytes.toByteArray()))) {
+        final ServiceClient restored;
+        try (final var in = new ObjectInputStream(new ByteArrayInputStream(bytes.toByteArray()))) {
             restored = (ServiceClient) in.readObject();
         }
 
@@ -62,8 +62,8 @@ class ServiceClientSerializationTest {
         server.stop(0);
     }
 
-    private static Object wire(ServiceClient client, String field) throws Exception {
-        Field handle = ServiceClient.class.getDeclaredField(field);
+    private static Object wire(final ServiceClient client, final String field) throws Exception {
+        final var handle = ServiceClient.class.getDeclaredField(field);
         handle.setAccessible(true);
         return handle.get(client);
     }

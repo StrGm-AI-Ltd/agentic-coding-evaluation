@@ -42,58 +42,58 @@ public class TradingService {
         return new BigDecimal(x.toString()).setScale(MONEY_SCALE, bug("halfup") ? RoundingMode.HALF_UP : RoundingMode.HALF_EVEN);
     }
 
-    public Map<String, Object> price(String symbol) {
-        BigDecimal p = PRICES.get(symbol.toUpperCase());
+    public Map<String, Object> price(final String symbol) {
+        final BigDecimal p = PRICES.get(symbol.toUpperCase());
         return p == null ? null : Map.of("symbol", symbol.toUpperCase(), "price", p.toPlainString());
     }
 
-    public Map<String, Object> createAccount(String currency) {
-        String id = UUID.randomUUID().toString();
+    public Map<String, Object> createAccount(final String currency) {
+        final var id = UUID.randomUUID().toString();
         accounts.put(id, new Account(id, currency == null || currency.isBlank() ? "USD" : currency, money(BigDecimal.ZERO)));
         return accountView(accounts.get(id));
     }
 
-    public Map<String, Object> account(String id) {
-        Account a = accounts.get(id);
+    public Map<String, Object> account(final String id) {
+        final Account a = accounts.get(id);
         return a == null ? null : accountView(a);
     }
 
     /** deposits: positivity on the RAW amount, then the bespoke rounding. The `float` bug does the
      *  arithmetic in double space (0.1 + 0.2 = 0.30000000000000004) exactly like the Python twin. */
-    public Map<String, Object> deposit(String accountId, String amount) {
-        Account a = accounts.get(accountId);
+    public Map<String, Object> deposit(final String accountId, final String amount) {
+        final Account a = accounts.get(accountId);
         if (a == null) return null;
-        BigDecimal raw = new BigDecimal(amount == null || amount.isBlank() ? "0" : amount);
+        final var raw = new BigDecimal(amount == null || amount.isBlank() ? "0" : amount);
         if (raw.compareTo(BigDecimal.ZERO) <= 0) return Map.of("error", "non-positive");
         if (bug("float")) {
-            double bal = a.balance().doubleValue() + raw.doubleValue();
-            Account updated = new Account(a.id(), a.currency(), BigDecimal.valueOf(bal));
+            final double bal = a.balance().doubleValue() + raw.doubleValue();
+            final var updated = new Account(a.id(), a.currency(), BigDecimal.valueOf(bal));
             accounts.put(a.id(), updated);
             return accountView(updated);
         }
-        BigDecimal amt = money(raw);
-        Account updated = new Account(a.id(), a.currency(), a.balance().add(amt));
+        final BigDecimal amt = money(raw);
+        final var updated = new Account(a.id(), a.currency(), a.balance().add(amt));
         accounts.put(a.id(), updated);
         return accountView(updated);
     }
 
     /** orders: BUY needs funds (422), SELL needs holdings (422); both write the ledger and fill at the limit price */
-    public OrderOutcome order(String accountId, String symbol, String side, String quantity, String limitPrice, String idempotencyKey) {
+    public OrderOutcome order(final String accountId, final String symbol, final String side, final String quantity, final String limitPrice, final String idempotencyKey) {
         if (idempotencyKey != null && !bug("noidem")) {
-            Idem hit = idem.get(idempotencyKey);
+            final Idem hit = idem.get(idempotencyKey);
             if (hit != null && hit.expires().isAfter(now())) return new OrderOutcome(200, orderView(orders.get(hit.orderId())), null);
         }
-        Account a = accounts.get(accountId);
+        final Account a = accounts.get(accountId);
         if (a == null) return new OrderOutcome(400, Map.of("error", "bad account"), null);
-        String sym = symbol == null ? "" : symbol.toUpperCase();
-        BigDecimal qty = new BigDecimal(quantity == null || quantity.isBlank() ? "0" : quantity);
-        BigDecimal px = money(new BigDecimal(limitPrice == null || limitPrice.isBlank() ? "0" : limitPrice));
+        final String sym = symbol == null ? "" : symbol.toUpperCase();
+        final var qty = new BigDecimal(quantity == null || quantity.isBlank() ? "0" : quantity);
+        final BigDecimal px = money(new BigDecimal(limitPrice == null || limitPrice.isBlank() ? "0" : limitPrice));
         if (!PRICES.containsKey(sym) || side == null || !(side.equals("BUY") || side.equals("SELL")) || qty.compareTo(BigDecimal.ZERO) <= 0)
             return new OrderOutcome(400, Map.of("error", "invalid"), null);
-        BigDecimal cost = money(qty.multiply(px));
+        final BigDecimal cost = money(qty.multiply(px));
 
         if (bug("hollow")) {   // orders return 201 + executedAt but change NO state and write NO ledger
-            Order o = filled(UUID.randomUUID().toString(), side, sym, qty, px);
+            final Order o = filled(UUID.randomUUID().toString(), side, sym, qty, px);
             if (idempotencyKey != null) idem.put(idempotencyKey, new Idem(o.orderId(), now().plusSeconds(60)));
             return new OrderOutcome(201, orderView(o), null);
         }
@@ -102,53 +102,53 @@ public class TradingService {
             if (cost.compareTo(a.balance()) > 0 && !bug("no422")) return new OrderOutcome(422, Map.of("error", "insufficient funds"), null);
             updated = new Account(a.id(), a.currency(), a.balance().subtract(cost));
         } else {
-            BigDecimal held = held(a.id(), sym);
+            final BigDecimal held = held(a.id(), sym);
             if (qty.compareTo(held) > 0 && !bug("no422")) return new OrderOutcome(422, Map.of("error", "insufficient holdings"), null);
-            BigDecimal credit = bug("asym") ? money(cost.multiply(new BigDecimal("0.99"))) : cost;
+            final BigDecimal credit = bug("asym") ? money(cost.multiply(new BigDecimal("0.99"))) : cost;
             updated = new Account(a.id(), a.currency(), a.balance().add(credit));
         }
         accounts.put(a.id(), updated);
-        Instant ts = now();
+        final Instant ts = now();
         synchronized (ledger) { ledger.add(new LedgerEntry(ts, a.id(), sym, side, qty)); }
-        Order o = new Order(UUID.randomUUID().toString(), "FILLED", side, sym, qty, px, ts);
+        final var o = new Order(UUID.randomUUID().toString(), "FILLED", side, sym, qty, px, ts);
         orders.put(o.orderId(), o);
         if (idempotencyKey != null) idem.put(idempotencyKey, new Idem(o.orderId(), now().plusSeconds(60)));
         return new OrderOutcome(201, orderView(o), null);
     }
 
-    public Map<String, Object> order(String id) {
-        Order o = orders.get(id);
+    public Map<String, Object> order(final String id) {
+        final Order o = orders.get(id);
         return o == null ? null : orderView(o);
     }
 
     /** cancel: cancelling a FILLED/CANCELLED order is an illegal transition (409) */
-    public CancelOutcome cancel(String orderId) {
-        Order o = orders.get(orderId);
+    public CancelOutcome cancel(final String orderId) {
+        final Order o = orders.get(orderId);
         if (o == null) return new CancelOutcome(404, Map.of("error", "no order"));
         if ((o.status().equals("FILLED") || o.status().equals("CANCELLED")) && !bug("no409"))
             return new CancelOutcome(409, Map.of("error", "illegal transition"));
-        Order cancelled = new Order(o.orderId(), "CANCELLED", o.side(), o.symbol(), o.quantity(), o.limitPrice(), o.executedAt());
+        final var cancelled = new Order(o.orderId(), "CANCELLED", o.side(), o.symbol(), o.quantity(), o.limitPrice(), o.executedAt());
         orders.put(o.orderId(), cancelled);
         return new CancelOutcome(200, Map.of("orderId", o.orderId(), "status", "CANCELLED"));
     }
 
     /** holdings with an OPTIONAL asOf point-in-time query. The boundary is EXCLUSIVE, and the applied
      *  instant is always echoed as asOfApplied. Sells SUBTRACT (the `selladd` bug adds them). */
-    public Map<String, Object> holdings(String accountId, Instant asOf) {
-        Account a = accounts.get(accountId);
+    public Map<String, Object> holdings(final String accountId, final Instant asOf) {
+        final Account a = accounts.get(accountId);
         if (a == null) return null;
-        Map<String, BigDecimal> h = new TreeMap<>();
+        final Map<String, BigDecimal> h = new TreeMap<>();
         synchronized (ledger) {
             for (LedgerEntry e : ledger) {
                 if (!e.accountId().equals(a.id())) continue;
                 if (asOf != null && (bug("inclusive") ? e.ts().isAfter(asOf) : !e.ts().isBefore(asOf))) continue;   // EXCLUSIVE boundary
-                int sign = e.side().equals("BUY") || bug("selladd") ? 1 : -1;
+                final int sign = e.side().equals("BUY") || bug("selladd") ? 1 : -1;
                 h.merge(e.symbol(), e.qty().multiply(BigDecimal.valueOf(sign)), BigDecimal::add);
             }
         }
-        Map<String, String> out = new TreeMap<>();
+        final Map<String, String> out = new TreeMap<>();
         h.forEach((k, v) -> { if (v.signum() != 0) out.put(k, v.toPlainString()); });
-        Instant applied = asOf != null ? asOf : now();
+        final Instant applied = asOf != null ? asOf : now();
         return Map.of("holdings", out, "asOfApplied", iso(applied));
     }
 
@@ -162,20 +162,20 @@ public class TradingService {
         return held;
     }
 
-    private Order filled(String id, String side, String sym, BigDecimal qty, BigDecimal px) {
+    private Order filled(final String id, final String side, final String sym, final BigDecimal qty, final BigDecimal px) {
         return new Order(id, "FILLED", side, sym, qty, px, now());
     }
 
-    private Map<String, Object> accountView(Account a) {
-        Map<String, Object> m = new LinkedHashMap<>();
+    private Map<String, Object> accountView(final Account a) {
+        final Map<String, Object> m = new LinkedHashMap<>();
         m.put("accountId", a.id());
         m.put("currency", a.currency());
         m.put("availableBalance", bug("float") ? String.valueOf(a.balance().doubleValue()) : a.balance().toPlainString());
         return m;
     }
 
-    private Map<String, Object> orderView(Order o) {
-        Map<String, Object> m = new LinkedHashMap<>();
+    private Map<String, Object> orderView(final Order o) {
+        final Map<String, Object> m = new LinkedHashMap<>();
         m.put("orderId", o.orderId());
         m.put("status", o.status());
         m.put("side", o.side());

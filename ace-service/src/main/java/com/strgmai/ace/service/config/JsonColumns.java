@@ -21,15 +21,15 @@ public final class JsonColumns {
     private static final Set<String> KEYS = Set.of(
             "argv", "params", "comparison", "manifest", "oracle", "metrics", "validity_reasons", "detail");
 
-    public static Map<String, Object> parse(Map<String, Object> row) {
-        Map<String, Object> out = new LinkedHashMap<>(row);
+    public static Map<String, Object> parse(final Map<String, Object> row) {
+        final Map<String, Object> out = new LinkedHashMap<>(row);
         for (String k : KEYS)
             if (out.get(k) instanceof String s && !s.isBlank())
                 try { out.put(k, MAPPER.readTree(s)); } catch (Exception ignore) { /* leave as raw text */ }
         return out;
     }
 
-    public static List<Map<String, Object>> parseAll(List<Map<String, Object>> rows) {
+    public static List<Map<String, Object>> parseAll(final List<Map<String, Object>> rows) {
         return rows.stream().map(JsonColumns::parse).toList();
     }
 }

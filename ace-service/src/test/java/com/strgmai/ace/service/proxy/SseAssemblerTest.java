@@ -16,15 +16,15 @@ import static org.junit.jupiter.api.Assertions.*;
 class SseAssemblerTest {
     private static final ObjectMapper M = new ObjectMapper();
 
-    private static byte[] chunk(String json) {
+    private static byte[] chunk(final String json) {
         return ("data: " + json + "\n\n").getBytes(StandardCharsets.UTF_8);
     }
 
     /** {"choices":[{"delta":{"tool_calls":[TC...]}}]} with the tool_calls pieces given as raw strings */
-    private static String toolChunk(String... toolCallJsons) {
-        ObjectNode root = M.createObjectNode();
-        ObjectNode delta = root.putArray("choices").addObject().putObject("delta");
-        ArrayNode tcs = delta.putArray("tool_calls");
+    private static String toolChunk(final String... toolCallJsons) {
+        final ObjectNode root = M.createObjectNode();
+        final ObjectNode delta = root.putArray("choices").addObject().putObject("delta");
+        final ArrayNode tcs = delta.putArray("tool_calls");
         for (String tcJson : toolCallJsons) {
             try { tcs.add(M.readTree(tcJson)); } catch (Exception e) { throw new IllegalArgumentException(e); }
         }
@@ -57,7 +57,7 @@ class SseAssemblerTest {
                 "{\"index\":1,\"id\":\"c2\",\"function\":{\"name\":\"bash\",\"arguments\":\"{}\"}}");
         String c3 = "{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}";   // (plain: no nested tool JSON)
 
-        SseAssembler.Assembled a = SseAssembler.parse(List.of(chunk(c1), chunk(c2), chunk(c3)));
+        final SseAssembler.Assembled a = SseAssembler.parse(List.of(chunk(c1), chunk(c2), chunk(c3)));
         assertEquals(2, a.toolCalls().size());
         assertEquals("read", a.toolCalls().get(0).get("name"));
         assertEquals(argPiece1 + argPiece2, a.toolCalls().get(0).get("arguments"));
@@ -67,7 +67,7 @@ class SseAssemblerTest {
 
     @Test
     void aNonDataLineIsIgnored() {
-        SseAssembler.Assembled a = SseAssembler.parse(List.of(": keepalive\n".getBytes(), chunk("{\"choices\":[{\"delta\":{\"content\":\"x\"}}]}")));
+        final SseAssembler.Assembled a = SseAssembler.parse(List.of(": keepalive\n".getBytes(), chunk("{\"choices\":[{\"delta\":{\"content\":\"x\"}}]}")));
         assertEquals("x", a.content());
         assertNull(a.finishReason());
     }

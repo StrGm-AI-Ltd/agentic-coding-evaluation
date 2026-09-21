@@ -28,7 +28,7 @@ public class WorkerService {
     private final ImporterService importer;
     private final BenchProperties props;
     private final ExecutorService runner = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "bench-runner");
+        final var t = new Thread(r, "bench-runner");
         t.setDaemon(true);
         return t;
     });
@@ -47,7 +47,7 @@ public class WorkerService {
 
     /** port of worker.finish()'s RESULT line: scored+exit-0 succeeds, oracle.json is the verdict */
     static String resultLine(Path runDir) {
-        boolean scored = Files.isRegularFile(runDir.resolve("oracle.json"));
+        final boolean scored = Files.isRegularFile(runDir.resolve("oracle.json"));
         return "RESULT " + runDir.getFileName() + (scored ? " scored" : " unscored");
     }
 
@@ -55,9 +55,9 @@ public class WorkerService {
     void reconcile() {
         for (Map<String, Object> job : queue.list()) {
             if (!"running".equals(job.get("status"))) continue;
-            Integer pid = (Integer) job.get("pid");
-            boolean alive = pid != null && ProcessHandle.of(pid.longValue()).map(ProcessHandle::isAlive).orElse(false);
-            if (!alive) queue.setStatus(((Number) job.get("id")).longValue(), "queued", null);
+            final Integer pid = (Integer) job.get("pid");
+            final boolean alive = pid != null && ProcessHandle.of(pid.longValue()).map(ProcessHandle::isAlive).orElse(false);
+            if (!alive) queue.setStatus((UUID) job.get("id"), "queued", null);
             else log.info("job {}: re-attaching to pid {}", job.get("id"), pid);
         }
     }
@@ -79,14 +79,14 @@ public class WorkerService {
             if (runLock == null) {
                 // the SAME lock file the Python service uses: "one benchmark run at a time" is an invariant
                 // over the shared model server at :9191, so both services must contend for one lock
-                java.nio.file.Path lockPath = java.nio.file.Path.of(System.getProperty("user.home"), ".cache/agentbench/run.lock");
+                final java.nio.file.Path lockPath = java.nio.file.Path.of(System.getProperty("user.home"), ".cache/agentbench/run.lock");
                 java.nio.file.Files.createDirectories(lockPath.getParent());
                 runLock = java.nio.channels.FileChannel.open(lockPath,
                         java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE);
                 if (runLock.tryLock() == null) { runLock.close(); runLock = null; return "run.lock is held by another benchmark run"; }
             }
         } catch (Exception e) { return "run.lock: " + e; }
-        Preflight.Report pf = preflight.check(flag(job.argv(), "--model"));
+        final Preflight.Report pf = preflight.check(flag(job.argv(), "--model"));
         if (pf.blocked())
             return "preflight: " + pf.checks().stream().filter(c -> c.fatal() && !c.ok()).findFirst().map(Preflight.Check::detail).orElse("");
         return null;
@@ -95,13 +95,13 @@ public class WorkerService {
     @Scheduled(fixedDelayString = "${ace.poll-sec:10}000", initialDelay = 5000)
     public void poll() {
         if (busy.get()) return;
-        JobQueue.Job job = queue.claim();
+        final JobQueue.Job job = queue.claim();
         if (job == null) return;
         if (Boolean.TRUE.equals(queue.get(job.id()).get("cancel_requested"))) {
             queue.finish(job.id(), "cancelled", null, null);
             return;
         }
-        String refusal = guard(job);
+        final String refusal = guard(job);
         if (refusal != null) {   // waiting_lock/blocked: the job stays, it is retried when the cause clears
             // blocked = a cause the job cannot outwait (claim() only re-picks queued/waiting_lock rows):
             // a fatal preflight and a treatment mismatch both need an operator. The lock clears on its own.
@@ -128,17 +128,17 @@ public class WorkerService {
             try {
                 queue.started(job.id(), (int) ProcessHandle.current().pid(), null);
                 log.info("job {}: started {} ({})", job.id(), job.runId(), job.argv());
-                Map<String, Object> cfg = new LinkedHashMap<>();
+                final Map<String, Object> cfg = new LinkedHashMap<>();
                 cfg.put("results_root", props.resultsDir());
                 cfg.put("workspace_root", props.workspaceRoot());
                 cfg.put("model", job.argv().stream().filter(a -> a.startsWith("--model=")).map(a -> a.substring(8)).findFirst().orElse(props.model()));
                 cfg.put("system_base_url", null);
-                String mode = flag(job.argv(), "--mode") != null ? flag(job.argv(), "--mode") : "monolithic";
-                String planSource = flag(job.argv(), "--plan-source") != null ? flag(job.argv(), "--plan-source") : "agent";
+                final String mode = flag(job.argv(), "--mode") != null ? flag(job.argv(), "--mode") : "monolithic";
+                final String planSource = flag(job.argv(), "--plan-source") != null ? flag(job.argv(), "--plan-source") : "agent";
                 if (flag(job.argv(), "--task-wall") != null) cfg.put("task_wall_sec", Integer.parseInt(flag(job.argv(), "--task-wall")));
                 if (flag(job.argv(), "--task-tokens") != null) cfg.put("task_tokens", Long.parseLong(flag(job.argv(), "--task-tokens")));
                 // a pinned --context-window IS the window: it skips step 0, whose whole job is to measure one
-                String window = flag(job.argv(), "--context-window");
+                final String window = flag(job.argv(), "--context-window");
                 if (window != null) cfg.put("context_window", Integer.parseInt(window));
                 // the context probe (step 0) is the default for direct runs; queue runs opt in via ACE_JLS_CONTEXT_PROBE
                 cfg.put("context_probe", window == null && Boolean.parseBoolean(System.getenv().getOrDefault("ACE_JLS_CONTEXT_PROBE", "true")));   // Python default: the probe runs
@@ -151,12 +151,12 @@ public class WorkerService {
                 // Map.of() rejects a null value outright - "model" IS null whenever review is enabled
                 // without an explicit --reviewer-model (self-review alone still needs a reviewer picked
                 // downstream, but that is RunBench's decision to make, not a reason to crash the worker)
-                Map<String, Object> review = new LinkedHashMap<>();
+                final Map<String, Object> review = new LinkedHashMap<>();
                 review.put("enabled", job.argv().contains("--self-review"));
                 review.put("model", flag(job.argv(), "--reviewer-model"));
                 review.put("blind", job.argv().contains("--review-blind"));
                 cfg.put("review", review);
-                Map<String, Object> trajectoryReview = new LinkedHashMap<>();
+                final Map<String, Object> trajectoryReview = new LinkedHashMap<>();
                 trajectoryReview.put("enabled", job.argv().contains("--trajectory-review"));
                 trajectoryReview.put("model", flag(job.argv(), "--trajectory-reviewer-model"));
                 cfg.put("trajectory_review", trajectoryReview);
@@ -171,10 +171,10 @@ public class WorkerService {
             } finally {
                 busy.set(false);
                 if (cancelCurrent) {   // move_aside: an aborted run's files must never mix into a re-run
-                    java.nio.file.Path runDir = java.nio.file.Path.of(props.resultsDir(), job.runId());
+                    final java.nio.file.Path runDir = java.nio.file.Path.of(props.resultsDir(), job.runId());
                     if (java.nio.file.Files.isDirectory(runDir) && !"score_only".equals(job.kind())) {
                         try {
-                            java.nio.file.Path aborted = java.nio.file.Path.of(props.resultsDir(), "_aborted");
+                            final java.nio.file.Path aborted = java.nio.file.Path.of(props.resultsDir(), "_aborted");
                             java.nio.file.Files.createDirectories(aborted);
                             java.nio.file.Files.move(runDir, aborted.resolve(job.runId() + "-" + System.currentTimeMillis() / 1000));
                         } catch (Exception ignore) {}
@@ -186,7 +186,7 @@ public class WorkerService {
         });
     }
 
-    static String flag(List<String> argv, String name) {
+    static String flag(final List<String> argv, final String name) {
         return argv.stream().filter(a -> a.startsWith(name + "=")).map(a -> a.substring(name.length() + 1)).findFirst().orElse(null);
     }
 

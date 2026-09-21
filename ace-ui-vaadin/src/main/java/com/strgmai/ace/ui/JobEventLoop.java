@@ -14,7 +14,7 @@ final class JobEventLoop implements Runnable {
     static final int MAX_ATTEMPTS = 3;
 
     private final ServiceClient client;
-    private final long jobId;
+    private final String jobId;
     private final Supplier<Boolean> stopped;
     private final Consumer<SseEvent> onEvent;
     private final Runnable onConnectionLost;
@@ -22,14 +22,14 @@ final class JobEventLoop implements Runnable {
 
     private volatile boolean connectionLost;
 
-    JobEventLoop(ServiceClient client, long jobId, Supplier<Boolean> stopped,
-            Consumer<SseEvent> onEvent, Runnable onConnectionLost) {
+    JobEventLoop(final ServiceClient client, final String jobId, final Supplier<Boolean> stopped,
+            final Consumer<SseEvent> onEvent, final Runnable onConnectionLost) {
         this(client, jobId, stopped, onEvent, onConnectionLost, 2000);
     }
 
     /** Package-private for tests: a short backoff keeps the retry cases fast. */
-    JobEventLoop(ServiceClient client, long jobId, Supplier<Boolean> stopped,
-            Consumer<SseEvent> onEvent, Runnable onConnectionLost, long backoffMs) {
+    JobEventLoop(final ServiceClient client, final String jobId, final Supplier<Boolean> stopped,
+            final Consumer<SseEvent> onEvent, final Runnable onConnectionLost, final long backoffMs) {
         this.client = client;
         this.jobId = jobId;
         this.stopped = stopped;
@@ -55,10 +55,10 @@ final class JobEventLoop implements Runnable {
                     onEvent.accept(event);
                 });
                 return; // the server ends the stream when the job is terminal
-            } catch (InterruptedException e) {
+            } catch (final InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
-            } catch (Exception e) {
+            } catch (final Exception e) {
                 if (stopped.get()) {
                     return;
                 }
@@ -66,7 +66,7 @@ final class JobEventLoop implements Runnable {
                 connectionLost = true;
                 try {
                     Thread.sleep(backoffMs);
-                } catch (InterruptedException ie) {
+                } catch (final InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     return;
                 }

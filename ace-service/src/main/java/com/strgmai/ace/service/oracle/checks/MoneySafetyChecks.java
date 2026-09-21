@@ -33,9 +33,9 @@ public final class MoneySafetyChecks {
                     + "|CASE\\s+WHEN[^;]*(BUY|BOUGHT)[^;]*ELSE\\s*-\\s*\\w*(qty|quantity)",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
-    public static List<CheckResult> run(Path ws) {
-        List<Path> java = sources(ws, ".java", ".kt"), sql = sources(ws, ".sql");
-        List<CheckResult> out = new ArrayList<>();
+    public static List<CheckResult> run(final Path ws) {
+        final List<Path> java = sources(ws, ".java", ".kt"), sql = sources(ws, ".sql");
+        final List<CheckResult> out = new ArrayList<>();
         if (java.isEmpty() && sql.isEmpty()) {
             for (CheckId c : List.of(CheckId.M1, CheckId.M2, CheckId.M3, CheckId.M4))
                 out.add(CheckResult.notAttempted(c, "no Java/Kotlin/SQL sources - task not attempted"));
@@ -43,9 +43,9 @@ public final class MoneySafetyChecks {
         }
 
         // ---- M1: money never float/double, token-level over comment-stripped source (multi-line safe)
-        List<String> bad = new ArrayList<>();
+        final List<String> bad = new ArrayList<>();
         for (Path p : java) {
-            String s = stripComments(read(p));
+            final String s = stripComments(read(p));
             for (var m : DECL.matcher(s).results().toList()) bad.add(rel(p, ws) + ":" + m.group(3));
             for (var m : KT.matcher(s).results().toList()) bad.add(rel(p, ws) + ":" + m.group(1));
         }
@@ -55,9 +55,9 @@ public final class MoneySafetyChecks {
                 bad.isEmpty() ? java.size() + " src + " + sql.size() + " sql scanned" : String.join("; ", bad.subList(0, Math.min(6, bad.size())))));
 
         // ---- M2: BigDecimal actually IMPORTED where money is handled (not merely mentioned in a comment)
-        List<Path> moneyFiles = new ArrayList<>(), withBd = new ArrayList<>();
+        final List<Path> moneyFiles = new ArrayList<>(), withBd = new ArrayList<>();
         for (Path p : java) {
-            String src = read(p);
+            final String src = read(p);
             if (Pattern.compile("\\b" + MONEY + "\\b", Pattern.CASE_INSENSITIVE).matcher(stripComments(src)).find()) {
                 moneyFiles.add(p);
                 if (BD_IMPORT.matcher(src).find()) withBd.add(p);
@@ -68,12 +68,12 @@ public final class MoneySafetyChecks {
                 withBd.size() + "/" + moneyFiles.size() + " money-handling files import BigDecimal"));
 
         // ---- M3: equals() on money (scale trap)
-        List<String> eq = new ArrayList<>();
+        final List<String> eq = new ArrayList<>();
         if (withBd.isEmpty()) out.add(CheckResult.notAttempted(CheckId.M3, "no BigDecimal money code to inspect"));
         else {
             for (Path p : withBd) {
-                Matcher m = EQUALS.matcher(stripComments(read(p)));
-                int[] n = {0};
+                final Matcher m = EQUALS.matcher(stripComments(read(p)));
+                final int[] n = {0};
                 while (m.find() && n[0] < 5) { eq.add(rel(p, ws) + ":" + m.group(0)); n[0]++; }
             }
             out.add(new CheckResult(CheckId.M3, eq.isEmpty() ? CheckStatus.PASS : CheckStatus.FAIL,
@@ -81,17 +81,17 @@ public final class MoneySafetyChecks {
         }
 
         // ---- M4: point-in-time replay subtracts sells, per METHOD DEFINITION; NOT_ATTEMPTED if absent
-        List<String> findings = new ArrayList<>();
-        int[] pitMethods = {0};
+        final List<String> findings = new ArrayList<>();
+        final int[] pitMethods = {0};
         for (Path p : java) {
-            String s = stripComments(read(p));
-            Map<Integer, MatchResult> hits = new TreeMap<>();
+            final String s = stripComments(read(p));
+            final Map<Integer, MatchResult> hits = new TreeMap<>();
             for (var m : PIT_DEF.matcher(s).results().toList()) hits.putIfAbsent(m.start(), m);
             if (Pattern.compile("holding|position|portfolio|ledger", Pattern.CASE_INSENSITIVE).matcher(p.getFileName().toString()).find())
                 for (var m : PIT_PARAM.matcher(s).results().toList()) hits.putIfAbsent(m.start(), m);
             for (MatchResult m : hits.values()) {
                 pitMethods[0]++;
-                String body = methodBody(s, m.start());
+                final String body = methodBody(s, m.start());
                 if (!SUBTRACTS.matcher(body).find()) findings.add(rel(p, ws) + ":" + m.group(1) + " (no subtraction in replay)");
             }
         }
@@ -105,21 +105,21 @@ public final class MoneySafetyChecks {
         return out;
     }
 
-    static String methodBody(String s, int start) {
-        String body = s.substring(start, Math.min(s.length(), start + 4000));
+    static String methodBody(final String s, final int start) {
+        final String body = s.substring(start, Math.min(s.length(), start + 4000));
         int depth = 0; boolean opened = false;
         for (int i = 0; i < body.length(); i++) {
-            char ch = body.charAt(i);
+            final char ch = body.charAt(i);
             if (ch == '{') { depth++; opened = true; }
             else if (ch == '}' && --depth == 0 && opened) return body.substring(0, i);
         }
         return body;
     }
 
-    static List<Path> sources(Path ws, String... exts) {
-        List<Path> out = new ArrayList<>();
+    static List<Path> sources(final Path ws, final String... exts) {
+        final List<Path> out = new ArrayList<>();
         for (Path p : StructureChecks.glob(ws, "**/*")) {
-            String n = p.toString();
+            final String n = p.toString();
             if (!Arrays.stream(exts).anyMatch(n::endsWith)) continue;
             if (n.contains("/src/test/") || n.contains("/node_modules/") || n.contains("/build/") || n.contains("/.git/") || n.contains("/.gradle")) continue;
             out.add(p);
@@ -127,7 +127,7 @@ public final class MoneySafetyChecks {
         return out;
     }
 
-    static String stripComments(String src) {
+    static String stripComments(final String src) {
         return src.replaceAll("(?s)/\\*.*?\\*/", "").replaceAll("//[^\n]*", "");
     }
     static String read(Path p) { try { return Files.readString(p); } catch (Exception e) { return ""; } }

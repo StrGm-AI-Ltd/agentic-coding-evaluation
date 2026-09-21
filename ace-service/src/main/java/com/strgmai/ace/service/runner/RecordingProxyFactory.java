@@ -20,8 +20,8 @@ public class RecordingProxyFactory {
      *  in-flight streams (they are journaled as drain_aborted) and returns the exit state. */
     public record ProxySession(String base, Runnable stop) {}
 
-    public ProxySession start(Path journal, Long tokenBudget, String tag) {
-        RecordingProxy proxy = new RecordingProxy(props);
+    public ProxySession start(final Path journal, final Long tokenBudget, final String tag) {
+        final var proxy = new RecordingProxy(props);
         final String[] base = new String[1];
         try { base[0] = proxy.start(journal, tokenBudget, tag); }
         catch (Exception e) {

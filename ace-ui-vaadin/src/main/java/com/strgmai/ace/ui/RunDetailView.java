@@ -35,13 +35,13 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
     private final ServiceClient client;
     private String runId;
 
-    public RunDetailView(ServiceClient client) {
+    public RunDetailView(final ServiceClient client) {
         this.client = client;
         setPadding(true);
     }
 
     @Override
-    public void beforeEnter(BeforeEnterEvent event) {
+    public void beforeEnter(final BeforeEnterEvent event) {
         runId = event.getRouteParameters().get("runId").orElse(null);
         render();
     }
@@ -52,10 +52,10 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
             add(new H3("Run"), Panels.error("No run id in the URL."));
             return;
         }
-        Api.Run run;
+        final Api.Run run;   // assigned exactly once below; a legal blank final
         try {
             run = client.run(runId);
-        } catch (Exception e) {
+        } catch (final Exception e) {
             if (isNotImported(e)) {
                 addNotImportedPanel();
             } else {
@@ -66,18 +66,18 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         render(run);
     }
 
-    private void render(Api.Run run) {
+    private void render(final Api.Run run) {
         add(new RouterLink("← Runs", RunsView.class));
 
-        com.vaadin.flow.component.html.H2 title = new com.vaadin.flow.component.html.H2(run.run_id());
+        final var title = new com.vaadin.flow.component.html.H2(run.run_id());
         title.getStyle().set("margin", "4px 0").set("font-size", "1.6em");
         add(title);
 
-        Span meta = new Span(metaLine(run));
+        final var meta = new Span(metaLine(run));
         meta.getStyle().set("color", "var(--lumo-secondary-text-color)");
         add(meta);
 
-        HorizontalLayout badges = new HorizontalLayout();
+        final var badges = new HorizontalLayout();
         badges.setPadding(false);
         badges.setSpacing(true);
         if (Boolean.FALSE.equals(run.valid())) {
@@ -97,10 +97,10 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
             add(badges);
         }
 
-        HorizontalLayout scores = new HorizontalLayout();
+        final var scores = new HorizontalLayout();
         scores.setPadding(false);
         scores.setSpacing(true);
-        String functionalDetail = Fmt.points(run.functional_points_got(), run.functional_denominator())
+        final var functionalDetail = Fmt.points(run.functional_points_got(), run.functional_denominator())
                 + (run.functional_ids() != null && !run.functional_ids().isEmpty()
                         ? ": " + String.join(", ", run.functional_ids())
                         : "");
@@ -116,23 +116,23 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         add(scores);
 
         if (Boolean.FALSE.equals(run.valid()) && run.validity_reasons() != null && !run.validity_reasons().isEmpty()) {
-            List<ListItem> reasons = run.validity_reasons().stream().map(ListItem::new).toList();
+            final var reasons = run.validity_reasons().stream().map(ListItem::new).toList();
             add(Panels.callout("var(--lumo-error-color)", "var(--lumo-error-color-10pct)",
                     new Span("recorded, never ranked"), new UnorderedList(reasons.toArray(new ListItem[0]))));
         }
         if (Boolean.TRUE.equals(run.contended()) && run.manifest() != null) {
-            String contention = run.manifest().has("contention")
+            final var contention = run.manifest().has("contention")
                     ? run.manifest().get("contention").toString() : "";
             add(Panels.warn("CONTENDED: excluded from leaderboards. " + contention));
         }
 
         if (!run.poolable()) {
-            Button rescore = new Button("Queue re-score", e -> {
+            final var rescore = new Button("Queue re-score", e -> {
                 try {
-                    Api.Job job = client.rescore(runId);
+                    final var job = client.rescore(runId);
                     Notification.show("Queued re-score job #" + job.id(), 3000, Notification.Position.BOTTOM_END);
                     getUI().ifPresent(ui -> ui.navigate("jobs"));
-                } catch (Exception ex) {
+                } catch (final Exception ex) {
                     Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
                 }
             });
@@ -146,7 +146,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         addStepScores(run.metrics());
         addProvenance(run);
 
-        Anchor servicePage = new Anchor(client.baseUrl() + "/runs/" + runId, "open in the service UI");
+        final var servicePage = new Anchor(client.baseUrl() + "/runs/" + runId, "open in the service UI");
         servicePage.getElement().setAttribute("target", "_blank");
         servicePage.getElement().setAttribute("rel", "noopener noreferrer");
         servicePage.getStyle().set("display", "inline-block").set("margin-top", "16px");
@@ -156,7 +156,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     /** A 404 on the run id — the job has not produced a scored, imported result yet. */
-    static boolean isNotImported(Exception e) {
+    static boolean isNotImported(final Exception e) {
         return e instanceof RestClientResponseException responseException
                 && responseException.getStatusCode().value() == 404;
     }
@@ -166,7 +166,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         IN_FLIGHT, ENDED_WITHOUT_SCORE, BLOCKED, UNKNOWN
     }
 
-    static NotImportedKind notImportedKind(Api.Job job) {
+    static NotImportedKind notImportedKind(final Api.Job job) {
         if (job == null) {
             return NotImportedKind.UNKNOWN;
         }
@@ -178,7 +178,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     /** The run's job row (the runs table has none until import). */
-    static Api.Job jobForRun(List<Api.Job> jobs, String runId) {
+    static Api.Job jobForRun(final List<Api.Job> jobs, final String runId) {
         return jobs.stream().filter(job -> runId.equals(job.run_id())).findFirst().orElse(null);
     }
 
@@ -189,13 +189,13 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
     private void addNotImportedPanel() {
         add(new H3("Run " + runId));
 
-        Api.Job job = null;
+        Api.Job job = null;   // reassigned below - cannot be final; null initializer rules out var
         try {
             job = jobForRun(client.jobs(), runId);
-        } catch (Exception ignored) {
+        } catch (final Exception ignored) {
             // the panel falls back to the generic rescan path
         }
-        final Api.Job runJob = job;
+        final var runJob = job;
 
         switch (notImportedKind(runJob)) {
             case IN_FLIGHT -> {
@@ -224,7 +224,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
                     try {
                         client.importAll();
                         render();
-                    } catch (Exception ex) {
+                    } catch (final Exception ex) {
                         Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
                     }
                 }));
@@ -232,9 +232,9 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         }
     }
 
-    private void addChecks(List<Api.Check> checks) {
+    private void addChecks(final List<Api.Check> checks) {
         add(Panels.sectionTitle("Checks"));
-        Grid<Api.Check> grid = new Grid<>(Api.Check.class, false);
+        final var grid = new Grid<>(Api.Check.class, false);
         grid.addColumn(Api.Check::check_id).setHeader("id").setAutoWidth(true);
         grid.addColumn(Api.Check::category).setHeader("category").setAutoWidth(true);
         grid.addColumn(c -> Fmt.num(c.weight())).setHeader("weight").setTextAlign(ColumnTextAlign.END)
@@ -254,14 +254,15 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     /** The metrics.per_task table rows (T-7) — pure, tested against real-shape fixtures. */
-    static List<PerTaskRow> perTaskRows(JsonNode metrics) {
-        JsonNode perTask = metrics == null ? null : metrics.get("per_task");
+    static List<PerTaskRow> perTaskRows(final JsonNode metrics) {
+        final var perTask = metrics == null ? null : metrics.get("per_task");
         if (perTask == null || !perTask.isObject() || perTask.isEmpty()) {
             return List.of();
         }
-        List<PerTaskRow> rows = new ArrayList<>();
+        // returned as List<PerTaskRow>; empty-diamond under var would infer <Object>
+        final List<PerTaskRow> rows = new ArrayList<>();
         perTask.propertyNames().stream().sorted().forEach(tid -> {
-            JsonNode t = perTask.get(tid);
+            final var t = perTask.get(tid);
             rows.add(new PerTaskRow(
                     tid,
                     Fmt.textOr(t.path("reported"), "–"),
@@ -277,13 +278,13 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     /** The metrics.per_task table from the Jinja2 run page (V-4). */
-    private void addPlanTasks(JsonNode metrics) {
-        List<PerTaskRow> rows = perTaskRows(metrics);
+    private void addPlanTasks(final JsonNode metrics) {
+        final var rows = perTaskRows(metrics);
         if (rows.isEmpty()) {
             return;
         }
         add(Panels.sectionTitle("Plan tasks"));
-        Grid<PerTaskRow> grid = new Grid<>(PerTaskRow.class, false);
+        final var grid = new Grid<>(PerTaskRow.class, false);
         grid.addColumn(PerTaskRow::tid).setHeader("task").setAutoWidth(true);
         grid.addColumn(PerTaskRow::reported).setHeader("reported").setAutoWidth(true);
         grid.addColumn(PerTaskRow::doneVerified).setHeader("verified").setAutoWidth(true);
@@ -307,27 +308,28 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     /** The metrics.steps table rows (T-7) — pure, tested against real-shape fixtures. */
-    static List<StepRow> stepRows(JsonNode metrics) {
-        JsonNode steps = metrics == null ? null : metrics.get("steps");
+    static List<StepRow> stepRows(final JsonNode metrics) {
+        final var steps = metrics == null ? null : metrics.get("steps");
         if (steps == null || !steps.isObject() || steps.isEmpty()) {
             return List.of();
         }
-        List<StepRow> rows = new ArrayList<>();
+        // returned as List<StepRow>; empty-diamond under var would infer <Object>
+        final List<StepRow> rows = new ArrayList<>();
         steps.propertyNames().stream().sorted().forEach(sid -> {
-            JsonNode s = steps.get(sid);
+            final var s = steps.get(sid);
             rows.add(new StepRow(sid, doubleOrNull(s.path("score_pct")), s.path("measured").asBoolean(true)));
         });
         return rows;
     }
 
     /** The metrics.steps table from the Jinja2 run page (V-4). */
-    private void addStepScores(JsonNode metrics) {
-        List<StepRow> rows = stepRows(metrics);
+    private void addStepScores(final JsonNode metrics) {
+        final var rows = stepRows(metrics);
         if (rows.isEmpty()) {
             return;
         }
         add(Panels.sectionTitle("Per-step scores"));
-        Grid<StepRow> grid = new Grid<>(StepRow.class, false);
+        final var grid = new Grid<>(StepRow.class, false);
         grid.addColumn(StepRow::sid).setHeader("step").setAutoWidth(true);
         grid.addColumn(r -> Fmt.pct(r.scorePct())).setHeader("score %").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true);
@@ -339,13 +341,13 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
 
     /** The provenance block from the Jinja2 run page (V-4) — values may be objects
      * (e.g. quantization is an 11-property map in real manifests), so never asText() them. */
-    private void addProvenance(Api.Run run) {
+    private void addProvenance(final Api.Run run) {
         add(Panels.sectionTitle("Provenance"));
-        VerticalLayout provenance = new VerticalLayout();
+        final var provenance = new VerticalLayout();
         provenance.setPadding(false);
         provenance.setSpacing(false);
-        for (String line : provenanceLines(run.manifest(), run.results_dir())) {
-            Span span = new Span(line);
+        for (final var line : provenanceLines(run.manifest(), run.results_dir())) {
+            final var span = new Span(line);
             span.getStyle().set("font-variant-numeric", "tabular-nums");
             provenance.add(span);
         }
@@ -360,12 +362,13 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
      * Fmt.textOr (scalars) or Fmt.json (containers) — both Jackson 3-safe. Keys are
      * taken from the same list the Jinja2 page uses; unknown manifest keys are ignored.
      */
-    static List<String> provenanceLines(JsonNode manifest, String resultsDir) {
-        List<String> lines = new ArrayList<>();
-        JsonNode prov = manifest == null ? null : manifest.get("provenance");
+    static List<String> provenanceLines(final JsonNode manifest, final String resultsDir) {
+        // returned as List<String>; empty-diamond under var would infer <Object>
+        final List<String> lines = new ArrayList<>();
+        final var prov = manifest == null ? null : manifest.get("provenance");
         if (prov != null && prov.isObject()) {
-            for (String key : PROVENANCE_KEYS) {
-                JsonNode value = prov.get(key);
+            for (final var key : PROVENANCE_KEYS) {
+                final var value = prov.get(key);
                 if (value == null || value.isNull() || value.isMissingNode()) {
                     continue;
                 }
@@ -374,7 +377,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
             }
         }
         if (manifest != null && manifest.hasNonNull("usable_context")) {
-            JsonNode usableContext = manifest.get("usable_context");
+            final var usableContext = manifest.get("usable_context");
             lines.add("usable_context: " + (usableContext.isNumber()
                     ? Fmt.count(usableContext.longValue()) : Fmt.textOr(usableContext, "–")));
         }
@@ -384,16 +387,18 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         return lines;
     }
 
-    private static Long longOrNull(JsonNode node) {
+    private static Long longOrNull(final JsonNode node) {
         return node.isNumber() ? node.longValue() : null;
     }
 
-    private static Double doubleOrNull(JsonNode node) {
+    private static Double doubleOrNull(final JsonNode node) {
         return node.isNumber() ? node.doubleValue() : null;
     }
 
-    private String metaLine(Api.Run run) {
-        List<String> parts = new ArrayList<>();
+    private String metaLine(final Api.Run run) {
+        // returned via String.join, which needs Iterable<? extends CharSequence> - empty-diamond
+        // under var would infer List<Object> and fail to compile there
+        final List<String> parts = new ArrayList<>();
         if (run.task() != null) parts.add(run.task());
         if (run.mode() != null) parts.add(run.mode());
         if (run.model() != null) parts.add(run.model());
@@ -404,13 +409,13 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         return String.join(" · ", parts);
     }
 
-    private Span score(String label, String pct, String detail) {
-        Span span = new Span();
-        Span value = new Span(pct);
+    private Span score(final String label, final String pct, final String detail) {
+        final var span = new Span();
+        final var value = new Span(pct);
         value.getStyle().set("font-size", "1.3em").set("font-weight", "600");
-        Span labelSpan = new Span(label + " ");
+        final var labelSpan = new Span(label + " ");
         labelSpan.getStyle().set("color", "var(--lumo-secondary-text-color)");
-        Span detailSpan = new Span(detail);
+        final var detailSpan = new Span(detail);
         detailSpan.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em");
         span.add(labelSpan, value, new Span(" "), detailSpan);
         return span;

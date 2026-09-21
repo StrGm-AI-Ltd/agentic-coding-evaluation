@@ -14,16 +14,16 @@ public final class ExperimentStatuses {
     private ExperimentStatuses() {
     }
 
-    public static String effective(String tableStatus, List<String> jobStatuses) {
+    public static String effective(final String tableStatus, final List<String> jobStatuses) {
         if (!"queued".equals(tableStatus) || jobStatuses == null || jobStatuses.isEmpty()) {
             return tableStatus;
         }
-        boolean progressing = jobStatuses.stream()
+        final var progressing = jobStatuses.stream()
                 .anyMatch(status -> "running".equals(status) || "waiting_lock".equals(status));
         if (progressing) {
             return "running";
         }
-        boolean blocked = jobStatuses.stream().anyMatch("blocked"::equals);
+        final var blocked = jobStatuses.stream().anyMatch("blocked"::equals);
         if (blocked) {
             return "blocked";
         }

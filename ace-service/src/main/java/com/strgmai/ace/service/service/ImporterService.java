@@ -25,19 +25,19 @@ public class ImporterService {
 
     public ImporterService(DSLContext dsl) { this.dsl = dsl; }
 
-    public Map<String, Object> importRun(Path runDir, Integer jobId) throws Exception {
-        Map<String, Object> oracle = json.readValue(runDir.resolve("oracle.json").toFile(), Map.class);
+    public Map<String, Object> importRun(final Path runDir, final UUID jobId) throws Exception {
+        final Map<String, Object> oracle = json.readValue(runDir.resolve("oracle.json").toFile(), Map.class);
         Map<String, Object> manifest = Files.exists(runDir.resolve("manifest.json"))
                 ? json.readValue(runDir.resolve("manifest.json").toFile(), Map.class) : new LinkedHashMap<>();
         Map<String, Object> metrics = Files.exists(runDir.resolve("metrics.json"))
                 ? json.readValue(runDir.resolve("metrics.json").toFile(), Map.class) : new LinkedHashMap<>();
-        Map<String, Object> prov = (Map<String, Object>) manifest.getOrDefault("provenance", Map.of());
-        Map<String, Object> validity = (Map<String, Object>) manifest.getOrDefault("validity", Map.of());
+        final Map<String, Object> prov = (Map<String, Object>) manifest.getOrDefault("provenance", Map.of());
+        final Map<String, Object> validity = (Map<String, Object>) manifest.getOrDefault("validity", Map.of());
         boolean poolable = Objects.equals(oracle.get("schema_version"), com.strgmai.ace.service.config.BenchProperties.RESULT_SCHEMA)
                 && oracle.get("weighted_score_pct") != null;
-        Map<String, Object> contention = manifest.get("contention") instanceof Map<?, ?> cm ? (Map<String, Object>) cm : Map.of();
-        Map<String, Object> leaderboard = metrics.get("leaderboard") instanceof Map<?, ?> lb ? (Map<String, Object>) lb : Map.of();
-        String runId = runDir.getFileName().toString();
+        final Map<String, Object> contention = manifest.get("contention") instanceof Map<?, ?> cm ? (Map<String, Object>) cm : Map.of();
+        final Map<String, Object> leaderboard = metrics.get("leaderboard") instanceof Map<?, ?> lb ? (Map<String, Object>) lb : Map.of();
+        final String runId = runDir.getFileName().toString();
         // a re-import/rescore refreshes EVERY column the insert sets (importer.py builds `updates`
         // from the whole row); job_id is the one exception — importAll passes null and must not
         // orphan the run from the job that produced it (COALESCE onto the existing row's job_id).
@@ -96,9 +96,9 @@ public class ImporterService {
                 .execute();
         dsl.deleteFrom(CHECK_RESULTS).where(CHECK_RESULTS.RUN_ID.eq(runId)).execute();
         for (Map<String, Object> r : (List<Map<String, Object>>) oracle.getOrDefault("results", List.of())) {
-            String id = (String) r.get("id");
-            var check = com.strgmai.ace.service.oracle.CheckId.valueOf(id);
-            CheckResultsRecord rec = dsl.newRecord(CHECK_RESULTS);
+            final String id = (String) r.get("id");
+            final var check = com.strgmai.ace.service.oracle.CheckId.valueOf(id);
+            final CheckResultsRecord rec = dsl.newRecord(CHECK_RESULTS);
             rec.setRunId(runId);
             rec.setCheckId(id);
             rec.setCategory(check.category);
@@ -112,12 +112,12 @@ public class ImporterService {
 
     /** run-id lists, not counts - the Vaadin UI's Api.ImportResult (ported from the Python service's
      *  own importer.import_all contract) deserializes "imported"/"skipped" as List&lt;String&gt;. */
-    public Map<String, List<String>> importAll(Path resultsDir) throws Exception {
-        List<String> imported = new ArrayList<>(), skipped = new ArrayList<>();
+    public Map<String, List<String>> importAll(final Path resultsDir) throws Exception {
+        final List<String> imported = new ArrayList<>(), skipped = new ArrayList<>();
         try (DirectoryStream<Path> s = Files.newDirectoryStream(resultsDir)) {
             for (Path p : s) {
                 if (!Files.isDirectory(p) || p.getFileName().toString().startsWith("_")) continue;
-                String runId = p.getFileName().toString();
+                final String runId = p.getFileName().toString();
                 if (Files.isRegularFile(p.resolve("oracle.json"))) { importRun(p, null); imported.add(runId); }
                 else skipped.add(runId);
             }
@@ -125,9 +125,9 @@ public class ImporterService {
         return Map.of("imported", imported, "skipped", skipped);
     }
 
-    static String keyHash(Map<String, Object> oracle, Map<String, Object> manifest) {
+    static String keyHash(final Map<String, Object> oracle, final Map<String, Object> manifest) {
         // sha256 of the full comparability keytuple (stats.py load(): KEY_FIELDS), not a 3-field stand-in
-        List<String> tuple = new ArrayList<>();
+        final List<String> tuple = new ArrayList<>();
         for (String k : com.strgmai.ace.service.metrics.StatsService.KEY_FIELDS)
             tuple.add(String.valueOf(switch (k) {
                 case "task" -> oracle.get("task");
@@ -145,7 +145,7 @@ public class ImporterService {
         catch (Exception e) { return null; }
     }
 
-    private String toJson(Object o) {
+    private String toJson(final Object o) {
         try { return json.writeValueAsString(o); } catch (Exception e) { return "{}"; }
     }
     private static String str(Object o) { return o == null ? null : String.valueOf(o); }

@@ -22,24 +22,24 @@ import static org.mockito.Mockito.mockStatic;
  *  guaranteed-refused port for the "unreachable" case - no external services required either way. */
 class PreflightTest {
 
-    private static BenchProperties props(String model, String endpoint, String javaHome) {
+    private static BenchProperties props(final String model, final String endpoint, final String javaHome) {
         return new BenchProperties(model, endpoint, "", null, null, null, null, null, null, null,
                 null, null, null, null, null, javaHome);
     }
 
     /** a fake bin/java so the "pinned JDK 21" check passes without shelling out to /usr/libexec/java_home */
     private static String fakeJavaHome() throws Exception {
-        Path home = Files.createTempDirectory("java-home");
+        final var home = Files.createTempDirectory("java-home");
         Files.createDirectories(home.resolve("bin"));
         Files.createFile(home.resolve("bin/java"));
         return home.toString();
     }
 
-    private static MockedStatic<DockerService> mockDocker(int dockerRc, int composeRc, int gitRc) {
-        MockedStatic<DockerService> docker = mockStatic(DockerService.class);
+    private static MockedStatic<DockerService> mockDocker(final int dockerRc, final int composeRc, final int gitRc) {
+        final MockedStatic<DockerService> docker = mockStatic(DockerService.class);
         docker.when(() -> DockerService.sh(anyInt(), any(String[].class))).thenAnswer(inv -> {
             Object[] all = inv.getArguments();   // Mockito flattens the varargs: [timeoutSec, cmd[0], cmd[1], ...]
-            String[] cmd = new String[all.length - 1];
+            final String[] cmd = new String[all.length - 1];
             for (int i = 1; i < all.length; i++) cmd[i - 1] = (String) all[i];
             if (cmd[0].equals("git")) return new DockerService.Sh(gitRc, "git version 2.42.0");
             if (cmd[0].equals("docker") && cmd.length > 1 && cmd[1].equals("info")) return new DockerService.Sh(dockerRc, "24.0.0");
@@ -49,10 +49,10 @@ class PreflightTest {
         return docker;
     }
 
-    private static HttpServer fakeModelServer(String modelId) throws Exception {
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    private static HttpServer fakeModelServer(final String modelId) throws Exception {
+        final HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/models", ex -> {
-            byte[] body = ("{\"data\":[{\"id\":\"" + modelId + "\",\"max_model_len\":8192}]}").getBytes(StandardCharsets.UTF_8);
+            final byte[] body = ("{\"data\":[{\"id\":\"" + modelId + "\",\"max_model_len\":8192}]}").getBytes(StandardCharsets.UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(200, body.length);
             try (var os = ex.getResponseBody()) { os.write(body); }
@@ -61,17 +61,17 @@ class PreflightTest {
         return server;
     }
 
-    private static Preflight.Check byName(Preflight.Report r, String name) {
+    private static Preflight.Check byName(Preflight.Report r, final String name) {
         return r.checks().stream().filter(c -> c.check().equals(name)).findFirst()
                 .orElseThrow(() -> new AssertionError("no check named " + name + " in " + r.checks()));
     }
 
     @Test
     void allFatalChecksPassingIsNotBlocked() throws Exception {
-        HttpServer server = fakeModelServer("target-model");
+        final HttpServer server = fakeModelServer("target-model");
         try (MockedStatic<DockerService> docker = mockDocker(0, 0, 0)) {
-            Preflight pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()));
-            Preflight.Report r = pf.check(null);
+            final var pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()));
+            final Preflight.Report r = pf.check(null);
 
             assertFalse(r.blocked());
             assertTrue(byName(r, "docker daemon").ok());
@@ -88,13 +88,13 @@ class PreflightTest {
 
     @Test
     void missingGitBlocksEvenThoughDockerIsUp() throws Exception {
-        HttpServer server = fakeModelServer("target-model");
+        final HttpServer server = fakeModelServer("target-model");
         try (MockedStatic<DockerService> docker = mockDocker(0, 0, 1)) {
-            Preflight pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()));
-            Preflight.Report r = pf.check(null);
+            final var pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()));
+            final Preflight.Report r = pf.check(null);
 
             assertTrue(r.blocked());
-            Preflight.Check git = byName(r, "git");
+            final Preflight.Check git = byName(r, "git");
             assertFalse(git.ok());
             assertTrue(git.fatal());
         } finally {
@@ -107,12 +107,12 @@ class PreflightTest {
         try (MockedStatic<DockerService> docker = mockDocker(0, 0, 0)) {
             // port 1 refuses instantly; ContextProbe.models() swallows the failure and returns {},
             // so "model server" itself reads ok (0 models) and it's "target model served" that fails
-            Preflight pf = new Preflight(props("target-model", "http://127.0.0.1:1/v1", fakeJavaHome()));
-            Preflight.Report r = pf.check(null);
+            final var pf = new Preflight(props("target-model", "http://127.0.0.1:1/v1", fakeJavaHome()));
+            final Preflight.Report r = pf.check(null);
 
             assertTrue(r.blocked());
             assertTrue(byName(r, "model server").ok());
-            Preflight.Check target = byName(r, "target model served");
+            final Preflight.Check target = byName(r, "target model served");
             assertFalse(target.ok());
             assertTrue(target.fatal());
         }
@@ -120,13 +120,13 @@ class PreflightTest {
 
     @Test
     void dockerDaemonDownAloneDoesNotBlock() throws Exception {
-        HttpServer server = fakeModelServer("target-model");
+        final HttpServer server = fakeModelServer("target-model");
         try (MockedStatic<DockerService> docker = mockDocker(1, 0, 0)) {
-            Preflight pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()));
-            Preflight.Report r = pf.check(null);
+            final var pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()));
+            final Preflight.Report r = pf.check(null);
 
             assertFalse(r.blocked());
-            Preflight.Check dockerDaemon = byName(r, "docker daemon");
+            final Preflight.Check dockerDaemon = byName(r, "docker daemon");
             assertFalse(dockerDaemon.ok());
             assertFalse(dockerDaemon.fatal());
         } finally {
@@ -136,9 +136,9 @@ class PreflightTest {
 
     @Test
     void anExplicitModelArgumentOverridesThePropsDefault() throws Exception {
-        HttpServer server = fakeModelServer("explicit-model");
+        final HttpServer server = fakeModelServer("explicit-model");
         try (MockedStatic<DockerService> docker = mockDocker(0, 0, 0)) {
-            Preflight pf = new Preflight(props("props-default-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()));
+            final var pf = new Preflight(props("props-default-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()));
             Preflight.Report r = pf.check("explicit-model");   // the model THIS job will request, not props.model()
 
             assertFalse(r.blocked());

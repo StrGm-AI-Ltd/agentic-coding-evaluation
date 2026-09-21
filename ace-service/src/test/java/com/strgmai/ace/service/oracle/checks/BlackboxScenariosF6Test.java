@@ -19,7 +19,7 @@ class BlackboxScenariosF6Test {
         try (var in = getClass().getResourceAsStream("/contract/openapi.yaml")) {
             yaml = new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
-        Map<String, Map<String, java.util.List<String>>> paths = BlackboxScenarios.parseOpenApiPaths(yaml);
+        final Map<String, Map<String, java.util.List<String>>> paths = BlackboxScenarios.parseOpenApiPaths(yaml);
         assertTrue(paths.containsKey("/accounts/{id}"), "paths parsed: " + paths.keySet());
         assertEquals(java.util.List.of("200", "404"), paths.get("/accounts/{id}").get("get"));
         assertEquals(java.util.List.of("200", "400", "404"), paths.get("/accounts/{id}/holdings").get("get"));
@@ -49,7 +49,7 @@ class BlackboxScenariosF6Test {
                       "400":
                         description: bad
                 """;
-        var paths = BlackboxScenarios.parseOpenApiPaths(yaml);
+        final var paths = BlackboxScenarios.parseOpenApiPaths(yaml);
         assertEquals(java.util.List.of("200", "404"), paths.get("/flow/{id}").get("get"));
         assertEquals(java.util.List.of("200"), paths.get("/block/{id}").get("get"));
         assertEquals(java.util.List.of("201", "400"), paths.get("/block/{id}").get("post"));
@@ -57,8 +57,8 @@ class BlackboxScenariosF6Test {
 
     @Test
     void parsesThePositiveControlFixturesOwnStandardBlockStyleSpec() throws Exception {
-        String yaml = java.nio.file.Files.readString(java.nio.file.Path.of("fixtures/positive/openapi.yaml"));
-        var paths = BlackboxScenarios.parseOpenApiPaths(yaml);
+        final String yaml = java.nio.file.Files.readString(java.nio.file.Path.of("fixtures/positive/openapi.yaml"));
+        final var paths = BlackboxScenarios.parseOpenApiPaths(yaml);
         assertEquals(java.util.List.of("200", "503"), paths.get("/health").get("get"));
         assertEquals(java.util.List.of("201", "400"), paths.get("/accounts").get("post"));
         assertEquals("/accounts/{id}", BlackboxScenarios.matchTemplate(paths, "GET", "/accounts/66e46cae-1a58-42ca-8bba-35e9f7f75143"));

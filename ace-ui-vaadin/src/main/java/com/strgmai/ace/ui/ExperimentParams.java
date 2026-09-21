@@ -21,11 +21,12 @@ public final class ExperimentParams {
      * @return the params map for the template
      * @throws IllegalArgumentException with a user-presentable message on bad input
      */
-    public static Map<String, Object> build(String template, Map<String, Object> raw) {
+    public static Map<String, Object> build(final String template, final Map<String, Object> raw) {
         if (template == null || template.isBlank()) {
             throw new IllegalArgumentException("unknown template: " + template);
         }
-        Map<String, Object> params = new LinkedHashMap<>();
+        // returned as Map<String, Object>; empty-diamond under var would infer <Object, Object>
+        final Map<String, Object> params = new LinkedHashMap<>();
         params.put("task_wall", intOr(raw.get("task_wall"), 3600, "task_wall"));
         params.put("task_tokens", taskTokens(raw.get("task_tokens")));
         if (raw.get("context_window") != null) {
@@ -43,8 +44,10 @@ public final class ExperimentParams {
             case "harness_effect" -> {
                 requireModel((String) raw.get("model"));
                 params.put("model", raw.get("model"));
+                // reassigned below to List.of(...) - cannot be final, and var would infer
+                // ArrayList<Object> here, which that reassignment is not compatible with
                 List<String> arms = new ArrayList<>();
-                for (Object arm : (List<?>) raw.getOrDefault("arms", List.of())) {
+                for (final var arm : (List<?>) raw.getOrDefault("arms", List.of())) {
                     arms.add(String.valueOf(arm));
                 }
                 if (arms.isEmpty()) { // the service defaults to orch+mono when nothing is checked
@@ -64,7 +67,7 @@ public final class ExperimentParams {
                 requireModel((String) raw.get("model"));
                 params.put("model", raw.get("model"));
                 params.put("mode", raw.get("mode") == null ? "orchestrated" : raw.get("mode"));
-                Object agents = raw.get("agents");
+                final var agents = raw.get("agents");
                 params.put("agents", agents == null ? List.of("ref", "pi") : agents);
             }
             default -> throw new IllegalArgumentException("unknown template: " + template);
@@ -73,35 +76,35 @@ public final class ExperimentParams {
     }
 
     /** "auto" (or blank) stays "auto"; digit strings become Integers; anything else is rejected. */
-    static Object taskTokens(Object value) {
+    static Object taskTokens(final Object value) {
         if (value == null || blank(value) || "auto".equals(value)) {
             return "auto";
         }
         if (value instanceof Integer number) {
             return number;
         }
-        String text = value.toString();
+        final var text = value.toString();
         if (text.matches("\\d+")) {
             try {
                 return Integer.valueOf(text);
-            } catch (NumberFormatException e) {
+            } catch (final NumberFormatException e) {
                 throw new IllegalArgumentException("task_tokens: enter a number up to 2147483647, or 'auto'");
             }
         }
         throw new IllegalArgumentException("task_tokens: enter a number, or 'auto'");
     }
 
-    private static void requireModel(String model) {
+    private static void requireModel(final String model) {
         if (blank(model)) {
             throw new IllegalArgumentException("a model is required for every template");
         }
     }
 
-    private static boolean blank(Object value) {
+    private static boolean blank(final Object value) {
         return value == null || (value instanceof String text && text.isBlank());
     }
 
-    private static Object intOr(Object value, Integer fallback, String field) {
+    private static Object intOr(final Object value, final Integer fallback, final String field) {
         if (value == null || blank(value)) {
             return fallback;
         }
@@ -110,14 +113,14 @@ public final class ExperimentParams {
         }
         try {
             return Integer.valueOf(value.toString());
-        } catch (NumberFormatException e) {
+        } catch (final NumberFormatException e) {
             throw new IllegalArgumentException(field + ": enter a whole number");
         }
     }
 
-    private static void putIfPresent(Map<String, Object> params, Map<String, Object> raw,
-            String key, Class<?> type) {
-        Object value = raw.get(key);
+    private static void putIfPresent(final Map<String, Object> params, final Map<String, Object> raw,
+            final String key, final Class<?> type) {
+        final var value = raw.get(key);
         if (value == null || blank(value)) {
             return;
         }
@@ -127,8 +130,8 @@ public final class ExperimentParams {
         }
         // raw may carry Strings (Map<String, Object> contract): parse instead of casting,
         // and convert parse failures to IllegalArgumentException per the documented contract
-        String text = value.toString();
-        Object typed;
+        final var text = value.toString();
+        final Object typed;   // assigned exactly once by the switch expression below; a legal blank final
         try {
             typed = switch (type.getName()) {
                 case "java.lang.Boolean" -> {
@@ -141,7 +144,7 @@ public final class ExperimentParams {
                 case "java.lang.Integer" -> Integer.valueOf(text);
                 default -> text;
             };
-        } catch (NumberFormatException e) {
+        } catch (final NumberFormatException e) {
             throw new IllegalArgumentException(key + ": expected a number");
         }
         params.put(key, typed);

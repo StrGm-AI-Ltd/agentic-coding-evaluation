@@ -19,12 +19,12 @@ public final class VerifyTask {
     // compiled ONCE: firstError runs this per output line, and Pattern.compile per line re-parses the regex every time
     private static final Pattern ERROR_PATTERN = Pattern.compile("error:|FAILED|What went wrong|cannot find symbol|requires JVM");
 
-    public static Map<String, Object> verify(Path ws, Map<String, Object> cfg, Path logPath) {
-        List<Path> roots = StructureChecks.gradleRoots(ws);
+    public static Map<String, Object> verify(final Path ws, final Map<String, Object> cfg, final Path logPath) {
+        final List<Path> roots = StructureChecks.gradleRoots(ws);
         if (roots.isEmpty()) return Map.of("ran", false, "reason", "no gradle project");
-        int timeoutSec = cfg.get("verify_timeout_sec") instanceof Number n ? n.intValue() : 600;
+        final int timeoutSec = cfg.get("verify_timeout_sec") instanceof Number n ? n.intValue() : 600;
         for (Path x : StructureChecks.glob(ws, "**/build/test-results/**/*.xml")) { try { Files.deleteIfExists(x); } catch (IOException ignore) {} }
-        Map<String, Object> res = new LinkedHashMap<>();
+        final Map<String, Object> res = new LinkedHashMap<>();
         res.put("ran", true);
         res.put("roots", new ArrayList<String>());
         res.put("executed", 0);
@@ -32,13 +32,13 @@ public final class VerifyTask {
         res.put("rc", new ArrayList<Integer>());
         res.put("seconds", 0.0);
         res.put("first_error", "");
-        long t0 = System.nanoTime();
+        final long t0 = System.nanoTime();
         try {
             java.io.Writer log = null;
             try {
                 log = logPath == null ? null : Files.newBufferedWriter(logPath, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
                 // one factory for the whole glob: newInstance() per XML file re-ran security/feature setup every time
-                var docFactory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+                final var docFactory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
                 for (Path r : roots) {
                     String cmd0 = Files.isRegularFile(r.resolve("gradlew")) && r.resolve("gradlew").toFile().canExecute()
                             ? r.resolve("gradlew").toString() : "gradle";
@@ -50,7 +50,7 @@ public final class VerifyTask {
                         env.put("CI", "1");
                         env.put("GRADLE_OPTS", "-Dorg.gradle.daemon=false");
                         if (cfg.get("java_home") != null) { env.put("JAVA_HOME", String.valueOf(cfg.get("java_home"))); env.put("PATH", cfg.get("java_home") + "/bin:" + env.getOrDefault("PATH", "")); }
-                        var r2 = com.strgmai.ace.service.docker.DockerService.proc(timeoutSec, r, env, cmd.toArray(String[]::new));
+                        final var r2 = com.strgmai.ace.service.docker.DockerService.proc(timeoutSec, r, env, cmd.toArray(String[]::new));
                         rc = r2.rc();
                         out = r2.out() + r2.err();
                     } catch (Exception e) { rc = 127; out = String.valueOf(e); }
@@ -61,8 +61,8 @@ public final class VerifyTask {
                         res.put("first_error", firstError(out));
                     for (Path x : StructureChecks.glob(r, "**/build/test-results/**/*.xml")) {
                         try {
-                            var doc = docFactory.newDocumentBuilder().parse(x.toFile());
-                            var root = doc.getDocumentElement();
+                            final var doc = docFactory.newDocumentBuilder().parse(x.toFile());
+                            final var root = doc.getDocumentElement();
                             if (root.getTagName().equals("testsuite")) {
                                 res.merge("executed", Integer.parseInt(root.getAttribute("tests").isEmpty() ? "0" : root.getAttribute("tests")), (a, b) -> (int) a + (int) b);
                                 res.merge("failed", Integer.parseInt(root.getAttribute("failures").isEmpty() ? "0" : root.getAttribute("failures"))
@@ -77,7 +77,7 @@ public final class VerifyTask {
             }
         } catch (IOException ignore) {}
         res.put("seconds", Math.round((System.nanoTime() - t0) / 1e8) / 10.0);
-        List<Integer> rcs = (List<Integer>) res.get("rc");
+        final List<Integer> rcs = (List<Integer>) res.get("rc");
         if (rcs.stream().anyMatch(rc -> rc != 0) && ((int) res.get("executed")) == 0) {
             res.put("green", null);   // inconclusive: nothing was executed and the build itself failed
             res.put("could_not_run", true);
@@ -87,17 +87,17 @@ public final class VerifyTask {
         return res;
     }
 
-    static String firstError(String out) {
+    static String firstError(final String out) {
         for (String line : out.split("\n")) {
-            String l = line.strip();
+            final String l = line.strip();
             if (ERROR_PATTERN.matcher(l).find())
                 return l.substring(0, Math.min(160, l.length()));
         }
-        String[] lines = Arrays.stream(out.split("\n")).filter(x -> !x.isBlank()).toArray(String[]::new);
+        final String[] lines = Arrays.stream(out.split("\n")).filter(x -> !x.isBlank()).toArray(String[]::new);
         return lines.length == 0 ? "" : lines[lines.length - 1].substring(0, Math.min(160, lines[lines.length - 1].length()));
     }
 
-    public static String verifyText(Map<String, Object> v) {
+    public static String verifyText(final Map<String, Object> v) {
         if (v == null || !Boolean.TRUE.equals(v.get("ran"))) return "(no Gradle project to verify yet)";
         if (v.get("green") == null)
             return "`gradle test` run by the harness could NOT run (build failed before any test executed; rc=" + v.get("rc") + ")"
@@ -109,16 +109,16 @@ public final class VerifyTask {
 
     /** True = claimed done AND harness green; False = claimed done and harness red, or not claimed
      *  done; None = claimed done but the verification could not run (inconclusive, R4 C-2). */
-    public static Boolean doneVerified(String reported, Map<String, Object> v) {
+    public static Boolean doneVerified(final String reported, final Map<String, Object> v) {
         if (!"done".equals(reported)) return false;
         return verdict(v);
     }
 
-    public static Boolean verdict(Map<String, Object> v) {
+    public static Boolean verdict(final Map<String, Object> v) {
         if (v == null || !Boolean.TRUE.equals(v.get("ran"))) return null;
-        Object g = v.get("green");
-        List<Integer> rcs = v.get("rc") instanceof List<?> l ? (List<Integer>) l : List.of(1);
-        int executed = v.get("executed") instanceof Number n ? n.intValue() : 0;
+        final Object g = v.get("green");
+        final List<Integer> rcs = v.get("rc") instanceof List<?> l ? (List<Integer>) l : List.of(1);
+        final int executed = v.get("executed") instanceof Number n ? n.intValue() : 0;
         if (g == null || (Boolean.FALSE.equals(g) && executed == 0 && rcs.stream().anyMatch(rc -> rc != 0))) return null;
         return (Boolean) g;
     }

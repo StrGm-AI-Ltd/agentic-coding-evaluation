@@ -16,7 +16,7 @@ class FileViewerViewTest {
 
     @Test
     void format_prettyPrintsCompactJson() {
-        String pretty = FileViewerView.format("{\"a\":1,\"b\":{\"c\":[1,2]}}");
+        final var pretty = FileViewerView.format("{\"a\":1,\"b\":{\"c\":[1,2]}}");
         assertTrue(pretty.contains("\n  "), "pretty-printed with indentation");
         assertTrue(pretty.contains("\"a\" : 1"));
         // formatting must not change the value, only the layout
@@ -32,7 +32,7 @@ class FileViewerViewTest {
 
     @Test
     void format_jsonlPrettyPrintsEachRecord() {
-        String formatted = FileViewerView.format("{\"a\":1}\n{\"a\":2}");
+        final var formatted = FileViewerView.format("{\"a\":1}\n{\"a\":2}");
         assertEquals("""
                 {
                   "a" : 1
@@ -44,7 +44,7 @@ class FileViewerViewTest {
 
     @Test
     void format_jsonlIgnoresBlankLinesAndTrailingNewline() {
-        String formatted = FileViewerView.format("{\"a\":1}\n\n{\"a\":2}\n\n");
+        final var formatted = FileViewerView.format("{\"a\":1}\n\n{\"a\":2}\n\n");
         assertEquals("""
                 {
                   "a" : 1

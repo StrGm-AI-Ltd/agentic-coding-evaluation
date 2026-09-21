@@ -27,18 +27,19 @@ public final class JobSpecs {
      * @return the normalized spec map; task first
      * @throws IllegalArgumentException when task is blank
      */
-    public static Map<String, Object> build(String task, Map<String, Object> raw) {
+    public static Map<String, Object> build(final String task, Map<String, Object> raw) {
         if (task == null || task.isBlank()) {
             throw new IllegalArgumentException("task is required (a rung from tasks/ladder.json)");
         }
         if (raw == null) {
-            raw = Map.of();
+            raw = Map.of();   // reassigned - cannot be final
         }
-        Map<String, Object> spec = new LinkedHashMap<>();
+        // returned as Map<String, Object>; empty-diamond under var would infer <Object, Object>
+        final Map<String, Object> spec = new LinkedHashMap<>();
         spec.put("task", task);
-        for (Map.Entry<String, Object> entry : raw.entrySet()) {
-            String key = entry.getKey();
-            Object value = entry.getValue();
+        for (final var entry : raw.entrySet()) {
+            final var key = entry.getKey();
+            final var value = entry.getValue();
             if (BOOLEAN_FLAGS.contains(key)) {
                 spec.put(key, Boolean.TRUE.equals(value));
             } else if (value != null && (!(value instanceof String text) || !text.isBlank())) {

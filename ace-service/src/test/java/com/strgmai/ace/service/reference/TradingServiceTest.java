@@ -25,7 +25,7 @@ class TradingServiceTest {
 
     @Test
     void decimalAmountsRoundTripExactly() {
-        String a = account();
+        final String a = account();
         svc.deposit(a, "10.00");
         for (int i = 0; i < 3; i++)
             assertEquals(201, svc.order(a, "AAPL", "BUY", "1", "0.10", null).status());
@@ -34,26 +34,26 @@ class TradingServiceTest {
 
     @Test
     void insufficientBalanceIs422() {
-        String a = account();
+        final String a = account();
         svc.deposit(a, "5.00");
         assertEquals(422, svc.order(a, "AAPL", "BUY", "10", "10.00", null).status());
     }
 
     @Test
     void illegalTransitionIs409() {
-        String a = account();
+        final String a = account();
         svc.deposit(a, "1000.00");
-        TradingService.OrderOutcome o = svc.order(a, "AAPL", "BUY", "1", "10.00", null);
+        final TradingService.OrderOutcome o = svc.order(a, "AAPL", "BUY", "1", "10.00", null);
         assertEquals(201, o.status());
         assertEquals(409, svc.cancel((String) o.body().get("orderId")).status());
     }
 
     @Test
     void theAsOfBoundaryIsExclusiveAndEchoed() throws InterruptedException {
-        String a = account();
+        final String a = account();
         svc.deposit(a, "1000.00");
-        TradingService.OrderOutcome buy = svc.order(a, "TSLA", "BUY", "2", "250.00", null);
-        java.time.Instant buyAt = java.time.Instant.parse((String) buy.body().get("executedAt"));
+        final TradingService.OrderOutcome buy = svc.order(a, "TSLA", "BUY", "2", "250.00", null);
+        final java.time.Instant buyAt = java.time.Instant.parse((String) buy.body().get("executedAt"));
         // read the buy's real executedAt and spin until strictly after it: the exclusive boundary
         // (and the assertion below) is only meaningful then; a bare sleep(5) could land on the
         // same millisecond on a GC-starved CI runner
@@ -61,17 +61,17 @@ class TradingServiceTest {
         do { Thread.sleep(5); between = TradingService.now().toString(); }
         while (!java.time.Instant.parse(between).isAfter(buyAt));
         svc.order(a, "TSLA", "SELL", "2", "250.00", null);
-        var h = svc.holdings(a, java.time.Instant.parse(between));
+        final var h = svc.holdings(a, java.time.Instant.parse(between));
         assertEquals("2", ((java.util.Map<?, ?>) h.get("holdings")).get("TSLA"));
         assertNotNull(h.get("asOfApplied"));                                        // always echoed
     }
 
     @Test
     void idempotencyKeyRepeatReturnsTheSameOrderWithoutReExecuting() {
-        String a = account();
+        final String a = account();
         svc.deposit(a, "1000.00");
-        TradingService.OrderOutcome first = svc.order(a, "AAPL", "BUY", "1", "10.00", "idem-1");
-        TradingService.OrderOutcome repeat = svc.order(a, "AAPL", "BUY", "1", "10.00", "idem-1");
+        final TradingService.OrderOutcome first = svc.order(a, "AAPL", "BUY", "1", "10.00", "idem-1");
+        final TradingService.OrderOutcome repeat = svc.order(a, "AAPL", "BUY", "1", "10.00", "idem-1");
         assertEquals(200, repeat.status());
         assertEquals(first.body().get("orderId"), repeat.body().get("orderId"));
         assertEquals("1", ((java.util.Map<?, ?>) svc.holdings(a, null).get("holdings")).get("AAPL"));   // executed once
@@ -79,7 +79,7 @@ class TradingServiceTest {
 
     @Test
     void buyThenEqualSellRestoresHoldings() {
-        String a = account();
+        final String a = account();
         svc.deposit(a, "1000.00");
         assertEquals(201, svc.order(a, "AAPL", "BUY", "10", "10.00", null).status());
         assertEquals(201, svc.order(a, "AAPL", "SELL", "10", "10.00", null).status());
@@ -89,33 +89,33 @@ class TradingServiceTest {
     // ---- the BUGS calibration modes: each must break exactly the rule it claims to
     @Test
     void theHalfupBugBreaksHalfEvenRounding() {
-        TradingService buggy = new TradingService(Set.of("halfup"));
-        String a = (String) buggy.createAccount("USD").get("accountId");
+        final var buggy = new TradingService(Set.of("halfup"));
+        final String a = (String) buggy.createAccount("USD").get("accountId");
         buggy.deposit(a, "0.005");
         assertEquals("0.01", buggy.account(a).get("availableBalance"));   // HALF_UP: the F7 catch
     }
 
     @Test
     void theNo409BugAllowsCancellingAFilledOrder() {
-        TradingService buggy = new TradingService(Set.of("no409"));
-        String a = (String) buggy.createAccount("USD").get("accountId");
+        final var buggy = new TradingService(Set.of("no409"));
+        final String a = (String) buggy.createAccount("USD").get("accountId");
         buggy.deposit(a, "1000.00");
-        String oid = (String) buggy.order(a, "AAPL", "BUY", "1", "10.00", null).body().get("orderId");
+        final String oid = (String) buggy.order(a, "AAPL", "BUY", "1", "10.00", null).body().get("orderId");
         assertEquals(200, buggy.cancel(oid).status());                    // the F4 catch
     }
 
     @Test
     void theNo422BugAcceptsInsufficientFunds() {
-        TradingService buggy = new TradingService(Set.of("no422"));
-        String a = (String) buggy.createAccount("USD").get("accountId");
+        final var buggy = new TradingService(Set.of("no422"));
+        final String a = (String) buggy.createAccount("USD").get("accountId");
         buggy.deposit(a, "5.00");
         assertEquals(201, buggy.order(a, "AAPL", "BUY", "10", "10.00", null).status());   // the F3 catch
     }
 
     @Test
     void theAsymBugUndercreditsTheSell() {
-        TradingService buggy = new TradingService(Set.of("asym"));
-        String a = (String) buggy.createAccount("USD").get("accountId");
+        final var buggy = new TradingService(Set.of("asym"));
+        final String a = (String) buggy.createAccount("USD").get("accountId");
         buggy.deposit(a, "100.00");
         buggy.order(a, "AAPL", "BUY", "1", "10.00", null);
         buggy.order(a, "AAPL", "SELL", "1", "10.00", null);
@@ -124,8 +124,8 @@ class TradingServiceTest {
 
     @Test
     void theNoidemBugExecutesTwice() {
-        TradingService buggy = new TradingService(Set.of("noidem"));
-        String a = (String) buggy.createAccount("USD").get("accountId");
+        final var buggy = new TradingService(Set.of("noidem"));
+        final String a = (String) buggy.createAccount("USD").get("accountId");
         buggy.deposit(a, "1000.00");
         buggy.order(a, "AAPL", "BUY", "1", "10.00", "idem-1");
         buggy.order(a, "AAPL", "BUY", "1", "10.00", "idem-1");
@@ -134,18 +134,18 @@ class TradingServiceTest {
 
     @Test
     void theInclusiveBugSeesEventsAtTheBoundary() {
-        TradingService buggy = new TradingService(Set.of("inclusive"));
-        String a = (String) buggy.createAccount("USD").get("accountId");
+        final var buggy = new TradingService(Set.of("inclusive"));
+        final String a = (String) buggy.createAccount("USD").get("accountId");
         buggy.deposit(a, "1000.00");
-        String executedAt = (String) buggy.order(a, "TSLA", "BUY", "2", "250.00", null).body().get("executedAt");
-        var h = buggy.holdings(a, java.time.Instant.parse(executedAt));
+        final String executedAt = (String) buggy.order(a, "TSLA", "BUY", "2", "250.00", null).body().get("executedAt");
+        final var h = buggy.holdings(a, java.time.Instant.parse(executedAt));
         assertEquals("2", ((java.util.Map<?, ?>) h.get("holdings")).get("TSLA"));   // AT the boundary: kept only under the bug
     }
 
     @Test
     void theSelladdBugAddsSellsToHoldings() {
-        TradingService buggy = new TradingService(Set.of("selladd"));
-        String a = (String) buggy.createAccount("USD").get("accountId");
+        final var buggy = new TradingService(Set.of("selladd"));
+        final String a = (String) buggy.createAccount("USD").get("accountId");
         buggy.deposit(a, "1000.00");
         buggy.order(a, "AAPL", "BUY", "10", "10.00", null);
         buggy.order(a, "AAPL", "SELL", "10", "10.00", null);
@@ -154,8 +154,8 @@ class TradingServiceTest {
 
     @Test
     void theFloatBugBreaksTheDecimalRoundTripRepresentation() {
-        TradingService buggy = new TradingService(Set.of("float"));
-        String a = (String) buggy.createAccount("USD").get("accountId");
+        final var buggy = new TradingService(Set.of("float"));
+        final String a = (String) buggy.createAccount("USD").get("accountId");
         buggy.deposit(a, "10.00");
         buggy.order(a, "AAPL", "BUY", "1", "0.10", null);
         assertEquals("9.9", buggy.account(a).get("availableBalance"));   // a float repr, not "9.90": the F5 catch

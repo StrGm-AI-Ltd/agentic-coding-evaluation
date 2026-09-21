@@ -35,7 +35,7 @@ class ReferenceAgentTest {
     void everyKindResolvesToAConfiguredEffort() {
         for (String name : new String[] {"p0_definition", "p1_plan", "p2_implementation", "INTEGRATION",
                 "REVIEW", "TRAJECTORY_REVIEW", "T3-wrapup", "T3-handoff", "W1-fix"}) {
-            String effort = ReferenceAgent.DEFAULT_REASONING.getOrDefault(ReferenceAgent.reasoningKind(name), "medium");
+            final String effort = ReferenceAgent.DEFAULT_REASONING.getOrDefault(ReferenceAgent.reasoningKind(name), "medium");
             assertEquals(true, effort.equals("high") || effort.equals("medium") || effort.equals("low"),
                     name + " resolved to an unexpected effort: " + effort);
         }

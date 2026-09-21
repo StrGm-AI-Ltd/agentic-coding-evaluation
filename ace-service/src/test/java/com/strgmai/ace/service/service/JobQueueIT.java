@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class JobQueueIT {
 
     private DSLContext dsl() throws Exception {
-        var ds = new org.sqlite.SQLiteDataSource();
+        final var ds = new org.sqlite.SQLiteDataSource();
         ds.setUrl("jdbc:sqlite:" + Files.createTempFile("ace-jobqueue-test", ".db") + "?foreign_keys=on");
         Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
         return DSL.using(ds, SQLDialect.SQLITE);
@@ -32,32 +32,32 @@ class JobQueueIT {
 
     @Test
     void enqueueClaimPriorityCancelAndRequeue() throws Exception {
-        JobQueue q = new JobQueue(dsl());
-        String results = Files.createTempDirectory("results").toString();
+        final var q = new JobQueue(dsl());
+        final var results = Files.createTempDirectory("results").toString();
 
         q.enqueue(spec("low-1"), 0, results, "r", "o", null, null, null);
         q.enqueue(spec("high-1"), 5, results, "r", "o", null, null, null);
-        JobQueue.Job claimed = q.claim();
+        final JobQueue.Job claimed = q.claim();
         assertEquals("high-1", claimed.runId());                     // priority DESC wins
 
         q.setStatus(claimed.id(), "failed", "boom");
         assertEquals("failed", q.get(claimed.id()).get("status"));
 
-        java.nio.file.Path dir = java.nio.file.Path.of(results, "high-1");
+        final java.nio.file.Path dir = java.nio.file.Path.of(results, "high-1");
         Files.createDirectories(dir);                                 // ...a re-run would mix its files
-        IllegalStateException mixed = assertThrows(IllegalStateException.class, () -> q.requeue(claimed.id(), results));
+        final IllegalStateException mixed = assertThrows(IllegalStateException.class, () -> q.requeue(claimed.id(), results));
         assertTrue(mixed.getMessage().contains("would mix its files"));
         Files.delete(dir);
         q.requeue(claimed.id(), results);
         assertEquals("queued", q.get(claimed.id()).get("status"));
 
-        JobQueue.Job again = q.claim();
+        final JobQueue.Job again = q.claim();
         assertEquals("high-1", again.runId());   // the requeued job kept its priority: it wins the next claim again
         q.cancel(again.id());
         assertEquals("running", q.get(again.id()).get("status"));   // a RUNNING job gets the flag; the worker stops it
         assertTrue((Boolean) q.get(again.id()).get("cancel_requested"));
 
-        JobQueue.Job second = q.claim();
+        final JobQueue.Job second = q.claim();
         assertEquals("low-1", second.runId());
         q.setStatus(second.id(), "queued", null);   // a non-running job cancels outright
         q.cancel(second.id());
@@ -67,7 +67,7 @@ class JobQueueIT {
         assertThrows(IllegalArgumentException.class, () -> q.enqueue(spec("low-1"), 0, results, "r", "o", null, null, null));   // never twice
     }
 
-    private static RunSpec spec(String runId) {
+    private static RunSpec spec(final String runId) {
         return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", 3600, null, null, null, null, false, false, false, null, false, true, null, runId);
     }
 }

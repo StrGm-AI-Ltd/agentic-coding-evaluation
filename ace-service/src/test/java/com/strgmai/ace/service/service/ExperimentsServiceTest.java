@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *  mid-loop enqueue failure must roll back the whole experiment, not leave orphans. */
 class ExperimentsServiceTest {
 
-    private static BenchProperties props(String endpoint) {
+    private static BenchProperties props(final String endpoint) {
         return new BenchProperties(null, endpoint, null, null, null, null, null, null, null, null,
                 null, null, null, null, null, null);
     }
@@ -39,13 +39,13 @@ class ExperimentsServiceTest {
 
     @Test
     void harnessEffectDefaultArmsCarryTheMonolithicBudgetMultiplierAndNullContextWindow() {
-        ExperimentsService svc = serviceWithUnreachableModelServer();
-        int n = ExperimentsService.taskCount();
-        List<ExperimentsService.ArmSpec> specs = svc.plan("harness_effect", Map.of("model", "modelX"), 1);
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final int n = ExperimentsService.taskCount();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("harness_effect", Map.of("model", "modelX"), 1);
 
         assertEquals(2, specs.size());
-        ExperimentsService.ArmSpec orch = specs.stream().filter(s -> s.arm().equals("orch")).findFirst().orElseThrow();
-        ExperimentsService.ArmSpec mono = specs.stream().filter(s -> s.arm().equals("mono")).findFirst().orElseThrow();
+        final ExperimentsService.ArmSpec orch = specs.stream().filter(s -> s.arm().equals("orch")).findFirst().orElseThrow();
+        final ExperimentsService.ArmSpec mono = specs.stream().filter(s -> s.arm().equals("mono")).findFirst().orElseThrow();
 
         assertEquals("orchestrated", orch.spec().mode());
         assertNull(orch.spec().implWall());
@@ -63,7 +63,7 @@ class ExperimentsServiceTest {
     @Test
     void modelAbResolvesEachArmsContextWindowIndependently() throws Exception {
         // model_a and model_b are different-sized models on the same server: windowA must not leak into windowB
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        final HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/models", ex -> {
             byte[] body = ("{\"data\":[{\"id\":\"qwenmodel\",\"max_model_len\":32768}," +
                     "{\"id\":\"llamamodel\",\"max_model_len\":8192}]}").getBytes(StandardCharsets.UTF_8);
@@ -79,8 +79,8 @@ class ExperimentsServiceTest {
                     Map.of("model_a", "qwenmodel", "model_b", "llamamodel"), 1);
 
             assertEquals(2, specs.size());
-            ExperimentsService.ArmSpec a = specs.stream().filter(s -> s.arm().equals("A")).findFirst().orElseThrow();
-            ExperimentsService.ArmSpec b = specs.stream().filter(s -> s.arm().equals("B")).findFirst().orElseThrow();
+            final ExperimentsService.ArmSpec a = specs.stream().filter(s -> s.arm().equals("A")).findFirst().orElseThrow();
+            final ExperimentsService.ArmSpec b = specs.stream().filter(s -> s.arm().equals("B")).findFirst().orElseThrow();
             assertEquals(32768, a.spec().contextWindow());
             assertEquals(8192, b.spec().contextWindow());
             assertEquals("qwenmodel", a.spec().model());
@@ -95,12 +95,12 @@ class ExperimentsServiceTest {
 
     @Test
     void agentAbComparesHarnessFlagAtEqualBudget() {
-        ExperimentsService svc = serviceWithUnreachableModelServer();
-        List<ExperimentsService.ArmSpec> specs = svc.plan("agent_ab", Map.of("model", "modelX"), 1);
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("agent_ab", Map.of("model", "modelX"), 1);
 
         assertEquals(2, specs.size());
-        ExperimentsService.ArmSpec ref = specs.stream().filter(s -> s.arm().equals("ref")).findFirst().orElseThrow();
-        ExperimentsService.ArmSpec pi = specs.stream().filter(s -> s.arm().equals("pi")).findFirst().orElseThrow();
+        final ExperimentsService.ArmSpec ref = specs.stream().filter(s -> s.arm().equals("ref")).findFirst().orElseThrow();
+        final ExperimentsService.ArmSpec pi = specs.stream().filter(s -> s.arm().equals("pi")).findFirst().orElseThrow();
         assertEquals("ref", ref.spec().harness());
         assertEquals("pi", pi.spec().harness());
         assertEquals(3600, ref.spec().taskWall());
@@ -113,7 +113,7 @@ class ExperimentsServiceTest {
 
     @Test
     void aMidLoopEnqueueFailureRollsBackTheWholeExperiment() throws Exception {
-        var ds = new org.sqlite.SQLiteDataSource();
+        final var ds = new org.sqlite.SQLiteDataSource();
         ds.setUrl("jdbc:sqlite:" + Files.createTempFile("ace-experiments-test", ".db") + "?foreign_keys=on");
         Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
         // plain DSL.using(dataSource, dialect) grabs a FRESH connection per statement, so it never
@@ -122,12 +122,12 @@ class ExperimentsServiceTest {
         // DataSource in a TransactionAwareDataSourceProxy (what spring-boot-starter-jooq's own
         // auto-configuration does for the real app's DSLContext bean) makes JOOQ hand back the
         // SAME connection the current Spring transaction owns.
-        var txAwareDs = new org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy(ds);
-        DSLContext db = DSL.using(new org.jooq.impl.DataSourceConnectionProvider(txAwareDs), SQLDialect.SQLITE);
-        JobQueue queue = new JobQueue(db);
-        TransactionTemplate tx = new TransactionTemplate(new DataSourceTransactionManager(ds));
-        ExperimentsService svc = new ExperimentsService(db, queue, props("http://127.0.0.1:1/v1"), tx);
-        Map<String, Object> params = Map.of("model", "modelX", "arms", List.of("orch"));
+        final var txAwareDs = new org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy(ds);
+        final DSLContext db = DSL.using(new org.jooq.impl.DataSourceConnectionProvider(txAwareDs), SQLDialect.SQLITE);
+        final var queue = new JobQueue(db);
+        final var tx = new TransactionTemplate(new DataSourceTransactionManager(ds));
+        final var svc = new ExperimentsService(db, queue, props("http://127.0.0.1:1/v1"), tx);
+        final var params = Map.of("model", "modelX", "arms", List.of("orch"));
 
         // arm r2's run id is deterministic given the tag; plan()'s tag has second resolution, so peek
         // and the real enqueue() below must land in the same wall-clock second. Both calls are pure/fast

@@ -22,9 +22,9 @@ public final class DockerService {
     }
 
     /** start Docker Desktop and wait for the daemon; relaunch once halfway (after a hard kill it can need a second start) */
-    public static boolean dockerUp(int timeoutSec) {
+    public static boolean dockerUp(final int timeoutSec) {
         sh(10, "open", "-a", "Docker");
-        long t0 = System.currentTimeMillis();
+        final long t0 = System.currentTimeMillis();
         boolean relaunched = false;
         while (System.currentTimeMillis() - t0 < timeoutSec * 1000L) {
             if (sh(10, "docker", "info", "--format", "{{.ServerVersion}}").rc == 0) return true;
@@ -40,7 +40,7 @@ public final class DockerService {
     }
 
     /** quit Docker Desktop so its VM stops competing with the model; it wedges, so fall back to a hard kill quickly */
-    public static boolean dockerDown(int timeoutSec) {
+    public static boolean dockerDown(final int timeoutSec) {
         try { new ProcessBuilder("osascript", "-e", "quit app \"Docker\"").start().waitFor(20, TimeUnit.SECONDS); }
         catch (Exception ignore) {}
         for (int i = 0; i < timeoutSec / 3; i++) {
@@ -55,22 +55,22 @@ public final class DockerService {
     /** the agent's Docker CLI in a fresh HOME: the on-demand shim first on PATH and the CLI plugins
      *  (`docker compose` lives in ~/.docker/cli-plugins of the OPERATOR's home). Only plugin
      *  symlinks are linked, never config.json (credentials). */
-    public static void dockerTools(String home) throws IOException {
-        Path bin = Path.of(home, "bin");
+    public static void dockerTools(final String home) throws IOException {
+        final var bin = Path.of(home, "bin");
         Files.createDirectories(bin);
-        Path shim = bin.resolve("docker");
+        final Path shim = bin.resolve("docker");
         Files.copy(Objects.requireNonNull(DockerService.class.getResourceAsStream("/docker_shim.sh"), "docker_shim.sh resource missing"), shim, StandardCopyOption.REPLACE_EXISTING);
         shim.toFile().setExecutable(true);
-        Path plug = Path.of(home, ".docker", "cli-plugins");
+        final var plug = Path.of(home, ".docker", "cli-plugins");
         Files.createDirectories(plug);
         for (String src : List.of(Path.of(System.getProperty("user.home"), ".docker/cli-plugins").toString(),
                 "/Applications/Docker.app/Contents/Resources/cli-plugins")) {
-            Path s = Path.of(src);
+            final var s = Path.of(src);
             if (Files.isDirectory(s)) {
                 try (DirectoryStream<Path> ds = Files.newDirectoryStream(s)) {
                     for (Path f : ds) {
-                        String n = f.getFileName().toString();
-                        Path dst = plug.resolve(n);
+                        final String n = f.getFileName().toString();
+                        final Path dst = plug.resolve(n);
                         if (n.startsWith("docker-") && !Files.exists(dst))
                             Files.createSymbolicLink(dst, f.toRealPath());
                     }
@@ -86,10 +86,10 @@ public final class DockerService {
         if (logPath != null && Files.isRegularFile(logPath)) {
             try {
                 for (String line : Files.readAllLines(logPath)) {
-                    String[] parts = line.split(" ", 3);
+                    final String[] parts = line.split(" ", 3);
                     if (parts.length < 2) continue;
                     try {
-                        OffsetDateTime ts = OffsetDateTime.parse(parts[0].replace("Z", "+00:00"));
+                        final OffsetDateTime ts = OffsetDateTime.parse(parts[0].replace("Z", "+00:00"));
                         if (parts.length > 2 && parts[2].startsWith("#start")) { starts++; continue; }
                         if (parts.length > 2 && parts[2].startsWith("#ready")) continue;
                         calls++;
@@ -111,7 +111,7 @@ public final class DockerService {
                 .orElse(false));
     }
 
-    public static boolean portInUse(int port, String host) {
+    public static boolean portInUse(final int port, final String host) {
         try (var s = new java.net.Socket(host, port)) { return true; }
         catch (IOException e) { return false; }
     }
@@ -119,14 +119,14 @@ public final class DockerService {
     /** one subprocess run with BOTH streams drained concurrently (read-after-waitFor deadlocks
      *  on >64KB: the pipe fills, the child blocks on write, waitFor never returns) */
     public record Proc(int rc, String out, String err) {}
-    public static Proc proc(int timeoutSec, Path cwd, Map<String, String> env, String... cmd) {
+    public static Proc proc(final int timeoutSec, final Path cwd, final Map<String, String> env, final String... cmd) {
         try {
-            ProcessBuilder pb = new ProcessBuilder(cmd);
+            final var pb = new ProcessBuilder(cmd);
             if (cwd != null) pb.directory(cwd.toFile());
             if (env != null) { pb.environment().clear(); pb.environment().putAll(env); }
-            Process p = pb.start();
-            StringBuilder out = new StringBuilder(), err = new StringBuilder();
-            Thread t1 = drain(p.getInputStream(), out), t2 = drain(p.getErrorStream(), err);
+            final Process p = pb.start();
+            final StringBuilder out = new StringBuilder(), err = new StringBuilder();
+            final Thread t1 = drain(p.getInputStream(), out), t2 = drain(p.getErrorStream(), err);
             if (!p.waitFor(timeoutSec, TimeUnit.SECONDS)) {
                 p.destroyForcibly();
                 t1.join(1000); t2.join(1000);
@@ -137,7 +137,7 @@ public final class DockerService {
         } catch (Exception e) { return new Proc(1, "", String.valueOf(e)); }
     }
 
-    private static Thread drain(java.io.InputStream in, StringBuilder sb) {
+    private static Thread drain(final java.io.InputStream in, final StringBuilder sb) {
         Thread t = new Thread(() -> {
             try (var r = new java.io.BufferedReader(new java.io.InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8))) {
                 for (String line; (line = r.readLine()) != null; ) sb.append(line).append('\n');
@@ -149,8 +149,8 @@ public final class DockerService {
     }
 
     public record Sh(int rc, String out) {}
-    public static Sh sh(int timeoutSec, String... cmd) {
-        Proc r = proc(timeoutSec, null, null, cmd);
+    public static Sh sh(final int timeoutSec, final String... cmd) {
+        final Proc r = proc(timeoutSec, null, null, cmd);
         return new Sh(r.rc(), r.out() + r.err());
     }
 

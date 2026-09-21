@@ -16,7 +16,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableScheduling
 @ConfigurationPropertiesScan
 public class AceServiceApplication {
-    public static void main(String[] args) {
+    public static void main(final String[] args) {
         SpringApplication.run(AceServiceApplication.class, args);
     }
 

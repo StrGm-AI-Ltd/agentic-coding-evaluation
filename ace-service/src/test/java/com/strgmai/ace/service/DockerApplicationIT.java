@@ -64,13 +64,13 @@ class DockerApplicationIT {
     static void startContainers() throws Exception {
         Assumptions.assumeTrue(DockerClientFactory.instance().isDockerAvailable(), "Docker is not available on this host");
 
-        String apiKey = System.getenv().getOrDefault("OMLX_API_KEY", "");
+        final String apiKey = System.getenv().getOrDefault("OMLX_API_KEY", "");
         modelServerConfigured = !apiKey.isBlank();
 
         // ace-service is a Gradle subproject: the Dockerfile needs the repo root as build context
         // (gradlew/settings.gradle/gradle/ now live one level up), so the whole root is staged and
         // the Dockerfile is addressed by its path within that context, not by its own parent dir.
-        Path repoRoot = Path.of(System.getProperty("user.dir")).getParent();
+        final var repoRoot = Path.of(System.getProperty("user.dir")).getParent();
         app = new GenericContainer<>(new ImageFromDockerfile()
                 .withFileFromPath(".", repoRoot)
                 .withDockerfilePath("ace-service/Dockerfile"))
@@ -98,17 +98,17 @@ class DockerApplicationIT {
         // Testcontainers/Ryuk reaps the CONTAINER on JVM exit but never the image ImageFromDockerfile
         // built for it - every run builds fresh (the source changed), so left alone these pile up
         // indefinitely. Best-effort: a failed removal here must not fail the suite.
-        String image = app.getDockerImageName();
+        final String image = app.getDockerImageName();
         app.stop();
         try { new ProcessBuilder("docker", "rmi", "-f", image).start().waitFor(30, TimeUnit.SECONDS); }
         catch (Exception ignore) {}
     }
 
-    private static HttpResponse<String> get(String path) throws Exception {
+    private static HttpResponse<String> get(final String path) throws Exception {
         return http.send(HttpRequest.newBuilder(URI.create(base + path)).GET().build(), HttpResponse.BodyHandlers.ofString());
     }
 
-    private static HttpResponse<String> post(String path, String body) throws Exception {
+    private static HttpResponse<String> post(final String path, String body) throws Exception {
         return http.send(HttpRequest.newBuilder(URI.create(base + path)).header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
     }
@@ -118,11 +118,11 @@ class DockerApplicationIT {
     @Test
     @Order(1)
     void theContainerizedAppServesItsApiOverHttp() throws Exception {
-        HttpResponse<String> preflight = get("/api/preflight");
+        final HttpResponse<String> preflight = get("/api/preflight");
         assertEquals(200, preflight.statusCode());
         assertTrue(preflight.body().contains("check"), "a preflight report, not an empty/error body: " + preflight.body());
 
-        HttpResponse<String> jobs = get("/api/jobs");
+        final HttpResponse<String> jobs = get("/api/jobs");
         assertEquals(200, jobs.statusCode());
         assertEquals("[]", jobs.body());   // a fresh container, empty queue - a real DB round-trip, not a stub
     }
@@ -136,15 +136,15 @@ class DockerApplicationIT {
         String requestBody = """
                 {"spec": {"task": "L3p_point_in_time", "model": "m", "mode": "monolithic",
                            "plan_source": "agent", "task_wall": 3600, "run_id": "it-jobs-detail-1"}}""";
-        HttpResponse<String> created = post("/api/jobs", requestBody);
+        final HttpResponse<String> created = post("/api/jobs", requestBody);
         assertEquals(200, created.statusCode(), created.body());
-        long id = json.readTree(created.body()).get("id").asLong();
+        final String id = json.readTree(created.body()).get("id").asText();
 
-        HttpResponse<String> fetched = get("/api/jobs/" + id);
+        final HttpResponse<String> fetched = get("/api/jobs/" + id);
         assertEquals(200, fetched.statusCode(), fetched.body());   // was 404 before the fix
         assertEquals("it-jobs-detail-1", json.readTree(fetched.body()).get("run_id").asText());
 
-        HttpResponse<String> missing = get("/api/jobs/999999");
+        final HttpResponse<String> missing = get("/api/jobs/00000000-0000-0000-0000-000000000000");
         assertEquals(404, missing.statusCode());
     }
 
@@ -157,13 +157,13 @@ class DockerApplicationIT {
         String requestBody = """
                 {"spec": {"task": "L3p_point_in_time", "model": "m", "mode": "monolithic",
                            "plan_source": "agent", "task_wall": 3600, "run_id": "it-cancel-requeue-1"}}""";
-        long id = json.readTree(post("/api/jobs", requestBody).body()).get("id").asLong();
+        final String id = json.readTree(post("/api/jobs", requestBody).body()).get("id").asText();
 
-        HttpResponse<String> cancelled = post("/api/jobs/" + id + "/cancel");
+        final HttpResponse<String> cancelled = post("/api/jobs/" + id + "/cancel");
         assertEquals(200, cancelled.statusCode(), cancelled.body());
         assertEquals("cancelled", json.readTree(cancelled.body()).get("status").asText());
 
-        HttpResponse<String> requeued = post("/api/jobs/" + id + "/requeue");
+        final HttpResponse<String> requeued = post("/api/jobs/" + id + "/requeue");
         assertEquals(200, requeued.statusCode(), requeued.body());
         assertEquals("queued", json.readTree(requeued.body()).get("status").asText());
 
@@ -177,7 +177,7 @@ class DockerApplicationIT {
         // cancel it again so it does not sit queued and racing the worker for the rest of the suite;
         // assert it STUCK - between /requeue and here the worker can claim the job, and cancelling a
         // running job only sets an ignored flag, leaving a live experiment to consume the suite's budget
-        HttpResponse<String> finalCancel = post("/api/jobs/" + id + "/cancel");
+        final HttpResponse<String> finalCancel = post("/api/jobs/" + id + "/cancel");
         assertEquals(200, finalCancel.statusCode(), finalCancel.body());
         assertEquals("cancelled", json.readTree(get("/api/jobs/" + id).body()).get("status").asText());
     }
@@ -205,23 +205,23 @@ class DockerApplicationIT {
         // read a root 0700 dir it never created
         app.execInContainerWithUser("root", "chown", "-R", "appuser:appuser", "/app/results/it-rescan-run-1");
 
-        HttpResponse<String> imported = post("/api/import");
+        final HttpResponse<String> imported = post("/api/import");
         assertEquals(200, imported.statusCode(), imported.body());
-        JsonNode importedIds = json.readTree(imported.body()).get("imported");
+        final JsonNode importedIds = json.readTree(imported.body()).get("imported");
         assertTrue(importedIds.isArray(), "run-id LIST, not a count - the reported UI crash: " + imported.body());
         assertTrue(contains(importedIds, "it-rescan-run-1"), imported.body());
 
-        HttpResponse<String> runs = get("/api/runs");
+        final HttpResponse<String> runs = get("/api/runs");
         assertTrue(runs.body().contains("it-rescan-run-1"), runs.body());
 
-        HttpResponse<String> detail = get("/api/runs/it-rescan-run-1");
+        final HttpResponse<String> detail = get("/api/runs/it-rescan-run-1");
         assertEquals(200, detail.statusCode());
-        JsonNode run = json.readTree(detail.body());
+        final JsonNode run = json.readTree(detail.body());
         assertEquals(83.5, run.get("weighted_score_pct").asDouble());
         assertEquals("it-rescan-model", run.get("model").asText());
     }
 
-    private static boolean contains(JsonNode array, String value) {
+    private static boolean contains(final JsonNode array, final String value) {
         for (JsonNode n : array) if (value.equals(n.asText())) return true;
         return false;
     }
@@ -240,7 +240,7 @@ class DockerApplicationIT {
                  "model_ab": false, "allow_partial": false, "include_invalid": false, "allow_budget_mismatch": false}""");
         assertEquals(200, compare.statusCode(), compare.body());
 
-        HttpResponse<String> status = get("/api/status");
+        final HttpResponse<String> status = get("/api/status");
         assertEquals(200, status.statusCode());
     }
 
@@ -252,9 +252,9 @@ class DockerApplicationIT {
     @Order(6)
     void groupsPlacesASingleImportedRunInIndicativeNeverRanked() throws Exception {
         Assumptions.assumeTrue(get("/api/runs").body().contains("it-rescan-run-1"), "it-rescan-run-1 was not imported - skipping");
-        HttpResponse<String> groups = get("/api/groups");
+        final HttpResponse<String> groups = get("/api/groups");
         assertEquals(200, groups.statusCode(), groups.body());
-        JsonNode body = json.readTree(groups.body());
+        final JsonNode body = json.readTree(groups.body());
         assertTrue(body.has("ranked") && body.has("indicative"), groups.body());
 
         boolean foundInIndicative = false;
@@ -271,7 +271,7 @@ class DockerApplicationIT {
     @Test
     @Order(7)
     void preflightConfirmsGitAndTheJdkAreActuallyPresentInTheContainer() throws Exception {
-        JsonNode checks = json.readTree(get("/api/preflight").body()).get("checks");
+        final JsonNode checks = json.readTree(get("/api/preflight").body()).get("checks");
         boolean gitOk = false, jdkOk = false;
         for (JsonNode c : checks) {
             if ("git".equals(c.get("check").asText())) gitOk = c.get("ok").asBoolean();
@@ -308,31 +308,31 @@ class DockerApplicationIT {
         Assumptions.assumeTrue(modelServerConfigured, "no OMLX_API_KEY in the environment - skipping the real-model-server test");
         // the endpoint answers a JSON array; elements().next() gave a single-element list containing
         // null for an empty array, so the isEmpty() skip could never fire and the model became "null"
-        JsonNode modelsNode = json.readTree(get("/api/models").body());
-        List<String> models = new ArrayList<>();
+        final JsonNode modelsNode = json.readTree(get("/api/models").body());
+        final List<String> models = new ArrayList<>();
         if (modelsNode != null && modelsNode.isArray())
             for (JsonNode m : modelsNode) if (!m.isNull()) models.add(m.asText());
         Assumptions.assumeTrue(!models.isEmpty(), "the model server reported no models");
-        String model = models.get(0);
+        final String model = models.get(0);
 
         String experimentBody = String.format("""
                 {"template": "harness_effect", "name": "it-verify-experiment", "k": 1,
                  "params": {"model": "%s", "arms": ["orch"], "task_wall": 600}}""", model);
-        HttpResponse<String> created = post("/api/experiments", experimentBody);
+        final HttpResponse<String> created = post("/api/experiments", experimentBody);
         assertEquals(200, created.statusCode(), created.body());
-        JsonNode jobs = json.readTree(created.body()).get("jobs");
+        final JsonNode jobs = json.readTree(created.body()).get("jobs");
         assertEquals(1, jobs.size(), created.body());
-        long jobId = jobs.get(0).get("id").asLong();
+        final String jobId = jobs.get(0).get("id").asText();
 
         assertJobReachesRunningWithoutFailing(jobId, "orch");
     }
 
-    private void assertJobReachesRunningWithoutFailing(long jobId, String arm) throws Exception {
-        Instant deadline = Instant.now().plusSeconds(90);
+    private void assertJobReachesRunningWithoutFailing(final String jobId, final String arm) throws Exception {
+        final var deadline = Instant.now().plusSeconds(90);
         String lastStatus = "queued";
         boolean sawRunning = false;
         while (Instant.now().isBefore(deadline)) {
-            JsonNode job = json.readTree(get("/api/jobs/" + jobId).body());
+            final JsonNode job = json.readTree(get("/api/jobs/" + jobId).body());
             lastStatus = job.get("status").asText();
             if ("failed".equals(lastStatus))
                 fail("job " + jobId + " (arm " + arm + ") failed instead of running - exactly the bug class this session kept "
@@ -350,7 +350,7 @@ class DockerApplicationIT {
         // context probe and the first real agent turn both require actual LLM round trips to land,
         // and (orch only) the stable/task packs must actually get written to disk
         Thread.sleep(15000);
-        String statusAfterRealWork = json.readTree(get("/api/jobs/" + jobId).body()).get("status").asText();
+        final String statusAfterRealWork = json.readTree(get("/api/jobs/" + jobId).body()).get("status").asText();
         assertNotEquals("failed", statusAfterRealWork, "job " + jobId + " (arm " + arm + ") failed after starting real work");
 
         // best-effort cleanup: a still-live job would otherwise keep spending model budget and the

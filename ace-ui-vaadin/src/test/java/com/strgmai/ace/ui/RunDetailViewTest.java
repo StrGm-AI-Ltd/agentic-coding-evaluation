@@ -88,7 +88,7 @@ class RunDetailViewTest {
         List<Api.Job> jobs = List.of(
                 ApiFixtures.job(36, "cancelled", null),
                 ApiFixtures.job(37, "running", null));
-        assertEquals(37L, RunDetailView.jobForRun(jobs, "r-37").id());
+        assertEquals("37", RunDetailView.jobForRun(jobs, "r-37").id());
         assertNull(RunDetailView.jobForRun(jobs, "no-such-run"));
     }
 

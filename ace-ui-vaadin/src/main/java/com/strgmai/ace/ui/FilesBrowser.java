@@ -15,7 +15,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import java.util.stream.Stream;
 
 /**
  * Run file browser — the Vaadin twin of the Jinja2 run page's file section:
@@ -31,7 +30,7 @@ public class FilesBrowser extends VerticalLayout {
     private final ServiceClient client;
     private final String runId;
 
-    public FilesBrowser(ServiceClient client, String runId, String resultsDir) {
+    public FilesBrowser(final ServiceClient client, final String runId, final String resultsDir) {
         this.client = client;
         this.runId = runId;
         setPadding(false);
@@ -39,13 +38,13 @@ public class FilesBrowser extends VerticalLayout {
 
         add(Panels.sectionTitle("Files"));
 
-        List<String> files = listFiles(resultsDir);
+        final var files = listFiles(resultsDir);
         if (files.isEmpty()) {
             add(new Div("no result files"));
             return;
         }
 
-        Grid<String> grid = new Grid<>(String.class, false);
+        final var grid = new Grid<>(String.class, false);
         grid.addColumn(name -> name).setHeader("path").setFlexGrow(1);
         grid.addColumn(name -> sizeOf(resultsDir, name)).setHeader("size")
                 .setTextAlign(ColumnTextAlign.END).setAutoWidth(true)
@@ -57,8 +56,8 @@ public class FilesBrowser extends VerticalLayout {
         add(grid);
     }
 
-    private Component fileLink(String name) {
-        Anchor anchor = isText(name)
+    private Component fileLink(final String name) {
+        final var anchor = isText(name)
                 ? new Anchor(viewRoute(runId, name), "view")   // opens the formatted viewer
                 : new Anchor(Links.rawFileUrl(client.baseUrl(), runId, name), "open");
         anchor.getElement().setAttribute("target", "_blank");
@@ -67,65 +66,66 @@ public class FilesBrowser extends VerticalLayout {
     }
 
     /** New-tab viewer URL; the path is segment-encoded so spaces and non-ASCII survive. */
-    static String viewRoute(String runId, String path) {
+    static String viewRoute(final String runId, final String path) {
         return "file-view?run=" + ServiceClient.encodeSegment(runId)
                 + "&path=" + ServiceClient.encodePath(path);
     }
 
-    static boolean isText(String name) {
-        int dot = name.lastIndexOf('.');
+    static boolean isText(final String name) {
+        final var dot = name.lastIndexOf('.');
         // extensions are case-sensitive in the set, but not on case-insensitive file systems
         return dot >= 0 && TEXT_SUFFIXES.contains(name.substring(dot).toLowerCase(Locale.ROOT));
     }
 
-    static String sizeOf(String resultsDir, String name) {
+    static String sizeOf(final String resultsDir, final String name) {
         try {
-            long size = sizeBytes(resultsDir, name);
+            final var size = sizeBytes(resultsDir, name);
             return size < 0 ? "–" : size < 1024 ? size + " B"
                     : size < 1024 * 1024 ? String.format("%.1f KiB", size / 1024.0)
                     : String.format("%.1f MiB", size / 1024.0 / 1024.0);
-        } catch (IOException e) {
+        } catch (final IOException e) {
             return "–";
         }
     }
 
-    private static long sizeBytes(String resultsDir, String name) throws IOException {
+    private static long sizeBytes(final String resultsDir, final String name) throws IOException {
         return Files.size(Path.of(resultsDir, name.split("/")));
     }
 
     /** Sort key for the size column: actual bytes, missing files last. */
-    static long sizeOr(String resultsDir, String name) {
+    static long sizeOr(final String resultsDir, final String name) {
         try {
             return sizeBytes(resultsDir, name);
-        } catch (IOException e) {
+        } catch (final IOException e) {
             return Long.MAX_VALUE;
         }
     }
 
     /** Mirrors run_files() in the service's api.py: top-level files plus one level of subdirs. */
-    static List<String> listFiles(String resultsDir) {
+    static List<String> listFiles(final String resultsDir) {
         if (resultsDir == null || resultsDir.isBlank()) {
             return List.of();
         }
-        Path base = Path.of(resultsDir);
+        final var base = Path.of(resultsDir);
         if (!Files.isDirectory(base)) {
             return List.of();
         }
-        List<String> files = new ArrayList<>();
-        try (Stream<Path> top = Files.list(base)) {
-            for (Path path : top.sorted().toList()) {
-                String name = path.getFileName().toString();
+        // returned as List<String>; empty-diamond under var would infer ArrayList<Object>
+        final List<String> files = new ArrayList<>();
+        try (var top = Files.list(base)) {
+            for (final var path : top.sorted().toList()) {
+                final var name = path.getFileName().toString();
                 if (Files.isRegularFile(path)) {
                     files.add(name);
                 } else if (Files.isDirectory(path) && !"workspace".equals(name)) {
-                    try (Stream<Path> inner = Files.list(path)) {
+                    try (var inner = Files.list(path)) {
                         inner.sorted()
                                 .filter(Files::isRegularFile)
                                 .forEach(child -> files.add(name + "/" + child.getFileName()));
                     }
                 }
             }
-        } catch (IOException e) {
+        } catch (final IOException e) {
             return List.of();
         }
         return files;
