@@ -24,7 +24,7 @@ import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
- * Thin typed client for agentbench-trading-service's JSON API. Blocking calls are
+ * Thin typed client for ace-service's JSON API. Blocking calls are
  * fine here: it is a local, single-operator service — but they are always bounded
  * by the configured connect/read timeouts (S-1), never unbounded.
  *
@@ -275,8 +275,8 @@ public class ServiceClient implements Serializable {
             return responseException.getStatusCode() + ": " + responseException.getResponseBodyAsString();
         }
         if (e instanceof ResourceAccessException) {
-            return "Cannot reach agentbench-service at " + baseUrl
-                    + " — is it running? (cd agentbench-trading-service/service && uv run agentbench-service)";
+            return "Cannot reach ace-service at " + baseUrl
+                    + " — is it running? (from the repo root: ./gradlew :ace-service:bootRun)";
         }
         if (e instanceof RestClientException restClientException) {
             // a failed conversion carries the interesting text in its cause chain

@@ -7,8 +7,7 @@ import java.io.Serializable;
 import java.time.Duration;
 
 /**
- * Location and HTTP budgets of the agentbench-trading FastAPI service
- * (service/ in agentbench-trading-service). Serializable so views can hold
+ * Location and HTTP budgets of ace-service. Serializable so views can hold
  * the ServiceClient across UI session serialization (V-3).
  */
 @ConfigurationProperties(prefix = "ace.service")

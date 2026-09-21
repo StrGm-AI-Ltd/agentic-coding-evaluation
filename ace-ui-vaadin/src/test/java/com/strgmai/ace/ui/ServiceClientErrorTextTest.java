@@ -69,7 +69,7 @@ class ServiceClientErrorTextTest {
     void resourceAccessExceptionGivesFriendlyHint() {
         final var text = CLIENT.errorText(new ResourceAccessException("refused"));
         assertTrue(text.contains("127.0.0.1:8765"), "should name the configured base URL");
-        assertTrue(text.contains("uv run agentbench-service"), "should name the start command");
+        assertTrue(text.contains("./gradlew :ace-service:bootRun"), "should name the start command");
     }
 
     /** A failed response conversion hides the real cause in the exception chain; surface it. */
