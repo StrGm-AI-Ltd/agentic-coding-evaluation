@@ -9,13 +9,13 @@ public record RunSpec(String task, String model, String harness, String mode, St
                       Integer implWall, Integer implTokens, String parallel, boolean systemRules, boolean selfReview,
                       boolean trajectoryReview, String reviewerModel, boolean handoffNotes, boolean manageDocker,
                       boolean noContextProbe, boolean contextProbeFresh,
-                      Integer contextWindow, Integer firstTokenTimeout, Integer compactionTrigger, String runId) {
+                      Integer contextWindow, Integer firstTokenTimeout, Integer compactionTrigger, Integer reviewWallSec, String runId) {
 
     public static final String RUN_ID = "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$";
 
     public RunSpec {
         taskWall = positive(taskWall); taskTokens = positive(taskTokens); implWall = positive(implWall); implTokens = positive(implTokens);
-        contextWindow = positive(contextWindow); firstTokenTimeout = positive(firstTokenTimeout);
+        contextWindow = positive(contextWindow); firstTokenTimeout = positive(firstTokenTimeout); reviewWallSec = positive(reviewWallSec);
         // 0 is a legitimate value here (disables compaction) - unlike the budgets above, only reject negative
         if (compactionTrigger != null && compactionTrigger < 0) throw new IllegalArgumentException("compactionTrigger must be >= 0 (0 disables compaction): " + compactionTrigger);
         if (runId != null && !runId.matches(RUN_ID)) throw new IllegalArgumentException("invalid run id: " + runId);
@@ -53,6 +53,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (contextWindow != null) args.add("--context-window=" + contextWindow);
         if (firstTokenTimeout != null) args.add("--first-token-timeout=" + firstTokenTimeout);
         if (compactionTrigger != null) args.add("--compaction-trigger=" + compactionTrigger);
+        if (reviewWallSec != null) args.add("--review-wall-sec=" + reviewWallSec);
         return args;
     }
 
