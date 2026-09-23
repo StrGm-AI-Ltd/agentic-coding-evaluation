@@ -244,7 +244,7 @@ public class ReferenceAgent {
             Integer completion = resp.metadata() == null || resp.metadata().tokenUsage() == null || resp.metadata().tokenUsage().outputTokenCount() == null
                     ? null : resp.metadata().tokenUsage().outputTokenCount();
             final List<ToolExecutionRequest> calls = ai.hasToolExecutionRequests() ? ai.toolExecutionRequests() : List.of();
-            session.assistant(ai.text(), calls, finish, Map.of("input", promptTokens == null ? 0 : promptTokens,
+            session.assistant(ai.thinking(), ai.text(), calls, finish, Map.of("input", promptTokens == null ? 0 : promptTokens,
                     "output", completion == null ? 0 : completion, "cached", 0));
             msgs.add(ai);
             if (calls.isEmpty()) {

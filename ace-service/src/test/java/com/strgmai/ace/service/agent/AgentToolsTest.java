@@ -92,7 +92,7 @@ class AgentToolsTest {
         s.system("system prompt");
         s.user("do it");
         final var req = dev.langchain4j.agent.tool.ToolExecutionRequest.builder().id("c1").name("bash").arguments("{\"command\":\"ls\"}").build();
-        s.assistant("thinking", java.util.List.of(req), "tool_calls", Map.of("input", 10, "output", 5));
+        s.assistant(null, "thinking", java.util.List.of(req), "tool_calls", Map.of("input", 10, "output", 5));
         s.toolResult("c1", "bash", "the output", false);
         final var resumed = new AgentSession(dir, "sid-1", true);
         assertEquals(s.path(), resumed.path());
