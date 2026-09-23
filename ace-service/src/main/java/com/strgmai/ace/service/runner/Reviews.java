@@ -124,6 +124,12 @@ public class Reviews {
         Files.writeString(rd.resolve("manifest.json"), JSON.writerWithDefaultPrettyPrinter().writeValueAsString(manifest));
         final Map<String, Object> summary = renderTrajectory(rd, manifest);
         Files.writeString(tdir.resolve("summary.json"), JSON.writerWithDefaultPrettyPrinter().writeValueAsString(summary));
+        // renderTrajectory() writes TRAJECTORY.md into rd (the permanent results dir), never ws - but
+        // the reviewer's own tools only ever see ws, so without this copy it can never find the
+        // transcript the pack tells it is there (confirmed live: a reviewer session burned its whole
+        // budget rediscovering this exact gap turn after turn instead of ever reviewing anything)
+        final Path rdTraj = rd.resolve("trajectory/TRAJECTORY.md");
+        if (Files.isRegularFile(rdTraj)) Files.copy(rdTraj, tdir.resolve("TRAJECTORY.md"), StandardCopyOption.REPLACE_EXISTING);
         final String head = Files.isRegularFile(tdir.resolve("TRAJECTORY.md")) ? Files.readString(tdir.resolve("TRAJECTORY.md")) : "";
         final Path packPath = rd.resolve("packs/TRAJECTORY_REVIEW.md");
         Files.writeString(packPath, Packs.trajectoryReviewPack(summary, head));
@@ -235,7 +241,10 @@ public class Reviews {
                     false, sysPath.toString(), ws.toString(),
                     proxy == null ? externalBase(reviewer, cfg) : proxy.base(),
                     proxy == null ? (() -> {}) : proxy.abort(), firstTokenTimeoutMs, compactionTrigger, model, extraEnv);
-            if (log != null) Files.writeString(log, "review session " + name + " rc=" + res.rc() + " turns=" + res.turns() + "\n");
+            // both self-review and trajectory-review write to the SAME log path - append, or the
+            // second review's line silently replaces the first's (default writeString() truncates)
+            if (log != null) Files.writeString(log, "review session " + name + " rc=" + res.rc() + " turns=" + res.turns() + "\n",
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
             return res;
         } finally {
             if (proxy != null) proxy.stop();
