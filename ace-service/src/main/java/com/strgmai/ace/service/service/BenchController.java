@@ -1,5 +1,7 @@
 package com.strgmai.ace.service.service;
 
+import com.openai.client.okhttp.OpenAIOkHttpClient;
+import com.openai.models.models.Model;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.config.JsonColumns;
 import com.strgmai.ace.service.metrics.StatsService;
@@ -19,8 +21,7 @@ import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
 import static com.strgmai.ace.service.jooq.Tables.JOBS;
 import static com.strgmai.ace.service.jooq.Tables.RUNS;
 
-/** Port of service/api.py as a JSON API (the HTML UI is not ported; every page has a JSON twin).
- *  Security carries over: files are confined to the run's own results directory (resolve + verified
+/** Security: files are confined to the run's own results directory (resolve + verified
  *  containment) and workspace/ — the agent's live tree the listing never shows — is never served. */
 @RestController
 public class BenchController {
@@ -49,13 +50,15 @@ public class BenchController {
         return Map.of("checks", r.checks(), "blocked", r.blocked(), "verdict", r.blocked() ? "BLOCKED" : "runnable");
     }
 
-    /** Whatever the model server currently serves, sorted - the picker source neither this API nor
-     *  the Python one's ever exposed; the HTML UI only had it because it renders server-side. Best
-     *  effort: an unreachable server means an empty list, not a 500 (same fallback as the queue's own
-     *  context-window resolution, which shares this data). */
     @GetMapping("/api/models")
     public List<String> models() {
-        return experiments.localModelSpecs().keySet().stream().sorted().toList();
+        // todo issue 25: define a service for available models
+        final var client = OpenAIOkHttpClient.builder()
+                //todo issue 25: take these from the env-vars
+                .baseUrl("http://127.0.0.1:9191/v1")
+                .apiKey("edding345")
+                .build();
+        return client.models().list().data().stream().map(Model::id).sorted().toList();
     }
 
     @GetMapping("/api/runs")
@@ -127,7 +130,11 @@ public class BenchController {
                 str(spec.get("reviewer_model")),
                 Boolean.parseBoolean(String.valueOf(spec.getOrDefault("handoff_notes", "false"))),
                 Boolean.parseBoolean(String.valueOf(spec.getOrDefault("manage_docker", "true"))),
+                Boolean.parseBoolean(String.valueOf(spec.getOrDefault("no_context_probe", "false"))),
+                Boolean.parseBoolean(String.valueOf(spec.getOrDefault("context_probe_fresh", "false"))),
                 spec.get("context_window") instanceof Number n ? n.intValue() : intOf(spec.get("context_window")),
+                spec.get("first_token_timeout") instanceof Number n ? n.intValue() : intOf(spec.get("first_token_timeout")),
+                spec.get("compaction_trigger") instanceof Number n2 ? n2.intValue() : intOf(spec.get("compaction_trigger")),
                 str(spec.get("run_id")));
         return queue.enqueue(rs, priority, props.resultsDir(), pin.current(), pin.current(), null, null, null);
     }

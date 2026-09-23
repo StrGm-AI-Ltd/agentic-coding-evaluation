@@ -2,8 +2,6 @@ package com.strgmai.ace.service.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-/** Port of config/default.json (the knobs that survive the port; the oMLX probe/parallel/review
- *  machinery is documented as not ported — see README-JLS.md). */
 @ConfigurationProperties(prefix = "ace")
 public record BenchProperties(
         String model,

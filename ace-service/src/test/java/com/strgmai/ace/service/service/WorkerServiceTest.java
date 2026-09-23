@@ -1,6 +1,7 @@
 package com.strgmai.ace.service.service;
 
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.runner.ContextProbe;
 import com.strgmai.ace.service.runner.RunBench;
 import org.junit.jupiter.api.Test;
 
@@ -27,7 +28,7 @@ class WorkerServiceTest {
         when(queue.list()).thenReturn(List.of());   // reconcile() runs in the constructor
         final BenchProperties props = mock(BenchProperties.class);
         return new WorkerService(queue, mock(RunBench.class), mock(ImporterService.class),
-                mock(ExperimentsService.class), preflight, pin, props);
+                mock(ExperimentsService.class), preflight, pin, props, mock(ContextProbe.class));
     }
 
     private static final UUID JOB_1 = UUID.fromString("00000000-0000-0000-0000-000000000001");
@@ -115,7 +116,7 @@ class WorkerServiceTest {
         when(queue.get(JOB_1)).thenReturn(Map.of("cancel_requested", false));
 
         WorkerService ws = new WorkerService(queue, mock(RunBench.class), mock(ImporterService.class),
-                mock(ExperimentsService.class), preflight, pin, props);
+                mock(ExperimentsService.class), preflight, pin, props, mock(ContextProbe.class));
         withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
 
         verify(queue, timeout(3000)).finish(eq(JOB_1), eq("succeeded"), eq(0), anyString());

@@ -15,6 +15,7 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import com.strgmai.ace.service.docker.DockerService;
 
@@ -66,6 +67,20 @@ public final class ContextProbe {
             Map.entry("pack_scale_min", 0.25), Map.entry("cache_max_age_days", 30));
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build();
+    /** the response currently being read by post() below, if any - tracked so a cancelled job can
+     *  unblock a probe request the same way RecordingProxy.abortInflight() does for the agent's own
+     *  streams (R14): confirmed live via jstack that Future.cancel(true)/Thread.interrupt() does NOT
+     *  reliably abort a blocking HttpResponseInputStream.read() - a cancelled probe sat parked there
+     *  for 6+ minutes with cancel_requested already true. Closing the tracked body is what actually
+     *  unblocks it. */
+    private final Set<HttpResponse<java.io.InputStream>> inflight = ConcurrentHashMap.newKeySet();
+
+    /** closes whatever probe request is CURRENTLY being read, unblocking its read() immediately. */
+    public void abortInflight() {
+        for (HttpResponse<java.io.InputStream> r : inflight) {
+            try { r.body().close(); } catch (Exception e) { log.debug("closing an in-flight probe stream on abortInflight(): {}", e.toString()); }
+        }
+    }
 
     /** One chat completion, STREAMED (oMLX reports usage and generation_tokens_per_second only in
      *  the final SSE usage chunk; a non-streamed response carries neither). */
@@ -75,12 +90,14 @@ public final class ContextProbe {
         body.put("stream", true);
         body.put("stream_options", Map.of("include_usage", true));
         final long t0 = System.nanoTime(); Double ttft = null; JsonNode usage = null; String finish = null; int chars = 0;
+        HttpResponse<java.io.InputStream> r = null;
         try {
             HttpRequest req = HttpRequest.newBuilder(URI.create(endpoint + "/chat/completions"))
                     .timeout(Duration.ofSeconds(timeoutSec)).header("Authorization", "Bearer " + key)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofByteArray(JSON.writeValueAsBytes(body))).build();
-            final HttpResponse<java.io.InputStream> r = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
+            r = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
+            inflight.add(r);
             if (!r.headers().firstValue("Content-Type").orElse("").contains("text/event-stream")) {
                 final JsonNode obj = JSON.readTree(r.body().readAllBytes());
                 final JsonNode ch = obj.path("choices").path(0);
@@ -114,6 +131,8 @@ public final class ContextProbe {
             return new Post(r.statusCode(), nu, finish, ttft == null ? null : Math.round(ttft * 100) / 100.0, chars, null, Math.round(lat * 100) / 100.0);
         } catch (Exception e) {
             return new Post(599, null, null, null, 0, String.valueOf(e).substring(0, Math.min(200, String.valueOf(e).length())), elapsed(t0));
+        } finally {
+            if (r != null) inflight.remove(r);
         }
     }
 
