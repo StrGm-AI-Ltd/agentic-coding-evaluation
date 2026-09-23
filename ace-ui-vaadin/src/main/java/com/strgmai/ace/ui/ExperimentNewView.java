@@ -42,6 +42,7 @@ public class ExperimentNewView extends VerticalLayout {
     private final TextField taskTokens = new TextField("task_tokens");
     private final IntegerField firstTokenTimeout = new IntegerField("first_token_timeout (seconds)");
     private final IntegerField compactionTrigger = new IntegerField("compaction_trigger (prompt tokens)");
+    private final IntegerField reviewWallSec = new IntegerField("review_wall_sec (seconds, per reviewer session)");
     private final IntegerField contextWindow = new IntegerField("context_window");
     private final Checkbox noContextProbe = new Checkbox("no_context_probe (derive the step-0 window from harness config)");
     private final ComboBox<String> model = modelPicker("model");
@@ -93,6 +94,8 @@ public class ExperimentNewView extends VerticalLayout {
         firstTokenTimeout.setMin(1);
         compactionTrigger.setMin(0);
         compactionTrigger.setPlaceholder("blank = default (28000), 0 = disabled");
+        reviewWallSec.setMin(1);
+        reviewWallSec.setPlaceholder("blank = default (900s)");
         contextWindow.setMin(1);
         contextWindow.setPlaceholder("blank = probe");
         name.setPlaceholder("optional, defaults to template + timestamp");
@@ -126,7 +129,7 @@ public class ExperimentNewView extends VerticalLayout {
         add(Forms.section("Experiment",
                 Forms.row(name, template, k, model),
                 Forms.row(taskWall, taskTokens, contextWindow, noContextProbe),
-                Forms.row(firstTokenTimeout, compactionTrigger)));
+                Forms.row(firstTokenTimeout, compactionTrigger, reviewWallSec)));
 
         // NB: Vaadin components have exactly ONE parent — a shared field must live in
         // one section only (this bug shipped the model picker away from harness_effect
@@ -241,6 +244,7 @@ public class ExperimentNewView extends VerticalLayout {
         raw.put("task_tokens", taskTokens.getValue());
         raw.put("first_token_timeout", firstTokenTimeout.getValue());
         raw.put("compaction_trigger", compactionTrigger.getValue());
+        raw.put("review_wall_sec", reviewWallSec.getValue());
         raw.put("context_window", contextWindow.getValue());
         raw.put("no_context_probe", noContextProbe.getValue());
         raw.put("reviewer_model", reviewerModel.getValue());

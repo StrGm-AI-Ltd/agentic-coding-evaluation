@@ -164,6 +164,9 @@ public class WorkerService {
                 review.put("enabled", job.argv().contains("--self-review"));
                 review.put("model", flag(job.argv(), "--reviewer-model"));
                 review.put("blind", job.argv().contains("--review-blind"));
+                // shared by both self-review and trajectory-review (Reviews.runReviewerSession reads
+                // this same "review" map's wall_sec for either kind of reviewer session)
+                if (flag(job.argv(), "--review-wall-sec") != null) review.put("wall_sec", Integer.parseInt(flag(job.argv(), "--review-wall-sec")));
                 cfg.put("review", review);
                 final Map<String, Object> trajectoryReview = new LinkedHashMap<>();
                 trajectoryReview.put("enabled", job.argv().contains("--trajectory-review"));

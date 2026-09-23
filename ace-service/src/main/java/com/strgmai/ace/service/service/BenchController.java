@@ -138,6 +138,7 @@ public class BenchController {
                 spec.get("context_window") instanceof Number n ? n.intValue() : intOf(spec.get("context_window")),
                 spec.get("first_token_timeout") instanceof Number n ? n.intValue() : intOf(spec.get("first_token_timeout")),
                 spec.get("compaction_trigger") instanceof Number n2 ? n2.intValue() : intOf(spec.get("compaction_trigger")),
+                spec.get("review_wall_sec") instanceof Number n3 ? n3.intValue() : intOf(spec.get("review_wall_sec")),
                 str(spec.get("run_id")));
         return queue.enqueue(rs, priority, props.resultsDir(), pin.current(), pin.current(), null, null, null);
     }
