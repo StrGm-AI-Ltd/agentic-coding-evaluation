@@ -52,6 +52,8 @@ public class JobNewView extends VerticalLayout {
     private final IntegerField implTokens = new IntegerField("impl_tokens");
     private final IntegerField planTokens = new IntegerField("plan_tokens");
     private final IntegerField contextWindow = new IntegerField("context_window");
+    private final IntegerField firstTokenTimeout = new IntegerField("first_token_timeout");
+    private final IntegerField compactionTrigger = new IntegerField("compaction_trigger");
     private final IntegerField wallBudget = new IntegerField("wall_budget");
     private final IntegerField priority = new IntegerField("priority");
     private final NumberField parallelWeight = new NumberField("parallel_weight");
@@ -104,6 +106,10 @@ public class JobNewView extends VerticalLayout {
         implTokens.setMin(1);
         planTokens.setMin(1);
         contextWindow.setMin(1);
+        firstTokenTimeout.setMin(1);
+        firstTokenTimeout.setPlaceholder("blank = default (180s)");
+        compactionTrigger.setMin(0);
+        compactionTrigger.setPlaceholder("blank = default (28000), 0 = disabled");
         wallBudget.setMin(1);
         parallelWeight.setMin(0);
         parallelWeight.setMax(1);
@@ -121,7 +127,8 @@ public class JobNewView extends VerticalLayout {
                 Forms.row(task, runIdField, harness, mode, planSource),
                 Forms.row(reasoning, phases, parallel, parallelPlan, parallelWeight)));
         add(Forms.section("Budgets",
-                Forms.row(taskWall, taskTokens, implWall, implTokens, planTokens, wallBudget, contextWindow)));
+                Forms.row(taskWall, taskTokens, implWall, implTokens, planTokens, wallBudget, contextWindow),
+                Forms.row(firstTokenTimeout, compactionTrigger)));
         add(Forms.section("Reviewers",
                 Forms.row(reviewerModel, reviewWeight, reviewBlind),
                 Forms.row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse, trajectoryReview)));
@@ -171,6 +178,8 @@ public class JobNewView extends VerticalLayout {
         raw.put("impl_tokens", implTokens.getValue());
         raw.put("plan_tokens", planTokens.getValue());
         raw.put("context_window", contextWindow.getValue());
+        raw.put("first_token_timeout", firstTokenTimeout.getValue());
+        raw.put("compaction_trigger", compactionTrigger.getValue());
         raw.put("parallel", parallel.getValue());
         raw.put("parallel_plan", parallelPlan.getValue());
         raw.put("parallel_weight", parallelWeight.getValue());

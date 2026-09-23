@@ -182,6 +182,8 @@ public class RunBench {
         final int taskWall = cfg.get("task_wall_sec") instanceof Number n ? n.intValue() : 3600;
         long taskTokens = cfg.get("task_tokens") instanceof Number n2 ? n2.longValue()
                 : ((Number) derived.getOrDefault("task_tokens", 60000)).longValue();
+        cfg.put("first_token_timeout_ms", (cfg.get("first_token_timeout_sec") instanceof Number n3 ? n3.longValue() : 180L) * 1000);
+        if (!(cfg.get("compaction_trigger") instanceof Number)) cfg.put("compaction_trigger", props.compactionTrigger());
 
         final Map<String, Object> manifest = new LinkedHashMap<>();
         manifest.put("schema_version", BenchProperties.RESULT_SCHEMA);
@@ -212,6 +214,19 @@ public class RunBench {
         if ("orchestrated".equals(mode)) orchestratedPhase(cfg, runId, rd, ws, home, journal, manifest, planSource, promptText, taskWall, taskTokens, task);
         else monolithicPhases(cfg, runId, rd, ws, journal, manifest, promptText, task);
         writeManifest(rd, manifest);
+        // R17: bundle the agent's actual solution NOW - this is the ONLY bundle. Nothing after this
+        // point ever adds anything worth re-bundling for: oracle scoring never commits at all, and
+        // Reviews.selfReview()/trajectoryReview() revert any source the reviewer touched (git checkout
+        // back to their own pre-review snapshot) before their own commit, so the tracked source there
+        // is byte-for-byte identical to what's bundled here already; their own report artifacts
+        // (SELF_REVIEW.md, trajectory_review.json, ...) are separately Files.copy()'d straight into rd
+        // regardless of git. Bundling here, before any of that runs, is also the safest point there
+        // is: oracle scoring runs the agent's OWN generated docker compose/build commands inside ws,
+        // and containers default to root, so anything they write back through a bind mount can leave
+        // root-owned files behind that silently break a LATER git bundle over the same tree (confirmed
+        // live: every one of 16 successfully-completed runs in the DB had no workspace.bundle at all,
+        // despite this identical command succeeding in isolation).
+        bundleWorkspace(ws, rd);
 
         // ---- reviews (scored for CALIBRATION against the oracle; they never replace it) ----
         final Map<String, Object> reviewCfg = cfg.get("review") instanceof Map<?, ?> r ? (Map<String, Object>) r : Map.of();
@@ -245,9 +260,32 @@ public class RunBench {
         manifest.put("decode_tps_median_short", summary.get("decode_tps_median_short"));
         manifest.put("contention", Map.of("docker_up", DockerService.dockerRunning(), "docker_windows", manifest.get("docker_windows")));
         writeManifest(rd, manifest);
-        DockerService.sh(600, "git", "-C", ws.toString(), "bundle", "create", rd.resolve("workspace.bundle").toString(), "--all");
-        if (!Boolean.TRUE.equals(cfg.get("keep_workspace"))) { deleteRecursive(ws); deleteRecursive(home); }
+        // never delete on an unconfirmed bundle (see bundleWorkspace above) - losing disk space on a
+        // scratch dir is recoverable, losing the run's own output is not
+        if (Files.isRegularFile(rd.resolve("workspace.bundle")) && !Boolean.TRUE.equals(cfg.get("keep_workspace"))) { deleteRecursive(ws); deleteRecursive(home); }
         return manifest;
+    }
+
+    /** git-bundles the CURRENT state of ws into rd/workspace.bundle - the durable copy of the run's
+     *  actual source, since ws itself is a scratch dir due for deletion. Written to a temp file and
+     *  only moved into place once confirmed non-empty, so a failed or partial attempt (R17: git
+     *  bundle create over a tree docker has left root-owned files in, among other possible causes)
+     *  never clobbers an earlier, good bundle from calling this again later in the same run. */
+    private static void bundleWorkspace(final Path ws, final Path rd) {
+        final Path tmp = rd.resolve("workspace.bundle.tmp");
+        try {
+            Files.deleteIfExists(tmp);
+            final DockerService.Sh r = DockerService.sh(600, "git", "-C", ws.toString(), "bundle", "create", tmp.toString(), "--all");
+            if (r.rc() == 0 && Files.isRegularFile(tmp) && Files.size(tmp) > 0) {
+                Files.move(tmp, rd.resolve("workspace.bundle"), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } else {
+                log.error("workspace bundle failed for {} (rc={}): {}", ws, r.rc(), r.out());
+            }
+        } catch (Exception e) {
+            log.warn("could not bundle workspace {}: {}", ws, e.toString());
+        } finally {
+            try { Files.deleteIfExists(tmp); } catch (Exception e) { log.debug("could not remove leftover bundle temp file {}: {}", tmp, e.toString()); }
+        }
     }
 
     static void deleteRecursive(Path p) {
@@ -335,6 +373,13 @@ public class RunBench {
                                                   Map<String, String> envOverride, boolean plainPlan) throws Exception {
         final var dw = new DockerWindowMonitor();
         final Map<String, String> env = envOverride != null ? envOverride : (Map<String, String>) cfg.get("_agent_env");
+        // the run's OWN requested model (--model=): a single worker JVM handles every queued job in
+        // turn, so the operator-wide default (props.model()) is not per-run - passing null here would
+        // silently run every task against whatever model happens to be configured process-wide instead
+        // of the model this run actually asked for (a real, previously silent mismatch)
+        final String runModel = (String) cfg.get("model");
+        final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number ftt ? ftt.longValue() : 180_000L;
+        final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
         final long t0 = System.currentTimeMillis();
         String full = plainPlan ? instruction
                 : instruction + "\n\n" + Packs.budgetSection(name, LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm")),
@@ -345,7 +390,7 @@ public class RunBench {
         try {
             rec = agent.run(name, full, wall, tokens, rd.resolve("sessions"),
                     sessionId == null ? UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + name).getBytes()).toString() : sessionId,
-                    false, appendSystem, ws.toString(), proxy.base(), null, env);
+                    false, appendSystem, ws.toString(), proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, runModel, env);
         } finally { if (monitor != null) monitor.interrupt(); }
         if (!plainPlan) appendWindows(manifestOf(cfg), dw, name);
         // P-1: a session that died on a `length` finish gets one continuation with what is LEFT (R4 C-7)
@@ -357,14 +402,21 @@ public class RunBench {
                 rec = agent.run(name + "-continue", "Your previous turn was cut off at the output limit. Continue the task from where you stopped; be concise and act with tools.",
                         (long) (wall - (System.currentTimeMillis() - t0) / 1000), remaining, rd.resolve("sessions"),
                         sessionId == null ? UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + name).getBytes()).toString() : sessionId,
-                        true, appendSystem, ws.toString(), contProxy.base(), null, env);
+                        true, appendSystem, ws.toString(), contProxy.base(), contProxy.abort(), firstTokenTimeoutMs, compactionTrigger, runModel, env);
             } finally { contProxy.stop(); }
         }
         final Map<String, Object> out = RunBench.sessionRecord(rec, name);
         String reported = plainPlan
                 ? (Files.isRegularFile(ws.resolve(name.startsWith("p0") ? "docs/TASK_DEFINITION.md" : "docs/IMPLEMENTATION_PLAN.md")) ? "done" : null)
                 : progressStatus(ws, name);
-        if (!plainPlan && reported == null) {   // the wrap-up: status writing only, wall scaled by the decode slowdown at the context where the session ended (R8)
+        if (!plainPlan && reported == null && rec.rc() == 2) {
+            // TransientError: the model call itself never got a response (retries already exhausted
+            // in chatWithRetry) - the session ended in ~seconds, nowhere near its wall budget, so this
+            // is an infrastructure failure, not "ran out of time to write status". A wrap-up call would
+            // go through the exact same broken path and fail identically; skip straight to the
+            // harness-authored fallback status below instead of burning another retry cycle.
+            log.warn("session {} ended rc=2 (turns={}); skipping the wrap-up call, it would hit the same failure", name, rec.turns());
+        } else if (!plainPlan && reported == null) {   // the wrap-up: status writing only, wall scaled by the decode slowdown at the context where the session ended (R8)
             final Long pt = JournalFacts.lastPromptTokens(journal.toString(), rec.start().toString());
             final Double here = pt == null ? null : ContextProbe.decodeAt(curve(cfg), pt);
             final Double shortDps = ((Map<String, Object>) manifestOf(cfg).get("derived")).get("decode_tps_short") instanceof Number n ? n.doubleValue() : null;
@@ -372,9 +424,11 @@ public class RunBench {
             final String wrapInstr = name.startsWith("p") || name.equals("implement") ? Packs.MONO_WRAPUP_INSTRUCTION : Packs.wrapupInstruction(name);
             // the wrap-up is a continuation on top of the task budget: its own proxy with its own 2000 tokens (run_bench run_task)
             final var wrapProxy = proxies.start(journal, 2000L, null);
-            var w = agent.run(name + "-wrapup", wrapInstr, (long) (300 * scale), 2000L, rd.resolve("sessions"),
-                    UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + name).getBytes()).toString(), true, appendSystem, ws.toString(), wrapProxy.base(), null, env);
-            wrapProxy.stop();
+            final ReferenceAgent.SessionResult w;   // assigned exactly once below; a legal blank final
+            try {
+                w = agent.run(name + "-wrapup", wrapInstr, (long) (300 * scale), 2000L, rd.resolve("sessions"),
+                        UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + name).getBytes()).toString(), true, appendSystem, ws.toString(), wrapProxy.base(), wrapProxy.abort(), firstTokenTimeoutMs, compactionTrigger, runModel, env);
+            } finally { wrapProxy.stop(); }
             out.put("wrapup_rc", w.rc());
             out.put("wrapup_seconds", w.seconds());
             out.put("wrapup_scale", Math.round(scale * 100) / 100.0);
@@ -438,16 +492,23 @@ public class RunBench {
         cfg.put("_manifest", manifest);
         final List<String> rungPhases = phasesFor(task);
         if (rungPhases.contains("p0_definition")) {   // L7-style rungs define before they plan (Python run_once loops the rung's phases)
-            final var proxy = proxies.start(journal, (long) props.phaseTokens("p0_definition"), null);
             Map<String, Object> rec;
-            try {
-                rec = sessionWithPolicy(cfg, runId, "p0_definition", PHASE_TEXT.get("p0_definition")[1],
-                        props.phaseWall("p0_definition"), (long) props.phaseTokens("p0_definition"), rd, ws, journal, proxy, null, null, null, true);
-            } finally { proxy.stop(); }
+            // R18: resume past this phase if a prior attempt of THIS SAME run already finished it
+            if (RunBenchSupport.tagExists(ws, "phase/p0") && Files.isRegularFile(ws.resolve(PHASE_TEXT.get("p0_definition")[0]))) {
+                log.info("run {}: phase/p0 already completed in a prior attempt, resuming past it", runId);
+                rec = new LinkedHashMap<>(Map.of("id", "p0_definition", "rc", 0, "resumed", true));
+                ((Map<String, String>) manifest.get("snapshots")).put("p0", RunBenchSupport.gitOut(ws, "rev-parse", "phase/p0"));
+            } else {
+                final var proxy = proxies.start(journal, (long) props.phaseTokens("p0_definition"), null);
+                try {
+                    rec = sessionWithPolicy(cfg, runId, "p0_definition", PHASE_TEXT.get("p0_definition")[1],
+                            props.phaseWall("p0_definition"), (long) props.phaseTokens("p0_definition"), rd, ws, journal, proxy, null, null, null, true);
+                } finally { proxy.stop(); }
+                ((Map<String, String>) manifest.get("snapshots")).put("p0", RunBenchSupport.snapshot(ws, "phase/p0"));
+            }
             rec.put("artifact", PHASE_TEXT.get("p0_definition")[0]);
             rec.put("artifact_present", Files.isRegularFile(ws.resolve(PHASE_TEXT.get("p0_definition")[0])));
             ((List<Map<String, Object>>) manifest.get("phases")).add(rec);
-            ((Map<String, String>) manifest.get("snapshots")).put("p0", RunBenchSupport.snapshot(ws, "phase/p0"));
             if (Files.isRegularFile(ws.resolve("docs/TASK_DEFINITION.md")))
                 Files.copy(ws.resolve("docs/TASK_DEFINITION.md"), rd.resolve("TASK_DEFINITION.md"), StandardCopyOption.REPLACE_EXISTING);
         }
@@ -466,16 +527,23 @@ public class RunBench {
             Files.copy(ref, ws.resolve("docs/IMPLEMENTATION_PLAN.md"), StandardCopyOption.REPLACE_EXISTING);
             planSha = RunBenchSupport.snapshot(ws, "phase/p1");
         } else {
-            final var proxy = proxies.start(journal, (long) props.phaseTokens("p1_plan"), null);
             Map<String, Object> p1rec;
-            try {
-                p1rec = sessionWithPolicy(cfg, runId, "p1_plan", PHASE_TEXT.get("p1_plan")[1],
-                        props.phaseWall("p1_plan"), (long) props.phaseTokens("p1_plan"), rd, ws, journal, proxy, null, null, null, true);
-            } finally { proxy.stop(); }
+            // R18: resume past the agent-authored plan if a prior attempt already finished it
+            if (RunBenchSupport.tagExists(ws, "phase/p1") && Files.isRegularFile(ws.resolve("docs/IMPLEMENTATION_PLAN.md"))) {
+                log.info("run {}: phase/p1 already completed in a prior attempt, resuming past it", runId);
+                p1rec = new LinkedHashMap<>(Map.of("id", "p1_plan", "rc", 0, "resumed", true));
+                planSha = RunBenchSupport.gitOut(ws, "rev-parse", "phase/p1");
+            } else {
+                final var proxy = proxies.start(journal, (long) props.phaseTokens("p1_plan"), null);
+                try {
+                    p1rec = sessionWithPolicy(cfg, runId, "p1_plan", PHASE_TEXT.get("p1_plan")[1],
+                            props.phaseWall("p1_plan"), (long) props.phaseTokens("p1_plan"), rd, ws, journal, proxy, null, null, null, true);
+                } finally { proxy.stop(); }
+                planSha = RunBenchSupport.snapshot(ws, "phase/p1");
+            }
             p1rec.put("artifact", PHASE_TEXT.get("p1_plan")[0]);
             p1rec.put("artifact_present", Files.isRegularFile(ws.resolve("docs/IMPLEMENTATION_PLAN.md")));
             ((List<Map<String, Object>>) manifest.get("phases")).add(p1rec);
-            planSha = RunBenchSupport.snapshot(ws, "phase/p1");
         }
         if ("reference".equals(planSource)) {   // the reference plan is a recorded phase too (rc=0, 0 s)
             Map<String, Object> p1rec = new LinkedHashMap<>(Map.of("id", "p1_plan", "rc", 0, "seconds", 0.0,
@@ -519,18 +587,31 @@ public class RunBench {
             if (w.isEmpty()) continue;
             if (w.size() == 1 || parallel <= 1) {   // ---- sequential task (the orchestrated mode as before) ----
                 for (PlanTask t : w) {
-                    final String tp = Packs.taskPack(ws, t, tasks, snapshots, doneSet(snapshots), prev, prevSession, handoffs, prevVerified, mergeConflicts.isEmpty() ? null : mergeConflicts, null);
-                    Files.writeString(rd.resolve("packs/" + t.id + ".md"), tp);
-                    final var proxy = proxies.start(journal, taskTokens, null);
                     Map<String, Object> rec;
-                    try {
-                        rec = sessionWithPolicy(cfg, runId, t.id, Packs.taskInstruction(t.id) + "\n\n" + tp,
-                                taskWall, taskTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null);
-                    } finally { proxy.stop(); }
-                    final String after = RunBenchSupport.snapshot(ws, "phase/" + t.id);
-                    ((Map<String, String>) manifest.get("snapshots")).put(t.id, after);
-                    snapshots.put(t.id, new String[]{String.valueOf(manifestSnap(manifest, "p1", planSha)), after});
-                    mergeConflicts.clear();
+                    // R18: resume past this task if a prior attempt of THIS SAME run already
+                    // finished it (the service restarted mid-run, the job got requeued, this method
+                    // is starting over) - re-running it would throw away real agent work already
+                    // paid for and redo it from a blank session
+                    if (RunBenchSupport.tagExists(ws, "phase/" + t.id)) {
+                        log.info("run {}: phase/{} already completed in a prior attempt, resuming past it instead of re-running", runId, t.id);
+                        rec = new LinkedHashMap<>(Map.of("id", t.id, "rc", 0, "resumed", true));
+                        final String after = RunBenchSupport.gitOut(ws, "rev-parse", "phase/" + t.id);
+                        ((Map<String, String>) manifest.get("snapshots")).put(t.id, after);
+                        snapshots.put(t.id, new String[]{String.valueOf(manifestSnap(manifest, "p1", planSha)), after});
+                        mergeConflicts.clear();
+                    } else {
+                        final String tp = Packs.taskPack(ws, t, tasks, snapshots, doneSet(snapshots), prev, prevSession, handoffs, prevVerified, mergeConflicts.isEmpty() ? null : mergeConflicts, null);
+                        Files.writeString(rd.resolve("packs/" + t.id + ".md"), tp);
+                        final var proxy = proxies.start(journal, taskTokens, null);
+                        try {
+                            rec = sessionWithPolicy(cfg, runId, t.id, Packs.taskInstruction(t.id) + "\n\n" + tp,
+                                    taskWall, taskTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null);
+                        } finally { proxy.stop(); }
+                        final String after = RunBenchSupport.snapshot(ws, "phase/" + t.id);
+                        ((Map<String, String>) manifest.get("snapshots")).put(t.id, after);
+                        snapshots.put(t.id, new String[]{String.valueOf(manifestSnap(manifest, "p1", planSha)), after});
+                        mergeConflicts.clear();
+                    }
                     rec.put("title", t.title);
                     ((List<Map<String, Object>>) manifest.get("tasks")).add(rec);
                     if (handoffs != null && ((int) rec.get("rc")) != 124) handoffStep(cfg, runId, t, rd, ws, journal, manifest, rec);
@@ -548,16 +629,23 @@ public class RunBench {
             mergeConflicts = (List<String[]>) wave.get("merge_conflicts");
         }
         // ---- integration: the fixed final task ----
-        final String tp = Packs.taskPack(ws, new PlanTask("INTEGRATION", "integrate and verify"), tasks, snapshots, doneSet(snapshots), prev, prevSession, handoffs, prevVerified, mergeConflicts.isEmpty() ? null : mergeConflicts, null);
-        Files.writeString(rd.resolve("packs/INTEGRATION.md"), tp);
-        final var proxy = proxies.start(journal, taskTokens, null);
         Map<String, Object> rec;
-        try {
-            rec = sessionWithPolicy(cfg, runId, "INTEGRATION", Packs.INTEGRATION_INSTRUCTION + "\n\n" + tp,
-                    (long) (taskWall * 0.2), taskTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null);
-        } finally { proxy.stop(); }
+        final String after;
+        if (RunBenchSupport.tagExists(ws, "phase/INTEGRATION")) {   // R18: see the sequential task loop above
+            log.info("run {}: phase/INTEGRATION already completed in a prior attempt, resuming past it", runId);
+            rec = new LinkedHashMap<>(Map.of("id", "INTEGRATION", "rc", 0, "resumed", true));
+            after = RunBenchSupport.gitOut(ws, "rev-parse", "phase/INTEGRATION");
+        } else {
+            final String tp = Packs.taskPack(ws, new PlanTask("INTEGRATION", "integrate and verify"), tasks, snapshots, doneSet(snapshots), prev, prevSession, handoffs, prevVerified, mergeConflicts.isEmpty() ? null : mergeConflicts, null);
+            Files.writeString(rd.resolve("packs/INTEGRATION.md"), tp);
+            final var proxy = proxies.start(journal, taskTokens, null);
+            try {
+                rec = sessionWithPolicy(cfg, runId, "INTEGRATION", Packs.INTEGRATION_INSTRUCTION + "\n\n" + tp,
+                        (long) (taskWall * 0.2), taskTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null);
+            } finally { proxy.stop(); }
+            after = RunBenchSupport.snapshot(ws, "phase/INTEGRATION");
+        }
         rec.put("title", "integration");
-        final String after = RunBenchSupport.snapshot(ws, "phase/INTEGRATION");
         ((Map<String, String>) manifest.get("snapshots")).put("INTEGRATION", after);
         ((List<Map<String, Object>>) manifest.get("tasks")).add(rec);
         manifest.put("snapshots_p2", after);
@@ -580,10 +668,12 @@ public class RunBench {
 
     private void handoffStep(final Map<String, Object> cfg, final String runId, final PlanTask t, final Path rd, final Path ws, final Path journal, final Map<String, Object> manifest, Map<String, Object> rec) throws Exception {
         final var proxy = proxies.start(journal, 3000L, null);
+        final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 180_000L;
+        final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
         try {
             ReferenceAgent.SessionResult h = agent.run(t.id + "-handoff", Packs.handoffInstruction(t.id), 300, 3000L,
                     rd.resolve("sessions"), UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + t.id).getBytes()).toString(),
-                    true, rd.resolve("packs/stable.md").toString(), ws.toString(), proxy.base(), null, null);
+                    true, rd.resolve("packs/stable.md").toString(), ws.toString(), proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, (String) cfg.get("model"), null);
             final Path hp = ws.resolve("handoff").resolve(t.id + ".md");
             if (Files.isRegularFile(hp)) {
                 final String txt = Files.readString(hp);
@@ -609,13 +699,25 @@ public class RunBench {
     /** the agent's parallelisation-plan step; the harness evaluates the schedule and uses it when valid */
     private Map<String, Object> parallelPlanStep(final Map<String, Object> cfg, final String runId, final Path rd, final Path ws, final Path journal, final Map<String, Object> manifest, final List<PlanTask> tasks, final String stable) throws Exception {
         Files.writeString(rd.resolve("packs/PARALLEL_PLAN.md"), Packs.parallelPlanPack(tasks));
-        final var proxy = proxies.start(journal, 8000L, null);
-        ReferenceAgent.SessionResult prec;
-        try {
-            prec = agent.run("PARALLEL_PLAN", Packs.parallelPlanPack(tasks) + "\n\n" + Packs.PARALLEL_PLAN_INSTRUCTION, 600, 8000L,
-                    rd.resolve("sessions"), UUID.nameUUIDFromBytes(("agentbench/" + runId + "/PARALLEL_PLAN").getBytes()).toString(),
-                    false, rd.resolve("packs/stable.md").toString(), ws.toString(), proxy.base(), null, null);
-        } finally { proxy.stop(); }
+        int rc = 0; double seconds = 0;
+        // R18: resume past this step if a prior attempt of THIS SAME run already finished it -
+        // re-running would discard a perfectly good plan and pay for another full agent turn
+        if (RunBenchSupport.tagExists(ws, "phase/parallel_plan") && Files.isRegularFile(ws.resolve("docs/parallel_plan.json"))) {
+            log.info("run {}: phase/parallel_plan already completed in a prior attempt, resuming past it", runId);
+            ((Map<String, String>) manifest.get("snapshots")).put("parallel_plan", RunBenchSupport.gitOut(ws, "rev-parse", "phase/parallel_plan"));
+        } else {
+            final var proxy = proxies.start(journal, 8000L, null);
+            final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 180_000L;
+            final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
+            ReferenceAgent.SessionResult prec;
+            try {
+                prec = agent.run("PARALLEL_PLAN", Packs.parallelPlanPack(tasks) + "\n\n" + Packs.PARALLEL_PLAN_INSTRUCTION, 600, 8000L,
+                        rd.resolve("sessions"), UUID.nameUUIDFromBytes(("agentbench/" + runId + "/PARALLEL_PLAN").getBytes()).toString(),
+                        false, rd.resolve("packs/stable.md").toString(), ws.toString(), proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, (String) cfg.get("model"), null);
+            } finally { proxy.stop(); }
+            rc = prec.rc(); seconds = prec.seconds();
+            ((Map<String, String>) manifest.get("snapshots")).put("parallel_plan", RunBenchSupport.snapshot(ws, "phase/parallel_plan"));
+        }
         final Map<String, Object> pp = Packs.parseParallelPlan(ws.resolve("docs/parallel_plan.json"));
         final Map<String, Object> ev = PlanParser.evaluateParallelPlan(pp, tasks);
         for (String f : List.of("PARALLEL_PLAN.md", "parallel_plan.json")) {
@@ -623,14 +725,13 @@ public class RunBench {
             if (Files.isRegularFile(src)) Files.copy(src, rd.resolve(f), StandardCopyOption.REPLACE_EXISTING);
         }
         final Map<String, Object> out = new LinkedHashMap<>();
-        out.put("seconds", prec.seconds());
-        out.put("rc", prec.rc());
-        out.put("over_budget", prec.rc() == 124);
+        out.put("seconds", seconds);
+        out.put("rc", rc);
+        out.put("over_budget", rc == 124);
         out.put("parse_ok", pp != null);
         out.put("plan", pp);
         out.put("evaluation", ev);
         out.put("used", Boolean.TRUE.equals(ev.get("valid")) && ((Number) cfg.getOrDefault("parallel", 1)).intValue() > 1);
-        ((Map<String, String>) manifest.get("snapshots")).put("parallel_plan", RunBenchSupport.snapshot(ws, "phase/parallel_plan"));
         manifest.put("parallel_plan", out);
         return out;
     }
@@ -650,7 +751,21 @@ public class RunBench {
         final Map<String, Path> wts = new LinkedHashMap<>(), homes = new LinkedHashMap<>();
         final Map<String, Path> taskJournals = new LinkedHashMap<>();
         final Map<String, String> packs = new LinkedHashMap<>();
+        final Map<String, Map<String, Object>> recs = new LinkedHashMap<>();
+        // R18: a wave task whose phase tag already exists finished its agent session in a prior
+        // attempt of THIS SAME run (the tag is only ever written after that session returns
+        // normally - see the merge loop below). Its work sits on the still-extant "task/<id>"
+        // branch (worktree removal never deletes the branch itself), so skip re-creating its
+        // worktree/HOME copy and re-running its session entirely; a synthetic resumed rec keeps
+        // it present in the manifest, and the merge loop below merges/re-tags it accordingly.
+        final Set<String> resumedTaskIds = new LinkedHashSet<>();
         for (PlanTask t : waveTasks) {
+            if (RunBenchSupport.tagExists(ws, "phase/" + t.id)) {
+                log.info("run {}: phase/{} already completed in a prior attempt (parallel wave), resuming past it", runId, t.id);
+                resumedTaskIds.add(t.id);
+                recs.put(t.id, new LinkedHashMap<>(Map.of("id", t.id, "rc", 0, "resumed", true)));
+                continue;
+            }
             final Path wt = Path.of(ws + "-" + t.id), homeT = Path.of(home + "-home-" + t.id);
             DockerService.sh(60, "git", "-C", ws.toString(), "worktree", "add", "-q", "-B", "task/" + t.id, wt.toString(), pre);
             deleteRecursive(homeT);
@@ -662,10 +777,10 @@ public class RunBench {
             Files.writeString(rd.resolve("packs/" + t.id + ".md"), packs.get(t.id));
         }
         final var sem = new java.util.concurrent.Semaphore(parallel);
-        final Map<String, Map<String, Object>> recs = new LinkedHashMap<>();
         final Map<String, Throwable> errors = new LinkedHashMap<>();
         final List<Thread> threads = new ArrayList<>();
         for (PlanTask t : waveTasks) {
+            if (resumedTaskIds.contains(t.id)) continue;
             Thread th = new Thread(() -> {
                 try {
                     sem.acquire();
@@ -698,7 +813,13 @@ public class RunBench {
         waveRec.put("merges", new ArrayList<Map<String, Object>>());
         for (PlanTask t : waveTasks) {
             final var wt = Path.of(ws + "-" + t.id);
-            final String after = RunBenchSupport.snapshot(wt, "phase/" + t.id);
+            final boolean resumed = resumedTaskIds.contains(t.id);
+            // R18: a resumed task's commit + tag already exist from a prior attempt (its worktree
+            // may already be gone too, if that attempt got as far as merging it) - re-snapshotting
+            // a worktree that no longer exists would throw, so just read the existing tag instead.
+            // The merge itself is safe to redo unconditionally: git merge of an already-merged
+            // branch is a harmless no-op ("Already up to date").
+            final String after = resumed ? RunBenchSupport.gitOut(ws, "rev-parse", "phase/" + t.id) : RunBenchSupport.snapshot(wt, "phase/" + t.id);
             ((Map<String, String>) manifest.get("snapshots")).put(t.id, after);
             snapshots.put(t.id, new String[]{pre, after});
             final DockerService.Sh m = DockerService.sh(600, "git", "-C", ws.toString(), "merge", "--no-ff", "--no-edit", "-m", "merge " + t.id, "task/" + t.id);
@@ -717,12 +838,15 @@ public class RunBench {
                 rec.put("title", t.title);
                 ((List<Map<String, Object>>) manifest.get("tasks")).add(rec);
             }
+            // best-effort cleanup either way: for a resumed task this is a no-op if a prior attempt
+            // already removed the worktree/HOME copy, and clears it if a crash happened in between
             DockerService.sh(300, "git", "-C", ws.toString(), "worktree", "remove", "--force", wt.toString());
             deleteRecursive(Path.of(home + "-home-" + t.id));
             // tagged records merge into the main journal; attribution is by tag (parallel windows overlap)
-            if (Files.isRegularFile(taskJournals.get(t.id))) {
-                Files.writeString(journal, Files.readString(taskJournals.get(t.id)), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-                Files.deleteIfExists(taskJournals.get(t.id));
+            final Path tj = taskJournals.get(t.id);
+            if (tj != null && Files.isRegularFile(tj)) {
+                Files.writeString(journal, Files.readString(tj), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                Files.deleteIfExists(tj);
             }
         }
         final String merged = DockerService.sh(20, "git", "-C", ws.toString(), "rev-parse", "HEAD").out().strip();
@@ -752,7 +876,8 @@ public class RunBench {
                         violations.add(new String[]{tid, f});
         }
         boolean broken = !conflicts.isEmpty() || (!Boolean.TRUE.equals(wv.get("green"))
-                && waveIds.stream().anyMatch(tid -> recs.containsKey(tid) && Boolean.TRUE.equals(((Map<String, Object>) recs.get(tid).get("verification")).get("green"))));
+                // a resumed task's synthetic rec (R18) carries no "verification" key - guard the cast instead of assuming one
+                && waveIds.stream().anyMatch(tid -> recs.get(tid) != null && recs.get(tid).get("verification") instanceof Map<?, ?> vm && Boolean.TRUE.equals(vm.get("green"))));
         final Map<String, Object> problems = new LinkedHashMap<>();
         problems.put("conflicts", conflicts);
         problems.put("verification", Boolean.TRUE.equals(wv.get("green")) ? null : VerifyTask.verifyText(wv));
@@ -765,22 +890,34 @@ public class RunBench {
         // the FIX step: the agent repairs what its parallelisation caused; its cost is recorded separately and scored
         if (broken && Boolean.TRUE.equals(cfg.getOrDefault("parallel_fix_enabled", true))) {
             final String fid = "FIX-W" + (((List<?>) manifest.get("waves")).size() + 1);
-            Files.writeString(rd.resolve("packs/" + fid + ".md"), Packs.fixPack(ws, problems));
-            final var proxy = proxies.start(journal, 20000L, null);
             Map<String, Object> frec;
-            try {
-                frec = sessionWithPolicy(cfg, runId, fid, Packs.FIX_INSTRUCTION.replace("{tasks}", String.join(", ", waveIds)).replace("{id}", fid),
-                        900, 20000L, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null);
-            } finally { proxy.stop(); }
+            final String fafter;
+            // R18: resume past the FIX step if a prior attempt of this same wave already ran it
+            if (RunBenchSupport.tagExists(ws, "phase/" + fid)) {
+                log.info("run {}: phase/{} already completed in a prior attempt, resuming past it", runId, fid);
+                frec = new LinkedHashMap<>(Map.of("id", fid, "rc", 0, "resumed", true));
+                fafter = RunBenchSupport.gitOut(ws, "rev-parse", "phase/" + fid);
+            } else {
+                Files.writeString(rd.resolve("packs/" + fid + ".md"), Packs.fixPack(ws, problems));
+                final var proxy = proxies.start(journal, 20000L, null);
+                try {
+                    frec = sessionWithPolicy(cfg, runId, fid, Packs.FIX_INSTRUCTION.replace("{tasks}", String.join(", ", waveIds)).replace("{id}", fid),
+                            900, 20000L, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null);
+                } finally { proxy.stop(); }
+                fafter = RunBenchSupport.snapshot(ws, "phase/" + fid);
+            }
             frec.put("title", "fix after merging " + String.join(", ", waveIds));
             frec.put("parallel_fix", true);
             frec.put("fixed_wave", waveIds);
-            final String fafter = RunBenchSupport.snapshot(ws, "phase/" + fid);
             ((Map<String, String>) manifest.get("snapshots")).put(fid, fafter);
             final Map<String, Object> fv = VerifyTask.verify(ws, cfg, rd.resolve("verify/" + fid + ".log"));
             ((List<Map<String, Object>>) manifest.get("tasks")).add(frec);
-            waveRec.put("fix", Map.of("id", fid, "seconds", frec.get("seconds_total") == null ? frec.get("seconds") : frec.get("seconds_total"),
-                    "resolved", Boolean.TRUE.equals(fv.get("green")), "reported", frec.get("reported")));
+            final Map<String, Object> fixSummary = new LinkedHashMap<>();   // Map.of() rejects nulls - a resumed frec has no seconds/reported
+            fixSummary.put("id", fid);
+            fixSummary.put("seconds", frec.get("seconds_total") == null ? frec.get("seconds") : frec.get("seconds_total"));
+            fixSummary.put("resolved", Boolean.TRUE.equals(fv.get("green")));
+            fixSummary.put("reported", frec.get("reported"));
+            waveRec.put("fix", fixSummary);
         }
         waveRec.put("verification_text", VerifyTask.verifyText(wv));
         waveRec.put("merge_conflicts", conflicts);

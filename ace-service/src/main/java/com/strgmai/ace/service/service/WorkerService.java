@@ -1,6 +1,7 @@
 package com.strgmai.ace.service.service;
 
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.runner.ContextProbe;
 import com.strgmai.ace.service.runner.RunBench;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,11 +38,12 @@ public class WorkerService {
     private final ExperimentsService experiments;
     private final Preflight preflight;
     private final TreatmentPin pin;
+    private final ContextProbe probe;
 
     public WorkerService(JobQueue queue, RunBench runBench, ImporterService importer, ExperimentsService experiments,
-                         Preflight preflight, TreatmentPin pin, BenchProperties props) {
+                         Preflight preflight, TreatmentPin pin, BenchProperties props, ContextProbe probe) {
         this.queue = queue; this.runBench = runBench; this.importer = importer; this.experiments = experiments;
-        this.preflight = preflight; this.pin = pin; this.props = props;
+        this.preflight = preflight; this.pin = pin; this.props = props; this.probe = probe;
         reconcile();
     }
 
@@ -115,8 +117,11 @@ public class WorkerService {
                 if (Boolean.TRUE.equals(queue.get(job.id()).get("cancel_requested"))) {
                     cancelCurrent = true;
                     // interrupt the worker thread: a blocking model-server call or Thread.sleep must
-                    // unwind NOW, not wait out the rest of the run's budget for the flag to be noticed
+                    // unwind NOW, not wait out the rest of the run's budget for the flag to be noticed.
+                    // interrupt() alone does not reach a blocking HttpResponseInputStream.read() (R14,
+                    // same class of bug as RecordingProxy pre-R12) - probe.abortInflight() closes it directly
                     if (currentJobFuture != null) currentJobFuture.cancel(true);
+                    probe.abortInflight();
                     return;
                 }
                 try { Thread.sleep(2000); } catch (InterruptedException e) { return; }
@@ -137,11 +142,15 @@ public class WorkerService {
                 final String planSource = flag(job.argv(), "--plan-source") != null ? flag(job.argv(), "--plan-source") : "agent";
                 if (flag(job.argv(), "--task-wall") != null) cfg.put("task_wall_sec", Integer.parseInt(flag(job.argv(), "--task-wall")));
                 if (flag(job.argv(), "--task-tokens") != null) cfg.put("task_tokens", Long.parseLong(flag(job.argv(), "--task-tokens")));
+                if (flag(job.argv(), "--first-token-timeout") != null) cfg.put("first_token_timeout_sec", Integer.parseInt(flag(job.argv(), "--first-token-timeout")));
+                if (flag(job.argv(), "--compaction-trigger") != null) cfg.put("compaction_trigger", Integer.parseInt(flag(job.argv(), "--compaction-trigger")));
                 // a pinned --context-window IS the window: it skips step 0, whose whole job is to measure one
                 final String window = flag(job.argv(), "--context-window");
                 if (window != null) cfg.put("context_window", Integer.parseInt(window));
-                // the context probe (step 0) is the default for direct runs; queue runs opt in via ACE_JLS_CONTEXT_PROBE
-                cfg.put("context_probe", window == null && Boolean.parseBoolean(System.getenv().getOrDefault("ACE_JLS_CONTEXT_PROBE", "true")));   // Python default: the probe runs
+                // the context probe (step 0) is the default for direct runs; queue runs opt in via ACE_JLS_CONTEXT_PROBE;
+                // --no-context-probe is a per-run override that skips it even when nothing is pinned
+                cfg.put("context_probe", !job.argv().contains("--no-context-probe") && window == null
+                        && Boolean.parseBoolean(System.getenv().getOrDefault("ACE_JLS_CONTEXT_PROBE", "true")));   // Python default: the probe runs
                 cfg.put("context_probe_fresh", job.argv().contains("--context-probe-fresh"));
                 if (flag(job.argv(), "--parallel") != null) {
                     if ("auto".equals(flag(job.argv(), "--parallel"))) cfg.put("parallel_auto", true);

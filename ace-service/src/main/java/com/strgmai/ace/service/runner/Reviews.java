@@ -226,12 +226,15 @@ public class Reviews {
         final String model = reviewer.startsWith("omlx/") ? reviewer.substring("omlx/".length()) : reviewer.substring(reviewer.indexOf('/') + 1);
         final RecordingProxyFactory.ProxySession proxy = external ? null : proxies.start(rd.resolve("interactions.jsonl"), tokens, null);
         final Map<String, String> extraEnv = external ? externalCredentials(reviewCfg) : null;
+        final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 180_000L;
+        final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
         try {
             ReferenceAgent.SessionResult res = agent.run(name, Files.readString(packPath) + "\n\n" + (name.equals("REVIEW") ? Packs.REVIEW_INSTRUCTION : Packs.TRAJ_INSTRUCTION),
                     ((Number) reviewCfg.getOrDefault("wall_sec", 900)).longValue(), tokens, rd.resolve("sessions"),
                     UUID.nameUUIDFromBytes(("agentbench/" + manifest.get("run_id") + "/" + name).getBytes()).toString(),
                     false, sysPath.toString(), ws.toString(),
-                    proxy == null ? externalBase(reviewer, cfg) : proxy.base(), model, extraEnv);
+                    proxy == null ? externalBase(reviewer, cfg) : proxy.base(),
+                    proxy == null ? (() -> {}) : proxy.abort(), firstTokenTimeoutMs, compactionTrigger, model, extraEnv);
             if (log != null) Files.writeString(log, "review session " + name + " rc=" + res.rc() + " turns=" + res.turns() + "\n");
             return res;
         } finally {

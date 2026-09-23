@@ -38,12 +38,15 @@ public class RecordingProxy {
     private final BenchProperties props;
 
     private HttpServer server;
+    private ExecutorService serverExecutor;
     private Path journal;
     private Long tokenBudget;
     private String tag;
     private volatile boolean stopping;
     private final Set<HttpResponse<InputStream>> inflight = ConcurrentHashMap.newKeySet();
     public static final double CHARS_PER_TOKEN = 3.6;   // the usage ESTIMATE of an abandoned stream
+    // java.net.http.HttpRequest.Builder.header() rejects these - lower-case, matched case-insensitively
+    private static final Set<String> RESTRICTED_HEADERS = Set.of("connection", "content-length", "expect", "host", "upgrade");
 
     public RecordingProxy(BenchProperties props) { this.props = props; }
 
@@ -65,9 +68,26 @@ public class RecordingProxy {
                 try { x.close(); } catch (Exception ignore) {}
             }
         });
-        server.setExecutor(Executors.newCachedThreadPool());
+        serverExecutor = Executors.newCachedThreadPool();
+        server.setExecutor(serverExecutor);
         server.start();
         return "http://127.0.0.1:" + server.getAddress().getPort() + "/v1";
+    }
+
+    /** Closes whatever is CURRENTLY relaying through this proxy - WITHOUT stopping the listening
+     *  server, unlike stop(). For when the agent gives up on one retry attempt but will
+     *  immediately start another through this SAME proxy (same session, same token budget,
+     *  same journal): the agent's own StreamingHandle.cancel() only closes ITS side of the
+     *  agent<->proxy hop; it does nothing for this proxy's OWN blocking read from upstream
+     *  (R12 - confirmed live via jstack: RecordingProxy relay threads sat blocked in
+     *  HttpResponseInputStream.read() for 750s+, one per abandoned attempt, each still
+     *  faithfully waiting on oMLX with nothing telling either side the agent had moved on -
+     *  exactly the still-"Generating..." entries piling up on oMLX's own dashboard). Closing the
+     *  tracked upstream body here is what actually reaches that hop. */
+    public void abortInflight() {
+        for (HttpResponse<InputStream> r : inflight) {
+            try { r.body().close(); } catch (Exception e) { log.debug("closing an in-flight stream on abortInflight(): {}", e.toString()); }
+        }
     }
 
     /** SIGTERM-equivalent: stop accepting, abort in-flight streams (they are journaled as drain_aborted) */
@@ -79,8 +99,13 @@ public class RecordingProxy {
         }
         server.stop(0);
         server = null;
+        // HttpServer.stop() does not shut down a custom executor supplied via setExecutor() - left
+        // running, its cached threads (and their per-thread kqueue/pipe fds) linger for up to 60s
+        // idle each, compounding across the many proxies a long benchmark run cycles through
+        if (serverExecutor != null) { serverExecutor.shutdownNow(); serverExecutor = null; }
     }
 
+    //todo refactor this
     private void forward(final com.sun.net.httpserver.HttpExchange x) throws Exception {
         byte[] body = x.getRequestBody().readAllBytes();
         final String path = x.getRequestURI().getPath();
@@ -115,8 +140,23 @@ public class RecordingProxy {
         }
         final long t0 = System.nanoTime();
         HttpRequest.Builder ub = HttpRequest.newBuilder(URI.create(props.upstreamBase() + path))
-                .method(x.getRequestMethod(), HttpRequest.BodyPublishers.ofByteArray(body.length > 0 ? body : new byte[0]));
-        x.getRequestHeaders().forEach((k, v) -> { if (!List.of("Host", "Content-length", "Connection").contains(k)) ub.header(k, v.get(0)); });
+                .method(x.getRequestMethod(), HttpRequest.BodyPublishers.ofByteArray(body.length > 0 ? body : new byte[0]))
+                // bounds only the wait for oMLX to start responding (headers), not a streamed body
+                // read afterward - without this, an upstream hang here blocks this handler thread
+                // forever, same class of bug as ReferenceAgent's chatModel timeout (see its comment).
+                // Kept under the agent's own 300s so this proxy fails first with a clean 502 the
+                // agent's retry logic can classify, instead of both sides timing out independently.
+                .timeout(java.time.Duration.ofSeconds(290));
+        // java.net.http.HttpRequest.Builder throws IllegalArgumentException on these - the JDK
+        // manages them itself. Matched case-insensitively: com.sun.net.httpserver.Headers presents
+        // "Content-Length" (title case), not the "Content-length" this used to compare against, so
+        // that exclusion silently never matched either. Missing "Upgrade" made EVERY real client
+        // request (the agent's own JDK HttpClient sends it for h2c negotiation) throw before ever
+        // reaching upstream - the exchange closed with no response, read by the client as a
+        // connection failure and retried into the ground (R9).
+        x.getRequestHeaders().forEach((k, v) -> {
+            if (!RESTRICTED_HEADERS.contains(k.toLowerCase(Locale.ROOT))) ub.header(k, v.get(0));
+        });
         if (body.length > 0 && x.getRequestHeaders().getFirst("Content-Type") == null) ub.header("Content-Type", "application/json");
         try {
             final HttpResponse<InputStream> up = http.send(ub.build(), HttpResponse.BodyHandlers.ofInputStream());
@@ -150,9 +190,20 @@ public class RecordingProxy {
         x.getResponseHeaders().set("Content-Type", "text/event-stream");
         x.sendResponseHeaders(up.statusCode(), 0);
         boolean clientAborted = false, drainAborted = false;
+        // read-level timing (not per SSE event - one read() can carry several/partial lines):
+        // diagnoses whether a stalled/aborted stream was a steady trickle or one long silent gap,
+        // which the assembled content alone can't distinguish (R13 - this is exactly the question
+        // that came up live: 4000+ chars of reasoning had accumulated by the time a 90s-idle abort
+        // fired, which looks like "still working" from the final content, but only firstByteMs/
+        // maxReadGapMs/reads actually show whether it was arriving continuously or not)
+        int reads = 0; long lastReadAt = t0, maxReadGapMs = 0, firstByteMs = -1;
         try (InputStream in = up.body(); OutputStream out = x.getResponseBody()) {
             final byte[] buf = new byte[8192]; int n; StringBuilder line = new StringBuilder();
             while ((n = in.read(buf)) >= 0) {
+                final long now = System.nanoTime();
+                maxReadGapMs = Math.max(maxReadGapMs, (now - lastReadAt) / 1_000_000);
+                if (firstByteMs < 0) firstByteMs = (now - t0) / 1_000_000;
+                lastReadAt = now; reads++;
                 final var s = new String(buf, 0, n, StandardCharsets.UTF_8);
                 int start = 0;
                 while (start <= s.length()) {
@@ -175,6 +226,9 @@ public class RecordingProxy {
             clientAborted = true;
         }
         if (stopping) drainAborted = true;
+        // the abort itself always looks like a "gap" (read() never returns again) - that tail is
+        // not evidence of anything upstream was doing, so it is deliberately excluded from
+        // maxReadGapMs; what matters here is the largest gap BETWEEN chunks that did arrive
         final SseAssembler.Assembled asm = isChat ? SseAssembler.parse(chunks) : null;
         final ObjectNode resp = json.createObjectNode();
         if (asm != null) {
@@ -185,6 +239,8 @@ public class RecordingProxy {
                 resp.putPOJO("usage", estimatedUsage(asm));
         } else resp.put("_bytes", chunks.stream().mapToLong(c -> c.length).sum());
         rec.put("status", up.statusCode()).put("streamed", true).put("latency_sec", elapsed(t0));
+        rec.put("reads", reads).put("max_read_gap_ms", maxReadGapMs);
+        if (firstByteMs >= 0) rec.put("first_byte_ms", firstByteMs);
         if (clientAborted) rec.put("client_aborted", true);
         if (drainAborted) rec.put("drain_aborted", true);
         journalRecord(rec, req, resp);

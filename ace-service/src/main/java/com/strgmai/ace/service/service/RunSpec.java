@@ -8,13 +8,16 @@ import java.util.*;
 public record RunSpec(String task, String model, String harness, String mode, String planSource, Integer taskWall, Integer taskTokens,
                       Integer implWall, Integer implTokens, String parallel, boolean systemRules, boolean selfReview,
                       boolean trajectoryReview, String reviewerModel, boolean handoffNotes, boolean manageDocker,
-                      Integer contextWindow, String runId) {
+                      boolean noContextProbe, boolean contextProbeFresh,
+                      Integer contextWindow, Integer firstTokenTimeout, Integer compactionTrigger, String runId) {
 
     public static final String RUN_ID = "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$";
 
     public RunSpec {
         taskWall = positive(taskWall); taskTokens = positive(taskTokens); implWall = positive(implWall); implTokens = positive(implTokens);
-        contextWindow = positive(contextWindow);
+        contextWindow = positive(contextWindow); firstTokenTimeout = positive(firstTokenTimeout);
+        // 0 is a legitimate value here (disables compaction) - unlike the budgets above, only reject negative
+        if (compactionTrigger != null && compactionTrigger < 0) throw new IllegalArgumentException("compactionTrigger must be >= 0 (0 disables compaction): " + compactionTrigger);
         if (runId != null && !runId.matches(RUN_ID)) throw new IllegalArgumentException("invalid run id: " + runId);
         if (mode != null && !List.of("monolithic", "orchestrated").contains(mode))
             throw new IllegalArgumentException("mode must be monolithic or orchestrated");
@@ -44,8 +47,12 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (reviewerModel != null) args.add("--reviewer-model=" + reviewerModel);
         if (handoffNotes) args.add("--handoff-notes");
         if (manageDocker) args.add("--manage-docker");
+        if (noContextProbe) args.add("--no-context-probe");
+        if (contextProbeFresh) args.add("--context-probe-fresh");
         // a pinned window: the run uses it as-is and skips step 0 (the probe exists to MEASURE one)
         if (contextWindow != null) args.add("--context-window=" + contextWindow);
+        if (firstTokenTimeout != null) args.add("--first-token-timeout=" + firstTokenTimeout);
+        if (compactionTrigger != null) args.add("--compaction-trigger=" + compactionTrigger);
         return args;
     }
 

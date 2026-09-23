@@ -24,7 +24,7 @@ java {
 repositories { mavenCentral() }
 
 dependencies {
-    implementation platform('dev.langchain4j:langchain4j-bom:1.1.0')
+    implementation platform('dev.langchain4j:langchain4j-bom:1.20.0')
     implementation platform("org.springframework.boot:spring-boot-dependencies:${libs.versions.springBoot.get()}")
     implementation 'org.springframework.boot:spring-boot-starter-web'
     // starter-jooq pulls jOOQ + spring-boot-starter-jdbc and auto-configures a DSLContext from the
@@ -35,6 +35,7 @@ dependencies {
     implementation 'dev.langchain4j:langchain4j-open-ai'
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.xerial:sqlite-jdbc:3.47.1.0'
+    implementation 'com.openai:openai-java:4.65.0'
     jooqGenerator 'org.xerial:sqlite-jdbc:3.47.1.0'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     // core Testcontainers (GenericContainer/ImageFromDockerfile/Wait/MountableFile/DockerClientFactory)

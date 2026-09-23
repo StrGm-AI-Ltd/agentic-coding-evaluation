@@ -128,6 +128,28 @@ class ExperimentParamsTest {
     }
 
     @Test
+    void firstTokenTimeoutDefaultsAndRejectsGarbage() {
+        final var raw = common();
+        raw.put("model", "qwen");
+        raw.put("first_token_timeout", null);
+        assertEquals(180, ExperimentParams.build("harness_effect", raw).get("first_token_timeout"));
+        raw.put("first_token_timeout", "abc");
+        assertThrows(IllegalArgumentException.class, () -> ExperimentParams.build("harness_effect", raw));
+    }
+
+    @Test
+    void compactionTriggerOmittedWhenUnsetZeroMeansDisabled() {
+        final var raw = common();
+        raw.put("model", "qwen");
+        raw.put("compaction_trigger", null);
+        assertFalse(ExperimentParams.build("harness_effect", raw).containsKey("compaction_trigger"), "unset leaves the operator default in place");
+        raw.put("compaction_trigger", 0);
+        assertEquals(0, ExperimentParams.build("harness_effect", raw).get("compaction_trigger"), "0 disables compaction, not treated as blank");
+        raw.put("compaction_trigger", "abc");
+        assertThrows(IllegalArgumentException.class, () -> ExperimentParams.build("harness_effect", raw));
+    }
+
+    @Test
     void unknownTemplateRejected() {
         assertThrows(IllegalArgumentException.class, () -> ExperimentParams.build("nope", Map.of()));
     }

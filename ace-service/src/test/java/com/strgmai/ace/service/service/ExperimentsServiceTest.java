@@ -109,6 +109,39 @@ class ExperimentsServiceTest {
         assertTrue(pi.spec().runId().matches("aa-\\d{8}-\\d{6}-modelX-pi-r1"));
     }
 
+    @Test
+    void harnessEffectReviewsAreOptInOnAReviewerModelBeingSet() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> noReviewer = svc.plan("harness_effect", Map.of("model", "modelX"), 1);
+        assertTrue(noReviewer.stream().noneMatch(s -> s.spec().selfReview() || s.spec().trajectoryReview()), "no reviewer_model -> reviews off, unlike model_ab which always reviews");
+        assertTrue(noReviewer.stream().allMatch(s -> s.spec().reviewerModel() == null));
+
+        final List<ExperimentsService.ArmSpec> withReviewer = svc.plan("harness_effect", Map.of("model", "modelX", "reviewer_model", "openai/gpt-5"), 1);
+        assertTrue(withReviewer.stream().allMatch(s -> s.spec().selfReview() && s.spec().trajectoryReview()));
+        assertTrue(withReviewer.stream().allMatch(s -> "openai/gpt-5".equals(s.spec().reviewerModel())));
+    }
+
+    @Test
+    void agentAbReviewsAreOptInOnAReviewerModelBeingSet() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> noReviewer = svc.plan("agent_ab", Map.of("model", "modelX"), 1);
+        assertTrue(noReviewer.stream().noneMatch(s -> s.spec().selfReview() || s.spec().trajectoryReview()));
+
+        final List<ExperimentsService.ArmSpec> withReviewer = svc.plan("agent_ab", Map.of("model", "modelX", "reviewer_model", "openai/gpt-5"), 1);
+        assertTrue(withReviewer.stream().allMatch(s -> s.spec().selfReview() && s.spec().trajectoryReview()));
+        assertTrue(withReviewer.stream().allMatch(s -> "openai/gpt-5".equals(s.spec().reviewerModel())));
+    }
+
+    @Test
+    void noContextProbeFlowsThroughToEveryTemplateArm() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> off = svc.plan("harness_effect", Map.of("model", "modelX"), 1);
+        assertTrue(off.stream().noneMatch(s -> s.spec().noContextProbe()));
+
+        final List<ExperimentsService.ArmSpec> on = svc.plan("harness_effect", Map.of("model", "modelX", "no_context_probe", true), 1);
+        assertTrue(on.stream().allMatch(s -> s.spec().noContextProbe()));
+    }
+
     // --- #3: enqueue() rolls back the whole experiment on a mid-loop failure ---------------------
 
     @Test

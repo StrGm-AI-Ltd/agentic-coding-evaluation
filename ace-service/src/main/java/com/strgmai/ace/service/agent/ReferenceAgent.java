@@ -5,12 +5,12 @@ import com.strgmai.ace.service.proxy.RecordingProxy;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.data.message.*;
-import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
-import dev.langchain4j.model.chat.response.ChatResponse;
-import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.chat.response.*;
 import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
+import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.model.output.FinishReason;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +20,9 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 
 /** Port of runner/agent_loop.py, the reference agent, on LangChain4j. The harness owns every part
  *  of the loop: four tools (read/write/edit/bash with mechanical output hygiene), structural
@@ -119,13 +122,25 @@ public class ReferenceAgent {
     public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
                              Path sessionDir, String sessionId, boolean continueSession,
                              String appendSystem, String cwd, String proxyBase, Map<String, String> extraEnv) throws Exception {
-        return run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase, null, extraEnv);
+        return run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase, () -> {}, DEFAULT_FIRST_TOKEN_TIMEOUT_MS, props.compactionTrigger(), null, extraEnv);
     }
 
-    /** full form: `model` overrides the configured one (a reviewer, a parallel task, a probe) */
+    /** full form: `model` overrides the configured one (a reviewer, a parallel task, a probe).
+     *  `abortProxy` closes the CALLER's RecordingProxy's own upstream connection when this method
+     *  gives up on a retry attempt (see chatWithRetry) - cancelling the agent's own
+     *  StreamingHandle only closes the agent<->proxy hop; it does nothing for the proxy's
+     *  separate, independently-blocking read from oMLX (R12). `firstTokenTimeoutMs` caps how long
+     *  a stream may sit with NO chunk at all before it counts as stalled; once the first chunk
+     *  arrives, IDLE_TIMEOUT_MS governs instead (see awaitStream). `compactionTrigger` overrides
+     *  BenchProperties' operator default (R16): compaction stubs OLD tool outputs to shrink the
+     *  prompt, but that edit invalidates oMLX's prefix cache for everything after it, forcing a
+     *  full re-prefill under whatever memory pressure the machine is already under - confirmed live
+     *  (oMLX's own log: "Prefill interrupted at 16384/18602 tokens" during exactly such a
+     *  post-compaction re-prefill, repeatedly, never completing across 4 retries). 0 disables
+     *  compaction entirely for a run where that trade is worse than just keeping the full prompt. */
     public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
                              Path sessionDir, String sessionId, boolean continueSession,
-                             String appendSystem, String cwd, String proxyBase, String model, Map<String, String> extraEnv) throws Exception {
+                             String appendSystem, String cwd, String proxyBase, Runnable abortProxy, long firstTokenTimeoutMs, int compactionTrigger, String model, Map<String, String> extraEnv) throws Exception {
         final long t0 = System.nanoTime();
         final var start = Instant.now();
         final String reasoningEffort = DEFAULT_REASONING.getOrDefault(reasoningKind(name), "medium");
@@ -143,12 +158,43 @@ public class ReferenceAgent {
             session.system(system);
             session.user(instruction);
         }
-        ChatModel chatModel = OpenAiChatModel.builder()
+        // Streaming, not the request/response OpenAiChatModel this used to be (R10). The blocking
+        // model was two bugs at once: (1) its synchronous JDK HttpClient.send() does NOT reliably
+        // abort on Thread.interrupt() (confirmed live via jstack - a cancelled job sat WAITING
+        // there for 1168s+ with cancel_requested already true and Future.cancel(true) already
+        // called), so cancellation only worked at all because of a blanket per-call timeout; and
+        // (2) that same blanket timeout gave up on calls that were still genuinely working (this
+        // local model server can run under 5 tok/s under real load - Docker and the model compete
+        // for memory, per the task prompt), and because oMLX only notices a client is gone when it
+        // next tries to WRITE to it, an abandoned-but-not-dead generation just kept running to
+        // completion in the background, competing for the same GPU as the retry that replaced it -
+        // the oMLX dashboard showed 5 concurrent "Generating..." entries from this, a feedback loop
+        // (each retry slower, causing more retries).
+        //
+        // langchain4j-bom bumped 1.1.0 -> 1.20.0 alongside this (R11) specifically for
+        // StreamingHandle: 1.1.0's StreamingChatResponseHandler had no way to reach the
+        // underlying connection at all, so giving up on a stalled stream really was just walking
+        // away and hoping oMLX noticed. 1.20.0's PartialResponseContext/PartialThinkingContext/
+        // PartialToolCallContext (see StreamCollector) expose a real handle.cancel() that closes
+        // the InputStream and actually aborts the exchange - confirmed against
+        // ChatCompletionEventDispatcher's bytecode for the OpenAI-compatible client this project
+        // uses. No .maxRetries(...) here: OpenAiStreamingChatModel's builder doesn't have one -
+        // streaming has no langchain4j-internal retry to disable in the first place.
+        //
+        // .returnThinking(true) (R15): without it, onPartialThinking NEVER fires - reproduced in
+        // isolation directly against oMLX (0 calls with reasoning_content genuinely streaming for
+        // 40+s; 6 calls, immediately, once this flag is set - same request otherwise). Silently
+        // meant StreamCollector.touch() only ever saw content/tool-call deltas, so IDLE_TIMEOUT_MS/
+        // firstTokenTimeoutMs were blind to a session spending its whole budget reasoning before
+        // its first visible content or tool call - exactly the "no first token in 180s" abort found
+        // live on a PARALLEL_PLAN session that had 8861 chars of reasoning already in the proxy's
+        // own journal at the moment it was killed.
+        StreamingChatModel chatModel = OpenAiStreamingChatModel.builder()
                 .baseUrl(proxyBase == null ? props.endpoint() : proxyBase)
                 .apiKey(apiKeyFor(proxyBase, model, extraEnv))
                 .modelName(model == null ? props.model() : model)
-                .timeout(Duration.ofSeconds(3600))
                 .defaultRequestParameters(OpenAiChatRequestParameters.builder().reasoningEffort(reasoningEffort).build())
+                .returnThinking(true)
                 .build();
         final List<ToolSpecification> specs = toolSpecs();
         // the run's SCRUBBED environment (fresh HOME, docker shim, pinned JAVA_HOME, AB_RUN_ID) is the
@@ -163,13 +209,13 @@ public class ReferenceAgent {
         final int MAX_TURNS = 400;
         final long deadline = System.currentTimeMillis() + wallSec * 1000;
         while (turns < MAX_TURNS) {
-            if (lastPrompt > 0 && lastPrompt > props.compactionTrigger()) {
+            if (compactionTrigger > 0 && lastPrompt > 0 && lastPrompt > compactionTrigger) {
                 final int n = AgentSession.compact(msgs, props.keepRecentTurns());
                 if (n > 0) { compactions++; session.compaction(n, lastPrompt); }
             }
             ChatResponse resp;
             try {
-                resp = chatWithRetry(chatModel, ChatRequest.builder().messages(msgs).toolSpecifications(specs).build(), deadline);
+                resp = chatWithRetry(chatModel, ChatRequest.builder().messages(msgs).toolSpecifications(specs).build(), deadline, abortProxy, firstTokenTimeoutMs);
             } catch (BudgetExhausted e) {
                 rc = 3; finish = "budget";
                 session.end(turns, toolErrors, compactions, finish);
@@ -177,8 +223,14 @@ public class ReferenceAgent {
             } catch (TransientError e) {
                 // rc=2 alone gives no way to tell auth failure/5xx/network drop apart after the
                 // fact - the real cause (e's cause carries the HTTP status per chatWithRetry) is
-                // otherwise gone the moment this method returns
-                log.warn("session {} ended (rc=2) after retries were exhausted: {}", name, e.getCause() == null ? e : e.getCause());
+                // otherwise gone the moment this method returns. Passed as a trailing Throwable,
+                // not a {} substitution: SLF4J's MessageFormatter strips a trailing Throwable arg
+                // for stack-trace purposes even when a matching {} placeholder was intended to
+                // consume it, silently leaving that placeholder unprinted with no trace at all
+                // (verified live - this line printed "...exhausted: {}" with nothing following).
+                // A real stack trace here is strictly more useful than the toString() this was
+                // going for anyway.
+                log.warn("session {} ended (rc=2) after retries were exhausted", name, e.getCause() == null ? e : e.getCause());
                 session.end(turns, toolErrors, compactions, finish);
                 return result(name, 2, t0, finish, turns, toolErrors, compactions, session, start);
             }
@@ -245,13 +297,36 @@ public class ReferenceAgent {
      *  exception (HttpException carries statusCode(); 5xx -> InternalServerException, 401/403 ->
      *  AuthenticationException, 404 -> ModelNotFoundException, 408 -> TimeoutException, 429 ->
      *  RateLimitException, other 4xx -> InvalidRequestException) under RetriableException /
-     *  NonRetriableException. Status codes, not substrings, decide here. */
-    static ChatResponse chatWithRetry(final ChatModel model, final ChatRequest req, final long deadline) {
+     *  NonRetriableException. Status codes, not substrings, decide here - onError hands back the
+     *  same exception shapes the old synchronous chat() threw, so this classification is unchanged.
+     *
+     *  abortProxy.run() on every way out of an attempt (R12): confirmed live via jstack that
+     *  giving up here - idle-timeout, a real error, or interruption - left RecordingProxy's OWN
+     *  relay thread for that attempt permanently blocked reading from oMLX, one per abandoned
+     *  attempt, accumulating (6 stuck threads found after normal today's-worth of testing).
+     *  collector.cancelIfPossible() inside awaitStream only closes the agent<->proxy hop; this is
+     *  the proxy<->oMLX hop, where the actual GPU-consuming work was still happening. Harmless to
+     *  call after the exchange already finished on its own (onError already fired) - closing an
+     *  already-closed/already-removed stream is a no-op in RecordingProxy.abortInflight(). */
+    static ChatResponse chatWithRetry(final StreamingChatModel model, final ChatRequest req, final long deadline, final Runnable abortProxy, final long firstTokenTimeoutMs) {
         RuntimeException last = null;
         long delay = 2000;
         for (int attempt = 0; attempt < 4; attempt++) {
-            try { return model.chat(req); }
+            final StreamCollector collector = new StreamCollector();
+            try {
+                model.chat(req, collector);
+                return awaitStream(collector, firstTokenTimeoutMs);
+            }
+            catch (InterruptedException ie) {
+                // a cancelled job interrupts this thread (WorkerService.Future.cancel(true)) - restoring
+                // the flag and retrying anyway would absorb the cancellation as just one more transient
+                // failure and keep going for up to 3 more attempts; terminal, not classified below
+                Thread.currentThread().interrupt();
+                abortProxy.run();
+                throw new TransientError(ie);
+            }
             catch (RuntimeException e) {
+                abortProxy.run();
                 last = e;
                 if (isBudgetRefusal(e)) throw new BudgetExhausted(e);
                 final Integer status = httpStatus(e);
@@ -260,9 +335,6 @@ public class ReferenceAgent {
                 if (clientError) throw new TransientError(e);   // final client errors
                 try { Thread.sleep(Math.min(delay, Math.max(100, deadline - System.currentTimeMillis()))); }
                 catch (InterruptedException ie) {
-                    // a cancelled job interrupts this thread (WorkerService.Future.cancel(true)) - restoring
-                    // the flag and retrying anyway would absorb the cancellation as just one more transient
-                    // failure and keep going for up to 3 more attempts, each a real HTTP call + backoff
                     Thread.currentThread().interrupt();
                     throw new TransientError(ie);
                 }
@@ -270,6 +342,106 @@ public class ReferenceAgent {
             }
         }
         throw new TransientError(last);
+    }
+
+    /** how long a stream already producing output may go quiet before it counts as stalled, not
+     *  slow. Was 90s; raised after live journal data on a slow local reasoning model
+     *  (Qwen3.8-27B-graft on oMLX, ~2-4 tok/s under load) showed 67% of one job's calls hitting
+     *  this exact threshold mid-reasoning - not stuck, still emitting reasoning_content deltas
+     *  (each correctly re-arming this timeout via StreamCollector.touch(), confirmed against
+     *  ChatCompletionEventDispatcher's bytecode), just occasionally slower between deltas than
+     *  90s allowed for. 180s matches DEFAULT_FIRST_TOKEN_TIMEOUT_MS below rather than introducing
+     *  a second magic number. */
+    static final long IDLE_TIMEOUT_MS = 180_000;
+    /** default cap on time-to-FIRST-token, before any chunk has arrived at all - a separate knob
+     *  from IDLE_TIMEOUT_MS (same default value today, but independently configurable per run):
+     *  a cold model server (loading weights, queued behind another request, prefill on a long
+     *  prompt) stalls for a structurally different reason than a mid-response stall does.
+     *  Per-run override: RunSpec.firstTokenTimeout / --first-token-timeout. */
+    static final long DEFAULT_FIRST_TOKEN_TIMEOUT_MS = 180_000;
+    private static final long POLL_MS = 2_000;
+
+    /** Waits for one streaming attempt by polling instead of blocking on it, so an interrupt
+     *  (cancellation) is noticed within POLL_MS instead of depending on the HTTP call itself
+     *  honoring Thread.interrupt() - which the old synchronous client did not (see the chatModel
+     *  comment above). langchain4j 1.20.0's PartialResponseContext/PartialThinkingContext/
+     *  PartialToolCallContext (see StreamCollector) close the gap 1.1.0 had here: text, thinking
+     *  AND tool-call deltas all update lastActivityMs now, not just visible text - confirmed
+     *  against ChatCompletionEventDispatcher's bytecode, all three route through
+     *  InternalStreamingChatResponseHandlerUtils with a real StreamingHandle attached. That's why
+     *  IDLE_TIMEOUT_MS can be tighter than the 4 min the pre-upgrade version needed as a safety
+     *  margin against that blind spot - 90s is now a genuine "nothing at all is happening" signal,
+     *  not a guess that also has to cover ordinary tool-call generation.
+     *  Remaining gap, not closed by this upgrade: the handle is only populated once the FIRST
+     *  chunk of any kind arrives (langchain4j/langchain4j#6304, still open as of 1.20.0) - there
+     *  is no hook between "request sent" and "first byte back", so a stall in that specific window
+     *  (e.g. a reasoning model's silent thinking pause before anything streams, or a slow network
+     *  handshake) still can't be force-cancelled, only waited out for firstTokenTimeoutMs same as
+     *  before. collector.cancelIfPossible() below is a no-op until the handle exists.
+     *  Two thresholds, not one: before the first chunk of any kind, lastActivityMs is still the
+     *  attempt's start time, so this is really "time to first token" and gets the looser,
+     *  configurable firstTokenTimeoutMs; once collector.gotFirstToken flips (see StreamCollector),
+     *  the tighter, fixed IDLE_TIMEOUT_MS takes over for genuine mid-stream stalls. */
+    private static ChatResponse awaitStream(final StreamCollector collector, final long firstTokenTimeoutMs) throws InterruptedException {
+        while (true) {
+            try {
+                return collector.future.get(POLL_MS, TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.TimeoutException pollTimeout) {
+                final long limit = collector.gotFirstToken ? IDLE_TIMEOUT_MS : firstTokenTimeoutMs;
+                if (System.currentTimeMillis() - collector.lastActivityMs > limit) {
+                    collector.cancelIfPossible();   // real abort now (R10), not just walking away
+                    throw new RuntimeException((collector.gotFirstToken ? "no data from the model in " : "no first token from the model in ")
+                            + (limit / 1000) + "s (stream stalled)");
+                }
+                // still within budget, or receiving text/thinking/tool-call deltas - keep polling
+            } catch (ExecutionException ee) {
+                final var cause = ee.getCause();
+                if (cause instanceof RuntimeException re) throw re;
+                throw new RuntimeException(cause);
+            } catch (InterruptedException ie) {
+                collector.cancelIfPossible();
+                throw ie;
+            }
+        }
+    }
+
+    /** Accumulates one streaming attempt's outcome into a plain future chatWithRetry can poll, and
+     *  captures the first StreamingHandle handed back by any partial-content callback so a stalled
+     *  or abandoned stream can be genuinely cancelled (R10) instead of just left running - which is
+     *  exactly what orphaned generations on the model server before this upgrade (langchain4j 1.1.0
+     *  exposed no such handle at all; see the chatModel comment above). langchain4j reassembles the
+     *  full response (text + tool calls, across however many chunks they arrived in) internally -
+     *  onCompleteResponse hands back the same ChatResponse shape the old synchronous chat()
+     *  returned, so nothing downstream of chatWithRetry needed to change for that part. */
+    private static final class StreamCollector implements StreamingChatResponseHandler {
+        private final CompletableFuture<ChatResponse> future = new CompletableFuture<>();
+        private volatile long lastActivityMs = System.currentTimeMillis();
+        private volatile boolean gotFirstToken = false;
+        private volatile StreamingHandle handle;
+
+        @Override public void onPartialResponse(final PartialResponse response, final PartialResponseContext context) {
+            touch(context.streamingHandle());
+        }
+        @Override public void onPartialThinking(final PartialThinking thinking, final PartialThinkingContext context) {
+            touch(context.streamingHandle());
+        }
+        @Override public void onPartialToolCall(final PartialToolCall toolCall, final PartialToolCallContext context) {
+            touch(context.streamingHandle());
+        }
+        @Override public void onCompleteResponse(final ChatResponse response) { future.complete(response); }
+        @Override public void onError(final Throwable error) { future.completeExceptionally(error); }
+
+        private void touch(final StreamingHandle h) {
+            lastActivityMs = System.currentTimeMillis();
+            gotFirstToken = true;
+            if (handle == null) handle = h;
+        }
+
+        /** best-effort: handle is null until the first chunk of any kind arrives (#6304) */
+        void cancelIfPossible() {
+            final var h = handle;
+            if (h != null && !h.isCancelled()) h.cancel();
+        }
     }
 
     /** the recording proxy's own 429: it is the phase budget's verdict, not a rate limit, and it ends

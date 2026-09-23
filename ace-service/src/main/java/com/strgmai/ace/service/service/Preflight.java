@@ -1,5 +1,7 @@
 package com.strgmai.ace.service.service;
 
+import com.openai.client.okhttp.OpenAIOkHttpClient;
+import com.openai.models.models.Model;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.docker.DockerService;
 import org.springframework.stereotype.Service;
@@ -38,11 +40,17 @@ public class Preflight {
         final boolean jdkOk = !jh.isBlank() && Files.isRegularFile(Path.of(jh, "bin", "java"));
         add(out, "pinned JDK 21", jdkOk, jh.isBlank() ? "none found: set ace.java-home or $ACE_JAVA_HOME" : jh, true);
 
-        try {   // the oMLX/OpenAI-compatible server + the model an actual run will request
-            final var models = new com.strgmai.ace.service.runner.ContextProbe().models(props.endpoint(), props.apiKey() == null ? "" : props.apiKey());
+        try {
+            // todo issue 25 define a service for available models
+            final var client = OpenAIOkHttpClient.builder()
+                    //todo take these from the env-vars
+                    .baseUrl("http://127.0.0.1:9191/v1")
+                    .apiKey("edding345")
+                    .build();
+            final var models = client.models().list().data().stream().map(Model::id).sorted().toList();
             add(out, "model server", true, models.size() + " models", true);
             final String target = model == null || model.isBlank() ? props.model() : model;
-            add(out, "target model served", models.containsKey(target), models.containsKey(target) ? target : target + " not in " + models.keySet().stream().limit(3).toList(), true);
+            add(out, "target model served", models.contains(target), models.contains(target) ? target : target + " not in " + models.stream().limit(3).toList(), true);
         } catch (Exception e) {
             add(out, "model server", false, String.valueOf(e).substring(0, Math.min(70, String.valueOf(e).length())), true);
         }

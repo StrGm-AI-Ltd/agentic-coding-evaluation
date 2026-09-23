@@ -44,7 +44,7 @@ public final class Links {
 
     /** Raw service URL for a run file, segment-encoded so names with %, spaces, or non-ASCII survive. */
     static String rawFileUrl(final String baseUrl, final String runId, final String path) {
-        return baseUrl + "/runs/" + ServiceClient.encodeSegment(runId) + "/files/" + ServiceClient.encodePath(path);
+        return baseUrl + "/api/runs/" + ServiceClient.encodeSegment(runId) + "/files/" + ServiceClient.encodePath(path);
     }
 
     /** Distinct, sorted, non-null values of a run attribute (used for picker suggestions). */

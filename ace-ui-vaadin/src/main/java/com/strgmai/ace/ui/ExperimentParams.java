@@ -29,9 +29,12 @@ public final class ExperimentParams {
         final Map<String, Object> params = new LinkedHashMap<>();
         params.put("task_wall", intOr(raw.get("task_wall"), 3600, "task_wall"));
         params.put("task_tokens", taskTokens(raw.get("task_tokens")));
+        params.put("first_token_timeout", intOr(raw.get("first_token_timeout"), 180, "first_token_timeout"));
         if (raw.get("context_window") != null) {
             params.put("context_window", intOr(raw.get("context_window"), null, "context_window"));
         }
+        // unset -> the operator's configured default (application.yml); 0 disables compaction entirely
+        putIfPresent(params, raw, "compaction_trigger", Integer.class);
         putIfPresent(params, raw, "no_context_probe", Boolean.class);
         putIfPresent(params, raw, "reviewer_model", String.class);
         putIfPresent(params, raw, "review_weight", Double.class);

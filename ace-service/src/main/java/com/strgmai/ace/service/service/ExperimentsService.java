@@ -60,11 +60,18 @@ public class ExperimentsService {
                 int n = taskCount();   // the monolithic impl budget = N x task budget from the reference plan (matched, P-1)
                 final String parallel = params.get("parallel") == null ? "3" : str(params.get("parallel"));
                 final Integer window = contextWindow(params, model);
+                final Integer firstTokenTimeout = firstTokenTimeout(params);
+                final Integer compactionTrigger = compactionTrigger(params);
+                // opt-in, unlike model_ab: harness_effect's own comparison is functional score, so a
+                // reviewer isn't forced on every arm - only when the form actually named one
+                final String reviewerModel = str(params.get("reviewer_model"));
+                final boolean review = reviewerModel != null;
+                final boolean noProbe = noContextProbe(params);
                 for (int i = 1; i <= k; i++)
                     for (String arm : arms)
                         specs.add(new ArmSpec(arm, i, new RunSpec(RUNG, model, null, "orchestrated".equals(armMode(arm)) ? "orchestrated" : "monolithic",
                                 "reference", wall, tokens, arm.contains("mono") ? wall * n : null, arm.contains("mono") ? tokens * n : null,
-                                "par".equals(arm) ? parallel : null, "mono+rules".equals(arm), false, false, null, false, true, window,
+                                "par".equals(arm) ? parallel : null, "mono+rules".equals(arm), review, review, reviewerModel, false, true, noProbe, false, window, firstTokenTimeout, compactionTrigger,
                                 "he-" + tag + "-" + shortName(model) + "-" + arm.replace("+", "") + "-r" + i)));
             }
             case "model_ab" -> {
@@ -72,13 +79,16 @@ public class ExperimentsService {
                 final int wall = num(params.getOrDefault("task_wall", 3600));
                 // per arm: A and B can be different-sized models, so the window fallback must resolve per model
                 final Integer windowA = contextWindow(params, a), windowB = contextWindow(params, b);
+                final Integer firstTokenTimeout = firstTokenTimeout(params);
+                final Integer compactionTrigger = compactionTrigger(params);
+                final boolean noProbe = noContextProbe(params);
                 for (int i = 1; i <= k; i++) {
                     // the arm suffix keeps A and B distinct; model-ab.sh always reviews both sides (self + trajectory)
                     specs.add(new ArmSpec("A", i, new RunSpec(RUNG, a, null, "orchestrated", "reference", wall, null, null, null, null, false,
-                            true, true, str(params.get("reviewer_model")), false, true, windowA,
+                            true, true, str(params.get("reviewer_model")), false, true, noProbe, false, windowA, firstTokenTimeout, compactionTrigger,
                             "ab-" + tag + "-" + shortName(a) + "-a-r" + i)));
                     specs.add(new ArmSpec("B", i, new RunSpec(RUNG, b, null, "orchestrated", "reference", wall, null, null, null, null, false,
-                            true, true, str(params.get("reviewer_model")), false, true, windowB,
+                            true, true, str(params.get("reviewer_model")), false, true, noProbe, false, windowB, firstTokenTimeout, compactionTrigger,
                             "ab-" + tag + "-" + shortName(b) + "-b-r" + i)));
                 }
             }
@@ -87,11 +97,17 @@ public class ExperimentsService {
                 final int wall = num(params.getOrDefault("task_wall", 3600));
                 final String mode = params.get("mode") == null ? "orchestrated" : str(params.get("mode"));
                 final Integer window = contextWindow(params, model);
+                final Integer firstTokenTimeout = firstTokenTimeout(params);
+                final Integer compactionTrigger = compactionTrigger(params);
+                // opt-in, same reasoning as harness_effect: agent_ab's own comparison is ref vs pi, not review score
+                final String reviewerModel = str(params.get("reviewer_model"));
+                final boolean review = reviewerModel != null;
+                final boolean noProbe = noContextProbe(params);
                 for (int i = 1; i <= k; i++)
                     for (String agent : List.of("ref", "pi"))   // --harness=ref|pi: the flag the comparison is ABOUT
                         specs.add(new ArmSpec(agent, i, new RunSpec(RUNG, model, agent, mode, "reference",
                                 "orchestrated".equals(mode) ? wall : null, null, "monolithic".equals(mode) ? wall * taskCount() : null,
-                                "monolithic".equals(mode) ? 60000 * taskCount() : null, null, false, false, false, null, false, true, window,
+                                "monolithic".equals(mode) ? 60000 * taskCount() : null, null, false, review, review, reviewerModel, false, true, noProbe, false, window, firstTokenTimeout, compactionTrigger,
                                 "aa-" + tag + "-" + shortName(model) + "-" + agent + "-r" + i)));
             }
             default -> throw new IllegalArgumentException("unknown template " + template + "; known: harness_effect, model_ab, agent_ab");
@@ -109,6 +125,21 @@ public class ExperimentsService {
     Integer contextWindow(Map<String, Object> params, String model) {
         if (params.get("context_window") != null) return num(params.get("context_window"));
         return localModelSpecs().get(model);
+    }
+
+    /** an explicit params.first_token_timeout wins; unset leaves the run on ReferenceAgent's own default (180s). */
+    Integer firstTokenTimeout(Map<String, Object> params) {
+        return params.get("first_token_timeout") == null ? null : num(params.get("first_token_timeout"));
+    }
+
+    /** an explicit params.compaction_trigger wins (0 disables compaction entirely); unset leaves the
+     *  run on the operator's configured default (application.yml: ace.compaction-trigger, 28000). */
+    Integer compactionTrigger(Map<String, Object> params) {
+        return params.get("compaction_trigger") == null ? null : num(params.get("compaction_trigger"));
+    }
+
+    static boolean noContextProbe(Map<String, Object> params) {
+        return Boolean.TRUE.equals(params.get("no_context_probe"));
     }
 
     /** id -> max_model_len for whatever the model server currently serves — the same /v1/models query

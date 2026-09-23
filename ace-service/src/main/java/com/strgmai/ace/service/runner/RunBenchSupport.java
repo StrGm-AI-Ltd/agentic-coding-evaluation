@@ -68,6 +68,20 @@ public final class RunBenchSupport {
         return gitOut(ws, "rev-parse", "HEAD");
     }
 
+    /** does this phase tag already exist in ws's history? A tag is only ever written AFTER its
+     *  phase's session call returns normally (see snapshot() call sites in RunBench) - its presence
+     *  means that phase genuinely finished in a PRIOR invocation of this same run, not merely that
+     *  it was attempted (a crash mid-session never reaches the snapshot call). Used to resume past
+     *  already-completed work instead of redoing it from a blank session after the service restarts
+     *  mid-run and the job gets requeued (R18). false, not an exception, on a genuinely fresh ws. */
+    public static boolean tagExists(final Path ws, final String tag) {
+        if (!Files.exists(ws.resolve(".git"))) return false;
+        try {
+            final Process p = git(ws, "rev-parse", "--verify", "--quiet", "refs/tags/" + tag);
+            return p.waitFor() == 0;
+        } catch (IOException | InterruptedException e) { return false; }
+    }
+
     public static String gitOut(final Path ws, final String... args) throws IOException, InterruptedException {
         final Process p = git(ws, args);
         final var out = new String(p.getInputStream().readAllBytes()).strip();

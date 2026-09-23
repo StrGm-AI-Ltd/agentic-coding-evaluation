@@ -19,9 +19,12 @@ public class RecordingProxyFactory {
 
     public RecordingProxyFactory(BenchProperties props) { this.props = props; }
 
-    /** one proxy session: base() is the model endpoint to point the agent at; stop() aborts
-     *  in-flight streams (they are journaled as drain_aborted) and returns the exit state. */
-    public record ProxySession(String base, Runnable stop) {}
+    /** one proxy session: base() is the model endpoint to point the agent at; abort() closes
+     *  whatever is currently relaying through it WITHOUT stopping the listening server - for
+     *  giving up on one retry attempt while staying on the same session/budget/journal for the
+     *  next one; stop() aborts in-flight streams (they are journaled as drain_aborted) AND tears
+     *  the whole proxy down, and returns the exit state. */
+    public record ProxySession(String base, Runnable abort, Runnable stop) {}
 
     public ProxySession start(final Path journal, final Long tokenBudget, final String tag) {
         final var proxy = new RecordingProxy(props);
@@ -33,7 +36,7 @@ public class RecordingProxyFactory {
             try { proxy.stop(); } catch (Exception cleanupEx) { log.warn("failed to release a partially-started proxy: {}", cleanupEx.toString()); }
             throw new IllegalStateException("cannot start the recording proxy", e);
         }
-        return new ProxySession(base[0], () -> {
+        return new ProxySession(base[0], proxy::abortInflight, () -> {
             try { proxy.stop(); } catch (Exception e) { log.warn("failed to stop the recording proxy for tag {}: {}", tag, e.toString()); }
         });
     }
