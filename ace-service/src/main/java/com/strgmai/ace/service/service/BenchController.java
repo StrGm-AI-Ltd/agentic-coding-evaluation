@@ -84,16 +84,19 @@ public class BenchController {
         return ResponseEntity.ok(run);
     }
 
-    /** files of a run, confined to its results dir; workspace/ is never listed nor served */
-    @GetMapping("/api/runs/{id}/files/{path}")
+    /** files of a run, confined to its results dir; workspace/ is never listed nor served.
+     *  {*path} (not {path}) so a nested path like packs/INTEGRATION.md or sessions/foo.jsonl
+     *  matches too - a plain {path} only ever captures a single segment, up to the first "/". */
+    @GetMapping("/api/runs/{id}/files/{*path}")
     public ResponseEntity<?> file(final @PathVariable String id, final @PathVariable String path) {
+        final String cleanPath = path.startsWith("/") ? path.substring(1) : path;   // {*path} keeps the leading "/"
         try {
             final String resultsDir = dsl.select(RUNS.RESULTS_DIR).from(RUNS).where(RUNS.RUN_ID.eq(id)).fetchOne(RUNS.RESULTS_DIR);
             if (resultsDir == null) return ResponseEntity.status(404).body(Map.of("detail", "run " + id + " is not imported"));
             final var base = Path.of(resultsDir).toRealPath();
-            if (path.equals("workspace") || path.startsWith("workspace/"))
+            if (cleanPath.equals("workspace") || cleanPath.startsWith("workspace/"))
                 return ResponseEntity.status(404).body(Map.of("detail", "workspace is the agent's live tree; not part of the record"));
-            final Path target = base.resolve(path).normalize();
+            final Path target = base.resolve(cleanPath).normalize();
             if (!target.startsWith(base) || !Files.isRegularFile(target))
                 return ResponseEntity.status(404).body(Map.of("detail", "not found"));
             return ResponseEntity.ok().header("Content-Type", "text/plain; charset=utf-8").body(Files.readString(target));

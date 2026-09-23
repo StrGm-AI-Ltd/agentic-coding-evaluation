@@ -3,7 +3,6 @@ package com.strgmai.ace.ui;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
-import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.ListItem;
 import com.vaadin.flow.component.html.Span;
@@ -150,12 +149,6 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         addPlanTasks(run.metrics());
         addStepScores(run.metrics());
         addProvenance(run);
-
-        final var servicePage = new Anchor(client.baseUrl() + "/runs/" + runId, "open in the service UI");
-        servicePage.getElement().setAttribute("target", "_blank");
-        servicePage.getElement().setAttribute("rel", "noopener noreferrer");
-        servicePage.getStyle().set("display", "inline-block").set("margin-top", "16px");
-        add(servicePage);
 
         add(new FilesBrowser(client, runId, run.results_dir()));
     }

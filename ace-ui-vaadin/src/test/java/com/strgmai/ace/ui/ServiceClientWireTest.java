@@ -103,7 +103,7 @@ class ServiceClientWireTest {
                 case "GET /api/runs/bad422" -> respond(exchange, 422, """
                         {"detail":[{"loc":["body","spec","harness"],"msg":"Input should be 'ref' or 'pi'"}]}""");
                 case "GET /api/runs/missing" -> respond(exchange, 404, "{\"detail\":\"run missing is not imported\"}");
-                case "GET /jobs/30/events" -> respond(exchange, 200, """
+                case "GET /api/jobs/30/events" -> respond(exchange, 200, """
                         event: step_started
                         data: {"type": "step_started", "step": "T1", "continuation": false, "source": "packs"}
 
@@ -117,7 +117,7 @@ class ServiceClientWireTest {
                         data: {"status": "succeeded", "pid": 99, "result_line": "all done"}
 
                         """);
-                case "GET /jobs/31/events" -> respond(exchange, 200, """
+                case "GET /api/jobs/31/events" -> respond(exchange, 200, """
                         event: broken
                         data: {not json
 
@@ -125,7 +125,7 @@ class ServiceClientWireTest {
                         data: {"status": "running", "pid": 7}
 
                         """);
-                case "GET /runs/r1/files/slow" -> {
+                case "GET /api/runs/r1/files/slow" -> {
                     try {
                         Thread.sleep(3000);
                     } catch (InterruptedException e) {
@@ -155,8 +155,8 @@ class ServiceClientWireTest {
         }
         if ("GET /api/runs/r1".equals(method + " " + uri)) return RUN_DETAIL_JSON;
         if ("POST /api/runs/r1/rescore".equals(method + " " + uri)) return JOB_JSON;
-        if ("GET /runs/r1/files/oracle.json".equals(method + " " + uri)) return "file content";
-        if ("GET /runs/r1/files/a%20b.txt".equals(method + " " + uri)) return "spaced";
+        if ("GET /api/runs/r1/files/oracle.json".equals(method + " " + uri)) return "file content";
+        if ("GET /api/runs/r1/files/a%20b.txt".equals(method + " " + uri)) return "spaced";
         if ("GET /api/jobs".equals(method + " " + uri)) return "[" + JOB_JSON + "]";
         if ("POST /api/jobs".equals(method + " " + uri)) return JOB_JSON;
         if ("POST /api/jobs/5/cancel".equals(method + " " + uri)) return JOB_JSON.replace("queued", "cancelled");
@@ -388,9 +388,9 @@ class ServiceClientWireTest {
     @Test
     void runFileText_fetchesContentAndEncodesSegments() {
         assertEquals("file content", client.runFileText("r1", "oracle.json"));
-        assertEquals("/runs/r1/files/oracle.json", last().uri());
+        assertEquals("/api/runs/r1/files/oracle.json", last().uri());
         assertEquals("spaced", client.runFileText("r1", "a b.txt"));
-        assertEquals("/runs/r1/files/a%20b.txt", last().uri(), "spaces are %20-encoded per segment");
+        assertEquals("/api/runs/r1/files/a%20b.txt", last().uri(), "spaces are %20-encoded per segment");
     }
 
     @Test

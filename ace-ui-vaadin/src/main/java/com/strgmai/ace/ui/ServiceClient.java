@@ -193,14 +193,14 @@ public class ServiceClient implements Serializable {
     }
 
     /**
-     * GET /runs/{runId}/files/{path} — raw file content from the run's results dir.
+     * GET /api/runs/{runId}/files/{path} — raw file content from the run's results dir.
      * Each path segment is URL-encoded (J-1), so spaces, %, and non-ASCII are safe.
      */
     public String runFileText(final String runId, final String relativePath) {
         if (relativePath.matches(".*[?#].*") || relativePath.contains("..")) {
             throw new IllegalArgumentException("unsafe file path: " + relativePath);
         }
-        final var uri = URI.create(baseUrl + "/runs/" + encodeSegment(runId) + "/files/"
+        final var uri = URI.create(baseUrl + "/api/runs/" + encodeSegment(runId) + "/files/"
                 + encodePath(relativePath));
         return http.get().uri(uri).retrieve().body(String.class);
     }
@@ -222,14 +222,14 @@ public class ServiceClient implements Serializable {
     }
 
     /**
-     * Blocking consumption of the service's SSE stream (/jobs/{id}/events — the endpoint
-     * the Jinja page's EventSource uses). Each parsed event is handed to {@code onEvent};
+     * Blocking consumption of the service's SSE stream (/api/jobs/{id}/events — the Java
+     * port of the endpoint the Jinja page's EventSource uses). Each parsed event is handed to {@code onEvent};
      * returns when the server ends the stream (terminal job). Throwing from {@code onEvent}
      * aborts the connection — that is the page's detach path.
      */
     public void streamJobEvents(final String jobId, final Consumer<SseEvent> onEvent) throws IOException, InterruptedException {
         final var request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/jobs/" + jobId + "/events"))
+                .uri(URI.create(baseUrl + "/api/jobs/" + jobId + "/events"))
                 .header("Accept", "text/event-stream")
                 .GET()
                 .build();
