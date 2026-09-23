@@ -60,8 +60,12 @@ public final class AgentSession {
     public void system(String text) throws IOException { message("system", text); }
     public void user(String text) throws IOException { message("user", text); }
 
-    public void assistant(String text, List<ToolExecutionRequest> calls, final String finish, final Map<String, Object> usage) throws IOException {
+    public void assistant(String thinking, String text, List<ToolExecutionRequest> calls, final String finish, final Map<String, Object> usage) throws IOException {
         final List<Map<String, Object>> parts = new ArrayList<>();
+        // recorded for analysis (e.g. a reviewer session that burns its whole budget without ever
+        // producing final text still has its actual work on record here) - loadMessages() below
+        // intentionally does not fold this back into resumed conversation history, only "text"/"toolCall"
+        if (thinking != null && !thinking.isEmpty()) parts.add(Map.of("type", "thinking", "text", thinking));
         if (text != null && !text.isEmpty()) parts.add(Map.of("type", "text", "text", text));
         for (ToolExecutionRequest c : calls) {
             Map<String, Object> args;
