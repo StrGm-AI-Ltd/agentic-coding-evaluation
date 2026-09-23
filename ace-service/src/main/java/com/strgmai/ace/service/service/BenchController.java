@@ -78,7 +78,7 @@ public class BenchController {
         final var rec = dsl.selectFrom(RUNS).where(RUNS.RUN_ID.eq(id)).fetchOne();
         if (rec == null) return ResponseEntity.status(404).body(Map.of("detail", "run " + id + " is not imported"));
         final Map<String, Object> run = JsonColumns.parse(rec.intoMap());
-        run.put("checks", dsl.select(CHECK_RESULTS.CHECK_ID, CHECK_RESULTS.CATEGORY, CHECK_RESULTS.WEIGHT, CHECK_RESULTS.STATUS, CHECK_RESULTS.DETAIL)
+        run.put("checks", dsl.select(CHECK_RESULTS.CHECK_ID, CHECK_RESULTS.CATEGORY, CHECK_RESULTS.WEIGHT, CHECK_RESULTS.STATUS, CHECK_RESULTS.DETAIL, CHECK_RESULTS.DESCRIPTION)
                 .from(CHECK_RESULTS).where(CHECK_RESULTS.RUN_ID.eq(id)).orderBy(CHECK_RESULTS.CHECK_ID)
                 .fetch().intoMaps().stream().map(JsonColumns::parse).toList());
         return ResponseEntity.ok(run);

@@ -99,6 +99,9 @@ class ImporterServiceTest {
         // check_results was replaced too, not accumulated
         assertEquals(1, db.fetchCount(CHECK_RESULTS, CHECK_RESULTS.RUN_ID.eq(runId)));
         assertEquals("fail", db.select(CHECK_RESULTS.STATUS).from(CHECK_RESULTS).where(CHECK_RESULTS.RUN_ID.eq(runId)).fetchOne(CHECK_RESULTS.STATUS));
+        // the description comes from CheckId's registry, not the oracle.json record - it never carries one
+        assertEquals(com.strgmai.ace.service.oracle.CheckId.S1.description,
+                db.select(CHECK_RESULTS.DESCRIPTION).from(CHECK_RESULTS).where(CHECK_RESULTS.RUN_ID.eq(runId)).fetchOne(CHECK_RESULTS.DESCRIPTION));
     }
 
     /** The Vaadin UI's Api.ImportResult(List<String> imported, List<String> skipped) - ported from

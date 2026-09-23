@@ -106,6 +106,7 @@ public class ImporterService {
             rec.setCheckId(id);
             rec.setCategory(check.category);
             rec.setWeight(check.weight);
+            rec.setDescription(check.description);
             rec.setStatus(str(r.get("status")));
             rec.setDetail(toJson(r.get("detail")));
             rec.insert();

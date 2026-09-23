@@ -45,13 +45,14 @@ dependencies {
     testImplementation 'org.testcontainers:junit-jupiter'
 }
 
-// jOOQ codegen needs a real database to introspect. V1__init.sql is plain SQL (no Flyway-specific
-// syntax), so it is just executed directly against a fresh scratch file - one statement at a time,
-// since the sqlite-jdbc driver's Statement.execute() does not reliably run a whole ;-separated script.
+// jOOQ codegen needs a real database to introspect. The migrations are plain SQL (no Flyway-specific
+// syntax), so they are just executed directly against a fresh scratch file, in Flyway's own V<N>__
+// filename order - one statement at a time, since the sqlite-jdbc driver's Statement.execute() does
+// not reliably run a whole ;-separated script.
 def jooqSchemaDb = layout.buildDirectory.file('jooq/schema.db')
+def migrationDir = file('src/main/resources/db/migration')
 tasks.register('prepareJooqSchema') {
-    def migration = file('src/main/resources/db/migration/V1__init.sql')
-    inputs.file(migration)
+    inputs.dir(migrationDir)
     outputs.file(jooqSchemaDb)
     doLast {
         def dbFile = jooqSchemaDb.get().asFile
@@ -65,15 +66,18 @@ tasks.register('prepareJooqSchema') {
         def conn = driver.connect("jdbc:sqlite:${dbFile.absolutePath}", new Properties())
         try {
             def stmt = conn.createStatement()
-            // strip line comments FIRST: a comment containing its own ';' (plain English prose does)
-            // would otherwise split one CREATE TABLE into two incomplete fragments.
-            def noComments = migration.text.readLines().collect { line ->
-                def idx = line.indexOf('--')
-                idx < 0 ? line : line.substring(0, idx)
-            }.join('\n')
-            for (def s : noComments.split(';')) {
-                def trimmed = s.trim()
-                if (!trimmed.isEmpty()) stmt.executeUpdate(trimmed)
+            def migrations = migrationDir.listFiles({ f -> f.name.endsWith('.sql') } as FileFilter).sort { it.name }
+            for (def migration : migrations) {
+                // strip line comments FIRST: a comment containing its own ';' (plain English prose does)
+                // would otherwise split one CREATE TABLE into two incomplete fragments.
+                def noComments = migration.text.readLines().collect { line ->
+                    def idx = line.indexOf('--')
+                    idx < 0 ? line : line.substring(0, idx)
+                }.join('\n')
+                for (def s : noComments.split(';')) {
+                    def trimmed = s.trim()
+                    if (!trimmed.isEmpty()) stmt.executeUpdate(trimmed)
+                }
             }
         } finally { conn.close() }
     }
