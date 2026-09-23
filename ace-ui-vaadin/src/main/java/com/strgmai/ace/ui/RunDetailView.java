@@ -1,6 +1,7 @@
 package com.strgmai.ace.ui;
 
 import com.vaadin.flow.component.button.Button;
+import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.H3;
@@ -247,7 +248,33 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         grid.addColumn(Api.Check::detail).setHeader("detail").setFlexGrow(1);
         grid.setItems(checks == null ? List.of() : checks);
         grid.setAllRowsVisible(true);
+        // the detail/check columns truncate long text in a fixed-width cell - a row click opens
+        // everything unclipped, since a check's detail can run well past what a cell can show
+        grid.addItemClickListener(e -> openCheckDialog(e.getItem()));
         add(grid);
+    }
+
+    /** Full, unclipped detail for one check row (id, category, weight, status, description, detail). */
+    private void openCheckDialog(final Api.Check c) {
+        final var dialog = new Dialog();
+        dialog.setHeaderTitle(c.check_id());
+        dialog.setWidth("min(600px, 90vw)");
+
+        final var body = new VerticalLayout();
+        body.setPadding(false);
+        body.setSpacing(false);
+        body.add(new HorizontalLayout(Badges.status(c.status()),
+                new Span("category: " + (c.category() == null ? "–" : c.category())),
+                new Span("weight: " + Fmt.num(c.weight()))));
+        body.add(Panels.sectionTitle("check"));
+        body.add(Panels.mono(c.description()));
+        body.add(Panels.sectionTitle("detail"));
+        body.add(Panels.mono(c.detail()));
+        dialog.add(body);
+
+        final var close = new Button("Close", ev -> dialog.close());
+        dialog.getFooter().add(close);
+        dialog.open();
     }
 
     record PerTaskRow(String tid, String reported, String doneVerified, Long requests,

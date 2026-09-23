@@ -202,7 +202,11 @@ public class ServiceClient implements Serializable {
         }
         final var uri = URI.create(baseUrl + "/api/runs/" + encodeSegment(runId) + "/files/"
                 + encodePath(relativePath));
-        return http.get().uri(uri).retrieve().body(String.class);
+        // RestClient's body(String.class) returns null (not "") for a genuinely empty response body -
+        // a 0-byte run file is a real, valid case (e.g. a verify log with nothing to report), and every
+        // caller downstream (FileViewerView.format() included) assumes a non-null String
+        final String body = http.get().uri(uri).retrieve().body(String.class);
+        return body == null ? "" : body;
     }
 
     static String encodePath(final String relativePath) {
