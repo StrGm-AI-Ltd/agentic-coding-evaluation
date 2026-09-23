@@ -54,6 +54,7 @@ public class JobNewView extends VerticalLayout {
     private final IntegerField contextWindow = new IntegerField("context_window");
     private final IntegerField firstTokenTimeout = new IntegerField("first_token_timeout");
     private final IntegerField compactionTrigger = new IntegerField("compaction_trigger");
+    private final IntegerField reviewWallSec = new IntegerField("review_wall_sec");
     private final IntegerField wallBudget = new IntegerField("wall_budget");
     private final IntegerField priority = new IntegerField("priority");
     private final NumberField parallelWeight = new NumberField("parallel_weight");
@@ -110,6 +111,8 @@ public class JobNewView extends VerticalLayout {
         firstTokenTimeout.setPlaceholder("blank = default (180s)");
         compactionTrigger.setMin(0);
         compactionTrigger.setPlaceholder("blank = default (28000), 0 = disabled");
+        reviewWallSec.setMin(1);
+        reviewWallSec.setPlaceholder("blank = default (900s)");
         wallBudget.setMin(1);
         parallelWeight.setMin(0);
         parallelWeight.setMax(1);
@@ -131,7 +134,8 @@ public class JobNewView extends VerticalLayout {
                 Forms.row(firstTokenTimeout, compactionTrigger)));
         add(Forms.section("Reviewers",
                 Forms.row(reviewerModel, reviewWeight, reviewBlind),
-                Forms.row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse, trajectoryReview)));
+                Forms.row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse, trajectoryReview),
+                Forms.row(reviewWallSec)));
         add(Forms.section("Model & flags",
                 Forms.row(model, handoffNotes, systemRules, selfReview),
                 Forms.row(javaHome, config, noContextProbe, contextProbeFresh, keepWorkspace),
@@ -188,6 +192,7 @@ public class JobNewView extends VerticalLayout {
         raw.put("trajectory_reviewer_model", trajectoryReviewerModel.getValue());
         raw.put("trajectory_weight", trajectoryWeight.getValue());
         raw.put("trajectory_use", trajectoryUse.getValue());
+        raw.put("review_wall_sec", reviewWallSec.getValue());
         raw.put("java_home", javaHome.getValue());
         raw.put("config", config.getValue());
         raw.put("wall_budget", wallBudget.getValue());
