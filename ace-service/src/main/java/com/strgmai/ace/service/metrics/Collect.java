@@ -36,6 +36,17 @@ public final class Collect {
                     "completion_tokens", f.get("completion_tokens"), "over_budget", Boolean.TRUE.equals(ph.get("over_budget"))));
         }
         out.put("phases", phases);
+        // manifest.phases only ever holds p0_definition/p1_plan - EVERY task's actual execution
+        // time (sequential tasks, INTEGRATION, parallel waves) lives in manifest.tasks/
+        // manifest.waves instead, which this never read: every orchestrated run's reported wall
+        // time was 0. A wave-task entry in manifest.tasks (tagged "parallel_wave") is skipped here
+        // and counted via its wave's own wall-clock "seconds" below instead - its constituent
+        // tasks run concurrently, so summing their individual durations would double-count real time.
+        for (Map<String, Object> t : (List<Map<String, Object>>) manifest.getOrDefault("tasks", List.of()))
+            if (!t.containsKey("parallel_wave"))
+                totalSec += t.get("seconds") instanceof Number n ? Math.round(n.doubleValue()) : 0;
+        for (Map<String, Object> w : (List<Map<String, Object>>) manifest.getOrDefault("waves", List.of()))
+            totalSec += w.get("seconds") instanceof Number n ? Math.round(n.doubleValue()) : 0;
         leaderboard.put("total_wall_sec", totalSec);
         leaderboard.put("completion_tokens", jf.get("completion_tokens"));
 
