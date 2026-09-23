@@ -157,6 +157,7 @@ class ServiceClientWireTest {
         if ("POST /api/runs/r1/rescore".equals(method + " " + uri)) return JOB_JSON;
         if ("GET /api/runs/r1/files/oracle.json".equals(method + " " + uri)) return "file content";
         if ("GET /api/runs/r1/files/a%20b.txt".equals(method + " " + uri)) return "spaced";
+        if ("GET /api/runs/r1/files/empty.log".equals(method + " " + uri)) return "";
         if ("GET /api/jobs".equals(method + " " + uri)) return "[" + JOB_JSON + "]";
         if ("POST /api/jobs".equals(method + " " + uri)) return JOB_JSON;
         if ("POST /api/jobs/5/cancel".equals(method + " " + uri)) return JOB_JSON.replace("queued", "cancelled");
@@ -391,6 +392,14 @@ class ServiceClientWireTest {
         assertEquals("/api/runs/r1/files/oracle.json", last().uri());
         assertEquals("spaced", client.runFileText("r1", "a b.txt"));
         assertEquals("/api/runs/r1/files/a%20b.txt", last().uri(), "spaces are %20-encoded per segment");
+    }
+
+    @Test
+    void runFileText_returnsEmptyStringNotNullForAGenuinelyEmptyFile() {
+        // RestClient.body(String.class) returns null, not "", for a 0-byte response body - a
+        // real, valid case for a run file (e.g. a verify log with nothing to report) that every
+        // caller (FileViewerView.format() included) needs as a non-null String
+        assertEquals("", client.runFileText("r1", "empty.log"));
     }
 
     @Test
