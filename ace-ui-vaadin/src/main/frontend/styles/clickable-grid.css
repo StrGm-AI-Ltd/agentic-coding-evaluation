@@ -1,0 +1,17 @@
+/* Issue #9: a grid whose rows navigate on click gave no visual hint that they were clickable -
+   highlight the row and switch to a pointer cursor on hover. Apply the "clickable-rows" class name
+   to any <vaadin-grid> that has an item click listener wired up.
+   A literal color, not var(--lumo-contrast-5pct): this app never loads Lumo's global color
+   props at the document level (each Vaadin component only carries its own bundled internals), so
+   that token resolves to nothing here - confirmed empty via getComputedStyle(document.documentElement)
+   before writing this. */
+vaadin-grid.clickable-rows::part(row):hover {
+  cursor: pointer;
+  background-color: rgba(0, 0, 0, 0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+  vaadin-grid.clickable-rows::part(row):hover {
+    background-color: rgba(255, 255, 255, 0.06);
+  }
+}

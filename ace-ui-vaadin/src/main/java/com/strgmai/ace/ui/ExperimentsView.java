@@ -1,6 +1,7 @@
 package com.strgmai.ace.ui;
 
 import com.vaadin.flow.component.button.Button;
+import com.vaadin.flow.component.dependency.CssImport;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.H2;
@@ -18,6 +19,7 @@ import java.util.Map;
 
 /** Experiments list — the UI twin of GET /api/experiments (+ /api/jobs for the live status). */
 @Route(value = "experiments", layout = MainLayout.class)
+@CssImport("./styles/clickable-grid.css")
 public class ExperimentsView extends VerticalLayout {
     private static final Logger log = LoggerFactory.getLogger(ExperimentsView.class);
 
@@ -50,6 +52,7 @@ public class ExperimentsView extends VerticalLayout {
                         exp.status(), jobStatusesByExperiment.get(exp.id()))));
         grid.addColumn(exp -> Fmt.when(exp.created_at())).setHeader("created").setAutoWidth(true)
                 .setComparator(Fmt.comparingTime(Api.Experiment::created_at));
+        grid.addClassName("clickable-rows");   // #9: hover highlight + pointer cursor, see clickable-grid.css
         grid.addItemClickListener(e -> e.getSource().getUI()
                 .ifPresent(ui -> ui.navigate("experiments/" + e.getItem().id())));
 
