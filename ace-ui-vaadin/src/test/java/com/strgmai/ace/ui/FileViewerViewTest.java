@@ -1,15 +1,19 @@
 package com.strgmai.ace.ui;
 
+import com.vaadin.flow.dom.Element;
 import com.vaadin.flow.router.Location;
 import com.vaadin.flow.router.QueryParameters;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /** The new-tab file viewer: JSON gets pretty-printed, everything else stays verbatim. */
 class FileViewerViewTest {
@@ -81,5 +85,30 @@ class FileViewerViewTest {
         assertFalse(FileViewerView.isMarkdown("readme.markdown"));
         assertFalse(FileViewerView.isMarkdown(null));
         assertFalse(FileViewerView.isMarkdown(""));
+    }
+
+    /** #11: opened in a new tab (no app layout, no browser history to fall back on), so the page
+     *  itself must offer a way back to the run it came from. */
+    @Test
+    void render_addsABackLinkToTheOriginatingRun() {
+        final var client = mock(ServiceClient.class);
+        when(client.runFileText("he-1", "oracle.json")).thenReturn("{}");
+        final var view = new FileViewerView(client);
+
+        view.render("he-1", "oracle.json");
+
+        final var back = findAnchor(view.getElement(), "runs/he-1");
+        assertTrue(back.isPresent(), "no <a href=\"runs/he-1\"> found in the rendered page");
+        assertEquals("← he-1", back.get().getText());
+    }
+
+    private static Optional<Element> findAnchor(final Element root, final String href) {
+        if ("a".equals(root.getTag()) && href.equals(root.getAttribute("href"))) {
+            return Optional.of(root);
+        }
+        return root.getChildren()
+                .map(child -> findAnchor(child, href))
+                .flatMap(Optional::stream)
+                .findFirst();
     }
 }
