@@ -101,6 +101,7 @@ public class WorkerService {
         if (job == null) return;
         if (Boolean.TRUE.equals(queue.get(job.id()).get("cancel_requested"))) {
             queue.finish(job.id(), "cancelled", null, null);
+            if (job.experimentId() != null) experiments.finalizeIfDone(job.experimentId());
             return;
         }
         final String refusal = guard(job);
