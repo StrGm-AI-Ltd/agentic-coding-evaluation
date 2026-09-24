@@ -195,6 +195,10 @@ public class ReferenceAgent {
                 .modelName(model == null ? props.model() : model)
                 .defaultRequestParameters(OpenAiChatRequestParameters.builder().reasoningEffort(reasoningEffort).build())
                 .returnThinking(true)
+                // lets RecordingProxy attribute every journaled request to this session
+                // unambiguously (even under concurrent parallel-wave sessions), for the live
+                // per-session prefill/decode speed averages
+                .customHeaders(Map.of(com.strgmai.ace.service.proxy.RecordingProxy.SESSION_HEADER, session.sessionId))
                 .build();
         final List<ToolSpecification> specs = toolSpecs();
         // the run's SCRUBBED environment (fresh HOME, docker shim, pinned JAVA_HOME, AB_RUN_ID) is the

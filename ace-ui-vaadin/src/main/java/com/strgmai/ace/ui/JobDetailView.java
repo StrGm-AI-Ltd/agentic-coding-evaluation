@@ -380,6 +380,12 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         sessions.addColumn(JobLiveState.SessionRow::label).setHeader("session").setAutoWidth(true);
         sessions.addColumn(r -> r.endedStage() == null ? "running" : r.endedStage())
                 .setHeader("ended at").setAutoWidth(true);
+        // averaged across the session's requests as they arrive - oMLX-reported tok/s, not derived
+        // from proxy-observed timings; "-" until the first request with real usage lands
+        sessions.addColumn(r -> Fmt.num(r.avgPrefillTokPerSec())).setHeader("prefill tok/s")
+                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
+        sessions.addColumn(r -> Fmt.num(r.avgDecodeTokPerSec())).setHeader("decode tok/s")
+                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
         sessions.setAllRowsVisible(true);
         sessions.setVisible(false);
         return sessions;
