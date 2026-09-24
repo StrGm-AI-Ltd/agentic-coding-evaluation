@@ -7,18 +7,21 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
 import static com.strgmai.ace.service.jooq.Tables.JOBS;
+import static com.strgmai.ace.service.jooq.Tables.RUNS;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -270,5 +273,68 @@ class ExperimentsServiceTest {
 
         final var exp = db.selectFrom(EXPERIMENTS).where(EXPERIMENTS.ID.eq(experimentId)).fetchOne();
         assertEquals("queued", exp.getStatus(), "a still-pending job means the experiment isn't done yet");
+    }
+
+    // --- comparing speed metrics alongside functional score ---
+
+    private static void succeededRunWithResults(final DSLContext db, final UUID experimentId, final String arm,
+                                                 final Path resultsDir, final double functionalPct, final Double avgLatencySec) throws Exception {
+        final var runId = "run-" + arm;
+        db.insertInto(JOBS).set(JOBS.ID, UUID.randomUUID()).set(JOBS.EXPERIMENT_ID, experimentId).set(JOBS.ARM, arm)
+                .set(JOBS.KIND, "run").set(JOBS.RUN_ID, runId).set(JOBS.ARGV, "[]").set(JOBS.STATUS, "succeeded").execute();
+        db.insertInto(RUNS).set(RUNS.RUN_ID, runId).set(RUNS.RESULTS_DIR, resultsDir.toString())
+                .set(RUNS.POOLABLE, true).set(RUNS.ORACLE, "{}").execute();
+        Files.writeString(resultsDir.resolve("oracle.json"), "{\"functional_score_pct\":" + functionalPct + "}");
+        final String leaderboard = avgLatencySec == null ? "{}" : "{\"avg_latency_sec\":" + avgLatencySec + "}";
+        Files.writeString(resultsDir.resolve("metrics.json"), "{\"leaderboard\":" + leaderboard + "}");
+    }
+
+    @Test
+    void finalizeIfDoneComparesSpeedMetricsAlongsideFunctionalScore(@TempDir final Path tmp) throws Exception {
+        final DSLContext db = freshDb("ace-experiments-speed-test");
+        final var svc = new ExperimentsService(db, null, props("http://127.0.0.1:1/v1"), null);
+        final UUID experimentId = UUID.randomUUID();
+        db.insertInto(EXPERIMENTS).set(EXPERIMENTS.ID, experimentId).set(EXPERIMENTS.NAME, "exp").set(EXPERIMENTS.TAG, "t")
+                .set(EXPERIMENTS.TEMPLATE, "model_ab").set(EXPERIMENTS.PARAMS, "{}").set(EXPERIMENTS.K, 1).execute();
+        final var dirA = Files.createDirectory(tmp.resolve("a"));
+        final var dirB = Files.createDirectory(tmp.resolve("b"));
+        succeededRunWithResults(db, experimentId, "A", dirA, 100.0, 50.0);   // arm A: slower (no MTP)
+        succeededRunWithResults(db, experimentId, "B", dirB, 100.0, 12.0);   // arm B: faster (MTP grafted)
+
+        svc.finalizeIfDone(experimentId);
+
+        final var exp = db.selectFrom(EXPERIMENTS).where(EXPERIMENTS.ID.eq(experimentId)).fetchOne();
+        assertEquals("finished", exp.getStatus());
+        final Map<String, Object> comparison = svc.fromJson(exp.getComparison());
+        final Map<String, Object> pair = (Map<String, Object>) comparison.get("A_vs_B");
+        final Map<String, Object> speed = (Map<String, Object>) pair.get("speed");
+        assertTrue(speed.containsKey("avg_latency_sec"), "the one speed metric both sides have must be compared");
+        final Map<String, Object> latency = (Map<String, Object>) speed.get("avg_latency_sec");
+        assertEquals(38.0, ((Number) latency.get("diff")).doubleValue(), 0.001, "A (50.0) - B (12.0)");
+        // other #32 leaderboard fields absent from both fixtures - must be skipped, not crash the comparison
+        assertFalse(speed.containsKey("avg_first_byte_ms"));
+        assertFalse(speed.containsKey("total_wall_sec"));
+    }
+
+    @Test
+    void finalizeIfDoneSkipsASpeedMetricMissingOnOneSide(@TempDir final Path tmp) throws Exception {
+        final DSLContext db = freshDb("ace-experiments-speed-missing-test");
+        final var svc = new ExperimentsService(db, null, props("http://127.0.0.1:1/v1"), null);
+        final UUID experimentId = UUID.randomUUID();
+        db.insertInto(EXPERIMENTS).set(EXPERIMENTS.ID, experimentId).set(EXPERIMENTS.NAME, "exp").set(EXPERIMENTS.TAG, "t")
+                .set(EXPERIMENTS.TEMPLATE, "model_ab").set(EXPERIMENTS.PARAMS, "{}").set(EXPERIMENTS.K, 1).execute();
+        final var dirA = Files.createDirectory(tmp.resolve("a"));
+        final var dirB = Files.createDirectory(tmp.resolve("b"));
+        succeededRunWithResults(db, experimentId, "A", dirA, 100.0, 50.0);
+        succeededRunWithResults(db, experimentId, "B", dirB, 100.0, null);   // arm B never measured latency
+
+        svc.finalizeIfDone(experimentId);
+
+        final var exp = db.selectFrom(EXPERIMENTS).where(EXPERIMENTS.ID.eq(experimentId)).fetchOne();
+        assertEquals("finished", exp.getStatus(), "one missing speed metric must not refuse the whole comparison");
+        final Map<String, Object> comparison = svc.fromJson(exp.getComparison());
+        final Map<String, Object> pair = (Map<String, Object>) comparison.get("A_vs_B");
+        assertNotNull(pair.get("result"), "the functional comparison (both sides have it) still succeeds");
+        assertFalse(pair.containsKey("speed"), "no speed metric had data on both sides - the whole block is omitted");
     }
 }
