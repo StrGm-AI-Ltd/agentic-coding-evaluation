@@ -11,6 +11,8 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class FilesBrowserTest {
 
@@ -88,5 +90,17 @@ class FilesBrowserTest {
                 FilesBrowser.viewRoute("r1", "100%.json"), "percent is escaped");
         assertEquals("file-view?run=he-1&path=t%C3%A9.json",
                 FilesBrowser.viewRoute("he-1", "té.json"), "non-ASCII is escaped");
+    }
+
+    /** #39: clicking a row opens the file directly - text files at the formatted viewer, everything
+     *  else straight to the service's raw file endpoint. */
+    @Test
+    void fileUrl_routesTextToTheViewerAndEverythingElseToTheRawEndpoint() {
+        final var client = mock(ServiceClient.class);
+        when(client.baseUrl()).thenReturn("http://svc:8080");
+
+        assertEquals("file-view?run=r1&path=oracle.json", FilesBrowser.fileUrl(client, "r1", "oracle.json"));
+        assertEquals(Links.rawFileUrl("http://svc:8080", "r1", "screenshot.png"),
+                FilesBrowser.fileUrl(client, "r1", "screenshot.png"));
     }
 }
