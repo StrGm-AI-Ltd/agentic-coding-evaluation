@@ -100,6 +100,13 @@ public final class Tailer {
                 e.put("budget_spent_completion_tokens", r.path("budget_spent_completion_tokens").asLong());
                 e.put("client_aborted", r.path("client_aborted").asBoolean(false));
                 e.put("tag", r.path("task").isTextual() ? r.path("task").asText() : null);
+                // RecordingProxy always journals latency_sec; first_byte_ms only for streamed
+                // requests - both were parsed here but never forwarded, so the live requests grid's
+                // latency/ttft columns always read "-" even mid-run. ttft_sec: first_byte_ms is
+                // milliseconds, the client's field name implies seconds - convert at the source
+                // rather than touch the (already correct) client.
+                e.put("latency_sec", r.path("latency_sec").isNumber() ? r.path("latency_sec").asDouble() : null);
+                e.put("ttft_sec", r.path("first_byte_ms").isNumber() ? r.path("first_byte_ms").asDouble() / 1000.0 : null);
                 events.add(e);
             } catch (Exception ex) { log.debug("could not parse journal line for the live view, skipping it: {}", ex.toString()); }
         }

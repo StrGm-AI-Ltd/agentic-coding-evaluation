@@ -55,6 +55,35 @@ class TailerTest {
         assertTrue(tailer.poll(runDir).isEmpty());   // a no-op poll reports nothing new
     }
 
+    /** The live requests grid's latency/ttft columns always read "-", even mid-run: RecordingProxy
+     *  always journals latency_sec and first_byte_ms, but tailRequests() parsed the line and just
+     *  never forwarded either field into the "request" SSE event. */
+    @Test
+    void latencyAndTtftAreForwardedFromTheJournalIntoTheRequestEvent() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.writeString(runDir.resolve("interactions.jsonl"),
+                "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
+                        + "\"latency_sec\": 12.34, \"first_byte_ms\": 340}\n");
+        final var events = new Tailer().poll(runDir).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        assertEquals(1, events.size());
+        assertEquals(12.34, (Double) events.get(0).get("latency_sec"), 0.001);
+        // first_byte_ms is milliseconds; the client's field name implies seconds - converted here
+        assertEquals(0.34, (Double) events.get(0).get("ttft_sec"), 0.001);
+    }
+
+    /** A non-streamed request never gets a first_byte_ms - ttft_sec must be null, not 0 (0 would
+     *  misleadingly read as an instant response). latency_sec is always present in practice, but the
+     *  read is defensive the same way. */
+    @Test
+    void ttftIsNullNotZeroWhenTheRequestWasNotStreamed() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.writeString(runDir.resolve("interactions.jsonl"),
+                "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200, \"latency_sec\": 5.0}\n");
+        final var events = new Tailer().poll(runDir).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        assertEquals(5.0, (Double) events.get(0).get("latency_sec"), 0.001);
+        assertNull(events.get(0).get("ttft_sec"));
+    }
+
     @Test
     void aRunWithNoFilesReportsNothing() throws Exception {
         assertTrue(new Tailer().poll(Files.createTempDirectory("empty")).isEmpty());
