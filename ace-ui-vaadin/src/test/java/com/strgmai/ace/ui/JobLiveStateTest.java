@@ -34,7 +34,54 @@ class JobLiveStateTest {
                 data: {"session_id": "755478fc-f323-565e-92f8-1a5b10584e41", "reasoning_effort": "high"}
 
                 """).forEach(state::apply);
-        assertEquals(List.of("755478fc (high)"), state.sessions());
+        assertEquals(List.of(new JobLiveState.SessionRow("755478fc (high)", null)), state.sessions());
+    }
+
+    /** #47: session_done carries the *.log file's name, not a session_id - the oldest still-open
+     *  session is taken as the one it refers to. */
+    @Test
+    void sessionDoneMarksTheOldestOpenSessionWithItsStage() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "755478fc-f323-565e-92f8-1a5b10584e41"}
+
+                event: session_done
+                data: {"type": "session_done", "log": "T1.log", "finish": "tool_calls"}
+
+                """).forEach(state::apply);
+        assertEquals(List.of(new JobLiveState.SessionRow("755478fc", "T1")), state.sessions());
+    }
+
+    @Test
+    void sessionDoneCorrelatesInFifoOrderAcrossMultipleSessions() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: session_started
+                data: {"session_id": "bbbbbbbb-0000-0000-0000-000000000000"}
+
+                event: session_done
+                data: {"type": "session_done", "log": "P0_DEFINITION.log", "finish": "stop"}
+
+                """).forEach(state::apply);
+        assertEquals(List.of(
+                new JobLiveState.SessionRow("aaaaaaaa", "P0_DEFINITION"),
+                new JobLiveState.SessionRow("bbbbbbbb", null)), state.sessions(),
+                "the oldest open session is matched first; the newer one is still running");
+    }
+
+    @Test
+    void sessionDoneWithNoOpenSessionIsIgnored() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_done
+                data: {"type": "session_done", "log": "T1.log", "finish": "stop"}
+
+                """).forEach(state::apply);
+        assertEquals(List.of(), state.sessions(), "no session to match - dropped, not a crash");
     }
 
     @Test
@@ -108,6 +155,9 @@ class JobLiveStateTest {
                     if (i % 7 == 0) {
                         state.apply(event("{\"type\": \"session_started\", \"session_id\": \"s-0000000-" + i
                                 + "\", \"reasoning_effort\": \"high\"}"));
+                    }
+                    if (i % 11 == 0) {   // mutates an existing sessions entry (not just appends) under the same lock
+                        state.apply(event("{\"type\": \"session_done\", \"log\": \"T" + (i / 11) + ".log\", \"finish\": \"stop\"}"));
                     }
                     state.apply(event("{\"type\": \"request\", \"seq\": " + i + ", \"ts\": \"t" + i
                             + "\", \"status\": 200, \"latency_sec\": " + (i / 10.0)
@@ -193,7 +243,8 @@ class JobLiveStateTest {
                 data: {"reasoning_effort": null}
 
                 """).forEach(state::apply);
-        assertEquals(List.of("?"), state.sessions(), "missing ids render as ? without throwing");
+        assertEquals(List.of(new JobLiveState.SessionRow("?", null)), state.sessions(),
+                "missing ids render as ? without throwing");
     }
 
     private static SseEvent event(final String json) {

@@ -25,12 +25,17 @@ public final class JobLiveState implements Serializable {
             Long tokens, boolean clientAborted) implements Serializable {
     }
 
+    /** One row of the sessions table: its short label, and the stage (the *.log file's stem) it
+     *  ended at once that log reported done - null while the session is still open. */
+    public record SessionRow(String label, String endedStage) implements Serializable {
+    }
+
     private static final long serialVersionUID = 1L;
 
     static final int MAX_RECENT_REQUESTS = 20;
 
     private final List<String> steps = new ArrayList<>();
-    private final List<String> sessions = new ArrayList<>();
+    private final List<SessionRow> sessions = new ArrayList<>();
     private final Deque<RequestRow> recentRequests = new ArrayDeque<>();
     private long requestCount;
     private Long lastTokens;
@@ -46,7 +51,8 @@ public final class JobLiveState implements Serializable {
                 }
                 steps.add(label);
             }
-            case "session_started" -> sessions.add(sessionLabel(data));
+            case "session_started" -> sessions.add(new SessionRow(sessionLabel(data), null));
+            case "session_done" -> markSessionDone(data);
             case "request" -> {
                 requestCount += 1;
                 if (data.hasNonNull("budget_spent_completion_tokens")) {
@@ -81,6 +87,23 @@ public final class JobLiveState implements Serializable {
         return effort == null || effort.isBlank() ? shortId : shortId + " (" + effort + ")";
     }
 
+    /** session_done carries no session_id, only the stage (log file) that just reported done - the
+     *  oldest still-open session is taken as the one that just ended. Holds as long as sessions
+     *  complete in the order they were started, true for this harness's mostly-sequential phases. */
+    private void markSessionDone(final JsonNode data) {
+        final var stage = stageOf(data);
+        for (int i = 0; i < sessions.size(); i++) {
+            if (sessions.get(i).endedStage() == null) {
+                sessions.set(i, new SessionRow(sessions.get(i).label(), stage));
+                return;
+            }
+        }
+    }
+
+    private static String stageOf(final JsonNode data) {
+        return Fmt.textOr(data.path("log"), "?").replaceFirst("\\.[^.]+$", "");
+    }
+
     /** A snapshot copy — never the live list. */
     public synchronized List<String> steps() {
         return new ArrayList<>(steps);
@@ -91,7 +114,7 @@ public final class JobLiveState implements Serializable {
     }
 
     /** A snapshot copy — never the live list. */
-    public synchronized List<String> sessions() {
+    public synchronized List<SessionRow> sessions() {
         return new ArrayList<>(sessions);
     }
 

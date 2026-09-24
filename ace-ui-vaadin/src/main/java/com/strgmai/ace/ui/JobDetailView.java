@@ -47,6 +47,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
     /** Built once so the user's column sorting survives the 2 s live updates. */
     private final Grid<JobLiveState.RequestRow> requestsGrid = buildRequestsGrid();
+    private final Grid<JobLiveState.SessionRow> sessionsGrid = buildSessionsGrid();
 
     // The live-requests sort keys — typed and null-safe (the ClassCastException regression).
     static final Comparator<JobLiveState.RequestRow> REQUESTS_BY_TS =
@@ -68,7 +69,6 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     private final Div actionsHolder = new Div();
     private final VerticalLayout liveSection = new VerticalLayout();
     private final Span stepLine = new Span();
-    private final Span sessionsLine = new Span();
     private final Span requestsLine = new Span();
     private final Div logTail = new Div();
     private final Span terminalNote = new Span("This job has finished; nothing more to stream.");
@@ -165,7 +165,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         liveSection.getStyle().set("margin-top", "16px");
         final var liveTitle = new H3("Live");
         liveTitle.getStyle().set("margin", "0 0 4px 0");
-        liveSection.add(liveTitle, stepLine, sessionsLine, requestsLine, lostNotice, terminalNote,
+        liveSection.add(liveTitle, stepLine, sessionsGrid, requestsLine, lostNotice, terminalNote,
                 requestsGrid, logTail);
         stepLine.getStyle().set("font-weight", "600");
         lostNotice.getStyle().set("color", "var(--lumo-warning-text-color, orange)").set("font-size", "0.85em");
@@ -300,7 +300,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 && !terminal && !sseStopped);
         terminalNote.setVisible(terminal);
         stepLine.setVisible(!terminal);
-        sessionsLine.setVisible(!terminal);
+        sessionsGrid.setVisible(!terminal);
         requestsLine.setVisible(!terminal);
 
         if (terminal) {
@@ -316,8 +316,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         }
 
         stepLine.setText("current step: " + (live.currentStep() == null ? "–" : live.currentStep()));
-        final var sessions = live.sessions();
-        sessionsLine.setText("sessions: " + (sessions.isEmpty() ? "–" : String.join(", ", sessions)));
+        sessionsGrid.setItems(live.sessions());
         requestsLine.setText("requests: " + (live.requestCount() == 0 ? "–"
                 : live.requestCount() + (live.lastTokens() == null ? "" : " · last completion tokens "
                 + Fmt.count(live.lastTokens()))));
@@ -372,6 +371,18 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         requests.setAllRowsVisible(true);
         requests.setVisible(false);
         return requests;
+    }
+
+    /** #47: the stage a session ended at, alongside its label - a session that outlives its own
+     *  stage (still "running") shows that explicitly rather than leaving the reader to guess. */
+    private static Grid<JobLiveState.SessionRow> buildSessionsGrid() {
+        final var sessions = new Grid<>(JobLiveState.SessionRow.class, false);
+        sessions.addColumn(JobLiveState.SessionRow::label).setHeader("session").setAutoWidth(true);
+        sessions.addColumn(r -> r.endedStage() == null ? "running" : r.endedStage())
+                .setHeader("ended at").setAutoWidth(true);
+        sessions.setAllRowsVisible(true);
+        sessions.setVisible(false);
+        return sessions;
     }
 
     /**
