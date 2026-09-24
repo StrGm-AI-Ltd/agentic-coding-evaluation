@@ -93,9 +93,16 @@ public final class Collect {
             final double base = composite * (1 - wc - wt - wp);
             double codeTerm = sr.get("score") instanceof Number s && functional != null
                     ? wc * (100 - Math.abs(s.doubleValue() - functional)) : 0;   // a missing/unparseable review scores 0 at full weight
-            // guard with instanceof (a raw cast would CCE on a non-Map, NPE on a missing key) before fetching
-            double trajTerm = tr.get("score") instanceof Number s && tr.get("objective_index_pct") instanceof Number oi
-                    ? wt * (100 - Math.abs(s.doubleValue() - oi.doubleValue())) : 0;
+            // "direct": the reviewer's own score IS the term (judged as a quality signal on its own
+            // terms). "calibration" (default): rewarded for AGREEING with the harness's own objective
+            // trajectory index, not for the raw score - guard with instanceof (a raw cast would CCE
+            // on a non-Map, NPE on a missing key) before fetching
+            final boolean trajDirect = "direct".equals(traj.get("use"));
+            double trajTerm = 0;
+            if (tr.get("score") instanceof Number s) {
+                if (trajDirect) trajTerm = wt * s.doubleValue();
+                else if (tr.get("objective_index_pct") instanceof Number oi) trajTerm = wt * (100 - Math.abs(s.doubleValue() - oi.doubleValue()));
+            }
             final double parTerm = wp * parallelTerm(manifest);
             leaderboard.put("agent_result_pct", round1(base + codeTerm + trajTerm + parTerm));
             leaderboard.put("agent_result_terms", Map.of("base", round1(base), "code", round1(codeTerm), "trajectory", round1(trajTerm), "parallel", round1(parTerm)));

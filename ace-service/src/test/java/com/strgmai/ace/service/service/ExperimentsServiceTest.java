@@ -142,6 +142,41 @@ class ExperimentsServiceTest {
         assertTrue(on.stream().allMatch(s -> s.spec().noContextProbe()));
     }
 
+    // --- issue #30: review_blind/trajectory_reviewer_model/review_weight/trajectory_weight/
+    // trajectory_use were unused anywhere in the backend, for every template ----------------------
+
+    @Test
+    void reviewBlindAndTrajectoryReviewerModelFlowThroughToEveryTemplateArm() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final var params = Map.<String, Object>of("model", "modelX", "reviewer_model", "openai/gpt-5", "review_blind", true,
+                "trajectory_reviewer_model", "openai/gpt-6");
+        for (String template : List.of("harness_effect", "agent_ab")) {
+            final List<ExperimentsService.ArmSpec> specs = svc.plan(template, params, 1);
+            assertTrue(specs.stream().allMatch(s -> s.spec().reviewBlind()), template);
+            assertTrue(specs.stream().allMatch(s -> "openai/gpt-6".equals(s.spec().trajectoryReviewerModel())), template);
+        }
+    }
+
+    @Test
+    void trajectoryReviewerModelDefaultsToReviewerModelWhenNotSetSeparately() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("harness_effect",
+                Map.of("model", "modelX", "reviewer_model", "openai/gpt-5"), 1);
+        // no trajectory_reviewer_model in params - a run naming one reviewer wants it for both jobs,
+        // not a silent divergence to the run's own local model for trajectory specifically
+        assertTrue(specs.stream().allMatch(s -> "openai/gpt-5".equals(s.spec().trajectoryReviewerModel())));
+    }
+
+    @Test
+    void reviewAndTrajectoryWeightsFlowThroughToRunSpec() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("harness_effect",
+                Map.<String, Object>of("model", "modelX", "review_weight", 0.3, "trajectory_weight", 0.2, "trajectory_use", "direct"), 1);
+        assertTrue(specs.stream().allMatch(s -> Double.valueOf(0.3).equals(s.spec().reviewWeight())));
+        assertTrue(specs.stream().allMatch(s -> Double.valueOf(0.2).equals(s.spec().trajectoryWeight())));
+        assertTrue(specs.stream().allMatch(s -> "direct".equals(s.spec().trajectoryUse())));
+    }
+
     // --- #3: enqueue() rolls back the whole experiment on a mid-loop failure ---------------------
 
     @Test

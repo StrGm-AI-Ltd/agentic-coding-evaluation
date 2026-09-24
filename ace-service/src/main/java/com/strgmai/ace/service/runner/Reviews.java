@@ -73,6 +73,9 @@ public class Reviews {
         final Path packPath = rd.resolve("packs/REVIEW.md");
         Files.writeString(packPath, Packs.reviewPack(ws, tasks, verified, blind));
         manifestMap(manifest, "review_config").putAll(Map.of("model", reviewer, "external", external, "blind", blind));
+        // unset -> Collect's own 0.1 default; only present when the run actually pinned a weight
+        if (cfg.get("review") instanceof Map<?, ?> rc && rc.get("weight") instanceof Number w)
+            manifestMap(manifest, "review_config").put("weight", w.doubleValue());
         Files.createDirectories(ws.resolve("review"));
         final ReferenceAgent.SessionResult rec = runReviewerSession(cfg, "REVIEW", packPath, sysPath, reviewer, external, ws, rd, manifest, proxies, rd.resolve("review.log"));
         // the code is frozen: anything the reviewer changed outside review/ is reverted and recorded
@@ -135,6 +138,15 @@ public class Reviews {
         Files.writeString(packPath, Packs.trajectoryReviewPack(summary, head));
         final Path sysPath = rd.resolve("packs/trajectory_review_system.md");
         Files.writeString(sysPath, Packs.TRAJ_ROLE);
+        // Collect.java reads this same shape (model/external/weight) for review_config already -
+        // this was never written at all before, so trajectory's blend weight and "use" mode (see
+        // below) silently fell back to Collect's own defaults on every run
+        final Map<String, Object> trajConfig = new LinkedHashMap<>(Map.of("model", reviewer, "external", external));
+        if (cfg.get("trajectory_review") instanceof Map<?, ?> tc) {
+            if (tc.get("weight") instanceof Number w) trajConfig.put("weight", w.doubleValue());
+            if (tc.get("use") instanceof String u && !u.isBlank()) trajConfig.put("use", u);
+        }
+        manifestMap(manifest, "trajectory_review_config").putAll(trajConfig);
         Files.createDirectories(ws.resolve("review"));
         final var pre = Path.of(RunBenchSupport.snapshot(ws, "phase/pre-trajectory-review"));
         final ReferenceAgent.SessionResult rec = runReviewerSession(cfg, "TRAJECTORY_REVIEW", packPath, sysPath, reviewer, external, ws, rd, manifest, proxies, rd.resolve("review.log"));

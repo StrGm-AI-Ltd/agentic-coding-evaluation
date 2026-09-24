@@ -139,6 +139,11 @@ public class BenchController {
                 spec.get("first_token_timeout") instanceof Number n ? n.intValue() : intOf(spec.get("first_token_timeout")),
                 spec.get("compaction_trigger") instanceof Number n2 ? n2.intValue() : intOf(spec.get("compaction_trigger")),
                 spec.get("review_wall_sec") instanceof Number n3 ? n3.intValue() : intOf(spec.get("review_wall_sec")),
+                Boolean.parseBoolean(String.valueOf(spec.getOrDefault("review_blind", "false"))),
+                str(spec.get("trajectory_reviewer_model")),
+                spec.get("review_weight") instanceof Number n4 ? n4.doubleValue() : doubleOf(spec.get("review_weight")),
+                spec.get("trajectory_weight") instanceof Number n5 ? n5.doubleValue() : doubleOf(spec.get("trajectory_weight")),
+                str(spec.get("trajectory_use")),
                 str(spec.get("run_id")));
         return queue.enqueue(rs, priority, props.resultsDir(), pin.current(), pin.current(), null, null, null);
     }
@@ -324,4 +329,5 @@ public class BenchController {
 
     static String str(Object o) { return o == null ? null : String.valueOf(o); }
     static Integer intOf(Object o) { try { return o == null || String.valueOf(o).isBlank() ? null : Integer.parseInt(String.valueOf(o)); } catch (NumberFormatException e) { throw new IllegalArgumentException("not a number: " + o); } }
+    static Double doubleOf(Object o) { try { return o == null || String.valueOf(o).isBlank() ? null : Double.parseDouble(String.valueOf(o)); } catch (NumberFormatException e) { throw new IllegalArgumentException("not a number: " + o); } }
 }

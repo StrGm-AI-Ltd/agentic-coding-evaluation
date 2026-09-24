@@ -9,7 +9,9 @@ public record RunSpec(String task, String model, String harness, String mode, St
                       Integer implWall, Integer implTokens, String parallel, boolean systemRules, boolean selfReview,
                       boolean trajectoryReview, String reviewerModel, boolean handoffNotes, boolean manageDocker,
                       boolean noContextProbe, boolean contextProbeFresh,
-                      Integer contextWindow, Integer firstTokenTimeout, Integer compactionTrigger, Integer reviewWallSec, String runId) {
+                      Integer contextWindow, Integer firstTokenTimeout, Integer compactionTrigger, Integer reviewWallSec,
+                      boolean reviewBlind, String trajectoryReviewerModel, Double reviewWeight, Double trajectoryWeight,
+                      String trajectoryUse, String runId) {
 
     public static final String RUN_ID = "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$";
 
@@ -18,6 +20,10 @@ public record RunSpec(String task, String model, String harness, String mode, St
         contextWindow = positive(contextWindow); firstTokenTimeout = positive(firstTokenTimeout); reviewWallSec = positive(reviewWallSec);
         // 0 is a legitimate value here (disables compaction) - unlike the budgets above, only reject negative
         if (compactionTrigger != null && compactionTrigger < 0) throw new IllegalArgumentException("compactionTrigger must be >= 0 (0 disables compaction): " + compactionTrigger);
+        if (reviewWeight != null && (reviewWeight < 0 || reviewWeight > 1)) throw new IllegalArgumentException("reviewWeight must be within 0..1: " + reviewWeight);
+        if (trajectoryWeight != null && (trajectoryWeight < 0 || trajectoryWeight > 1)) throw new IllegalArgumentException("trajectoryWeight must be within 0..1: " + trajectoryWeight);
+        if (trajectoryUse != null && !trajectoryUse.isBlank() && !List.of("calibration", "direct").contains(trajectoryUse))
+            throw new IllegalArgumentException("trajectoryUse must be calibration or direct: " + trajectoryUse);
         if (runId != null && !runId.matches(RUN_ID)) throw new IllegalArgumentException("invalid run id: " + runId);
         if (mode != null && !List.of("monolithic", "orchestrated").contains(mode))
             throw new IllegalArgumentException("mode must be monolithic or orchestrated");
@@ -54,6 +60,11 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (firstTokenTimeout != null) args.add("--first-token-timeout=" + firstTokenTimeout);
         if (compactionTrigger != null) args.add("--compaction-trigger=" + compactionTrigger);
         if (reviewWallSec != null) args.add("--review-wall-sec=" + reviewWallSec);
+        if (reviewBlind) args.add("--review-blind");
+        if (trajectoryReviewerModel != null) args.add("--trajectory-reviewer-model=" + trajectoryReviewerModel);
+        if (reviewWeight != null) args.add("--review-weight=" + reviewWeight);
+        if (trajectoryWeight != null) args.add("--trajectory-weight=" + trajectoryWeight);
+        if (trajectoryUse != null && !trajectoryUse.isBlank()) args.add("--trajectory-use=" + trajectoryUse);
         return args;
     }
 

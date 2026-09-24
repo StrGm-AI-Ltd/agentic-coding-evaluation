@@ -68,11 +68,16 @@ public class ExperimentsService {
                 final String reviewerModel = str(params.get("reviewer_model"));
                 final boolean review = reviewerModel != null;
                 final boolean noProbe = noContextProbe(params);
+                final boolean blind = reviewBlind(params);
+                final String trajReviewerModel = trajectoryReviewerModel(params, reviewerModel);
+                final Double reviewWeight = reviewWeight(params), trajectoryWeight = trajectoryWeight(params);
+                final String trajectoryUse = trajectoryUse(params);
                 for (int i = 1; i <= k; i++)
                     for (String arm : arms)
                         specs.add(new ArmSpec(arm, i, new RunSpec(RUNG, model, null, "orchestrated".equals(armMode(arm)) ? "orchestrated" : "monolithic",
                                 "reference", wall, tokens, arm.contains("mono") ? wall * n : null, arm.contains("mono") ? tokens * n : null,
                                 "par".equals(arm) ? parallel : null, "mono+rules".equals(arm), review, review, reviewerModel, false, true, noProbe, false, window, firstTokenTimeout, compactionTrigger, reviewWallSec,
+                                blind, trajReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse,
                                 "he-" + tag + "-" + shortName(model) + "-" + arm.replace("+", "") + "-r" + i)));
             }
             case "model_ab" -> {
@@ -84,13 +89,20 @@ public class ExperimentsService {
                 final Integer compactionTrigger = compactionTrigger(params);
                 final Integer reviewWallSec = reviewWallSec(params);
                 final boolean noProbe = noContextProbe(params);
+                final boolean blind = reviewBlind(params);
+                final String reviewerModel = str(params.get("reviewer_model"));
+                final String trajReviewerModel = trajectoryReviewerModel(params, reviewerModel);
+                final Double reviewWeight = reviewWeight(params), trajectoryWeight = trajectoryWeight(params);
+                final String trajectoryUse = trajectoryUse(params);
                 for (int i = 1; i <= k; i++) {
                     // the arm suffix keeps A and B distinct; model-ab.sh always reviews both sides (self + trajectory)
                     specs.add(new ArmSpec("A", i, new RunSpec(RUNG, a, null, "orchestrated", "reference", wall, null, null, null, null, false,
-                            true, true, str(params.get("reviewer_model")), false, true, noProbe, false, windowA, firstTokenTimeout, compactionTrigger, reviewWallSec,
+                            true, true, reviewerModel, false, true, noProbe, false, windowA, firstTokenTimeout, compactionTrigger, reviewWallSec,
+                            blind, trajReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse,
                             "ab-" + tag + "-" + shortName(a) + "-a-r" + i)));
                     specs.add(new ArmSpec("B", i, new RunSpec(RUNG, b, null, "orchestrated", "reference", wall, null, null, null, null, false,
-                            true, true, str(params.get("reviewer_model")), false, true, noProbe, false, windowB, firstTokenTimeout, compactionTrigger, reviewWallSec,
+                            true, true, reviewerModel, false, true, noProbe, false, windowB, firstTokenTimeout, compactionTrigger, reviewWallSec,
+                            blind, trajReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse,
                             "ab-" + tag + "-" + shortName(b) + "-b-r" + i)));
                 }
             }
@@ -106,11 +118,16 @@ public class ExperimentsService {
                 final String reviewerModel = str(params.get("reviewer_model"));
                 final boolean review = reviewerModel != null;
                 final boolean noProbe = noContextProbe(params);
+                final boolean blind = reviewBlind(params);
+                final String trajReviewerModel = trajectoryReviewerModel(params, reviewerModel);
+                final Double reviewWeight = reviewWeight(params), trajectoryWeight = trajectoryWeight(params);
+                final String trajectoryUse = trajectoryUse(params);
                 for (int i = 1; i <= k; i++)
                     for (String agent : List.of("ref", "pi"))   // --harness=ref|pi: the flag the comparison is ABOUT
                         specs.add(new ArmSpec(agent, i, new RunSpec(RUNG, model, agent, mode, "reference",
                                 "orchestrated".equals(mode) ? wall : null, null, "monolithic".equals(mode) ? wall * taskCount() : null,
                                 "monolithic".equals(mode) ? 60000 * taskCount() : null, null, false, review, review, reviewerModel, false, true, noProbe, false, window, firstTokenTimeout, compactionTrigger, reviewWallSec,
+                                blind, trajReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse,
                                 "aa-" + tag + "-" + shortName(model) + "-" + agent + "-r" + i)));
             }
             default -> throw new IllegalArgumentException("unknown template " + template + "; known: harness_effect, model_ab, agent_ab");
@@ -150,6 +167,34 @@ public class ExperimentsService {
         return Boolean.TRUE.equals(params.get("no_context_probe"));
     }
 
+    static boolean reviewBlind(Map<String, Object> params) {
+        return Boolean.TRUE.equals(params.get("review_blind"));
+    }
+
+    /** an explicit params.trajectory_reviewer_model wins; unset defaults to the SAME reviewer as
+     *  self-review, not Reviews' own silent fallback to the run's own local model - a run naming
+     *  one reviewer presumably wants that reviewer for both jobs, not a divergent default for one of them. */
+    static String trajectoryReviewerModel(Map<String, Object> params, String reviewerModel) {
+        final String v = str(params.get("trajectory_reviewer_model"));
+        return v != null ? v : reviewerModel;
+    }
+
+    /** an explicit params.review_weight wins; unset leaves Collect's own 0.1 default */
+    Double reviewWeight(Map<String, Object> params) {
+        return params.get("review_weight") == null ? null : numD(params.get("review_weight"));
+    }
+
+    /** an explicit params.trajectory_weight wins; unset leaves Collect's own 0.1 default */
+    Double trajectoryWeight(Map<String, Object> params) {
+        return params.get("trajectory_weight") == null ? null : numD(params.get("trajectory_weight"));
+    }
+
+    /** an explicit params.trajectory_use wins ("calibration" or "direct"); unset leaves Collect's
+     *  own "calibration" default */
+    static String trajectoryUse(Map<String, Object> params) {
+        return str(params.get("trajectory_use"));
+    }
+
     /** id -> max_model_len for whatever the model server currently serves — the same /v1/models query
      *  Preflight's "target model served" check makes. Best-effort: an unreachable server means an empty
      *  map (the probe owns the window), never a crash. */
@@ -177,6 +222,7 @@ public class ExperimentsService {
     }
     static String str(Object o) { return o == null ? null : String.valueOf(o); }
     static int num(Object o) { return o instanceof Number n ? n.intValue() : Integer.parseInt(String.valueOf(o)); }
+    static double numD(Object o) { return o instanceof Number n ? n.doubleValue() : Double.parseDouble(String.valueOf(o)); }
 
     /** the experiment row and its arms are one unit: an arm that fails to enqueue (a colliding run id,
      *  a results dir already on disk) must not leave an experiment behind that can never finish, so the

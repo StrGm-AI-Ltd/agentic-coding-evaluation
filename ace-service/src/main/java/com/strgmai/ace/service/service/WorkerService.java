@@ -167,10 +167,14 @@ public class WorkerService {
                 // shared by both self-review and trajectory-review (Reviews.runReviewerSession reads
                 // this same "review" map's wall_sec for either kind of reviewer session)
                 if (flag(job.argv(), "--review-wall-sec") != null) review.put("wall_sec", Integer.parseInt(flag(job.argv(), "--review-wall-sec")));
+                // unset -> Collect's own 0.1 default; only set when the run actually pinned one
+                if (flag(job.argv(), "--review-weight") != null) review.put("weight", Double.parseDouble(flag(job.argv(), "--review-weight")));
                 cfg.put("review", review);
                 final Map<String, Object> trajectoryReview = new LinkedHashMap<>();
                 trajectoryReview.put("enabled", job.argv().contains("--trajectory-review"));
                 trajectoryReview.put("model", flag(job.argv(), "--trajectory-reviewer-model"));
+                if (flag(job.argv(), "--trajectory-weight") != null) trajectoryReview.put("weight", Double.parseDouble(flag(job.argv(), "--trajectory-weight")));
+                trajectoryReview.put("use", flag(job.argv(), "--trajectory-use"));
                 cfg.put("trajectory_review", trajectoryReview);
                 runBench.runOnce(cfg, job.runId(), flag(job.argv(), "--task") == null ? "L7_full_platform" : flag(job.argv(), "--task"), mode, planSource);
                 queue.finish(job.id(), "succeeded", 0, resultLine(Path.of(props.resultsDir(), job.runId())));
