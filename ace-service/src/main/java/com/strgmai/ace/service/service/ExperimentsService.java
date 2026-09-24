@@ -25,6 +25,11 @@ import static com.strgmai.ace.service.jooq.Tables.RUNS;
 public class ExperimentsService {
     private static final Logger log = LoggerFactory.getLogger(ExperimentsService.class);
     public static final String RUNG = "L3p_point_in_time";
+    /** leaderboard fields compared alongside functional score, so an A/B experiment's comparison
+     *  says whether one arm is faster, not just whether it scores differently (issue: model_ab's
+     *  compare() previously only looked at functional score). */
+    static final List<String> SPEED_METRICS = List.of(
+            "avg_latency_sec", "avg_first_byte_ms", "total_wall_sec", "wall_sec_per_functional_point");
 
     private final DSLContext dsl;
     private final JobQueue queue;
@@ -282,7 +287,19 @@ public class ExperimentsService {
             }
             try {
                 final List<Double> fa = functional(a), fb = functional(b);
-                comparisons.put(label, Map.of("result", stats.compare(fa, fb, "functional"), "printed", ""));
+                final Map<String, Object> entry = new LinkedHashMap<>();
+                entry.put("result", stats.compare(fa, fb, "functional"));
+                final Map<String, Object> speed = new LinkedHashMap<>();
+                for (String metric : SPEED_METRICS) {
+                    try {
+                        speed.put(metric, stats.compare(leaderboardValues(a, metric), leaderboardValues(b, metric), metric));
+                    } catch (Exception e) {   // not every run has every speed metric yet - skip it, don't fail the whole comparison
+                        log.debug("skipping speed metric {} for {}: {}", metric, label, e.toString());
+                    }
+                }
+                if (!speed.isEmpty()) entry.put("speed", speed);
+                entry.put("printed", "");
+                comparisons.put(label, entry);
             } catch (Exception e) {   // stats refused (not comparable / nothing to pool): a result, not a crash
                 comparisons.put(label, Map.of("refused", String.valueOf(e)));
             }
@@ -318,6 +335,24 @@ public class ExperimentsService {
             }
         }
         if (out.isEmpty()) throw new IllegalArgumentException("no functional scores on one side");
+        return out;
+    }
+
+    /** the same shape as functional(), but for any metrics.json leaderboard field (e.g. the #32
+     *  latency/TTFT stats) - not every run has every speed metric yet, so an empty side just skips
+     *  that metric's comparison rather than failing the whole arm-pair comparison. */
+    List<Double> leaderboardValues(List<Path> dirs, String leaderboardKey) {
+        final List<Double> out = new ArrayList<>();
+        for (Path d : dirs) {
+            try {
+                com.fasterxml.jackson.databind.JsonNode v = new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readTree(d.resolve("metrics.json").toFile()).path("leaderboard").path(leaderboardKey);
+                if (v.isNumber()) out.add(v.asDouble());
+            } catch (Exception e) {
+                log.warn("could not read leaderboard.{} from {}/metrics.json, excluding it from the comparison: {}", leaderboardKey, d, e.toString());
+            }
+        }
+        if (out.isEmpty()) throw new IllegalArgumentException("no " + leaderboardKey + " values on one side");
         return out;
     }
 

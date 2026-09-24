@@ -186,8 +186,10 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         return failures.isEmpty() ? null : String.join("\n", failures);
     }
 
-    /** One comparison verdict card, as rendered from experiments.comparison (M3). */
-    record ComparisonCard(String label, String calloutKind, String calloutText, String printed) {
+    /** One comparison verdict card, as rendered from experiments.comparison (M3). speedLines is one
+     *  formatted line per leaderboard speed metric (avg_latency_sec etc.) that had data on both
+     *  sides — empty when the main verdict is an error/refused/no-comparison case. */
+    record ComparisonCard(String label, String calloutKind, String calloutText, String printed, List<String> speedLines) {
     }
 
     /**
@@ -202,21 +204,22 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
             return cards;
         }
         comparison.propertyNames().stream().sorted().forEach(label -> {
+            if ("arms".equals(label)) return;   // job-status metadata, not a per-pair comparison
             final var c = comparison.get(label);
             final var title = label.replace("_vs_", " vs ");
             final var printed = Fmt.textOr(c.path("printed"), null);
 
             final var error = c.path("error");
             if (!error.isMissingNode() && !error.isNull()) {
-                cards.add(new ComparisonCard(title, "warn", Fmt.textOr(error, ""), printed));
+                cards.add(new ComparisonCard(title, "warn", Fmt.textOr(error, ""), printed, List.of()));
                 return;
             }
             final var refused = c.path("refused");
             if (!refused.isMissingNode() && !refused.isNull()) {
-                cards.add(new ComparisonCard(title, "error", "StatsService refused: " + Fmt.textOr(refused, ""), printed));
+                cards.add(new ComparisonCard(title, "error", "StatsService refused: " + Fmt.textOr(refused, ""), printed, List.of()));
                 return;
             }
-            final var cmp = c.path("result").path("compare");
+            final var cmp = c.path("result");
             if (cmp.isObject()) {
                 final var diff = cmp.path("diff").asDouble(0);
                 final var p = cmp.path("p").asDouble(1);
@@ -225,13 +228,27 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
                         + ", " + Fmt.num(cmp.path("ci90").path(1).asDouble()) + "] · p = "
                         + String.format(Locale.ROOT, "%.3f", p) + " · "
                         + (p < 0.10 ? "supported (p < 0.10)" : "not supported at α = 0.10");
-                cards.add(new ComparisonCard(title, p < 0.10 ? "good" : "muted", text, printed));
+                final List<String> speedLines = new ArrayList<>();
+                final var speed = c.path("speed");
+                speed.propertyNames().stream().sorted().forEach(metric -> speedLines.add(formatSpeedLine(speed.get(metric))));
+                cards.add(new ComparisonCard(title, p < 0.10 ? "good" : "muted", text, printed, speedLines));
                 return;
             }
             cards.add(new ComparisonCard(title, "warn",
-                    "No comparison: one side had no comparable runs after exclusions.", printed));
+                    "No comparison: one side had no comparable runs after exclusions.", printed, List.of()));
         });
         return cards;
+    }
+
+    /** One speed-metric line, e.g. "avg_latency_sec: A − B = -4.2 · 90% CI [...] · p = 0.031 · supported". */
+    private static String formatSpeedLine(final JsonNode cmp) {
+        final var diff = cmp.path("diff").asDouble(0);
+        final var p = cmp.path("p").asDouble(1);
+        return Fmt.textOr(cmp.path("metric"), "") + ": A − B = " + Fmt.num(diff)
+                + " · 90% CI [" + Fmt.num(cmp.path("ci90").path(0).asDouble())
+                + ", " + Fmt.num(cmp.path("ci90").path(1).asDouble()) + "] · p = "
+                + String.format(Locale.ROOT, "%.3f", p) + " · "
+                + (p < 0.10 ? "supported (p < 0.10)" : "not supported at α = 0.10");
     }
 
     private void addComparison(final Api.Experiment experiment) {
@@ -267,6 +284,11 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
                 case "error" -> cardLayout.add(Panels.error(card.calloutText()));
                 case "warn" -> cardLayout.add(Panels.warn(card.calloutText()));
                 default -> cardLayout.add(new Span(card.calloutText()));
+            }
+            for (final var speedLine : card.speedLines()) {
+                final var line = new Span(speedLine);
+                line.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.9em");
+                cardLayout.add(line);
             }
             if (card.printed() != null && !card.printed().isBlank()) {
                 cardLayout.add(new com.vaadin.flow.component.details.Details("StatsService output",
