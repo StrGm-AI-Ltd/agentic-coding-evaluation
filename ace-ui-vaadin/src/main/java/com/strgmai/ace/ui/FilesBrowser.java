@@ -1,9 +1,8 @@
 package com.strgmai.ace.ui;
 
-import com.vaadin.flow.component.Component;
+import com.vaadin.flow.component.dependency.CssImport;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
-import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import org.slf4j.Logger;
@@ -21,9 +20,10 @@ import java.util.Set;
 /**
  * Run file browser — the Vaadin twin of the Jinja2 run page's file section:
  * lists the run's results dir (top level + one subdir level, excluding workspace/,
- * mirroring run_files() in the service's api.py). Text files open formatted in
- * a new tab at the file-view route; binary files link out to the service.
+ * mirroring run_files() in the service's api.py). Clicking a row opens the file in a new
+ * tab: text files formatted at the file-view route, everything else raw from the service.
  */
+@CssImport("./styles/clickable-grid.css")
 public class FilesBrowser extends VerticalLayout {
     private static final Logger log = LoggerFactory.getLogger(FilesBrowser.class);
 
@@ -52,20 +52,18 @@ public class FilesBrowser extends VerticalLayout {
         grid.addColumn(name -> sizeOf(resultsDir, name)).setHeader("size")
                 .setTextAlign(ColumnTextAlign.END).setAutoWidth(true)
                 .setComparator(Comparator.comparingLong(name -> sizeOr(resultsDir, name)));
-        grid.addComponentColumn(this::fileLink).setFlexGrow(0);
+        grid.addClassName("clickable-rows");   // #39: the row itself opens the file, no separate link
+        grid.addItemClickListener(e -> getUI().ifPresent(
+                ui -> ui.getPage().open(fileUrl(client, runId, e.getItem()), "_blank")));
         grid.setItems(files);
         grid.setAllRowsVisible(true);
         grid.setMaxHeight("300px");
         add(grid);
     }
 
-    private Component fileLink(final String name) {
-        final var anchor = isText(name)
-                ? new Anchor(viewRoute(runId, name), "view")   // opens the formatted viewer
-                : new Anchor(Links.rawFileUrl(client.baseUrl(), runId, name), "open");
-        anchor.getElement().setAttribute("target", "_blank");
-        anchor.getElement().setAttribute("rel", "noopener noreferrer");
-        return anchor;
+    /** New tab target for a row click: the formatted viewer for text files, the raw file otherwise. */
+    static String fileUrl(final ServiceClient client, final String runId, final String name) {
+        return isText(name) ? viewRoute(runId, name) : Links.rawFileUrl(client.baseUrl(), runId, name);
     }
 
     /** New-tab viewer URL; the path is segment-encoded so spaces and non-ASCII survive. */
