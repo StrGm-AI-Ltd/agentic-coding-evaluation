@@ -38,6 +38,19 @@ public final class Fmt {
         return value == null ? "–" : String.format(Locale.ROOT, "%,d", value);
     }
 
+    /** e.g. "12.3s" for a request's latency_sec. */
+    public static String seconds(final Double value) {
+        return value == null ? "–" : String.format(Locale.ROOT, "%.1fs", value);
+    }
+
+    /** e.g. "340ms" or, once it crosses a second, "1.4s" — for a request's first_byte_ms (TTFT). */
+    public static String millis(final Long value) {
+        if (value == null) {
+            return "–";
+        }
+        return value >= 1000 ? String.format(Locale.ROOT, "%.1fs", value / 1000.0) : value + "ms";
+    }
+
     /** Compact "2026-09-15 23:57" from whatever string timestamp the service sent. */
     public static String when(final String timestamp) {
         if (timestamp == null) {

@@ -423,7 +423,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         return node.isNumber() ? node.doubleValue() : null;
     }
 
-    private String metaLine(final Api.Run run) {
+    String metaLine(final Api.Run run) {
         // returned via String.join, which needs Iterable<? extends CharSequence> - empty-diamond
         // under var would infer List<Object> and fail to compile there
         final List<String> parts = new ArrayList<>();
@@ -434,6 +434,11 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         parts.add("schema " + run.schema_version());
         parts.add("wall " + Fmt.duration(run.wall_sec()));
         parts.add("tokens " + Fmt.count(run.completion_tokens()));
+        final var leaderboard = run.metrics() == null ? null : run.metrics().path("leaderboard");
+        if (leaderboard != null && leaderboard.path("avg_latency_sec").isNumber())
+            parts.add("avg latency " + Fmt.seconds(leaderboard.path("avg_latency_sec").doubleValue()));
+        if (leaderboard != null && leaderboard.path("avg_first_byte_ms").isNumber())
+            parts.add("avg TTFT " + Fmt.millis(leaderboard.path("avg_first_byte_ms").longValue()));
         return String.join(" · ", parts);
     }
 

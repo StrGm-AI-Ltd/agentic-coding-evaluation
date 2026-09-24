@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
 
 /** The run page's not-imported gate: only a real 404 opens the self-service panel. */
 class RunDetailViewTest {
@@ -110,5 +111,32 @@ class RunDetailViewTest {
                 RunDetailView.notImportedKind(ApiFixtures.job(36, "succeeded", null)),
                 "succeeded but unimported — the rare rescan case");
         assertEquals(RunDetailView.NotImportedKind.UNKNOWN, RunDetailView.notImportedKind(null));
+    }
+
+    /** #32: run stats had no latency/TTFT - both now ride along on the meta line once the
+     *  leaderboard carries them. */
+    @Test
+    void metaLine_includesAvgLatencyAndTtftWhenPresent() {
+        var metrics = Json.MAPPER.readTree("{\"leaderboard\": {\"avg_latency_sec\": 12.34, \"avg_first_byte_ms\": 250}}");
+        var run = new Api.Run("r1", null, null, "L3p_point_in_time", "orchestrated", "m", null, 3, true,
+                null, null, null, null, null, null, null, null, null, null,
+                null, null, 3600.0, 1000L, null, null, null, metrics, null);
+
+        var line = new RunDetailView(mock(ServiceClient.class)).metaLine(run);
+
+        assertTrue(line.contains("avg latency 12.3s"), line);
+        assertTrue(line.contains("avg TTFT 250ms"), line);
+    }
+
+    @Test
+    void metaLine_omitsLatencyAndTtftWhenAbsent() {
+        var run = new Api.Run("r1", null, null, "L3p_point_in_time", "orchestrated", "m", null, 3, true,
+                null, null, null, null, null, null, null, null, null, null,
+                null, null, 3600.0, 1000L, null, null, null, null, null);
+
+        var line = new RunDetailView(mock(ServiceClient.class)).metaLine(run);
+
+        assertFalse(line.contains("latency"), line);
+        assertFalse(line.contains("TTFT"), line);
     }
 }

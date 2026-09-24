@@ -31,7 +31,8 @@ public final class JournalFacts {
 
     record Entry(long off, String task, OffsetDateTime ts, int status, boolean budget, boolean upstream,
                  boolean clientAbort, boolean drainAbort, boolean truncated, long ct, boolean est, Object pt,
-                 String fin, String effort, boolean reqDict, List<String> ws) {}
+                 String fin, String effort, boolean reqDict, List<String> ws,
+                 double latencySec, Long firstByteMs) {}
 
     public static Map<String, Object> facts(String path, String sinceIso, String untilIso,
                                             List<String[]> exclude, List<String> normalise, String tag) {
@@ -46,6 +47,8 @@ public final class JournalFacts {
         final String wsRoot = normalise == null ? null : normalise.stream().filter(n -> n != null && n.contains("agentbench-ws")).findFirst().orElse(null);
         final String own = wsRoot == null ? null : Path.of(wsRoot).getParent().getFileName().toString();
         final boolean window = lo != null || hi != null || !ex.isEmpty();
+        double latencySum = 0; int latencyN = 0;
+        long ttftSum = 0; int ttftN = 0;
         for (Entry e : entries(Path.of(path))) {
             if (tag != null && !Objects.equals(e.task(), tag)) continue;          // a parallel task's own records
             if (window) {
@@ -62,6 +65,11 @@ public final class JournalFacts {
             if (e.clientAbort()) f.merge("client_aborts", 1, (a, b) -> (int) a + 1);
             if (e.drainAbort()) f.merge("drain_aborted", 1, (a, b) -> (int) a + 1);
             if (e.truncated()) f.merge("truncated", 1, (a, b) -> (int) a + 1);
+            // budget refusals are instant local rejections (always latency_sec=0), not real network
+            // latency - excluded so they don't drag the average down
+            if (!e.budget()) { latencySum += e.latencySec(); latencyN++; }
+            // only streamed requests carry a first byte time - the request's actual time-to-first-token
+            if (e.firstByteMs() != null) { ttftSum += e.firstByteMs(); ttftN++; }
             f.merge("completion_tokens", e.ct(), (a, b) -> (long) a + (long) b);
             if (e.est()) f.merge("estimated_completion_tokens", e.ct(), (a, b) -> (long) a + (long) b);
             if (e.effort() != null) {
@@ -87,6 +95,8 @@ public final class JournalFacts {
                 f.put("first_prompt_tokens", e.pt());
             }
         }
+        if (latencyN > 0) f.put("avg_latency_sec", Math.round(latencySum / latencyN * 100) / 100.0);
+        if (ttftN > 0) f.put("avg_first_byte_ms", Math.round((double) ttftSum / ttftN));
         return f;
     }
 
@@ -159,7 +169,9 @@ public final class JournalFacts {
                 u == null ? 0 : u.path("completion_tokens").asLong(0), u != null && u.path("estimated").asBoolean(false),
                 u == null || u.path("prompt_tokens").isMissingNode() ? null : u.path("prompt_tokens").asLong(),
                 resp == null || !resp.isObject() ? null : resp.path("finish_reason").asText(null),
-                effort, req != null && req.isObject(), ws);
+                effort, req != null && req.isObject(), ws,
+                r.path("latency_sec").asDouble(0.0),
+                r.path("first_byte_ms").isMissingNode() ? null : r.path("first_byte_ms").asLong());
     }
 
     static JsonNode requestAt(final Path p, final long off) {
