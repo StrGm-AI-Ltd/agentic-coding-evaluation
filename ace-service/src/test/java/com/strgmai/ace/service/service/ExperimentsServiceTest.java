@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
 import static com.strgmai.ace.service.jooq.Tables.JOBS;
@@ -221,5 +222,53 @@ class ExperimentsServiceTest {
             return;
         }
         fail("could not get the collision to land in the same clock-second after 5 attempts");
+    }
+
+    // --- #18: an experiment whose runs were all cancelled must finalize as "cancelled", not "finished" ---
+
+    private static DSLContext freshDb(final String name) throws Exception {
+        final var ds = new org.sqlite.SQLiteDataSource();
+        ds.setUrl("jdbc:sqlite:" + Files.createTempFile(name, ".db") + "?foreign_keys=on");
+        Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
+        return DSL.using(ds, SQLDialect.SQLITE);
+    }
+
+    private static void job(final DSLContext db, final UUID experimentId, final String arm, final String status) {
+        db.insertInto(JOBS).set(JOBS.ID, UUID.randomUUID()).set(JOBS.EXPERIMENT_ID, experimentId).set(JOBS.ARM, arm)
+                .set(JOBS.KIND, "run").set(JOBS.RUN_ID, "run-" + arm).set(JOBS.ARGV, "[]").set(JOBS.STATUS, status)
+                .execute();
+    }
+
+    @Test
+    void finalizeIfDoneMarksTheExperimentCancelledWhenEveryJobWasCancelled() throws Exception {
+        final DSLContext db = freshDb("ace-experiments-allcancelled-test");
+        final var svc = new ExperimentsService(db, null, props("http://127.0.0.1:1/v1"), null);
+        final UUID experimentId = UUID.randomUUID();
+        db.insertInto(EXPERIMENTS).set(EXPERIMENTS.ID, experimentId).set(EXPERIMENTS.NAME, "exp").set(EXPERIMENTS.TAG, "t")
+                .set(EXPERIMENTS.TEMPLATE, "harness_effect").set(EXPERIMENTS.PARAMS, "{}").set(EXPERIMENTS.K, 1).execute();
+        job(db, experimentId, "orch", "cancelled");
+        job(db, experimentId, "mono", "cancelled");
+
+        svc.finalizeIfDone(experimentId);
+
+        final var exp = db.selectFrom(EXPERIMENTS).where(EXPERIMENTS.ID.eq(experimentId)).fetchOne();
+        assertEquals("cancelled", exp.getStatus());
+        assertNull(exp.getComparison(), "an all-cancelled experiment has nothing to compare");
+    }
+
+    @Test
+    void finalizeIfDoneLeavesTheExperimentQueuedWhileAJobIsStillPending() throws Exception {
+        final DSLContext db = freshDb("ace-experiments-pending-test");
+        final var svc = new ExperimentsService(db, null, props("http://127.0.0.1:1/v1"), null);
+        final UUID experimentId = UUID.randomUUID();
+        db.insertInto(EXPERIMENTS).set(EXPERIMENTS.ID, experimentId).set(EXPERIMENTS.NAME, "exp").set(EXPERIMENTS.TAG, "t")
+                .set(EXPERIMENTS.TEMPLATE, "harness_effect").set(EXPERIMENTS.PARAMS, "{}").set(EXPERIMENTS.K, 1).execute();
+        job(db, experimentId, "orch", "cancelled");
+        job(db, experimentId, "mono", "queued");   // still pending - not every job is terminal yet
+
+        svc.finalizeIfDone(experimentId);
+
+        final var exp = db.selectFrom(EXPERIMENTS).where(EXPERIMENTS.ID.eq(experimentId)).fetchOne();
+        assertEquals("queued", exp.getStatus(), "a still-pending job means the experiment isn't done yet");
     }
 }

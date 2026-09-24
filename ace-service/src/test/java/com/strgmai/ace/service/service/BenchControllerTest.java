@@ -183,6 +183,36 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.detail").value("job 7 is already succeeded"));
     }
 
+    /** issue #18: a still-queued job is cancelled straight in the DB, the worker never sees it - so
+     *  this endpoint, not WorkerService, is the only place that can notice "that was the experiment's
+     *  last pending job" and finalize it. */
+    @Test
+    void cancellingAJobsExperimentsLastPendingJobFinalizesTheExperiment() throws Exception {
+        final UUID experimentId = UUID.fromString("00000000-0000-0000-0000-0000000000e1");
+        final Map<String, Object> cancelled = new java.util.LinkedHashMap<>();
+        cancelled.put("id", JOB_7);
+        cancelled.put("experiment_id", experimentId);
+        cancelled.put("status", "cancelled");
+        when(queue.cancel(JOB_7)).thenReturn(cancelled);
+
+        mvc.perform(post("/api/jobs/" + JOB_7 + "/cancel")).andExpect(status().isOk());
+
+        verify(experiments).finalizeIfDone(experimentId);
+    }
+
+    @Test
+    void cancellingAJobWithNoExperimentNeverCallsFinalize() throws Exception {
+        final Map<String, Object> cancelled = new java.util.LinkedHashMap<>();
+        cancelled.put("id", JOB_7);
+        cancelled.put("experiment_id", null);
+        cancelled.put("status", "cancelled");
+        when(queue.cancel(JOB_7)).thenReturn(cancelled);
+
+        mvc.perform(post("/api/jobs/" + JOB_7 + "/cancel")).andExpect(status().isOk());
+
+        verify(experiments, never()).finalizeIfDone(any());
+    }
+
     private void runRow(final String task, String model, final String keyHash, final String runId) {
         dsl.insertInto(RUNS)
                 .set(RUNS.RUN_ID, runId).set(RUNS.RESULTS_DIR, "/results/" + runId)

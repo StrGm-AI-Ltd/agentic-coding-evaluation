@@ -44,6 +44,29 @@ class WorkerServiceTest {
         try { return body.call(); } finally { System.setProperty("user.home", realHome); }
     }
 
+    /** issue #18: a job whose cancel_requested flag was already set before it was ever claimed (still
+     *  "queued") is cancelled right here in poll() - the worker never runs it, so this is the only
+     *  place that call can notice the experiment is now fully done. */
+    @Test
+    void pollFinalizesTheExperimentWhenAPreCancelledJobIsClaimed() throws Exception {
+        final UUID experimentId = UUID.fromString("00000000-0000-0000-0000-0000000000e2");
+        final JobQueue.Job job = new JobQueue.Job(JOB_1, experimentId, "orch", 1, "run", "run-1",
+                List.of("--task=L3p_point_in_time", "--model=m"), "queued", null, 0, null, null, false, null, null, null, null);
+        final JobQueue queue = mock(JobQueue.class);
+        when(queue.list()).thenReturn(List.of());
+        when(queue.claim()).thenReturn(job);
+        when(queue.get(JOB_1)).thenReturn(Map.of("cancel_requested", true));
+        final ExperimentsService experiments = mock(ExperimentsService.class);
+        final BenchProperties props = mock(BenchProperties.class);
+        final WorkerService ws = new WorkerService(queue, mock(RunBench.class), mock(ImporterService.class),
+                experiments, mock(Preflight.class), mock(TreatmentPin.class), props, mock(ContextProbe.class));
+
+        ws.poll();
+
+        verify(queue).finish(JOB_1, "cancelled", null, null);
+        verify(experiments).finalizeIfDone(experimentId);
+    }
+
     @Test
     void treatmentPinMismatchIsBlockedBeforeTouchingTheRunLock() throws Exception {
         final JobQueue queue = mock(JobQueue.class);

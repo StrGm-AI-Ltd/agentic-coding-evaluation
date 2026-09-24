@@ -148,7 +148,14 @@ public class BenchController {
         return queue.enqueue(rs, priority, props.resultsDir(), pin.current(), pin.current(), null, null, null);
     }
 
-    @PostMapping("/api/jobs/{id}/cancel") public Map<String, Object> cancel(@PathVariable UUID id) { return queue.cancel(id); }
+    @PostMapping("/api/jobs/{id}/cancel") public Map<String, Object> cancel(@PathVariable UUID id) {
+        final Map<String, Object> job = queue.cancel(id);
+        // a still-queued job is cancelled outright here (the worker never sees it) - finalizeIfDone
+        // otherwise only fires from WorkerService, so cancelling the last pending job of an experiment
+        // straight from this endpoint would leave it stuck at "queued" forever (issue #18)
+        if (job.get("experiment_id") instanceof UUID experimentId) experiments.finalizeIfDone(experimentId);
+        return job;
+    }
     @PostMapping("/api/jobs/{id}/requeue") public Map<String, Object> requeue(@PathVariable UUID id) { return queue.requeue(id, props.resultsDir()); }
     @PostMapping("/api/jobs/{id}/priority") public Map<String, Object> priority(final @PathVariable UUID id, final @RequestBody Map<String, Object> body) {
         // a missing or non-numeric priority would NPE/CCE into a 500 on the raw (int) cast

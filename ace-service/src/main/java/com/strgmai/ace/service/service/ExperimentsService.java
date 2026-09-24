@@ -259,6 +259,12 @@ public class ExperimentsService {
         var jobs = dsl.select(JOBS.ARM, JOBS.RUN_ID, JOBS.STATUS).from(JOBS)
                 .where(JOBS.EXPERIMENT_ID.eq(experimentId)).orderBy(JOBS.REPEAT, JOBS.ARM).fetch();
         if (jobs.stream().anyMatch(j -> !RunSpec.TERMINAL.contains(j.get(JOBS.STATUS)))) return;
+        // issue #18: every job cancelled (none ever succeeded or failed) means there is nothing to
+        // compare - the experiment itself is cancelled, not "finished" with an empty comparison
+        if (jobs.stream().allMatch(j -> "cancelled".equals(j.get(JOBS.STATUS)))) {
+            dsl.update(EXPERIMENTS).set(EXPERIMENTS.STATUS, "cancelled").where(EXPERIMENTS.ID.eq(experimentId)).execute();
+            return;
+        }
         final Map<String, List<Path>> byArm = new LinkedHashMap<>();
         for (var j : jobs)
             if ("succeeded".equals(j.get(JOBS.STATUS)))
