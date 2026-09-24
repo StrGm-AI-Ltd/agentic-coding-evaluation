@@ -42,7 +42,7 @@ public class FileViewerView extends VerticalLayout implements BeforeEnterObserve
         render(runId, path);
     }
 
-    private void render(final String runId, final String path) {
+    void render(final String runId, final String path) {
         removeAll();
         if (runId == null || runId.isBlank() || path == null || path.isBlank()) {
             add(new com.vaadin.flow.component.html.H2("File viewer"), Panels.error("URL needs ?run=<run id>&path=<file>"));
@@ -64,6 +64,10 @@ public class FileViewerView extends VerticalLayout implements BeforeEnterObserve
             setPadding(false);
             setSpacing(false);
             setSizeFull();
+
+            final var back = new Anchor("runs/" + runId, "← " + runId);   // #11: same tab, back to the run
+            back.getStyle().set("font-size", "0.9em");
+            add(back);
 
             final var title = new com.vaadin.flow.component.html.H2(runId + " — " + path);
             title.getStyle().set("margin", "0 0 4px 0").set("font-size", "1.2em");
