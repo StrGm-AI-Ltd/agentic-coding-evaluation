@@ -6,7 +6,9 @@ import java.io.Serializable;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The job page's live progress, accumulated from /jobs/{id}/events — the server-side
@@ -25,9 +27,14 @@ public final class JobLiveState implements Serializable {
             Long tokens, boolean clientAborted) implements Serializable {
     }
 
-    /** One row of the sessions table: its short label, and the stage (the *.log file's stem) it
-     *  ended at once that log reported done - null while the session is still open. */
-    public record SessionRow(String label, String endedStage) implements Serializable {
+    /** One row of the sessions table: its short label, the stage (the *.log file's stem) it ended
+     *  at once that log reported done (null while still open), and its average prefill/decode
+     *  speed across the requests attributed to it (RecordingProxy tags each with the session's
+     *  full id via the X-Ace-Session-Id header; both null until a request with real oMLX-reported
+     *  usage.*_tokens_per_second lands). id is the full session id (correlation key) - label is the
+     *  truncated display form. */
+    public record SessionRow(String id, String label, String endedStage,
+            Double avgPrefillTokPerSec, Double avgDecodeTokPerSec) implements Serializable {
     }
 
     private static final long serialVersionUID = 1L;
@@ -36,6 +43,8 @@ public final class JobLiveState implements Serializable {
 
     private final List<String> steps = new ArrayList<>();
     private final List<SessionRow> sessions = new ArrayList<>();
+    // session id -> [prefillSum, prefillN, decodeSum, decodeN], for the running averages in SessionRow
+    private final Map<String, double[]> speedSums = new LinkedHashMap<>();
     private final Deque<RequestRow> recentRequests = new ArrayDeque<>();
     private long requestCount;
     private Long lastTokens;
@@ -51,7 +60,8 @@ public final class JobLiveState implements Serializable {
                 }
                 steps.add(label);
             }
-            case "session_started" -> sessions.add(new SessionRow(sessionLabel(data), null));
+            case "session_started" -> sessions.add(new SessionRow(
+                    Fmt.textOr(data.path("session_id"), ""), sessionLabel(data), null, null, null));
             case "session_done" -> markSessionDone(data);
             case "request" -> {
                 requestCount += 1;
@@ -69,6 +79,7 @@ public final class JobLiveState implements Serializable {
                 while (recentRequests.size() > MAX_RECENT_REQUESTS) {
                     recentRequests.removeLast();
                 }
+                accumulateSpeed(data);
             }
             case "status" -> {
                 if (data.hasNonNull("result_line")) {
@@ -93,8 +104,9 @@ public final class JobLiveState implements Serializable {
     private void markSessionDone(final JsonNode data) {
         final var stage = stageOf(data);
         for (int i = 0; i < sessions.size(); i++) {
-            if (sessions.get(i).endedStage() == null) {
-                sessions.set(i, new SessionRow(sessions.get(i).label(), stage));
+            final var s = sessions.get(i);
+            if (s.endedStage() == null) {
+                sessions.set(i, new SessionRow(s.id(), s.label(), stage, s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec()));
                 return;
             }
         }
@@ -102,6 +114,26 @@ public final class JobLiveState implements Serializable {
 
     private static String stageOf(final JsonNode data) {
         return Fmt.textOr(data.path("log"), "?").replaceFirst("\\.[^.]+$", "");
+    }
+
+    /** Accumulates a request's prefill/decode speed (when it has them - not every request does,
+     *  e.g. errors) into its session's running average, keyed by the full session id Tailer/
+     *  RecordingProxy attach via X-Ace-Session-Id. A request with no session_id (no session open
+     *  yet, or the agent path that predates this header) is silently not attributed to any session. */
+    private void accumulateSpeed(final JsonNode data) {
+        final var sessionId = Fmt.textOr(data.path("session_id"), null);
+        if (sessionId == null || sessionId.isBlank()) return;
+        for (int i = 0; i < sessions.size(); i++) {
+            final var s = sessions.get(i);
+            if (!sessionId.equals(s.id())) continue;
+            final var sums = speedSums.computeIfAbsent(sessionId, k -> new double[4]);
+            if (data.path("prefill_tok_per_sec").isNumber()) { sums[0] += data.path("prefill_tok_per_sec").asDouble(); sums[1]++; }
+            if (data.path("decode_tok_per_sec").isNumber()) { sums[2] += data.path("decode_tok_per_sec").asDouble(); sums[3]++; }
+            final Double avgPrefill = sums[1] > 0 ? sums[0] / sums[1] : null;
+            final Double avgDecode = sums[3] > 0 ? sums[2] / sums[3] : null;
+            sessions.set(i, new SessionRow(s.id(), s.label(), s.endedStage(), avgPrefill, avgDecode));
+            return;
+        }
     }
 
     /** A snapshot copy — never the live list. */

@@ -34,7 +34,8 @@ class JobLiveStateTest {
                 data: {"session_id": "755478fc-f323-565e-92f8-1a5b10584e41", "reasoning_effort": "high"}
 
                 """).forEach(state::apply);
-        assertEquals(List.of(new JobLiveState.SessionRow("755478fc (high)", null)), state.sessions());
+        assertEquals(List.of(new JobLiveState.SessionRow(
+                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc (high)", null, null, null)), state.sessions());
     }
 
     /** #47: session_done carries the *.log file's name, not a session_id - the oldest still-open
@@ -50,7 +51,8 @@ class JobLiveStateTest {
                 data: {"type": "session_done", "log": "T1.log", "finish": "tool_calls"}
 
                 """).forEach(state::apply);
-        assertEquals(List.of(new JobLiveState.SessionRow("755478fc", "T1")), state.sessions());
+        assertEquals(List.of(new JobLiveState.SessionRow(
+                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc", "T1", null, null)), state.sessions());
     }
 
     @Test
@@ -68,8 +70,8 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(
-                new JobLiveState.SessionRow("aaaaaaaa", "P0_DEFINITION"),
-                new JobLiveState.SessionRow("bbbbbbbb", null)), state.sessions(),
+                new JobLiveState.SessionRow("aaaaaaaa-0000-0000-0000-000000000000", "aaaaaaaa", "P0_DEFINITION", null, null),
+                new JobLiveState.SessionRow("bbbbbbbb-0000-0000-0000-000000000000", "bbbbbbbb", null, null, null)), state.sessions(),
                 "the oldest open session is matched first; the newer one is still running");
     }
 
@@ -82,6 +84,65 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(), state.sessions(), "no session to match - dropped, not a crash");
+    }
+
+    /** RecordingProxy tags every request with the session's full id (X-Ace-Session-Id, unambiguous
+     *  even under concurrent parallel-wave sessions); oMLX reports prefill/decode speed itself per
+     *  response - this averages those across the requests attributed to each session. */
+    @Test
+    void requestsWithASessionIdAccumulateIntoThatSessionsAverageSpeed() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "prefill_tok_per_sec": 100.0, "decode_tok_per_sec": 20.0}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "prefill_tok_per_sec": 120.0, "decode_tok_per_sec": 30.0}
+
+                """).forEach(state::apply);
+        final var session = state.sessions().get(0);
+        assertEquals(110.0, session.avgPrefillTokPerSec(), "(100+120)/2");
+        assertEquals(25.0, session.avgDecodeTokPerSec(), "(20+30)/2");
+    }
+
+    @Test
+    void requestsWithNoSessionIdOrAnUnknownOneAreNotAttributed() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "prefill_tok_per_sec": 100.0, "decode_tok_per_sec": 20.0}
+
+                event: request
+                data: {"type": "request", "session_id": "no-such-session", "prefill_tok_per_sec": 100.0, "decode_tok_per_sec": 20.0}
+
+                """).forEach(state::apply);
+        final var session = state.sessions().get(0);
+        assertNull(session.avgPrefillTokPerSec(), "neither request named this session's id");
+        assertNull(session.avgDecodeTokPerSec());
+    }
+
+    /** A request can carry one speed field without the other (e.g. an estimated-usage entry) -
+     *  the metric it's missing must not be dragged toward it (no implicit zero). */
+    @Test
+    void aRequestMissingOneSpeedFieldDoesNotPolluteTheOtherAverage() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "decode_tok_per_sec": 20.0}
+
+                """).forEach(state::apply);
+        final var session = state.sessions().get(0);
+        assertNull(session.avgPrefillTokPerSec());
+        assertEquals(20.0, session.avgDecodeTokPerSec());
     }
 
     @Test
@@ -243,7 +304,7 @@ class JobLiveStateTest {
                 data: {"reasoning_effort": null}
 
                 """).forEach(state::apply);
-        assertEquals(List.of(new JobLiveState.SessionRow("?", null)), state.sessions(),
+        assertEquals(List.of(new JobLiveState.SessionRow("", "?", null, null, null)), state.sessions(),
                 "missing ids render as ? without throwing");
     }
 

@@ -45,8 +45,13 @@ public class RecordingProxy {
     private volatile boolean stopping;
     private final Set<HttpResponse<InputStream>> inflight = ConcurrentHashMap.newKeySet();
     public static final double CHARS_PER_TOKEN = 3.6;   // the usage ESTIMATE of an abandoned stream
+    // the agent's chat model sets this per session (ReferenceAgent) so every journaled request can
+    // be attributed to its session unambiguously, even under concurrent (parallel-wave) sessions -
+    // unlike a time-window heuristic. Stripped before forwarding upstream: oMLX has no use for it.
+    public static final String SESSION_HEADER = "X-Ace-Session-Id";
     // java.net.http.HttpRequest.Builder.header() rejects these - lower-case, matched case-insensitively
-    private static final Set<String> RESTRICTED_HEADERS = Set.of("connection", "content-length", "expect", "host", "upgrade");
+    private static final Set<String> RESTRICTED_HEADERS = Set.of("connection", "content-length", "expect", "host", "upgrade",
+            SESSION_HEADER.toLowerCase(Locale.ROOT));
 
     public RecordingProxy(BenchProperties props) { this.props = props; }
 
@@ -113,6 +118,8 @@ public class RecordingProxy {
         rec.put("ts", Instant.now().toString());
         rec.put("method", x.getRequestMethod());
         rec.put("path", path);
+        final String sessionId = x.getRequestHeaders().getFirst(SESSION_HEADER);
+        if (sessionId != null) rec.put("session_id", sessionId);
         JsonNode req = null;
         // a chat request that fails to parse here silently skips budget enforcement and sampler
         // pinning below (isChat requires a parsed object) - worth knowing about, not just "not chat"

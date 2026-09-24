@@ -107,6 +107,15 @@ public final class Tailer {
                 // rather than touch the (already correct) client.
                 e.put("latency_sec", r.path("latency_sec").isNumber() ? r.path("latency_sec").asDouble() : null);
                 e.put("ttft_sec", r.path("first_byte_ms").isNumber() ? r.path("first_byte_ms").asDouble() / 1000.0 : null);
+                // session_id: set by RecordingProxy from the agent's X-Ace-Session-Id header, so a
+                // request is attributed to its session unambiguously even under concurrent (parallel-
+                // wave) sessions. prefill/decode speed: oMLX reports these itself per response
+                // (usage.prompt_tokens_per_second / generation_tokens_per_second) - ground truth from
+                // the inference engine, not re-derived from proxy-observed timings.
+                e.put("session_id", r.path("session_id").isTextual() ? r.path("session_id").asText() : null);
+                final JsonNode usage = r.path("response").path("usage");
+                e.put("prefill_tok_per_sec", usage.path("prompt_tokens_per_second").isNumber() ? usage.path("prompt_tokens_per_second").asDouble() : null);
+                e.put("decode_tok_per_sec", usage.path("generation_tokens_per_second").isNumber() ? usage.path("generation_tokens_per_second").asDouble() : null);
                 events.add(e);
             } catch (Exception ex) { log.debug("could not parse journal line for the live view, skipping it: {}", ex.toString()); }
         }

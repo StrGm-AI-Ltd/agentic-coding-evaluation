@@ -84,6 +84,36 @@ class TailerTest {
         assertNull(events.get(0).get("ttft_sec"));
     }
 
+    /** RecordingProxy stamps the agent's X-Ace-Session-Id header onto the journal line as
+     *  "session_id"; oMLX reports prefill/decode speed itself in response.usage. Both must reach
+     *  the live "request" event for the sessions grid's per-session speed averages. */
+    @Test
+    void sessionIdAndSpeedAreForwardedFromTheJournalIntoTheRequestEvent() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.writeString(runDir.resolve("interactions.jsonl"),
+                "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
+                        + "\"session_id\": \"755478fc-f323-565e-92f8-1a5b10584e41\", "
+                        + "\"response\": {\"usage\": {\"prompt_tokens_per_second\": 99.15, \"generation_tokens_per_second\": 24.05}}}\n");
+        final var events = new Tailer().poll(runDir).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        assertEquals(1, events.size());
+        assertEquals("755478fc-f323-565e-92f8-1a5b10584e41", events.get(0).get("session_id"));
+        assertEquals(99.15, (Double) events.get(0).get("prefill_tok_per_sec"), 0.001);
+        assertEquals(24.05, (Double) events.get(0).get("decode_tok_per_sec"), 0.001);
+    }
+
+    /** No X-Ace-Session-Id header (a run predating this feature, or a non-agent caller) and no
+     *  usage block (an error/refused request) - both must be absent, not a crash. */
+    @Test
+    void sessionIdAndSpeedAreNullWhenTheJournalLineHasNeither() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.writeString(runDir.resolve("interactions.jsonl"),
+                "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 429, \"budget_exceeded\": true}\n");
+        final var events = new Tailer().poll(runDir).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        assertNull(events.get(0).get("session_id"));
+        assertNull(events.get(0).get("prefill_tok_per_sec"));
+        assertNull(events.get(0).get("decode_tok_per_sec"));
+    }
+
     @Test
     void aRunWithNoFilesReportsNothing() throws Exception {
         assertTrue(new Tailer().poll(Files.createTempDirectory("empty")).isEmpty());
