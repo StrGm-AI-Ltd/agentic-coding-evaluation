@@ -49,6 +49,8 @@ public final class Collect {
             totalSec += w.get("seconds") instanceof Number n ? Math.round(n.doubleValue()) : 0;
         leaderboard.put("total_wall_sec", totalSec);
         leaderboard.put("completion_tokens", jf.get("completion_tokens"));
+        leaderboard.put("avg_latency_sec", jf.get("avg_latency_sec"));
+        leaderboard.put("avg_first_byte_ms", jf.get("avg_first_byte_ms"));
 
         // oracle.json powers the scores
         final JsonNode o = JSON.readTree(runDir.resolve("oracle.json").toFile());

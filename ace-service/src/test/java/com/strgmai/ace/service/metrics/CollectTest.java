@@ -63,6 +63,20 @@ class CollectTest {
         assertEquals(67.0, ((Number) leaderboard.get("agent_result_pct")).doubleValue(), 0.001);
     }
 
+    /** #32: journal_facts' averages must reach the leaderboard - they used to be computed by
+     *  JournalFacts and then silently dropped (only completion_tokens was ever read out of it). */
+    @Test
+    void avgLatencyAndFirstByteFlowFromJournalFactsIntoTheLeaderboard(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);
+        final Map<String, Object> manifest = Map.of(
+                "phases", List.of(), "tasks", List.of(), "waves", List.of(),
+                "journal_facts", Map.of("completion_tokens", 5L, "avg_latency_sec", 12.34, "avg_first_byte_ms", 250L));
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        final Map<String, Object> leaderboard = (Map<String, Object>) out.get("leaderboard");
+        assertEquals(12.34, ((Number) leaderboard.get("avg_latency_sec")).doubleValue(), 0.001);
+        assertEquals(250L, ((Number) leaderboard.get("avg_first_byte_ms")).longValue());
+    }
+
     /** the default (unset trajectory_use, or "calibration"): unchanged from before #30 - rewarded
      *  for agreeing with the harness's own objective trajectory index, not for the raw score. */
     @Test

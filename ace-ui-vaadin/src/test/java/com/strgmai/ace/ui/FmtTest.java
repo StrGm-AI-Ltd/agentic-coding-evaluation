@@ -40,6 +40,22 @@ class FmtTest {
     }
 
     @Test
+    void seconds_oneDecimalAndNull() {
+        assertEquals("–", Fmt.seconds(null));
+        assertEquals("12.3s", Fmt.seconds(12.34));
+        assertEquals("0.0s", Fmt.seconds(0.0));
+    }
+
+    @Test
+    void millis_msUnderASecondThenSeconds() {
+        assertEquals("–", Fmt.millis(null));
+        assertEquals("340ms", Fmt.millis(340L));
+        assertEquals("999ms", Fmt.millis(999L));
+        assertEquals("1.0s", Fmt.millis(1000L));
+        assertEquals("2.5s", Fmt.millis(2500L));
+    }
+
+    @Test
     void when_trimsIsoTimestamp() {
         assertEquals("2026-09-15 23:57", Fmt.when("2026-09-15T23:57:00Z"));
         assertEquals("2026-09-15 23:57", Fmt.when("2026-09-15 23:57:12.532324+00"));

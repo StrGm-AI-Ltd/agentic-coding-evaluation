@@ -121,4 +121,39 @@ class JournalFactsTest {
         assertEquals("tool_calls", JournalFacts.lastFinish(one.toString(), "2026-09-14T09:00:00Z"));
         assertEquals(100L, JournalFacts.lastPromptTokens(one.toString(), "2026-09-14T09:00:00Z"));
     }
+
+    /** #32: run stats had no latency/TTFT at all - RecordingProxy always journals latency_sec, and
+     *  first_byte_ms on streamed requests, but nothing ever averaged them until now. */
+    @Test
+    void avgLatencyAndFirstByteAreAveragedAcrossChatCompletions() throws Exception {
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
+        Files.writeString(j,
+                chat("2026-09-14T10:00:00Z", ", \"latency_sec\": 10.0, \"first_byte_ms\": 100", "", REQ)
+                        + chat("2026-09-14T10:01:00Z", ", \"latency_sec\": 20.0, \"first_byte_ms\": 300", "", REQ)
+                        // a non-streamed request: latency counts, but there is no first byte time to average in
+                        + chat("2026-09-14T10:02:00Z", ", \"latency_sec\": 30.0", "", REQ));
+        final Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null);
+        assertEquals(20.0, ((Number) f.get("avg_latency_sec")).doubleValue(), 0.001, "(10+20+30)/3");
+        assertEquals(200L, ((Number) f.get("avg_first_byte_ms")).longValue(), "(100+300)/2, the non-streamed request excluded");
+    }
+
+    @Test
+    void budgetRefusalsAreExcludedFromTheLatencyAverage() throws Exception {
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
+        Files.writeString(j,
+                chat("2026-09-14T10:00:00Z", ", \"latency_sec\": 10.0", "", REQ)
+                        // a budget refusal is an instant local rejection: always latency_sec=0, not real latency
+                        + chat("2026-09-14T10:01:00Z", 429, ", \"budget_exceeded\": true, \"latency_sec\": 0.0", "", REQ));
+        final Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null);
+        assertEquals(10.0, ((Number) f.get("avg_latency_sec")).doubleValue(), 0.001);
+    }
+
+    @Test
+    void avgLatencyAndFirstByteAreAbsentWithNothingToAverage() throws Exception {
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
+        Files.writeString(j, "{\"ts\": \"2026-09-14T10:00:00Z\", \"path\": \"/v1/models\", \"status\": 200}\n");
+        final Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null);
+        assertFalse(f.containsKey("avg_latency_sec"));
+        assertFalse(f.containsKey("avg_first_byte_ms"));
+    }
 }
