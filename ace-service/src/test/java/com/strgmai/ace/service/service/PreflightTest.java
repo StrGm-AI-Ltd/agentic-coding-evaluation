@@ -106,18 +106,24 @@ class PreflightTest {
     }
 
     @Test
-    void unreachableModelServerBlocksViaTargetModelServedNotViaModelServerItself() throws Exception {
+    void unreachableModelServerBlocksViaModelServerItself() throws Exception {
         try (MockedStatic<DockerService> docker = mockDocker(0, 0, 0)) {
-            // port 1 refuses instantly; ContextProbe.models() swallows the failure and returns {},
-            // so "model server" itself reads ok (0 models) and it's "target model served" that fails
+            // port 1 refuses instantly; the raw OpenAI client's models().list() throws straight into
+            // check()'s own catch, so "model server" itself is what fails and blocks - "target model
+            // served" is never even added to the report, since the code never reaches that line.
+            // #80: before ace.endpoint was actually honored here, this fixture's port-1 endpoint was
+            // silently ignored (the hardcoded URL always won), so this scenario was never really
+            // exercised at all - it only "passed" by accident, against whatever real server the
+            // hardcoded address happened to reach.
             final var pf = new Preflight(props("target-model", "http://127.0.0.1:1/v1", fakeJavaHome()));
             final Preflight.Report r = pf.check(null);
 
             assertTrue(r.blocked());
-            assertTrue(byName(r, "model server").ok());
-            final Preflight.Check target = byName(r, "target model served");
-            assertFalse(target.ok());
-            assertTrue(target.fatal());
+            final Preflight.Check modelServer = byName(r, "model server");
+            assertFalse(modelServer.ok());
+            assertTrue(modelServer.fatal());
+            assertTrue(r.checks().stream().noneMatch(c -> c.check().equals("target model served")),
+                    "the model list itself failed - there is nothing to check the target against");
         }
     }
 
