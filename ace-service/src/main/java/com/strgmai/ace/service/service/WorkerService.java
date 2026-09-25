@@ -145,6 +145,14 @@ public class WorkerService {
                 if (flag(job.argv(), "--task-tokens") != null) cfg.put("task_tokens", Long.parseLong(flag(job.argv(), "--task-tokens")));
                 if (flag(job.argv(), "--first-token-timeout") != null) cfg.put("first_token_timeout_sec", Integer.parseInt(flag(job.argv(), "--first-token-timeout")));
                 if (flag(job.argv(), "--compaction-trigger") != null) cfg.put("compaction_trigger", Integer.parseInt(flag(job.argv(), "--compaction-trigger")));
+                // sampler knobs (#72) - RunBench folds these into a SamplerOverrides pinned onto
+                // every request by RecordingProxy; unset means "use the operator-wide default"
+                if (flag(job.argv(), "--temperature") != null) cfg.put("temperature", Double.parseDouble(flag(job.argv(), "--temperature")));
+                if (flag(job.argv(), "--top-p") != null) cfg.put("top_p", Double.parseDouble(flag(job.argv(), "--top-p")));
+                if (flag(job.argv(), "--top-k") != null) cfg.put("top_k", Integer.parseInt(flag(job.argv(), "--top-k")));
+                if (flag(job.argv(), "--repetition-penalty") != null) cfg.put("repetition_penalty", Double.parseDouble(flag(job.argv(), "--repetition-penalty")));
+                if (flag(job.argv(), "--max-tokens") != null) cfg.put("max_tokens_override", Integer.parseInt(flag(job.argv(), "--max-tokens")));
+                if (flag(job.argv(), "--reasoning-effort") != null) cfg.put("reasoning_effort", flag(job.argv(), "--reasoning-effort"));
                 // a pinned --context-window IS the window: it skips step 0, whose whole job is to measure one
                 final String window = flag(job.argv(), "--context-window");
                 if (window != null) cfg.put("context_window", Integer.parseInt(window));

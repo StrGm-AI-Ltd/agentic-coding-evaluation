@@ -11,13 +11,16 @@ public record RunSpec(String task, String model, String harness, String mode, St
                       boolean noContextProbe, boolean contextProbeFresh,
                       Integer contextWindow, Integer firstTokenTimeout, Integer compactionTrigger, Integer reviewWallSec,
                       boolean reviewBlind, String trajectoryReviewerModel, Double reviewWeight, Double trajectoryWeight,
-                      String trajectoryUse, String runId) {
+                      String trajectoryUse, String runId,
+                      Double temperature, Double topP, Integer topK, Double repetitionPenalty, Integer maxTokens, String reasoningEffort) {
 
     public static final String RUN_ID = "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$";
+    public static final List<String> REASONING_EFFORTS = List.of("none", "low", "medium", "high");
 
     public RunSpec {
         taskWall = positive(taskWall); taskTokens = positive(taskTokens); implWall = positive(implWall); implTokens = positive(implTokens);
         contextWindow = positive(contextWindow); firstTokenTimeout = positive(firstTokenTimeout); reviewWallSec = positive(reviewWallSec);
+        maxTokens = positive(maxTokens);
         // 0 is a legitimate value here (disables compaction) - unlike the budgets above, only reject negative
         if (compactionTrigger != null && compactionTrigger < 0) throw new IllegalArgumentException("compactionTrigger must be >= 0 (0 disables compaction): " + compactionTrigger);
         if (reviewWeight != null && (reviewWeight < 0 || reviewWeight > 1)) throw new IllegalArgumentException("reviewWeight must be within 0..1: " + reviewWeight);
@@ -29,6 +32,14 @@ public record RunSpec(String task, String model, String harness, String mode, St
             throw new IllegalArgumentException("mode must be monolithic or orchestrated");
         if (planSource != null && !List.of("agent", "reference").contains(planSource))
             throw new IllegalArgumentException("plan_source must be agent or reference");
+        // sampler knobs (#72): temperature/top_p/repetition_penalty are unbounded on the wire (oMLX's
+        // own choice to reject or clamp), but a negative value is never meaningful for any of them
+        if (temperature != null && temperature < 0) throw new IllegalArgumentException("temperature must be >= 0: " + temperature);
+        if (topP != null && (topP <= 0 || topP > 1)) throw new IllegalArgumentException("topP must be within (0, 1]: " + topP);
+        if (topK != null && topK < 1) throw new IllegalArgumentException("topK must be >= 1: " + topK);
+        if (repetitionPenalty != null && repetitionPenalty < 0) throw new IllegalArgumentException("repetitionPenalty must be >= 0: " + repetitionPenalty);
+        if (reasoningEffort != null && !reasoningEffort.isBlank() && !REASONING_EFFORTS.contains(reasoningEffort))
+            throw new IllegalArgumentException("reasoningEffort must be one of " + REASONING_EFFORTS + ": " + reasoningEffort);
     }
 
     private static Integer positive(Integer v) { return v == null || v > 0 ? v : failPositive(v); }
@@ -65,6 +76,12 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (reviewWeight != null) args.add("--review-weight=" + reviewWeight);
         if (trajectoryWeight != null) args.add("--trajectory-weight=" + trajectoryWeight);
         if (trajectoryUse != null && !trajectoryUse.isBlank()) args.add("--trajectory-use=" + trajectoryUse);
+        if (temperature != null) args.add("--temperature=" + temperature);
+        if (topP != null) args.add("--top-p=" + topP);
+        if (topK != null) args.add("--top-k=" + topK);
+        if (repetitionPenalty != null) args.add("--repetition-penalty=" + repetitionPenalty);
+        if (maxTokens != null) args.add("--max-tokens=" + maxTokens);
+        if (reasoningEffort != null && !reasoningEffort.isBlank()) args.add("--reasoning-effort=" + reasoningEffort);
         return args;
     }
 

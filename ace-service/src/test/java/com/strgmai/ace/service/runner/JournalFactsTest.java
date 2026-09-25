@@ -43,6 +43,31 @@ class JournalFactsTest {
 
     private static final String REQ = "{\"messages\": [{\"role\": \"system\", \"content\": \"s\"}], \"tools\": [], \"temperature\": 1}";
 
+    /** #72: top_k/repetition_penalty/reasoning_effort must reach sampler_effective too, the same
+     *  way temperature/top_p already do - this is the comparability key's only real signal for
+     *  "these two runs used different sampler settings" (StatsService.KEY_FIELDS "sampler"). */
+    @Test
+    void samplerEffectiveCapturesTheNewSamplerKnobs() throws Exception {
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
+        final String req = "{\"messages\": [], \"tools\": [], \"temperature\": 0.7, \"top_p\": 0.9, "
+                + "\"top_k\": 40, \"repetition_penalty\": 1.1, \"reasoning_effort\": \"high\"}";
+        Files.writeString(j, chat("2026-09-25T10:00:00Z", "", "", req));
+        final Map<?, ?> sampler = (Map<?, ?>) JournalFacts.facts(j.toString(), null, null, null, null, null).get("sampler_effective");
+        assertEquals(40, ((Number) sampler.get("top_k")).intValue());
+        assertEquals(1.1, ((Number) sampler.get("repetition_penalty")).doubleValue(), 0.001);
+        assertEquals("high", sampler.get("reasoning_effort"));
+    }
+
+    @Test
+    void samplerEffectiveOmitsTheNewSamplerKnobsWhenNotOnTheRequest() throws Exception {
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
+        Files.writeString(j, chat("2026-09-25T10:00:00Z", "", "", REQ));
+        final Map<?, ?> sampler = (Map<?, ?>) JournalFacts.facts(j.toString(), null, null, null, null, null).get("sampler_effective");
+        assertNull(sampler.get("top_k"));
+        assertNull(sampler.get("repetition_penalty"));
+        assertNull(sampler.get("reasoning_effort"));
+    }
+
     @Test
     void windowsFilterTheCachedEntries() throws Exception {
         final Path j = track(Files.createTempFile("j", ".jsonl"));

@@ -40,7 +40,7 @@ public class JobNewView extends VerticalLayout {
     private final Select<String> planSource = new Select<>();
     private final Select<String> parallelPlan = new Select<>();
     private final Select<String> trajectoryUse = new Select<>();
-    private final TextField reasoning = new TextField("reasoning");
+    private final Select<String> reasoningEffort = new Select<>();
     private final TextField phases = new TextField("phases");
     private final TextField parallel = new TextField("parallel");
     private final TextField javaHome = new TextField("java_home");
@@ -60,6 +60,11 @@ public class JobNewView extends VerticalLayout {
     private final NumberField parallelWeight = new NumberField("parallel_weight");
     private final NumberField reviewWeight = new NumberField("review_weight");
     private final NumberField trajectoryWeight = new NumberField("trajectory_weight");
+    private final NumberField temperature = new NumberField("temperature");
+    private final NumberField topP = new NumberField("top_p");
+    private final IntegerField topK = new IntegerField("top_k");
+    private final NumberField repetitionPenalty = new NumberField("repetition_penalty");
+    private final IntegerField maxTokens = new IntegerField("max_tokens");
     private final Checkbox handoffNotes = new Checkbox("handoff_notes");
     private final Checkbox systemRules = new Checkbox("system_rules");
     private final Checkbox selfReview = new Checkbox("self_review");
@@ -90,13 +95,15 @@ public class JobNewView extends VerticalLayout {
         configureSelect(planSource, "", "agent", "reference");
         configureSelect(parallelPlan, "", "on", "off");
         configureSelect(trajectoryUse, "", "calibration", "direct");
+        configureSelect(reasoningEffort, "", "none", "low", "medium", "high");
         harness.setLabel("harness");
         mode.setLabel("mode");
         planSource.setLabel("plan_source");
         parallelPlan.setLabel("parallel_plan");
         trajectoryUse.setLabel("trajectory_use");
+        reasoningEffort.setLabel("reasoning_effort");
+        reasoningEffort.setItemLabelGenerator(v -> v.isEmpty() ? "blank = default per phase" : v.equals("none") ? "none (disable thinking)" : v);
 
-        reasoning.setPlaceholder("default=high (or step=low,review=high)");
         phases.setPlaceholder("definition,plan,t1,t2 (comma list)");
         parallel.setPlaceholder("auto, or 1–99");
         manageDocker.setValue(true);
@@ -120,6 +127,17 @@ public class JobNewView extends VerticalLayout {
         reviewWeight.setMax(1);
         trajectoryWeight.setMin(0);
         trajectoryWeight.setMax(1);
+        temperature.setMin(0);
+        temperature.setPlaceholder("blank = operator default");
+        topP.setMin(0);
+        topP.setMax(1);
+        topP.setPlaceholder("blank = operator default");
+        topK.setMin(1);
+        topK.setPlaceholder("blank = model default");
+        repetitionPenalty.setMin(0);
+        repetitionPenalty.setPlaceholder("blank = model default");
+        maxTokens.setMin(1);
+        maxTokens.setPlaceholder("blank = context-probe-derived cap");
 
         add(new H2("New job"));
         add(new RouterLink("← Queue", JobsView.class));
@@ -128,10 +146,13 @@ public class JobNewView extends VerticalLayout {
 
         add(Forms.section("Run",
                 Forms.row(task, runIdField, harness, mode, planSource),
-                Forms.row(reasoning, phases, parallel, parallelPlan, parallelWeight)));
+                Forms.row(phases, parallel, parallelPlan, parallelWeight)));
         add(Forms.section("Budgets",
                 Forms.row(taskWall, taskTokens, implWall, implTokens, planTokens, wallBudget, contextWindow),
                 Forms.row(firstTokenTimeout, compactionTrigger)));
+        add(Forms.section("Sampler",
+                Forms.row(temperature, topP, topK, repetitionPenalty),
+                Forms.row(maxTokens, reasoningEffort)));
         add(Forms.section("Reviewers",
                 Forms.row(reviewerModel, reviewWeight, reviewBlind),
                 Forms.row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse, trajectoryReview),
@@ -174,8 +195,13 @@ public class JobNewView extends VerticalLayout {
         raw.put("harness", harness.getValue());
         raw.put("mode", mode.getValue());
         raw.put("plan_source", planSource.getValue());
-        raw.put("reasoning", reasoning.getValue());
+        raw.put("reasoning_effort", reasoningEffort.getValue());
         raw.put("phases", phases.getValue());
+        raw.put("temperature", temperature.getValue());
+        raw.put("top_p", topP.getValue());
+        raw.put("top_k", topK.getValue());
+        raw.put("repetition_penalty", repetitionPenalty.getValue());
+        raw.put("max_tokens", maxTokens.getValue());
         raw.put("task_wall", taskWall.getValue());
         raw.put("task_tokens", taskTokens.getValue());
         raw.put("impl_wall", implWall.getValue());

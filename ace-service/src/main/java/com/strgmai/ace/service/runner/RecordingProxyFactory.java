@@ -29,16 +29,13 @@ public class RecordingProxyFactory {
     public record ProxySession(String base, Consumer<String> abort, Runnable stop) {}
 
     public ProxySession start(final Path journal, final Long tokenBudget, final String tag) {
-        return start(journal, tokenBudget, tag, null);
+        return start(journal, tokenBudget, tag, RecordingProxy.SamplerOverrides.NONE);
     }
 
-    /** maxOutputTokens: the run's own context-probe-derived output-token cap for ONE request
-     *  (distinct from tokenBudget, the whole phase's completion-token budget across every turn);
-     *  null uses the operator-wide default (see RecordingProxy.maxOutputTokens). */
-    public ProxySession start(final Path journal, final Long tokenBudget, final String tag, final Integer maxOutputTokens) {
+    public ProxySession start(final Path journal, final Long tokenBudget, final String tag, final RecordingProxy.SamplerOverrides overrides) {
         final var proxy = new RecordingProxy(props);
         final String[] base = new String[1];
-        try { base[0] = proxy.start(journal, tokenBudget, tag, maxOutputTokens); }
+        try { base[0] = proxy.start(journal, tokenBudget, tag, overrides); }
         catch (Exception e) {
             // release the partially-started server/executor, don't wait for GC - the real cause
             // is already carried by the ISE thrown below, this is just the cleanup-of-cleanup case

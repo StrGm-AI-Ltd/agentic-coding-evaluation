@@ -8,6 +8,7 @@ import com.strgmai.ace.service.oracle.RunOracle;
 import com.strgmai.ace.service.pack.Packs;
 import com.strgmai.ace.service.plan.PlanParser;
 import com.strgmai.ace.service.plan.PlanTask;
+import com.strgmai.ace.service.proxy.RecordingProxy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -187,6 +188,20 @@ public class RunBench {
             cfg.put("usable_context", window);
             cfg.put("max_output_tokens", derivedNoProbe.get("max_output_tokens"));
         }
+        // an explicit --max-tokens is an operator override, not a measurement: it wins over
+        // whatever step 0 (probed or not) derived
+        if (cfg.get("max_tokens_override") instanceof Number mt) cfg.put("max_output_tokens", mt.intValue());
+        // pinned once per run and reused at every proxies.start(...) call site (RunBench, Reviews) -
+        // the run's own sampler knobs (#72): null fields fall back to the operator-wide ace.*
+        // default, or are simply omitted from the request when no such default exists (see
+        // RecordingProxy.forward())
+        cfg.put("_sampler_overrides", new RecordingProxy.SamplerOverrides(
+                cfg.get("temperature") instanceof Number t ? t.doubleValue() : null,
+                cfg.get("top_p") instanceof Number tp ? tp.doubleValue() : null,
+                cfg.get("top_k") instanceof Number tk ? tk.intValue() : null,
+                cfg.get("repetition_penalty") instanceof Number rp ? rp.doubleValue() : null,
+                cfg.get("max_output_tokens") instanceof Number mo ? mo.intValue() : null,
+                cfg.get("reasoning_effort") instanceof String re && !re.isBlank() ? re : null));
         final int taskWall = cfg.get("task_wall_sec") instanceof Number n ? n.intValue() : 3600;
         long taskTokens = cfg.get("task_tokens") instanceof Number n2 ? n2.longValue()
                 : ((Number) derived.getOrDefault("task_tokens", 60000)).longValue();
@@ -211,6 +226,12 @@ public class RunBench {
         manifest.put("provenance", Map.of("model", cfg.getOrDefault("model", props.model()), "harness", "ref",
                 "harness_version", BenchProperties.HARNESS_VERSION, "java_home", cfg.get("java_home"),
                 "runner", System.getProperty("ace.build", "ace-service")));
+        // was always read for comparability (StatsService.KEY_FIELDS) but never actually written -
+        // every run compared equal (both null) on this field, giving it no real protective value.
+        // A run-level override replaces ReferenceAgent's own per-phase-kind DEFAULT_REASONING
+        // table entirely (design rule 5: "record what was sent, not what was configured");
+        // unset stays "default"
+        manifest.put("reasoning_policy", cfg.get("reasoning_effort") instanceof String re && !re.isBlank() ? re : "default");
         ((Map<String, String>) manifest.get("snapshots")).put("start", RunBenchSupport.snapshot(ws, "phase/start"));
         Path journal = rd.resolve("interactions.jsonl");
 
@@ -368,7 +389,7 @@ public class RunBench {
             long tokens = "p2_implementation".equals(pid) ? props.phaseTokens("p2_implementation")
                     : "implement".equals(pid) ? props.phaseTokens("implement") : props.phaseTokens("p1_plan");
             final boolean isImpl = pid.equals(impl);
-            final var proxy = proxies.start(journal, tokens, null, (Integer) cfg.get("max_output_tokens"));
+            final var proxy = proxies.start(journal, tokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
             Map<String, Object> rec;
             try {
                 rec = sessionWithPolicy(cfg, runId, pid, PHASE_TEXT.get(pid)[1] + (isImpl ? "\n\n" + Packs.MONO_STATUS_INSTRUCTION : ""),
@@ -443,7 +464,7 @@ public class RunBench {
         if (!plainPlan && "length".equals(rec.finish()) && rec.rc() != 124 && wall - (System.currentTimeMillis() - t0) / 1000 > 120) {
             final long spent = ((Number) JournalFacts.facts(journal.toString(), rec.start().toString(), nowIso(), null, null, null).getOrDefault("completion_tokens", 0L)).longValue();
             long remaining = Math.max(1000, tokens - spent);   // what is LEFT, not a fresh budget (R4 C-7); a fresh proxy enforces it
-            final var contProxy = proxies.start(journal, remaining, null, (Integer) cfg.get("max_output_tokens"));
+            final var contProxy = proxies.start(journal, remaining, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
             try {
                 final long contWall = wall - (System.currentTimeMillis() - t0) / 1000;
                 rec = RunBenchSupport.runBounded(contWall, name + "-continue", rd.resolve("sessions"), sid, contProxy.abort(), () -> agent.run(name + "-continue",
@@ -470,7 +491,7 @@ public class RunBench {
             final double scale = shortDps != null && here != null && here > 0 ? Math.min(4.0, Math.max(1.0, shortDps / here)) : 1.0;
             final String wrapInstr = name.startsWith("p") || name.equals("implement") ? Packs.MONO_WRAPUP_INSTRUCTION : Packs.wrapupInstruction(name);
             // the wrap-up is a continuation on top of the task budget: its own proxy with its own 2000 tokens (run_bench run_task)
-            final var wrapProxy = proxies.start(journal, 2000L, null, (Integer) cfg.get("max_output_tokens"));
+            final var wrapProxy = proxies.start(journal, 2000L, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
             final long wrapWall = (long) (300 * scale);
             final ReferenceAgent.SessionResult w;   // assigned exactly once below; a legal blank final
             try {
@@ -548,7 +569,7 @@ public class RunBench {
                 rec = new LinkedHashMap<>(Map.of("id", "p0_definition", "rc", 0, "resumed", true));
                 ((Map<String, String>) manifest.get("snapshots")).put("p0", RunBenchSupport.gitOut(ws, "rev-parse", "phase/p0"));
             } else {
-                final var proxy = proxies.start(journal, (long) props.phaseTokens("p0_definition"), null, (Integer) cfg.get("max_output_tokens"));
+                final var proxy = proxies.start(journal, (long) props.phaseTokens("p0_definition"), null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
                 try {
                     rec = sessionWithPolicy(cfg, runId, "p0_definition", PHASE_TEXT.get("p0_definition")[1],
                             props.phaseWall("p0_definition"), (long) props.phaseTokens("p0_definition"), rd, ws, journal, proxy, null, null, null, true);
@@ -583,7 +604,7 @@ public class RunBench {
                 p1rec = new LinkedHashMap<>(Map.of("id", "p1_plan", "rc", 0, "resumed", true));
                 planSha = RunBenchSupport.gitOut(ws, "rev-parse", "phase/p1");
             } else {
-                final var proxy = proxies.start(journal, (long) props.phaseTokens("p1_plan"), null, (Integer) cfg.get("max_output_tokens"));
+                final var proxy = proxies.start(journal, (long) props.phaseTokens("p1_plan"), null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
                 try {
                     p1rec = sessionWithPolicy(cfg, runId, "p1_plan", PHASE_TEXT.get("p1_plan")[1],
                             props.phaseWall("p1_plan"), (long) props.phaseTokens("p1_plan"), rd, ws, journal, proxy, null, null, null, true);
@@ -658,7 +679,7 @@ public class RunBench {
                     } else {
                         final String tp = Packs.taskPack(ws, t, tasks, snapshots, doneSet(snapshots), prev, prevSession, handoffs, prevVerified, mergeConflicts.isEmpty() ? null : mergeConflicts, null);
                         Files.writeString(rd.resolve("packs/" + t.id + ".md"), tp);
-                        final var proxy = proxies.start(journal, taskTokens, null, (Integer) cfg.get("max_output_tokens"));
+                        final var proxy = proxies.start(journal, taskTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
                         try {
                             rec = sessionWithPolicy(cfg, runId, t.id, Packs.taskInstruction(t.id) + "\n\n" + tp,
                                     taskWall, taskTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null);
@@ -694,7 +715,7 @@ public class RunBench {
         } else {
             final String tp = Packs.taskPack(ws, new PlanTask("INTEGRATION", "integrate and verify"), tasks, snapshots, doneSet(snapshots), prev, prevSession, handoffs, prevVerified, mergeConflicts.isEmpty() ? null : mergeConflicts, null);
             Files.writeString(rd.resolve("packs/INTEGRATION.md"), tp);
-            final var proxy = proxies.start(journal, taskTokens, null, (Integer) cfg.get("max_output_tokens"));
+            final var proxy = proxies.start(journal, taskTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
             try {
                 rec = sessionWithPolicy(cfg, runId, "INTEGRATION", Packs.INTEGRATION_INSTRUCTION + "\n\n" + tp,
                         (long) (taskWall * 0.2), taskTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null);
@@ -723,7 +744,7 @@ public class RunBench {
     }
 
     private void handoffStep(final Map<String, Object> cfg, final String runId, final PlanTask t, final Path rd, final Path ws, final Path journal, final Map<String, Object> manifest, Map<String, Object> rec) throws Exception {
-        final var proxy = proxies.start(journal, 3000L, null, (Integer) cfg.get("max_output_tokens"));
+        final var proxy = proxies.start(journal, 3000L, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
         final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 180_000L;
         final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
         try {
@@ -764,7 +785,7 @@ public class RunBench {
             log.info("run {}: phase/parallel_plan already completed in a prior attempt, resuming past it", runId);
             ((Map<String, String>) manifest.get("snapshots")).put("parallel_plan", RunBenchSupport.gitOut(ws, "rev-parse", "phase/parallel_plan"));
         } else {
-            final var proxy = proxies.start(journal, 8000L, null, (Integer) cfg.get("max_output_tokens"));
+            final var proxy = proxies.start(journal, 8000L, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
             final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 180_000L;
             final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
             final String planSid = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/PARALLEL_PLAN").getBytes()).toString();
@@ -845,7 +866,7 @@ public class RunBench {
                 try {
                     sem.acquire();
                     try {
-                        final var proxy = proxies.start(taskJournals.get(t.id), taskTokens, t.id, (Integer) cfg.get("max_output_tokens"));
+                        final var proxy = proxies.start(taskJournals.get(t.id), taskTokens, t.id, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
                         Map<String, String> envT = RunBenchSupport.scrubbedEnv(Path.of(home + "-home-" + t.id).toString(), runId + "/" + t.id, (String) cfg.get("java_home"));   // the task's own HOME copy (R6)
                         Map<String, Object> rec;
                         try {
@@ -959,7 +980,7 @@ public class RunBench {
                 fafter = RunBenchSupport.gitOut(ws, "rev-parse", "phase/" + fid);
             } else {
                 Files.writeString(rd.resolve("packs/" + fid + ".md"), Packs.fixPack(ws, problems));
-                final var proxy = proxies.start(journal, 20000L, null, (Integer) cfg.get("max_output_tokens"));
+                final var proxy = proxies.start(journal, 20000L, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
                 try {
                     frec = sessionWithPolicy(cfg, runId, fid, Packs.FIX_INSTRUCTION.replace("{tasks}", String.join(", ", waveIds)).replace("{id}", fid),
                             900, 20000L, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null);

@@ -1,5 +1,6 @@
 package com.strgmai.ace.service.proxy;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.sun.net.httpserver.HttpServer;
@@ -178,7 +179,8 @@ class RecordingProxyTest {
         final var journal = Files.createTempFile("proxy-test", ".jsonl");
         final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
         try {
-            final var proxyBase = proxy.start(journal, 1000L, null, 555);
+            final var proxyBase = proxy.start(journal, 1000L, null,
+                    new RecordingProxy.SamplerOverrides(null, null, null, null, 555, null));
             sendPlainChatRequest(proxyBase);
             assertEquals(555, upstreamSawMaxTokens.get(), "the run's own derived cap must reach the actual request");
         } finally {
@@ -209,6 +211,64 @@ class RecordingProxyTest {
         upstream.createContext("/v1/chat/completions", ex -> {
             final var body = new ObjectMapper().readTree(ex.getRequestBody().readAllBytes());
             sawMaxTokens.set(body.path("max_tokens").asInt());
+            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().set("Content-Type", "application/json");
+            ex.sendResponseHeaders(200, resp.length);
+            try (var os = ex.getResponseBody()) { os.write(resp); }
+        });
+        return upstream;
+    }
+
+    /** 2026-09-25 (#72): top_k/repetition_penalty/reasoning_effort have no operator-wide ace.*
+     *  default (unlike temperature/top_p/max_tokens) - each must be omitted entirely from the
+     *  request when the run didn't set one, and present with the run's exact value when it did. */
+    @Test
+    void samplerOverridesReachTheForwardedRequestOnlyWhenSet() throws Exception {
+        final AtomicReference<JsonNode> sawBody = new AtomicReference<>();
+        final HttpServer upstream = upstreamCapturingBody(sawBody);
+        upstream.start();
+        final var journal = Files.createTempFile("proxy-test", ".jsonl");
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        try {
+            final var proxyBase = proxy.start(journal, 1000L, null,
+                    new RecordingProxy.SamplerOverrides(0.7, 0.9, 40, 1.1, null, "high"));
+            sendPlainChatRequest(proxyBase);
+            final var body = sawBody.get();
+            assertEquals(0.7, body.path("temperature").asDouble(), 0.001);
+            assertEquals(0.9, body.path("top_p").asDouble(), 0.001);
+            assertEquals(40, body.path("top_k").asInt());
+            assertEquals(1.1, body.path("repetition_penalty").asDouble(), 0.001);
+            assertEquals("high", body.path("reasoning_effort").asText());
+        } finally {
+            proxy.stop();
+            upstream.stop(0);
+        }
+    }
+
+    @Test
+    void unsetTopKAndRepetitionPenaltyAndReasoningEffortAreOmittedEntirely() throws Exception {
+        final AtomicReference<JsonNode> sawBody = new AtomicReference<>();
+        final HttpServer upstream = upstreamCapturingBody(sawBody);
+        upstream.start();
+        final var journal = Files.createTempFile("proxy-test", ".jsonl");
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        try {
+            final var proxyBase = proxy.start(journal, 1000L, null);   // SamplerOverrides.NONE
+            sendPlainChatRequest(proxyBase);
+            final var body = sawBody.get();
+            assertFalse(body.has("top_k"), "no run-specific top_k must mean no top_k on the wire at all");
+            assertFalse(body.has("repetition_penalty"));
+            assertFalse(body.has("reasoning_effort"));
+        } finally {
+            proxy.stop();
+            upstream.stop(0);
+        }
+    }
+
+    private static HttpServer upstreamCapturingBody(final AtomicReference<JsonNode> sawBody) throws Exception {
+        final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        upstream.createContext("/v1/chat/completions", ex -> {
+            sawBody.set(new ObjectMapper().readTree(ex.getRequestBody().readAllBytes()));
             final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(StandardCharsets.UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(200, resp.length);
