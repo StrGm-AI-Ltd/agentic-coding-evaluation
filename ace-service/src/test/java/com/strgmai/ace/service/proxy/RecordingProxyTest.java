@@ -300,4 +300,38 @@ class RecordingProxyTest {
                 .build();
         client.send(request, HttpResponse.BodyHandlers.ofString());
     }
+
+    /** #93: a chat request that isn't a parseable JSON object must be refused outright - not
+     *  silently forwarded unmetered and unpinned by falling through to plain proxying. */
+    @Test
+    void unparseableChatRequestBodyIsRefusedNotSilentlyForwarded() throws Exception {
+        final var upstreamCalled = new AtomicReference<>(false);
+        final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        upstream.createContext("/", ex -> {
+            upstreamCalled.set(true);
+            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(200, resp.length);
+            try (var os = ex.getResponseBody()) { os.write(resp); }
+        });
+        upstream.start();
+        final var journal = Files.createTempFile("proxy-test", ".jsonl");
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        try {
+            final var proxyBase = proxy.start(journal, 1000L, null);
+            final var client = HttpClient.newHttpClient();
+            for (String malformed : List.of("not json at all", "[]", "\"a bare string\"")) {
+                final var request = HttpRequest.newBuilder(URI.create(proxyBase + "/chat/completions"))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(malformed))
+                        .build();
+                final var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                assertEquals(400, response.statusCode(), "malformed body: " + malformed);
+                assertTrue(response.body().contains("invalid_request"), response.body());
+            }
+            assertFalse(upstreamCalled.get(), "an unparseable request must never reach upstream unmetered/unpinned");
+        } finally {
+            proxy.stop();
+            upstream.stop(0);
+        }
+    }
 }

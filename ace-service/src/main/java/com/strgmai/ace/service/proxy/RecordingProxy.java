@@ -175,11 +175,24 @@ public class RecordingProxy {
         final String sessionId = x.getRequestHeaders().getFirst(SESSION_HEADER);
         if (sessionId != null) rec.put("session_id", sessionId);
         JsonNode req = null;
-        // a chat request that fails to parse here silently skips budget enforcement and sampler
-        // pinning below (isChat requires a parsed object) - worth knowing about, not just "not chat"
         try { if (body.length > 0) req = json.readTree(body); }
         catch (Exception e) { log.warn("could not parse request body as JSON for {} {}: {}", x.getRequestMethod(), path, e.toString()); }
-        final boolean isChat = path.startsWith("/v1/chat/completions") && req != null && req.isObject();
+        final boolean isChatPath = path.startsWith("/v1/chat/completions");
+        // #93: a chat request whose body isn't a parseable JSON object must not silently skip budget
+        // enforcement and sampler pinning below by just falling through to plain forwarding - refuse
+        // it outright instead, so the harness's core integrity guarantee ("pins the sampler params
+        // onto every chat request", the phase token budget) can't be quietly bypassed by any caller
+        // whose request happens not to parse (today only ReferenceAgent's LangChain4j client calls
+        // this proxy, and it always serializes structurally, but that must not be the only thing
+        // keeping this guarantee true).
+        if (isChatPath && (req == null || !req.isObject())) {
+            final byte[] out = json.writeValueAsBytes(json.createObjectNode().set("error",
+                    json.createObjectNode().put("message", "ace-service: request body is not a parseable JSON object; refusing to forward it unmetered and unpinned").put("type", "invalid_request")));
+            reply(x, 400, out);
+            journalRecord(rec.put("status", 400).put("invalid_request", true).put("latency_sec", 0.0), req, null);
+            return;
+        }
+        final boolean isChat = isChatPath;
         if (isChat) {
             final ObjectNode r = (ObjectNode) req;
             final Double temp = overrides.temperature() != null ? overrides.temperature() : props.temperature();
