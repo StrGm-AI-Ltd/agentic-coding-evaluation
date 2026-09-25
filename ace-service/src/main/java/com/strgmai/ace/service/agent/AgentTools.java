@@ -22,8 +22,19 @@ public final class AgentTools {
         return (p.isAbsolute() ? p : Paths.get(cwd).resolve(p)).normalize();
     }
 
+    /** confines read/write/edit to the task workspace (#91): resolve() honors an absolute path or a
+     *  ".."-climbing relative path verbatim, which otherwise lets the model touch any file the JVM can
+     *  reach (e.g. write(path="/Users/.../.ssh/authorized_keys")). This closes the direct path-string
+     *  vector; it does not (and cannot, on its own) stop a symlink the model created inside the
+     *  workspace via the still-unconfined `bash` tool from pointing back out - full sandboxing of the
+     *  agent's shell access is a separate, larger decision tracked in #91. */
+    static boolean withinWorkspace(final String cwd, final Path resolved) {
+        return resolved.normalize().startsWith(Paths.get(cwd).normalize());
+    }
+
     public static Outcome read(final String cwd, final Map<String, Object> a) {
         final Path p = resolve(cwd, String.valueOf(a.getOrDefault("path", "")));
+        if (!withinWorkspace(cwd, p)) return new Outcome("error: path escapes the task workspace: " + a.get("path"), true);
         if (!Files.isRegularFile(p)) return new Outcome("error: no such file: " + a.get("path"), true);
         List<String> lines;
         try { lines = Files.readAllLines(p, StandardCharsets.UTF_8); }
@@ -46,6 +57,7 @@ public final class AgentTools {
         final String content = a.get("content") == null ? null : String.valueOf(a.get("content"));
         if (content == null) return new Outcome("error: content is required", true);
         final Path p = resolve(cwd, String.valueOf(a.getOrDefault("path", "")));
+        if (!withinWorkspace(cwd, p)) return new Outcome("error: path escapes the task workspace: " + a.get("path"), true);
         try {
             Files.createDirectories(p.getParent() == null ? Paths.get(".") : p.getParent());
             Files.writeString(p, content, StandardCharsets.UTF_8);
@@ -56,6 +68,7 @@ public final class AgentTools {
     /** exact-match replace: the match must be unique (or replace_all); include context to make it unique */
     public static Outcome edit(final String cwd, final Map<String, Object> a) {
         final Path p = resolve(cwd, String.valueOf(a.getOrDefault("path", "")));
+        if (!withinWorkspace(cwd, p)) return new Outcome("error: path escapes the task workspace: " + a.get("path"), true);
         if (!Files.isRegularFile(p)) return new Outcome("error: no such file: " + a.get("path"), true);
         String src;
         try { src = Files.readString(p, StandardCharsets.UTF_8); } catch (IOException e) { return new Outcome("error: " + e, true); }

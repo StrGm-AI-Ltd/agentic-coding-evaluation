@@ -85,6 +85,36 @@ class AgentToolsTest {
     }
 
     @Test
+    void toolsRefuseToEscapeTheWorkspace() throws IOException {
+        final var ws = Files.createTempDirectory("ws");
+        final var outside = Files.createTempFile("outside", ".txt");
+        Files.writeString(outside, "secret");
+
+        final AgentTools.Outcome readOutside = AgentTools.read(ws.toString(), Map.of("path", outside.toString()));
+        assertTrue(readOutside.isError());
+        assertTrue(readOutside.output().contains("escapes the task workspace"));
+
+        final AgentTools.Outcome writeOutside = AgentTools.write(ws.toString(), Map.of("path", outside.toString(), "content", "pwned"));
+        assertTrue(writeOutside.isError());
+        assertTrue(writeOutside.output().contains("escapes the task workspace"));
+        assertEquals("secret", Files.readString(outside), "the write must never reach the file outside the workspace");
+
+        final AgentTools.Outcome editOutside = AgentTools.edit(ws.toString(), Map.of("path", outside.toString(), "old_string", "secret", "new_string", "pwned"));
+        assertTrue(editOutside.isError());
+        assertTrue(editOutside.output().contains("escapes the task workspace"));
+        assertEquals("secret", Files.readString(outside));
+
+        // a ".."-climbing relative path is exactly as much an escape as an absolute one
+        final AgentTools.Outcome traversal = AgentTools.write(ws.toString(), Map.of("path", "../" + outside.getFileName(), "content", "pwned"));
+        assertTrue(traversal.isError());
+        assertEquals("secret", Files.readString(outside));
+
+        // a path that stays inside the workspace must still work normally
+        final AgentTools.Outcome ok = AgentTools.write(ws.toString(), Map.of("path", "inside.txt", "content", "fine"));
+        assertFalse(ok.isError());
+    }
+
+    @Test
     void theSessionFileResumesWithItsMessages() throws IOException {
         final var dir = Files.createTempDirectory("sessions");
         final var s = new AgentSession(dir, "sid-1", false);
