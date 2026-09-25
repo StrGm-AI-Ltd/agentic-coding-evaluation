@@ -46,11 +46,16 @@ public class ApiExceptionHandler {
 
     /** anything else: an unexpected server-side failure. Same {"detail": ...} shape as every other
      *  error - never Spring's default whitebox 500 body - and always logged with the request it
-     *  came from, so an unhandled exception is never silently invisible to the operator. */
+     *  came from, so an unhandled exception is never silently invisible to the operator. Unlike the
+     *  three handlers above (whose messages are deliberately user-facing), the client gets a generic
+     *  message here rather than the raw exception (#86): full detail is already in the log line just
+     *  above, and an uncaught exception's own message could otherwise leak internal detail (class
+     *  names, paths, SQL) to any API caller - now that ACE's target audience is any local-model
+     *  tinkerer, not only a single-machine setup that's never reverse-proxied. */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> serverError(final Exception e, final HttpServletRequest req) {
         log.error("unhandled exception on {} {}", req.getMethod(), req.getRequestURI(), e);
-        return body(HttpStatus.INTERNAL_SERVER_ERROR, e);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("detail", "internal error; see the server log for detail"));
     }
 
     private static ResponseEntity<Map<String, Object>> body(final HttpStatus status, final Exception e) {
