@@ -97,7 +97,7 @@ public class BenchController {
             if (cleanPath.equals("workspace") || cleanPath.startsWith("workspace/"))
                 return ResponseEntity.status(404).body(Map.of("detail", "workspace is the agent's live tree; not part of the record"));
             final Path target = base.resolve(cleanPath).normalize();
-            if (!target.startsWith(base) || !Files.isRegularFile(target))
+            if (!target.startsWith(base) || !Files.isRegularFile(target) || !isContainedEvenViaSymlinks(base, target))
                 return ResponseEntity.status(404).body(Map.of("detail", "not found"));
             return ResponseEntity.ok().header("Content-Type", "text/plain; charset=utf-8").body(Files.readString(target));
         } catch (Exception e) {
@@ -310,5 +310,17 @@ public class BenchController {
     public Map<String, Object> status() {
         return Map.of("harness_version", BenchProperties.HARNESS_VERSION, "result_schema", BenchProperties.RESULT_SCHEMA,
                 "checks", CheckId.values().length, "worker_busy", worker.busyNow());
+    }
+
+    /** #85: target.normalize() only collapses ".."/"." lexically - it does not follow symlinks, so a
+     *  symlink planted inside the results tree pointing outside `base` would pass a plain
+     *  target.startsWith(base) check and still be followed at read time. Re-checks containment
+     *  against the REAL (symlink-resolved) path too - defense-in-depth given this threat model
+     *  literally involves executing arbitrary LLM-directed shell/file actions elsewhere in the same
+     *  run. Only called once `target` is already confirmed to be an existing regular file, so
+     *  toRealPath() is safe to call here. */
+    static boolean isContainedEvenViaSymlinks(final Path base, final Path target) {
+        try { return target.toRealPath().startsWith(base); }
+        catch (Exception e) { return false; }
     }
 }

@@ -15,6 +15,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -22,6 +23,8 @@ import java.util.UUID;
 
 import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
 import static com.strgmai.ace.service.jooq.Tables.RUNS;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -255,5 +258,25 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.indicative[0].key_hash").value("keyB"))
                 .andExpect(jsonPath("$.ranked[0].key_hash").value("keyC"))            // 90.0 mean sorts before 40.0
                 .andExpect(jsonPath("$.ranked[1].key_hash").value("keyA"));
+    }
+
+    /** #85: a symlink planted inside the served results subtree, pointing outside it, must not be
+     *  followed - normalize() alone (lexical "../." collapsing) cannot catch this, only resolving
+     *  the real path can. */
+    @Test
+    void isContainedEvenViaSymlinks_rejectsASymlinkPointingOutsideBase() throws Exception {
+        final Path base = Files.createTempDirectory("results-base").toRealPath();
+        final Path outside = Files.createTempDirectory("outside");
+        final Path secret = outside.resolve("secret.txt");
+        Files.writeString(secret, "top secret");
+
+        final Path normalFile = base.resolve("oracle.json");
+        Files.writeString(normalFile, "{}");
+        assertTrue(BenchController.isContainedEvenViaSymlinks(base, normalFile), "an ordinary file inside base must pass");
+
+        final Path escapingLink = base.resolve("innocuous-looking-file.txt");
+        Files.createSymbolicLink(escapingLink, secret);
+        assertFalse(BenchController.isContainedEvenViaSymlinks(base, escapingLink),
+                "a symlink inside base pointing outside it must be rejected, not silently followed");
     }
 }
