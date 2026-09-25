@@ -38,7 +38,7 @@ class ExperimentsServiceTest {
     private static ExperimentsService serviceWithUnreachableModelServer() {
         // port 1 refuses instantly: ContextProbe.models() catches the failure and returns {}, so
         // contextWindow() falls through to null - deterministic, no real network dependency
-        return new ExperimentsService(null, null, props("http://127.0.0.1:1/v1"), null);
+        return new ExperimentsService(null, null, props("http://127.0.0.1:1/v1"), null, new com.strgmai.ace.service.runner.ContextProbe());
     }
 
     @Test
@@ -78,7 +78,7 @@ class ExperimentsServiceTest {
         server.start();
         try {
             ExperimentsService svc = new ExperimentsService(null, null,
-                    props("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"), null);
+                    props("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"), null, new com.strgmai.ace.service.runner.ContextProbe());
             List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab",
                     Map.of("model_a", "qwenmodel", "model_b", "llamamodel"), 1);
 
@@ -237,7 +237,7 @@ class ExperimentsServiceTest {
         final DSLContext db = DSL.using(new org.jooq.impl.DataSourceConnectionProvider(txAwareDs), SQLDialect.SQLITE);
         final var queue = new JobQueue(db);
         final var tx = new TransactionTemplate(new DataSourceTransactionManager(ds));
-        final var svc = new ExperimentsService(db, queue, props("http://127.0.0.1:1/v1"), tx);
+        final var svc = new ExperimentsService(db, queue, props("http://127.0.0.1:1/v1"), tx, new com.strgmai.ace.service.runner.ContextProbe());
         final var params = Map.of("model", "modelX", "arms", List.of("orch"));
 
         // arm r2's run id is deterministic given the tag; plan()'s tag has second resolution, so peek
@@ -284,7 +284,7 @@ class ExperimentsServiceTest {
     @Test
     void finalizeIfDoneMarksTheExperimentCancelledWhenEveryJobWasCancelled() throws Exception {
         final DSLContext db = freshDb("ace-experiments-allcancelled-test");
-        final var svc = new ExperimentsService(db, null, props("http://127.0.0.1:1/v1"), null);
+        final var svc = new ExperimentsService(db, null, props("http://127.0.0.1:1/v1"), null, new com.strgmai.ace.service.runner.ContextProbe());
         final UUID experimentId = UUID.randomUUID();
         db.insertInto(EXPERIMENTS).set(EXPERIMENTS.ID, experimentId).set(EXPERIMENTS.NAME, "exp").set(EXPERIMENTS.TAG, "t")
                 .set(EXPERIMENTS.TEMPLATE, "harness_effect").set(EXPERIMENTS.PARAMS, "{}").set(EXPERIMENTS.K, 1).execute();
@@ -301,7 +301,7 @@ class ExperimentsServiceTest {
     @Test
     void finalizeIfDoneLeavesTheExperimentQueuedWhileAJobIsStillPending() throws Exception {
         final DSLContext db = freshDb("ace-experiments-pending-test");
-        final var svc = new ExperimentsService(db, null, props("http://127.0.0.1:1/v1"), null);
+        final var svc = new ExperimentsService(db, null, props("http://127.0.0.1:1/v1"), null, new com.strgmai.ace.service.runner.ContextProbe());
         final UUID experimentId = UUID.randomUUID();
         db.insertInto(EXPERIMENTS).set(EXPERIMENTS.ID, experimentId).set(EXPERIMENTS.NAME, "exp").set(EXPERIMENTS.TAG, "t")
                 .set(EXPERIMENTS.TEMPLATE, "harness_effect").set(EXPERIMENTS.PARAMS, "{}").set(EXPERIMENTS.K, 1).execute();
@@ -331,7 +331,7 @@ class ExperimentsServiceTest {
     @Test
     void finalizeIfDoneComparesSpeedMetricsAlongsideFunctionalScore(@TempDir final Path tmp) throws Exception {
         final DSLContext db = freshDb("ace-experiments-speed-test");
-        final var svc = new ExperimentsService(db, null, props("http://127.0.0.1:1/v1"), null);
+        final var svc = new ExperimentsService(db, null, props("http://127.0.0.1:1/v1"), null, new com.strgmai.ace.service.runner.ContextProbe());
         final UUID experimentId = UUID.randomUUID();
         db.insertInto(EXPERIMENTS).set(EXPERIMENTS.ID, experimentId).set(EXPERIMENTS.NAME, "exp").set(EXPERIMENTS.TAG, "t")
                 .set(EXPERIMENTS.TEMPLATE, "model_ab").set(EXPERIMENTS.PARAMS, "{}").set(EXPERIMENTS.K, 1).execute();
@@ -358,7 +358,7 @@ class ExperimentsServiceTest {
     @Test
     void finalizeIfDoneSkipsASpeedMetricMissingOnOneSide(@TempDir final Path tmp) throws Exception {
         final DSLContext db = freshDb("ace-experiments-speed-missing-test");
-        final var svc = new ExperimentsService(db, null, props("http://127.0.0.1:1/v1"), null);
+        final var svc = new ExperimentsService(db, null, props("http://127.0.0.1:1/v1"), null, new com.strgmai.ace.service.runner.ContextProbe());
         final UUID experimentId = UUID.randomUUID();
         db.insertInto(EXPERIMENTS).set(EXPERIMENTS.ID, experimentId).set(EXPERIMENTS.NAME, "exp").set(EXPERIMENTS.TAG, "t")
                 .set(EXPERIMENTS.TEMPLATE, "model_ab").set(EXPERIMENTS.PARAMS, "{}").set(EXPERIMENTS.K, 1).execute();
