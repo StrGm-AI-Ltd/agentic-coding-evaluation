@@ -130,4 +130,95 @@ class TailerTest {
         assertEquals(2, events.size());   // T1 and its continuation; stable is not a step
         assertTrue(events.stream().anyMatch(e -> "T1".equals(e.get("step")) && Boolean.TRUE.equals(e.get("continuation"))));
     }
+
+    private static final String SESSION_HEADER = "{\"type\": \"session\", \"id\": \"755478fc-f323-565e-92f8-1a5b10584e41\", "
+            + "\"model\": \"m\", \"ts\": \"t\", \"agent\": \"a\", \"label\": \"T2\"}\n";
+
+    /** AgentSession.header() writes the stage/task name it's actually running (RunBench's "name"
+     *  argument) as "label" - the sessions grid's new "description" column is built from this. */
+    @Test
+    void sessionStartedForwardsTheSessionsLabel() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"), SESSION_HEADER);
+        final var events = new Tailer().poll(runDir);
+        final var started = events.stream().filter(e -> "session_started".equals(e.get("type"))).findFirst().orElseThrow();
+        assertEquals("T2", started.get("label"));
+    }
+
+    /** The live sessions grid always showed "running", even long after a session had genuinely
+     *  finished: the old detection ported from Python looked for a "done after N turns (finish=X)"
+     *  line in a *.log file nothing in this Java runner ever writes. The real signal is a session's
+     *  own trailing {"type":"end"} line - this must be read and reported with the session's real id
+     *  (not guessed as "the oldest still-open session", which also gets it wrong once sessions can
+     *  finish out of start order). */
+    @Test
+    void sessionEndEmitsSessionDoneWithTheRealSessionIdAndFinishReason() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"),
+                SESSION_HEADER + "{\"type\": \"end\", \"finish\": \"stop\", \"turns\": 2}\n");
+        final var events = new Tailer().poll(runDir);
+        final var done = events.stream().filter(e -> "session_done".equals(e.get("type"))).findFirst().orElseThrow();
+        assertEquals("755478fc-f323-565e-92f8-1a5b10584e41", done.get("session_id"));
+        assertEquals("stop", done.get("finish"));
+    }
+
+    @Test
+    void sessionEndIsNotReportedTwice() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"),
+                SESSION_HEADER + "{\"type\": \"end\", \"finish\": \"stop\", \"turns\": 2}\n");
+        final var tailer = new Tailer();
+        final long first = tailer.poll(runDir).stream().filter(e -> "session_done".equals(e.get("type"))).count();
+        final long second = tailer.poll(runDir).stream().filter(e -> "session_done".equals(e.get("type"))).count();
+        assertEquals(1, first);
+        assertEquals(0, second);
+    }
+
+    @Test
+    void aSessionStillInProgressProducesNoSessionDone() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"),
+                SESSION_HEADER + "{\"type\": \"message\", \"message\": {\"role\": \"assistant\"}}\n");
+        final var events = new Tailer().poll(runDir);
+        assertTrue(events.stream().noneMatch(e -> "session_done".equals(e.get("type"))));
+    }
+
+    @Test
+    void sessionEndArrivingOnALaterPollIsStillDetected() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("sessions"));
+        final var f = runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl");
+        Files.writeString(f, SESSION_HEADER);
+        final var tailer = new Tailer();
+        assertTrue(tailer.poll(runDir).stream().noneMatch(e -> "session_done".equals(e.get("type"))));
+        Files.writeString(f, "{\"type\": \"end\", \"finish\": \"length\", \"turns\": 9}\n", java.nio.file.StandardOpenOption.APPEND);
+        final var done = tailer.poll(runDir).stream().filter(e -> "session_done".equals(e.get("type"))).findFirst().orElseThrow();
+        assertEquals("length", done.get("finish"));
+    }
+
+    /** RunBench writes execution_order.json (the real planned task waves) before any task session
+     *  starts - the live view needs this to explain a numerically-later task's session starting
+     *  before an earlier one in the same wave (e.g. T4 before T3, when T3 only depends on T2). */
+    @Test
+    void executionOrderIsReportedOnceWhenTheFileAppears() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.writeString(runDir.resolve("execution_order.json"), "[[\"T1\"],[\"T2\",\"T4\"],[\"T3\"]]");
+        final var tailer = new Tailer();
+        final var events = tailer.poll(runDir);
+        final var order = events.stream().filter(e -> "execution_order".equals(e.get("type"))).findFirst().orElseThrow();
+        assertEquals("[[\"T1\"],[\"T2\",\"T4\"],[\"T3\"]]".replace(" ", ""),
+                order.get("waves").toString().replaceAll("\\s", ""));
+        assertTrue(tailer.poll(runDir).stream().noneMatch(e -> "execution_order".equals(e.get("type"))),
+                "the file never changes after it's written - reported once, not every poll");
+    }
+
+    @Test
+    void aRunWithNoExecutionOrderFileReportsNone() throws Exception {
+        final var events = new Tailer().poll(Files.createTempDirectory("tailer"));
+        assertTrue(events.stream().noneMatch(e -> "execution_order".equals(e.get("type"))));
+    }
 }

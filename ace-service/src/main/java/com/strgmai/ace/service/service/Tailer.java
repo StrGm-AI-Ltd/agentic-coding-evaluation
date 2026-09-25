@@ -10,7 +10,6 @@ import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
-import java.util.regex.Pattern;
 
 /** Port of service/progress.py (WITH the byte-exact offset fix from the Python review): live
  *  progress inferred from the files a run already writes. Stateless across connections: each caller
@@ -19,30 +18,38 @@ import java.util.regex.Pattern;
 public final class Tailer {
     private static final Logger log = LoggerFactory.getLogger(Tailer.class);
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final Pattern DONE = Pattern.compile("done after (\\d+) turns \\(finish=(\\w+), tool errors (\\d+), compactions (\\d+)\\)");
 
     private final Set<String> seenFiles = new HashSet<>();
     private final Map<String, Long> offsets = new HashMap<>();
     private final Set<String> sessionIds = new HashSet<>();
+    private final Map<String, String> sessionIdByFile = new HashMap<>();
+    private final Set<String> doneSessionFiles = new HashSet<>();
+    private boolean executionOrderReported;
 
     public List<Map<String, Object>> poll(final Path runDir) {
         final List<Map<String, Object>> events = new ArrayList<>();
         newFiles(runDir.resolve("packs"), events);
         newFiles(runDir.resolve("instructions"), events);
         newSessions(runDir.resolve("sessions"), events);
+        newExecutionOrder(runDir.resolve("execution_order.json"), events);
         tailRequests(runDir.resolve("interactions.jsonl"), events);
-        try (DirectoryStream<Path> s = Files.newDirectoryStream(runDir, "*.log")) {
-            for (Path p : s) {
-                String finish = null;
-                for (String line : tailLines(p)) {
-                    final var m = DONE.matcher(line);
-                    if (m.find()) finish = m.group(2);
-                }
-                if (finish != null)
-                    events.add(Map.of("type", "session_done", "log", p.getFileName().toString(), "finish", finish));
-            }
-        } catch (IOException e) { log.debug("could not list *.log files under {}: {}", runDir, e.toString()); }
         return events;
+    }
+
+    /** RunBench writes this once, before any task session starts: the real planned task order
+     *  (waves), so a live viewer can see e.g. "T2, T4" are a wave (either can run first/only one at
+     *  a time under parallel=1) BEFORE a numerically-later task's session starting looks like the
+     *  runner going backwards. One-shot: the file never changes after it's written. */
+    private void newExecutionOrder(final Path path, final List<Map<String, Object>> events) {
+        if (executionOrderReported || !Files.isRegularFile(path)) return;
+        try {
+            final JsonNode waves = JSON.readTree(path.toFile());
+            if (!waves.isArray()) return;
+            executionOrderReported = true;
+            events.add(Map.of("type", "execution_order", "waves", waves));
+        } catch (Exception e) {
+            log.debug("execution_order.json for {} not fully written yet, retrying next poll: {}", path, e.toString());
+        }
     }
 
     private void newFiles(final Path dir, final List<Map<String, Object>> events) {
@@ -72,18 +79,47 @@ public final class Tailer {
         if (!Files.isDirectory(dir)) return;
         try (DirectoryStream<Path> s = Files.newDirectoryStream(dir)) {
             for (Path p : s) {
-                if (!Files.isRegularFile(p) || sessionIds.contains(p.getFileName().toString())) continue;
-                try {
-                    final String first = Files.readString(p, StandardCharsets.UTF_8).split("\n", 2)[0];
-                    final JsonNode r = JSON.readTree(first);
-                    if (!"session".equals(r.path("type").asText())) continue;
-                    sessionIds.add(p.getFileName().toString());
-                    events.add(Map.of("type", "session_started", "session_id", r.path("id").asText(),
-                            "agent", r.path("agent").asText(), "model", r.path("model").asText(),
-                            "path", "sessions/" + p.getFileName()));
-                } catch (Exception e) { log.debug("session header for {} not fully written yet, retrying next poll: {}", p, e.toString()); }
+                if (!Files.isRegularFile(p)) continue;
+                final String key = p.getFileName().toString();
+                if (!sessionIds.contains(key)) {
+                    try {
+                        final String first = Files.readString(p, StandardCharsets.UTF_8).split("\n", 2)[0];
+                        final JsonNode r = JSON.readTree(first);
+                        if (!"session".equals(r.path("type").asText())) continue;
+                        sessionIds.add(key);
+                        sessionIdByFile.put(key, r.path("id").asText());
+                        events.add(Map.of("type", "session_started", "session_id", r.path("id").asText(),
+                                "agent", r.path("agent").asText(), "model", r.path("model").asText(),
+                                "label", r.path("label").asText(""), "path", "sessions/" + p.getFileName()));
+                    } catch (Exception e) {
+                        log.debug("session header for {} not fully written yet, retrying next poll: {}", p, e.toString());
+                        continue;
+                    }
+                }
+                if (!doneSessionFiles.contains(key)) sessionEnd(p, key, events);
             }
         } catch (IOException e) { log.debug("could not list session dir {}: {}", dir, e.toString()); }
+    }
+
+    /** A session's own transcript carries its real completion signal — a trailing {"type":"end",
+     *  "finish":..., "turns":..., ...} line — unlike the old ported-from-Python progress.py, which
+     *  looked for a "done after N turns (finish=X, ...)" line in a *.log file nothing in this Java
+     *  runner ever writes; that mechanism never fired, so a session that finished stayed "running" in
+     *  the live view for the rest of the job. Matched by the session's real id (from its header), not
+     *  guessed as "the oldest still-open session" — correct under concurrent (parallel-wave) sessions
+     *  too, not just ones that happen to finish in start order. */
+    private void sessionEnd(final Path p, final String key, final List<Map<String, Object>> events) {
+        for (String line : tailLines(p)) {
+            if (line.isBlank()) continue;
+            try {
+                final JsonNode r = JSON.readTree(line);
+                if (!"end".equals(r.path("type").asText())) continue;
+                doneSessionFiles.add(key);
+                events.add(Map.of("type", "session_done", "session_id", sessionIdByFile.getOrDefault(key, ""),
+                        "finish", r.path("finish").isTextual() ? r.path("finish").asText() : "?"));
+                return;
+            } catch (Exception e) { log.debug("could not parse a session line for end-detection, skipping it: {}", e.toString()); }
+        }
     }
 
     private void tailRequests(final Path path, final List<Map<String, Object>> events) {

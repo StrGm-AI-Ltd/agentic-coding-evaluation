@@ -13,6 +13,7 @@ java {
 
 repositories {
     mavenCentral()
+    maven { url 'https://maven.vaadin.com/vaadin-addons' }   // com.github.appreciated:apexcharts (free Flow chart addon)
 }
 
 dependencies {
@@ -20,6 +21,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-restclient'
     implementation 'org.commonmark:commonmark:0.30.0'
     implementation 'org.commonmark:commonmark-ext-gfm-tables:0.30.0'
+    implementation 'com.github.appreciated:apexcharts:25.0.1'
     developmentOnly 'com.vaadin:vaadin-dev'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'

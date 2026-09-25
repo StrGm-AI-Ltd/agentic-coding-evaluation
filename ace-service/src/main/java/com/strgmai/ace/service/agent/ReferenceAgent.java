@@ -154,7 +154,7 @@ public class ReferenceAgent {
             String system = SYSTEM.replace("{cwd}", cwd).replace("{date}", start.toString().substring(0, 10))
                     + (appendSystem == null ? "" : "\n\n" + java.nio.file.Files.readString(Path.of(appendSystem)));
             msgs = new ArrayList<>(List.of(SystemMessage.from(system), UserMessage.from(instruction)));
-            session.header(AGENT_VERSION, model == null ? props.model() : model, cwd, reasoningEffort);
+            session.header(AGENT_VERSION, model == null ? props.model() : model, cwd, reasoningEffort, name);
             session.system(system);
             session.user(instruction);
         }

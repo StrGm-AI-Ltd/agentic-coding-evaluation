@@ -148,6 +148,68 @@ class JournalFactsTest {
         assertEquals(10.0, ((Number) f.get("avg_latency_sec")).doubleValue(), 0.001);
     }
 
+    /** New metric: how prefill/decode speed depends on context size - each request is bucketed by
+     *  its prompt_tokens into fixed 1024-token-wide buckets (bucket index = prompt_tokens / 1024), so
+     *  the X axis has fine, consistent resolution regardless of the run's own context window size.
+     *  oMLX's own reported per-request prompt_tokens_per_second/generation_tokens_per_second are
+     *  averaged within each bucket. */
+    @Test
+    void speedByContextBucketsPromptTokensAndAveragesSpeedPerBucket() throws Exception {
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
+        Files.writeString(j,
+                chat("2026-09-14T10:00:00Z", "", "\"usage\": {\"completion_tokens\": 1, \"prompt_tokens\": 500, "
+                        + "\"prompt_tokens_per_second\": 200.0, \"generation_tokens_per_second\": 40.0}", REQ)
+                        + chat("2026-09-14T10:01:00Z", "", "\"usage\": {\"completion_tokens\": 1, \"prompt_tokens\": 800, "
+                        + "\"prompt_tokens_per_second\": 100.0, \"generation_tokens_per_second\": 20.0}", REQ)
+                        + chat("2026-09-14T10:02:00Z", "", "\"usage\": {\"completion_tokens\": 1, \"prompt_tokens\": 10000, "
+                        + "\"prompt_tokens_per_second\": 90.0, \"generation_tokens_per_second\": 18.0}", REQ));
+        final Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null);
+        final List<Map<String, Object>> buckets = (List<Map<String, Object>>) f.get("speed_by_context");
+        assertEquals(2, buckets.size());
+        assertEquals(0L, buckets.get(0).get("context_lo"));
+        assertEquals(1024L, buckets.get(0).get("context_hi"));
+        assertEquals(2L, buckets.get(0).get("requests"));
+        assertEquals(150.0, ((Number) buckets.get(0).get("avg_prefill_tok_per_sec")).doubleValue(), 0.001, "(200+100)/2");
+        assertEquals(30.0, ((Number) buckets.get(0).get("avg_decode_tok_per_sec")).doubleValue(), 0.001, "(40+20)/2");
+        assertEquals(9216L, buckets.get(1).get("context_lo"));
+        assertEquals(10240L, buckets.get(1).get("context_hi"));
+        assertEquals(1L, buckets.get(1).get("requests"));
+        assertEquals(90.0, ((Number) buckets.get(1).get("avg_prefill_tok_per_sec")).doubleValue(), 0.001);
+    }
+
+    /** A run capped at a small context window (e.g. 8K) must not be flattened into 1-2 buckets by a
+     *  fixed scheme - a run capped at a small context window (e.g. 8K) still gets a full spread of
+     *  1024-token points, not just 1-2 buckets. Eight requests, one exactly at the start of each
+     *  1024-token band from 0 to 7168, land in eight distinct buckets. */
+    @Test
+    void aSmallContextWindowRunStillGetsFineGrainedBuckets() throws Exception {
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
+        final var sb = new StringBuilder();
+        for (int i = 0; i < 8; i++) {
+            final long pt = i * 1024L;
+            sb.append(chat("2026-09-14T10:0" + i + ":00Z", "", "\"usage\": {\"completion_tokens\": 1, \"prompt_tokens\": " + pt
+                    + ", \"prompt_tokens_per_second\": 100.0, \"generation_tokens_per_second\": 20.0}", REQ));
+        }
+        Files.writeString(j, sb.toString());
+        final Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null);
+        final List<Map<String, Object>> buckets = (List<Map<String, Object>>) f.get("speed_by_context");
+        assertEquals(8, buckets.size());
+        assertEquals(0L, buckets.get(0).get("context_lo"));
+        assertEquals(7168L, buckets.get(7).get("context_lo"));
+        assertTrue(buckets.stream().allMatch(b -> ((Number) b.get("requests")).longValue() == 1));
+    }
+
+    /** A request with no prompt_tokens at all (an error/refused request) is skipped entirely -
+     *  it cannot be attributed to any context-size bucket. */
+    @Test
+    void speedByContextIsAbsentWithNoPromptTokensAnywhere() throws Exception {
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
+        Files.writeString(j, "{\"ts\": \"2026-09-14T10:00:00Z\", \"path\": \"/v1/chat/completions\", \"status\": 429, "
+                + "\"budget_exceeded\": true}\n");
+        final Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null);
+        assertFalse(f.containsKey("speed_by_context"));
+    }
+
     @Test
     void avgLatencyAndFirstByteAreAbsentWithNothingToAverage() throws Exception {
         final Path j = track(Files.createTempFile("j", ".jsonl"));

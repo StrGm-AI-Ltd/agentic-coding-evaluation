@@ -114,4 +114,17 @@ class JobDetailViewTest {
         assertFalse(JobDetailView.shouldProbeRun(Boolean.TRUE, "succeeded", "succeeded"));
         assertFalse(JobDetailView.shouldProbeRun(Boolean.FALSE, "succeeded", "failed"));
     }
+
+    /** The T3-after-T4 confusion, pinned: T3 legitimately starts after T4 (both are wave 2, T3 only
+     *  depends on T2) but looks like the runner went backwards without seeing the declared order. */
+    @Test
+    void plannedOrderText_joinsWavesWithArrowsAndTasksWithCommas() {
+        assertEquals("T1 → T2, T4 → T3",
+                JobDetailView.plannedOrderText(List.of(List.of("T1"), List.of("T2", "T4"), List.of("T3"))));
+    }
+
+    @Test
+    void plannedOrderText_emptyWavesYieldsEmptyText() {
+        assertEquals("", JobDetailView.plannedOrderText(List.of()));
+    }
 }

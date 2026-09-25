@@ -27,13 +27,15 @@ public final class JobLiveState implements Serializable {
             Long tokens, boolean clientAborted) implements Serializable {
     }
 
-    /** One row of the sessions table: its short label, the stage (the *.log file's stem) it ended
-     *  at once that log reported done (null while still open), and its average prefill/decode
-     *  speed across the requests attributed to it (RecordingProxy tags each with the session's
-     *  full id via the X-Ace-Session-Id header; both null until a request with real oMLX-reported
-     *  usage.*_tokens_per_second lands). id is the full session id (correlation key) - label is the
-     *  truncated display form. */
-    public record SessionRow(String id, String label, String endedStage,
+    /** One row of the sessions table: its short label, a human-readable description of what the
+     *  session actually is (its stage/task, from the session file's own "label" field - "T2", "T2
+     *  (handoff)", "Definition", "Self review", ...), the reason it finished (its own transcript's
+     *  trailing {"type":"end","finish":...} line - null while still open), and its average
+     *  prefill/decode speed across the requests attributed to it (RecordingProxy tags each with the
+     *  session's full id via the X-Ace-Session-Id header; both null until a request with real
+     *  oMLX-reported usage.*_tokens_per_second lands). id is the full session id (correlation key) -
+     *  label is the truncated display form. */
+    public record SessionRow(String id, String label, String description, String endedStage,
             Double avgPrefillTokPerSec, Double avgDecodeTokPerSec) implements Serializable {
     }
 
@@ -49,6 +51,9 @@ public final class JobLiveState implements Serializable {
     private long requestCount;
     private Long lastTokens;
     private String logTail;
+    // the run's declared task waves (RunBench writes execution_order.json before any task session
+    // starts) - one entry per wave, each a list of task ids; empty until that one-shot event lands
+    private List<List<String>> executionOrder = List.of();
 
     public synchronized void apply(final SseEvent event) {
         final var data = event.data();
@@ -61,8 +66,9 @@ public final class JobLiveState implements Serializable {
                 steps.add(label);
             }
             case "session_started" -> sessions.add(new SessionRow(
-                    Fmt.textOr(data.path("session_id"), ""), sessionLabel(data), null, null, null));
+                    Fmt.textOr(data.path("session_id"), ""), sessionLabel(data), sessionDescription(data), null, null, null));
             case "session_done" -> markSessionDone(data);
+            case "execution_order" -> executionOrder = parseExecutionOrder(data);
             case "request" -> {
                 requestCount += 1;
                 if (data.hasNonNull("budget_spent_completion_tokens")) {
@@ -91,6 +97,21 @@ public final class JobLiveState implements Serializable {
         }
     }
 
+    /** waves is a JSON array of arrays of task ids, e.g. [["T1"],["T2","T4"],["T3"]] - a wave with
+     *  more than one task ran one at a time (not concurrently) unless the job's argv actually enabled
+     *  --parallel, but they're still a declared wave: neither depends on the other. */
+    static List<List<String>> parseExecutionOrder(final JsonNode data) {
+        final var waves = data.path("waves");
+        if (!waves.isArray()) return List.of();
+        final List<List<String>> out = new ArrayList<>();
+        for (final var wave : waves) {
+            final List<String> ids = new ArrayList<>();
+            for (final var id : wave) if (id.isTextual()) ids.add(id.asText());
+            out.add(ids);
+        }
+        return out;
+    }
+
     private static String sessionLabel(final JsonNode data) {
         final var id = Fmt.textOr(data.path("session_id"), "");
         final var effort = Fmt.textOr(data.path("reasoning_effort"), null);
@@ -98,22 +119,49 @@ public final class JobLiveState implements Serializable {
         return effort == null || effort.isBlank() ? shortId : shortId + " (" + effort + ")";
     }
 
-    /** session_done carries no session_id, only the stage (log file) that just reported done - the
-     *  oldest still-open session is taken as the one that just ended. Holds as long as sessions
-     *  complete in the order they were started, true for this harness's mostly-sequential phases. */
-    private void markSessionDone(final JsonNode data) {
-        final var stage = stageOf(data);
-        for (int i = 0; i < sessions.size(); i++) {
-            final var s = sessions.get(i);
-            if (s.endedStage() == null) {
-                sessions.set(i, new SessionRow(s.id(), s.label(), stage, s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec()));
-                return;
-            }
+    private static final List<String> LABEL_SUFFIXES = List.of("-continue", "-wrapup", "-handoff", "-fix");
+
+    /** RunBench names every session with the stage/task it's actually for - a plan phase
+     *  ("p0_definition", "p1_plan"), a plan task id ("T1".."T4"), "PARALLEL_PLAN"/"INTEGRATION", a
+     *  reviewer ("REVIEW"/"TRAJECTORY_REVIEW"), or one of those with a continuation suffix - turned
+     *  human-readable here rather than showing the raw internal name verbatim. */
+    static String sessionDescription(final JsonNode data) {
+        // package-private (not private): tested directly against the full label taxonomy, like
+        // Tailer's own pure static helpers, rather than only indirectly via apply()
+        final var label = Fmt.textOr(data.path("label"), "");
+        if (label.isBlank()) return "";
+        var base = label;
+        var suffix = "";
+        for (final var s : LABEL_SUFFIXES) {
+            if (base.endsWith(s)) { suffix = " (" + s.substring(1) + ")"; base = base.substring(0, base.length() - s.length()); break; }
         }
+        return switch (base) {
+            case "p0_definition" -> "Definition" + suffix;
+            case "p1_plan" -> "Plan" + suffix;
+            case "p2_implementation" -> "Implementation" + suffix;
+            case "PARALLEL_PLAN" -> "Parallel plan" + suffix;
+            case "INTEGRATION" -> "Integration" + suffix;
+            case "REVIEW" -> "Self review" + suffix;
+            case "TRAJECTORY_REVIEW" -> "Trajectory review" + suffix;
+            default -> "Task " + base + suffix;   // a plain plan-task id, e.g. "T2"
+        };
     }
 
-    private static String stageOf(final JsonNode data) {
-        return Fmt.textOr(data.path("log"), "?").replaceFirst("\\.[^.]+$", "");
+    /** Matched by the session's own real id (Tailer reads it straight from the session file's
+     *  header) - correct even when sessions finish out of start order, unlike the earlier "guess the
+     *  oldest still-open session" approach this replaced, which relied on a *.log file / DONE-regex
+     *  mechanism that nothing in the Java runner ever actually wrote (every session stayed "running"
+     *  forever in the live view, regardless of how long ago it had actually finished). */
+    private void markSessionDone(final JsonNode data) {
+        final var sessionId = Fmt.textOr(data.path("session_id"), null);
+        if (sessionId == null || sessionId.isBlank()) return;
+        final var finish = Fmt.textOr(data.path("finish"), "?");
+        for (int i = 0; i < sessions.size(); i++) {
+            final var s = sessions.get(i);
+            if (!sessionId.equals(s.id())) continue;
+            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), finish, s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec()));
+            return;
+        }
     }
 
     /** Accumulates a request's prefill/decode speed (when it has them - not every request does,
@@ -131,7 +179,7 @@ public final class JobLiveState implements Serializable {
             if (data.path("decode_tok_per_sec").isNumber()) { sums[2] += data.path("decode_tok_per_sec").asDouble(); sums[3]++; }
             final Double avgPrefill = sums[1] > 0 ? sums[0] / sums[1] : null;
             final Double avgDecode = sums[3] > 0 ? sums[2] / sums[3] : null;
-            sessions.set(i, new SessionRow(s.id(), s.label(), s.endedStage(), avgPrefill, avgDecode));
+            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), avgPrefill, avgDecode));
             return;
         }
     }
@@ -165,5 +213,11 @@ public final class JobLiveState implements Serializable {
 
     public synchronized String logTail() {
         return logTail;
+    }
+
+    /** The declared task waves - each entry replaced wholesale by the one-shot execution_order
+     *  event, never mutated in place, so (unlike steps()/sessions()) no defensive copy is needed. */
+    public synchronized List<List<String>> executionOrder() {
+        return executionOrder;
     }
 }
