@@ -153,10 +153,18 @@ public final class Trajectory {
         byCtx.put("ge30k", medGenTps(out, t -> pTok(t) >= 30000));
         s.put("decode_tps_by_context", byCtx);
         s.put("decode_tps_median_short", byCtx.get("lt16k"));
-        if (dockerWindows != null && !dockerWindows.isEmpty())
-            s.put("docker_window", Map.of("windows", dockerWindows.size(),
-                    "seconds", dockerWindows.stream().mapToDouble(w -> w.get("seconds") instanceof Number n ? n.doubleValue() : 0).sum(),
-                    "turns", inw.size(), "decode_tps_median", medGenTps(inw, t -> true)));
+        if (dockerWindows != null && !dockerWindows.isEmpty()) {
+            // Map.of is null-hostile, and medGenTps legitimately returns null when none of the
+            // in-window turns have a numeric genTps (e.g. every one of them errored or was budget-
+            // refused before oMLX ever reported a decode speed) - a real crash seen live (NPE in
+            // Map.of), fixed the same way byCtx just above already handles the identical case
+            final Map<String, Object> dw = new LinkedHashMap<>();
+            dw.put("windows", dockerWindows.size());
+            dw.put("seconds", dockerWindows.stream().mapToDouble(w -> w.get("seconds") instanceof Number n ? n.doubleValue() : 0).sum());
+            dw.put("turns", inw.size());
+            dw.put("decode_tps_median", medGenTps(inw, t -> true));
+            s.put("docker_window", dw);
+        }
         s.put("prefix_cache_hit_turns", turns.stream().filter(t -> t.cachedTokens() != null && ((Number) t.cachedTokens()).intValue() > 0).count());
         final int rc = turns.stream().mapToInt(Turn::reasoningChars).sum(), cc = turns.stream().mapToInt(Turn::contentChars).sum();
         s.put("reasoning_share_pct", rc + cc > 0 ? Math.round(1000.0 * rc / (rc + cc)) / 10.0 : null);

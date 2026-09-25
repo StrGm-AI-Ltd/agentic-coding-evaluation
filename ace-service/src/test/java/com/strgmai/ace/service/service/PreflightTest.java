@@ -25,7 +25,7 @@ class PreflightTest {
 
     private static BenchProperties props(final String model, final String endpoint, final String javaHome) {
         return new BenchProperties(model, endpoint, "", null, null, null, null, null, null, null,
-                null, null, null, null, null, javaHome);
+                null, null, null, null, null, javaHome, null);
     }
 
     /** a fake bin/java so the "pinned JDK 21" check passes without shelling out to /usr/libexec/java_home */

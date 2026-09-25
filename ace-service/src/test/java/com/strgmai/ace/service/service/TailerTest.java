@@ -112,6 +112,20 @@ class TailerTest {
         assertNull(events.get(0).get("session_id"));
         assertNull(events.get(0).get("prefill_tok_per_sec"));
         assertNull(events.get(0).get("decode_tok_per_sec"));
+        assertNull(events.get(0).get("completion_tokens"));
+    }
+
+    /** The sessions grid's new "total tokens" column sums this per session - unlike
+     *  budget_spent_completion_tokens (a per-proxy running counter that resets on a continuation's
+     *  fresh proxy), this is the request's own actual completion token count. */
+    @Test
+    void completionTokensAreForwardedFromTheJournalIntoTheRequestEvent() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.writeString(runDir.resolve("interactions.jsonl"),
+                "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
+                        + "\"response\": {\"usage\": {\"completion_tokens\": 340}}}\n");
+        final var events = new Tailer().poll(runDir).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        assertEquals(340L, events.get(0).get("completion_tokens"));
     }
 
     @Test
@@ -146,6 +160,18 @@ class TailerTest {
         assertEquals("T2", started.get("label"));
     }
 
+    /** The sessions grid's new "wall time" column needs the session's own start ts, computed against
+     *  its "end" ts once the session finishes (see sessionEndForwardsItsOwnTimestamp below). */
+    @Test
+    void sessionStartedForwardsItsTimestamp() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"), SESSION_HEADER);
+        final var events = new Tailer().poll(runDir);
+        final var started = events.stream().filter(e -> "session_started".equals(e.get("type"))).findFirst().orElseThrow();
+        assertEquals("t", started.get("ts"));
+    }
+
     /** The live sessions grid always showed "running", even long after a session had genuinely
      *  finished: the old detection ported from Python looked for a "done after N turns (finish=X)"
      *  line in a *.log file nothing in this Java runner ever writes. The real signal is a session's
@@ -162,6 +188,18 @@ class TailerTest {
         final var done = events.stream().filter(e -> "session_done".equals(e.get("type"))).findFirst().orElseThrow();
         assertEquals("755478fc-f323-565e-92f8-1a5b10584e41", done.get("session_id"));
         assertEquals("stop", done.get("finish"));
+    }
+
+    /** Paired with the session's own start ts (sessionStartedForwardsItsTimestamp) to compute the
+     *  sessions grid's "wall time" column. */
+    @Test
+    void sessionEndForwardsItsOwnTimestamp() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"),
+                SESSION_HEADER + "{\"type\": \"end\", \"finish\": \"stop\", \"turns\": 2, \"ts\": \"2026-01-01T00:12:30Z\"}\n");
+        final var done = new Tailer().poll(runDir).stream().filter(e -> "session_done".equals(e.get("type"))).findFirst().orElseThrow();
+        assertEquals("2026-01-01T00:12:30Z", done.get("ts"));
     }
 
     @Test

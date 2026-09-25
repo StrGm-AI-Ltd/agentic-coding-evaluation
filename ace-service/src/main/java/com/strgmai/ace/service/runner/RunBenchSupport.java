@@ -1,11 +1,21 @@
 package com.strgmai.ace.service.runner;
 
+import com.strgmai.ace.service.agent.ReferenceAgent;
+
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.file.*;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
 
 /** Ports of run_bench.py's process-level machinery: the single-run lock (two runs would share the
  *  model server and fight over Docker), git workspace snapshots (the commit SHAs live OUTSIDE the
@@ -108,4 +118,54 @@ public final class RunBenchSupport {
 
     public static String nowIso() { return Instant.now().toString(); }
     public static long secondsSince(Instant t0) { return Duration.between(t0, Instant.now()).getSeconds(); }
+
+    /** Runs one agent call on its own virtual thread and enforces wallSec PREEMPTIVELY - even
+     *  mid-request, not just between turns. The run's own task-wall budget (the run's own params,
+     *  R4) is meant to be the only time limit a session needs: ReferenceAgent no longer enforces any
+     *  wall budget or mid-stream idle timeout of its own (see its awaitStream/run javadoc - removed
+     *  2026-09-25 after the fixed mid-stream idle ceiling there was found firing on oMLX's own
+     *  legitimate memory-pressure throttling, discarding real partial generation and restarting from
+     *  scratch each time). Every direct agent.run() call site (RunBench's main/continue/wrapup task
+     *  sessions, its handoff and PARALLEL_PLAN sessions, and Reviews' reviewer sessions) goes through
+     *  this - none of them get task-wall enforcement any other way now.
+     *  On timeout: names the reason on abortProxy BEFORE cancelling (best-effort - the interrupted
+     *  call's own chatWithRetry catch block may also write its own, vaguer reason to the same
+     *  RecordingProxy field concurrently; a benign, diagnostic-only race, not correctness-affecting),
+     *  cancels the agent's thread (interrupting it - awaitStream's InterruptedException path fires),
+     *  and reports rc=124 exactly as ReferenceAgent's own wall-budget exit used to. */
+    public static ReferenceAgent.SessionResult runBounded(final long wallSec, final String name, final Path sessionDir,
+                                                            final String sessionId, final Consumer<String> abortProxy,
+                                                            final Callable<ReferenceAgent.SessionResult> call) throws Exception {
+        final Instant start = Instant.now();
+        try (ExecutorService exec = Executors.newVirtualThreadPerTaskExecutor()) {
+            final Future<ReferenceAgent.SessionResult> future = exec.submit(call);
+            try {
+                return future.get(wallSec, TimeUnit.SECONDS);
+            } catch (TimeoutException te) {
+                abortProxy.accept("task-wall budget exceeded (" + wallSec + "s)");
+                future.cancel(true);
+                return new ReferenceAgent.SessionResult(name, 124, wallSec, null, 0, 0, 0,
+                        findSessionFile(sessionDir, sessionId), start, Instant.now());
+            } catch (ExecutionException ee) {
+                if (ee.getCause() instanceof Exception e) throw e;
+                throw new RuntimeException(ee.getCause());
+            }
+        }
+    }
+
+    /** best-effort: a timed-out attempt's session file already has whatever it wrote before being
+     *  cut off (AgentSession.write() appends per turn, not buffered), so the manifest's session_id
+     *  for a timed-out task still points at real, if partial, data. Same lookup AgentSession itself
+     *  uses for --continue. */
+    private static Path findSessionFile(final Path sessionDir, final String sessionId) {
+        try (var s = Files.list(sessionDir)) {
+            return s.filter(p -> p.getFileName().toString().contains(sessionId) && p.getFileName().toString().endsWith(".jsonl"))
+                    .max(Comparator.comparing(RunBenchSupport::lastModifiedOrEpoch))
+                    .orElse(null);
+        } catch (IOException e) { return null; }
+    }
+
+    private static java.nio.file.attribute.FileTime lastModifiedOrEpoch(final Path p) {
+        try { return Files.getLastModifiedTime(p); } catch (IOException e) { return java.nio.file.attribute.FileTime.fromMillis(0); }
+    }
 }

@@ -36,7 +36,7 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(new JobLiveState.SessionRow(
-                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc (high)", "", null, null, null)), state.sessions());
+                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc (high)", "", null, null, null, null, null, null, null)), state.sessions());
     }
 
     /** RunBench names every session with the stage/task it's actually for (AgentSession.header's
@@ -109,7 +109,7 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(new JobLiveState.SessionRow(
-                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc", "", "tool_calls", null, null)), state.sessions());
+                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc", "", "tool_calls", null, null, null, null, null, null)), state.sessions());
     }
 
     /** The whole point of matching by real id: a run's sessions need not finish in the order they
@@ -131,8 +131,8 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(
-                new JobLiveState.SessionRow("aaaaaaaa-0000-0000-0000-000000000000", "aaaaaaaa", "", null, null, null),
-                new JobLiveState.SessionRow("bbbbbbbb-0000-0000-0000-000000000000", "bbbbbbbb", "", "stop", null, null)), state.sessions(),
+                new JobLiveState.SessionRow("aaaaaaaa-0000-0000-0000-000000000000", "aaaaaaaa", "", null, null, null, null, null, null, null),
+                new JobLiveState.SessionRow("bbbbbbbb-0000-0000-0000-000000000000", "bbbbbbbb", "", "stop", null, null, null, null, null, null)), state.sessions(),
                 "the second-started session is the one marked done; the first (still open) is unaffected");
     }
 
@@ -204,6 +204,122 @@ class JobLiveStateTest {
         final var session = state.sessions().get(0);
         assertNull(session.avgPrefillTokPerSec());
         assertEquals(20.0, session.avgDecodeTokPerSec());
+    }
+
+    /** Wall time is the session's own transcript's start ts to its "end" ts - computed once, on
+     *  session_done, from timestamps Tailer now forwards on both events. */
+    @Test
+    void sessionDoneComputesWallTimeFromStartAndEndTimestamps() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "2026-09-25T00:00:00Z"}
+
+                event: session_done
+                data: {"type": "session_done", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "finish": "stop", "ts": "2026-09-25T00:12:30Z"}
+
+                """).forEach(state::apply);
+        assertEquals(750.0, state.sessions().get(0).wallSec(), "12m30s");
+    }
+
+    @Test
+    void wallTimeIsNullWhileASessionIsStillRunning() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "2026-09-25T00:00:00Z"}
+
+                """).forEach(state::apply);
+        assertNull(state.sessions().get(0).wallSec());
+    }
+
+    @Test
+    void wallTimeIsNullWhenEitherTimestampIsMissing() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: session_done
+                data: {"type": "session_done", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "finish": "stop", "ts": "2026-09-25T00:12:30Z"}
+
+                """).forEach(state::apply);
+        assertNull(state.sessions().get(0).wallSec(), "no start ts to compute a duration from");
+    }
+
+    /** Total tokens is a running sum across the session's own requests, visible live - unlike wall
+     *  time it doesn't need the session to have ended. */
+    @Test
+    void requestsWithCompletionTokensSumIntoTheSessionsTotal() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "completion_tokens": 120}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "completion_tokens": 340}
+
+                """).forEach(state::apply);
+        assertEquals(460L, state.sessions().get(0).totalTokens());
+    }
+
+    @Test
+    void aRequestWithNoCompletionTokensDoesNotResetTheRunningTotal() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "completion_tokens": 120}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "status": 429}
+
+                """).forEach(state::apply);
+        assertEquals(120L, state.sessions().get(0).totalTokens());
+    }
+
+    /** ttft_sec IS the prefill wall time for a request; latency_sec - ttft_sec is the decode wall time
+     *  for everything after the first token. Both are running sums across the session's own requests. */
+    @Test
+    void requestsSumIntoPrefillAndDecodeWallTime() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "latency_sec": 30.0, "ttft_sec": 0.05}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "latency_sec": 90.0, "ttft_sec": 0.15}
+
+                """).forEach(state::apply);
+        final var session = state.sessions().get(0);
+        assertEquals(0.2, session.prefillWallSec(), 0.001, "0.05+0.15");
+        assertEquals(119.8, session.decodeWallSec(), 0.001, "(30-0.05)+(90-0.15)");
+    }
+
+    /** A request with no ttft_sec (not streamed, or a degenerate payload) contributes to neither sum
+     *  rather than guessing the prefill/decode split from its total latency alone. */
+    @Test
+    void aRequestWithNoTtftDoesNotPolluteEitherWallTimeSum() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "latency_sec": 5.0}
+
+                """).forEach(state::apply);
+        final var session = state.sessions().get(0);
+        assertNull(session.prefillWallSec());
+        assertNull(session.decodeWallSec());
     }
 
     /** The live requests grid used to cap at 20 and silently drop the rest, with no indication in the
@@ -370,7 +486,7 @@ class JobLiveStateTest {
                 data: {"reasoning_effort": null}
 
                 """).forEach(state::apply);
-        assertEquals(List.of(new JobLiveState.SessionRow("", "?", "", null, null, null)), state.sessions(),
+        assertEquals(List.of(new JobLiveState.SessionRow("", "?", "", null, null, null, null, null, null, null)), state.sessions(),
                 "missing ids render as ? without throwing");
     }
 

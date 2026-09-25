@@ -42,8 +42,20 @@ public class RecordingProxy {
     private Path journal;
     private Long tokenBudget;
     private String tag;
+    // the run's own context-probe-derived output-token cap, distinct from tokenBudget (the whole
+    // PHASE's completion-token budget across every turn) - this bounds ONE request's max_tokens.
+    // null (no probe, or a caller that predates this) falls back to the operator-wide default.
+    private Integer maxOutputTokens;
     private volatile boolean stopping;
     private final Set<HttpResponse<InputStream>> inflight = ConcurrentHashMap.newKeySet();
+    // set by whoever decides to give up on the current attempt (ReferenceAgent.chatWithRetry, or
+    // the harness's own task-wall timeout in RunBenchSupport.runBounded) just before/as it calls
+    // abortInflight(reason); read and cleared by streamSse() below for the journal's abort_reason.
+    // A single field, not one per in-flight request: in practice a proxy has at most one in-flight
+    // exchange at a time (sessions process turns sequentially), so the two writers this can ever
+    // have (a generic "interrupted" from chatWithRetry and a more specific one from runBounded) are
+    // racing over the SAME attempt's own reason - a diagnostic label, not correctness-affecting.
+    private volatile String pendingAbortReason;
     public static final double CHARS_PER_TOKEN = 3.6;   // the usage ESTIMATE of an abandoned stream
     // the agent's chat model sets this per session (ReferenceAgent) so every journaled request can
     // be attributed to its session unambiguously, even under concurrent (parallel-wave) sessions -
@@ -57,8 +69,12 @@ public class RecordingProxy {
 
     /** start on a free port; the journal is APPENDED across restarts (one proxy per phase/task, like the Python original) */
     public synchronized String start(Path journal, Long tokenBudget, String tag) throws Exception {
+        return start(journal, tokenBudget, tag, null);
+    }
+
+    public synchronized String start(Path journal, Long tokenBudget, String tag, Integer maxOutputTokens) throws Exception {
         stop();
-        this.journal = journal; this.tokenBudget = tokenBudget; this.tag = tag; this.stopping = false;
+        this.journal = journal; this.tokenBudget = tokenBudget; this.tag = tag; this.maxOutputTokens = maxOutputTokens; this.stopping = false;
         Files.createDirectories(journal.toAbsolutePath().getParent());
         if (!Files.exists(journal)) Files.createFile(journal);
         // --append: the seq continues the journal, as the Python proxy does. A failed count here
@@ -89,7 +105,11 @@ public class RecordingProxy {
      *  faithfully waiting on oMLX with nothing telling either side the agent had moved on -
      *  exactly the still-"Generating..." entries piling up on oMLX's own dashboard). Closing the
      *  tracked upstream body here is what actually reaches that hop. */
-    public void abortInflight() {
+    public void abortInflight() { abortInflight(null); }
+
+    /** same as abortInflight(), plus names WHY for the journal's abort_reason (see pendingAbortReason). */
+    public void abortInflight(final String reason) {
+        if (reason != null) pendingAbortReason = reason;
         for (HttpResponse<InputStream> r : inflight) {
             try { r.body().close(); } catch (Exception e) { log.debug("closing an in-flight stream on abortInflight(): {}", e.toString()); }
         }
@@ -131,7 +151,7 @@ public class RecordingProxy {
             if (props.temperature() != null) r.put("temperature", props.temperature());
             if (props.topP() != null) r.put("top_p", props.topP());
             if (props.seed() != null) r.put("seed", props.seed());
-            r.put("max_tokens", props.maxOutputTokens());
+            r.put("max_tokens", maxOutputTokens != null ? maxOutputTokens : props.maxOutputTokens());
             if (r.path("stream").asBoolean(false)) {   // ask the server to append a usage chunk (transparent to the client)
                 ((ObjectNode) r.with("stream_options")).put("include_usage", true);
                 body = json.writeValueAsBytes(r);
@@ -248,7 +268,14 @@ public class RecordingProxy {
         rec.put("status", up.statusCode()).put("streamed", true).put("latency_sec", elapsed(t0));
         rec.put("reads", reads).put("max_read_gap_ms", maxReadGapMs);
         if (firstByteMs >= 0) rec.put("first_byte_ms", firstByteMs);
-        if (clientAborted) rec.put("client_aborted", true);
+        if (clientAborted) {
+            rec.put("client_aborted", true);
+            // consumed, not just read: the NEXT attempt through this same proxy must not inherit a
+            // stale reason from an earlier, unrelated abort
+            final String reason = pendingAbortReason;
+            pendingAbortReason = null;
+            if (reason != null) rec.put("abort_reason", reason);
+        }
         if (drainAborted) rec.put("drain_aborted", true);
         journalRecord(rec, req, resp);
         inflight.remove(up);

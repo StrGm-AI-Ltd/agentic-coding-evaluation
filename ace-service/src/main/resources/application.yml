@@ -27,3 +27,4 @@ ace:
   max-error-rate: 0.2
   reference-server-port: 0     # 0 = the reference trading server stays off (the oracle starts it on demand)
   java-home: ${ACE_JAVA_HOME:}
+  omlx-server-log: ${ACE_OMLX_SERVER_LOG:}   # EMPTY = no capture; the model server's own log (path is operator/machine-specific)

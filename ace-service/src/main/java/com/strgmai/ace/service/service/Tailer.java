@@ -90,7 +90,8 @@ public final class Tailer {
                         sessionIdByFile.put(key, r.path("id").asText());
                         events.add(Map.of("type", "session_started", "session_id", r.path("id").asText(),
                                 "agent", r.path("agent").asText(), "model", r.path("model").asText(),
-                                "label", r.path("label").asText(""), "path", "sessions/" + p.getFileName()));
+                                "label", r.path("label").asText(""), "ts", r.path("ts").asText(""),
+                                "path", "sessions/" + p.getFileName()));
                     } catch (Exception e) {
                         log.debug("session header for {} not fully written yet, retrying next poll: {}", p, e.toString());
                         continue;
@@ -116,7 +117,8 @@ public final class Tailer {
                 if (!"end".equals(r.path("type").asText())) continue;
                 doneSessionFiles.add(key);
                 events.add(Map.of("type", "session_done", "session_id", sessionIdByFile.getOrDefault(key, ""),
-                        "finish", r.path("finish").isTextual() ? r.path("finish").asText() : "?"));
+                        "finish", r.path("finish").isTextual() ? r.path("finish").asText() : "?",
+                        "ts", r.path("ts").isTextual() ? r.path("ts").asText() : ""));
                 return;
             } catch (Exception e) { log.debug("could not parse a session line for end-detection, skipping it: {}", e.toString()); }
         }
@@ -152,6 +154,11 @@ public final class Tailer {
                 final JsonNode usage = r.path("response").path("usage");
                 e.put("prefill_tok_per_sec", usage.path("prompt_tokens_per_second").isNumber() ? usage.path("prompt_tokens_per_second").asDouble() : null);
                 e.put("decode_tok_per_sec", usage.path("generation_tokens_per_second").isNumber() ? usage.path("generation_tokens_per_second").asDouble() : null);
+                // per-request completion tokens, summed per session for the sessions grid's "total
+                // tokens" column - budget_spent_completion_tokens is a per-PROXY running counter that
+                // RESETS on a continuation's fresh proxy (given the REMAINING budget, not zero), so it
+                // undercounts a session that spans one; summing this instead is correct regardless.
+                e.put("completion_tokens", usage.path("completion_tokens").isNumber() ? usage.path("completion_tokens").asLong() : null);
                 events.add(e);
             } catch (Exception ex) { log.debug("could not parse journal line for the live view, skipping it: {}", ex.toString()); }
         }
