@@ -5,6 +5,12 @@ per-task results are comparable. `Oracle:` names the oracle checks each task is 
 scoring; scored at the final state - a later task can still break or repair them). The dependency graph is
 T1 → {T2, T4} → T3: in parallel-orchestrated mode T2 and T4 run concurrently (wave 2).
 
+**Not every scored check is attributed to a task above.** `tasks/ladder.json`'s check set for this
+rung is `M1, M2, M4, P2, B1, B2, B3, C2, F1, F2, F3, F8` (denominator 36); `P2` ("plan subtasks have
+id/goal/deps/criterion") and `B2` (">0 tests executed and passing, XML-verified") are whole-run
+checks against the plan and the complete test suite respectively, not any one subtask's own
+acceptance criterion, so they intentionally appear in no `Oracle:` line above.
+
 ## T1 — Project skeleton, schema and accounts
 - Goal: a Gradle Spring Boot `account-service` with Flyway `V1` (accounts, orders, ledger tables with non-negative CHECKs), `POST /accounts` (201), `GET /accounts/{id}` (200/404), `POST /accounts/{id}/deposits` (200, HALF_EVEN to 2 dp, 400 on non-positive), `GET /health` (200); decimals as JSON strings.
 - Services: account-service.
