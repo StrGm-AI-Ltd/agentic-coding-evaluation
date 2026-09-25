@@ -13,7 +13,7 @@ import java.util.Map;
 /**
  * The job page's live progress, accumulated from /jobs/{id}/events — the server-side
  * twin of the Jinja page's streaming JS: step list (with continuation marks), sessions,
- * request count and last completion tokens, the 20 most recent requests (newest first),
+ * request count and last completion tokens, every request seen so far (newest first),
  * and the log tail the status events carry.
  *
  * <p>Synchronized: events are applied on the SSE thread while the UI thread reads
@@ -40,8 +40,6 @@ public final class JobLiveState implements Serializable {
     }
 
     private static final long serialVersionUID = 1L;
-
-    static final int MAX_RECENT_REQUESTS = 20;
 
     private final List<String> steps = new ArrayList<>();
     private final List<SessionRow> sessions = new ArrayList<>();
@@ -74,6 +72,10 @@ public final class JobLiveState implements Serializable {
                 if (data.hasNonNull("budget_spent_completion_tokens")) {
                     lastTokens = data.get("budget_spent_completion_tokens").longValue();
                 }
+                // every request for the life of the job's live view - #new bug: this used to cap at the
+                // 20 most recent and silently drop the rest, with no indication in the grid that it was
+                // truncated and no way to scroll to see more (the "requests: N" summary line was never
+                // capped, so it visibly disagreed with what the grid showed underneath it)
                 recentRequests.addFirst(new RequestRow(
                         Fmt.textOr(data.path("ts"), null),
                         data.path("status").isNumber() ? data.path("status").intValue() : null,
@@ -82,9 +84,6 @@ public final class JobLiveState implements Serializable {
                         data.hasNonNull("budget_spent_completion_tokens")
                                 ? data.get("budget_spent_completion_tokens").longValue() : null,
                         data.path("client_aborted").asBoolean(false)));
-                while (recentRequests.size() > MAX_RECENT_REQUESTS) {
-                    recentRequests.removeLast();
-                }
                 accumulateSpeed(data);
             }
             case "status" -> {
