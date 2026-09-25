@@ -37,6 +37,7 @@ public class ExperimentsService {
     private final JobQueue queue;
     private final BenchProperties props;
     private final org.springframework.transaction.support.TransactionTemplate tx;
+    private final com.strgmai.ace.service.runner.ContextProbe probe;
     private final com.strgmai.ace.service.metrics.StatsService stats = new com.strgmai.ace.service.metrics.StatsService();
     // #83: was `new ObjectMapper()` per call (functional(), leaderboardValues(), fromJson(), toJson())
     // instead of one reused instance, inconsistent with ImporterService/JobQueue in the same package -
@@ -44,8 +45,8 @@ public class ExperimentsService {
     private final ObjectMapper json = new ObjectMapper();
 
     public ExperimentsService(DSLContext dsl, JobQueue queue, BenchProperties props,
-                              org.springframework.transaction.support.TransactionTemplate tx) {
-        this.dsl = dsl; this.queue = queue; this.props = props; this.tx = tx;
+                              org.springframework.transaction.support.TransactionTemplate tx, com.strgmai.ace.service.runner.ContextProbe probe) {
+        this.dsl = dsl; this.queue = queue; this.props = props; this.tx = tx; this.probe = probe;
     }
 
     public static String shortName(String model) {
@@ -280,8 +281,11 @@ public class ExperimentsService {
      *  Preflight's "target model served" check makes. Best-effort: an unreachable server means an empty
      *  map (the probe owns the window), never a crash. */
     Map<String, Integer> localModelSpecs() {
+        // #84: was `new ContextProbe()` inline instead of the Spring-managed bean (AceServiceApplication's
+        // @Bean contextProbe()) already injected the same way into WorkerService - inconsistent DI
+        // usage, and harder to unit-test/mock this class in isolation as a result.
         final Map<String, Integer> out = new LinkedHashMap<>();
-        new com.strgmai.ace.service.runner.ContextProbe().models(props.endpoint(), props.apiKey() == null ? "" : props.apiKey())
+        probe.models(props.endpoint(), props.apiKey() == null ? "" : props.apiKey())
                 .forEach((id, m) -> { if (m.hasNonNull("max_model_len")) out.put(id, m.get("max_model_len").asInt()); });
         return out;
     }
