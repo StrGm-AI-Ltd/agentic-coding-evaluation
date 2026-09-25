@@ -42,10 +42,10 @@ public class Preflight {
 
         try {
             // todo issue 25 define a service for available models
+            // #80: was hardcoded to the default endpoint/key regardless of ace.endpoint/ace.api-key
             final var client = OpenAIOkHttpClient.builder()
-                    //todo take these from the env-vars
-                    .baseUrl("http://127.0.0.1:9191/v1")
-                    .apiKey("edding345")
+                    .baseUrl(props.upstreamBase() + "/v1")
+                    .apiKey(props.apiKey() == null || props.apiKey().isBlank() ? "none" : props.apiKey())
                     .build();
             final var models = client.models().list().data().stream().map(Model::id).sorted().toList();
             add(out, "model server", true, models.size() + " models", true);
