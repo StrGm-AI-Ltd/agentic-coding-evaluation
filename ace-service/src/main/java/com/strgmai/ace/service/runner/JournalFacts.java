@@ -11,7 +11,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.OffsetDateTime;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /** Port of run_bench.py's journal_facts (WITH the parse-once-per-version cache from the Python fix):
@@ -25,9 +24,23 @@ public final class JournalFacts {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Pattern WS_REF = Pattern.compile("agentbench-ws/([A-Za-z0-9][A-Za-z0-9._-]{3,})");
 
-    /** cache: path -> [bytes consumed, mtimeNs, entries]; guarded so parallel tasks can share it */
-    private static final Map<String, Cache> CACHE = new ConcurrentHashMap<>();
+    /** #100: was an unbounded ConcurrentHashMap - one entry per unique journal path this process
+     *  ever parsed, held for the life of the JVM with no eviction. WorkerService runs as a long-lived
+     *  daemon over an unbounded stream of queued jobs, so every historical run's journal stayed
+     *  resident in heap - a genuine, slow leak for an operator running many benchmarks over days or
+     *  weeks without restarting the service. Bounded LRU instead: MAX_CACHED_JOURNALS is generous
+     *  enough for one run's own journal plus its parallel-wave per-task journals to all stay hot at
+     *  once, while still capping growth across many runs. accessOrder=true + removeEldestEntry is the
+     *  standard bounded-LRU idiom; synchronizedMap makes it safe for the same concurrent (parallel
+     *  wave) access ConcurrentHashMap was chosen for originally. */
+    private static final int MAX_CACHED_JOURNALS = 64;
+    private static final Map<String, Cache> CACHE = Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(final Map.Entry<String, Cache> eldest) { return size() > MAX_CACHED_JOURNALS; }
+    });
     record Cache(long consumed, long mtimeNs, List<Entry> entries) {}
+
+    /** test-only observability into the bound (#100) - never used by production code. */
+    static int cacheSize() { return CACHE.size(); }
 
     record Entry(long off, String task, OffsetDateTime ts, int status, boolean budget, boolean upstream,
                  boolean clientAbort, boolean drainAbort, boolean truncated, long ct, boolean est, Object pt,
