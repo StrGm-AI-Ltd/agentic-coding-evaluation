@@ -191,21 +191,26 @@ public class RunBench {
         // an explicit --max-tokens is an operator override, not a measurement: it wins over
         // whatever step 0 (probed or not) derived
         if (cfg.get("max_tokens_override") instanceof Number mt) cfg.put("max_output_tokens", mt.intValue());
+        final int firstTokenTimeoutSec = cfg.get("first_token_timeout_sec") instanceof Number n3 ? n3.intValue() : 180;
+        cfg.put("first_token_timeout_ms", firstTokenTimeoutSec * 1000L);
         // pinned once per run and reused at every proxies.start(...) call site (RunBench, Reviews) -
         // the run's own sampler knobs (#72): null fields fall back to the operator-wide ace.*
         // default, or are simply omitted from the request when no such default exists (see
-        // RecordingProxy.forward())
+        // RecordingProxy.forward()). firstTokenTimeoutSec (#92) is not a sampler knob, but rides the
+        // same "one bag of per-run proxy config, pinned once" vehicle rather than a second one -
+        // it bounds RecordingProxy's own upstream connect wait, which used to be a hardcoded 290s
+        // regardless of what --first-token-timeout was actually set to.
         cfg.put("_sampler_overrides", new RecordingProxy.SamplerOverrides(
                 cfg.get("temperature") instanceof Number t ? t.doubleValue() : null,
                 cfg.get("top_p") instanceof Number tp ? tp.doubleValue() : null,
                 cfg.get("top_k") instanceof Number tk ? tk.intValue() : null,
                 cfg.get("repetition_penalty") instanceof Number rp ? rp.doubleValue() : null,
                 cfg.get("max_output_tokens") instanceof Number mo ? mo.intValue() : null,
-                cfg.get("reasoning_effort") instanceof String re && !re.isBlank() ? re : null));
+                cfg.get("reasoning_effort") instanceof String re && !re.isBlank() ? re : null,
+                firstTokenTimeoutSec));
         final int taskWall = cfg.get("task_wall_sec") instanceof Number n ? n.intValue() : 3600;
         long taskTokens = cfg.get("task_tokens") instanceof Number n2 ? n2.longValue()
                 : ((Number) derived.getOrDefault("task_tokens", 60000)).longValue();
-        cfg.put("first_token_timeout_ms", (cfg.get("first_token_timeout_sec") instanceof Number n3 ? n3.longValue() : 180L) * 1000);
         if (!(cfg.get("compaction_trigger") instanceof Number)) cfg.put("compaction_trigger", props.compactionTrigger());
 
         final Map<String, Object> manifest = new LinkedHashMap<>();
