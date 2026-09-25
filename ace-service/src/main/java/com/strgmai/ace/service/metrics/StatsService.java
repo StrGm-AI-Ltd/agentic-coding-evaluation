@@ -2,6 +2,8 @@ package com.strgmai.ace.service.metrics;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.file.*;
 import java.util.*;
@@ -12,6 +14,7 @@ import java.util.*;
  *  the schema version, mode and budgets; a model A/B compares SETUPS — window-derived knobs are
  *  properties of the setup, printed as differences, never a refusal. */
 public final class StatsService {
+    private static final Logger log = LoggerFactory.getLogger(StatsService.class);
     private final ObjectMapper json = new ObjectMapper();
 
     public StatsService() {}
@@ -86,7 +89,7 @@ public final class StatsService {
             final List<String> why = new ArrayList<>();
             if (r.score() == null && !allowPartial) why.add("partial (docker skipped/infra)");
             if (!r.valid() && !includeInvalid) why.add("invalid");
-            if (!why.isEmpty()) System.out.println("  excluded " + Path.of(r.dir()).getFileName() + ": " + String.join("; ", why));
+            if (!why.isEmpty()) log.info("{}: excluded {}: {}", label, Path.of(r.dir()).getFileName(), String.join("; ", why));
             else kept.add(r);
         }
         return kept;
@@ -131,8 +134,8 @@ public final class StatsService {
         if (Math.abs(a.implWall() - b.implWall()) > 0.02 * Math.max(a.implWall(), b.implWall())
                 || Math.abs(a.implTokens() - b.implTokens()) > 0.02 * Math.max(a.implTokens(), b.implTokens())) {
             if (!allowMismatch) throw new IllegalArgumentException("harness-effect comparison refused: " + msg + " are not matched (pass allow-budget-mismatch to compare anyway, confounded)");
-            System.out.println("  WARNING: " + msg + " are NOT matched; the harness effect is confounded with budget");
-        } else System.out.println("  matched budgets: " + msg);
+            log.warn("{} are NOT matched; the harness effect is confounded with budget", msg);
+        } else log.info("matched budgets: {}", msg);
     }
 
     /** port of summarize(): k, mean scores with bootstrap 90% CI, and the pass^k matrix (# = passes

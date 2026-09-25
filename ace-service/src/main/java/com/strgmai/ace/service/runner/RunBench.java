@@ -891,8 +891,20 @@ public class RunBench {
             th.start();
         }
         joinAll(threads);
-        for (Map.Entry<String, Throwable> e : errors.entrySet())
-            System.out.println("      !! parallel task " + e.getKey() + " failed: " + e.getValue());
+        // #102: a thrown wave-task exception used to be println'd (bypassing the SLF4J log every
+        // other operator-relevant event in this class goes through) and the task simply vanished
+        // from manifest.tasks with no other trace (recs.put only happens on the success path).
+        // Logged properly now, AND a synthetic failure record takes the missing task's place so it
+        // stays visible in the manifest instead of silently disappearing.
+        for (Map.Entry<String, Throwable> e : errors.entrySet()) {
+            log.warn("run {}: parallel task {} failed", runId, e.getKey(), e.getValue());
+            final Map<String, Object> failed = new LinkedHashMap<>();
+            failed.put("id", e.getKey());
+            failed.put("rc", 1);
+            failed.put("error", String.valueOf(e.getValue()));
+            failed.put("parallel_wave", waveIds);
+            recs.put(e.getKey(), failed);
+        }
         // merge in plan order; conflicts are kept (markers committed) and surfaced to the next packs and the integration task
         final List<String[]> conflicts = new ArrayList<>();
         final Map<String, Object> waveRec = new LinkedHashMap<>();
