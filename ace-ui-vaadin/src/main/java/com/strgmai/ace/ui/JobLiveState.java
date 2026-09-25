@@ -50,6 +50,12 @@ public final class JobLiveState implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
+    /** #109: a bound on recentRequests, so a very long run's live view doesn't hold unbounded state
+     *  in the Vaadin session's JVM heap for as long as the job page stays open. requestCount() is
+     *  never capped, so the UI can still say how many requests happened in total even once the grid
+     *  itself only shows the most recent window of them. */
+    static final int MAX_RECENT_REQUESTS = 500;
+
     private final List<String> steps = new ArrayList<>();
     private final List<SessionRow> sessions = new ArrayList<>();
     // session id -> [prefillSum, prefillN, decodeSum, decodeN], for the running averages in SessionRow
@@ -89,10 +95,15 @@ public final class JobLiveState implements Serializable {
                 if (data.hasNonNull("budget_spent_completion_tokens")) {
                     lastTokens = data.get("budget_spent_completion_tokens").longValue();
                 }
-                // every request for the life of the job's live view - #new bug: this used to cap at the
-                // 20 most recent and silently drop the rest, with no indication in the grid that it was
-                // truncated and no way to scroll to see more (the "requests: N" summary line was never
-                // capped, so it visibly disagreed with what the grid showed underneath it)
+                // every request for the life of the job's live view, up to MAX_RECENT_REQUESTS -
+                // #new bug (2026-09): this used to cap at the 20 most recent and silently drop the
+                // rest, with no indication in the grid that it was truncated and no way to scroll to
+                // see more (the "requests: N" summary line was never capped, so it visibly disagreed
+                // with what the grid showed underneath it). #109: an unbounded deque then replaced
+                // that cap, which is honest but unbounded server-side Vaadin-session state for a
+                // long-running job - capped again, but now with requestCount() (never capped) still
+                // available so the UI can say "showing the most recent 500 of 3,241" instead of
+                // either silently dropping rows or growing forever.
                 recentRequests.addFirst(new RequestRow(
                         Fmt.textOr(data.path("ts"), null),
                         data.path("status").isNumber() ? data.path("status").intValue() : null,
@@ -102,6 +113,7 @@ public final class JobLiveState implements Serializable {
                                 ? data.get("budget_spent_completion_tokens").longValue() : null,
                         data.path("client_aborted").asBoolean(false),
                         data.path("abort_reason").isTextual() ? data.path("abort_reason").asText() : null));
+                if (recentRequests.size() > MAX_RECENT_REQUESTS) recentRequests.removeLast();
                 accumulateSpeed(data);
                 accumulateTokens(data);
                 accumulateRequestWallTime(data);
