@@ -46,19 +46,29 @@ public class JobQueue {
         if (experimentId == null && dsl.fetchCount(JOBS, JOBS.RUN_ID.eq(runId)
                 .and(JOBS.STATUS.notIn("succeeded", "failed", "cancelled"))) > 0)
             throw new IllegalArgumentException(runId + " already has a pending job");
-        JobsRecord rec = dsl.insertInto(JOBS)
-                .set(JOBS.ID, UUID.randomUUID())   // no AUTOINCREMENT on a UUID PK - assigned here
-                .set(JOBS.EXPERIMENT_ID, experimentId)
-                .set(JOBS.ARM, arm)
-                .set(JOBS.REPEAT, repeat)
-                .set(JOBS.KIND, "run")
-                .set(JOBS.RUN_ID, runId)
-                .set(JOBS.ARGV, toJson(spec.argv(runId)))
-                .set(JOBS.PRIORITY, priority)
-                .set(JOBS.PINNED_RUNNER_SHA, runnerSha)
-                .set(JOBS.PINNED_ORACLE_SHA, oracleSha)
-                .returning()
-                .fetchOne();
+        JobsRecord rec;
+        try {
+            rec = dsl.insertInto(JOBS)
+                    .set(JOBS.ID, UUID.randomUUID())   // no AUTOINCREMENT on a UUID PK - assigned here
+                    .set(JOBS.EXPERIMENT_ID, experimentId)
+                    .set(JOBS.ARM, arm)
+                    .set(JOBS.REPEAT, repeat)
+                    .set(JOBS.KIND, "run")
+                    .set(JOBS.RUN_ID, runId)
+                    .set(JOBS.ARGV, toJson(spec.argv(runId)))
+                    .set(JOBS.PRIORITY, priority)
+                    .set(JOBS.PINNED_RUNNER_SHA, runnerSha)
+                    .set(JOBS.PINNED_ORACLE_SHA, oracleSha)
+                    .returning()
+                    .fetchOne();
+        } catch (org.jooq.exception.DataAccessException e) {
+            // #87: the pre-checks above race with the DB's own uq_jobs_kind_run_id unique constraint
+            // (the real backstop against a genuine double-insert) rather than being backed by it in
+            // the exception-handling path - a request that LOSES that race used to surface as a raw,
+            // unmapped 500 instead of the 409 Conflict its sibling methods (cancel(), requeue())
+            // already return for the equivalent "state changed concurrently" case.
+            throw new IllegalStateException("run id " + runId + " was enqueued concurrently by another request", e);
+        }
         return JsonColumns.parse(rec.intoMap());
     }
 
