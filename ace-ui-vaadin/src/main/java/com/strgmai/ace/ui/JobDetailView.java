@@ -4,6 +4,8 @@ import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
+import com.vaadin.flow.component.grid.GridSortOrder;
+import com.vaadin.flow.data.provider.SortDirection;
 import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.H2;
@@ -60,6 +62,28 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             Fmt.nullsLast(JobLiveState.RequestRow::ttftSec);
     static final Comparator<JobLiveState.RequestRow> REQUESTS_BY_TOKENS =
             Fmt.nullsLast(JobLiveState.RequestRow::tokens);
+
+    // The live-sessions sort keys, same shape as the requests ones above - every column sortable.
+    static final Comparator<JobLiveState.SessionRow> SESSIONS_BY_TS =
+            Fmt.comparingTime(JobLiveState.SessionRow::ts);
+    static final Comparator<JobLiveState.SessionRow> SESSIONS_BY_LABEL =
+            Fmt.nullsLast(JobLiveState.SessionRow::label);
+    static final Comparator<JobLiveState.SessionRow> SESSIONS_BY_DESCRIPTION =
+            Fmt.nullsLast(JobLiveState.SessionRow::description);
+    static final Comparator<JobLiveState.SessionRow> SESSIONS_BY_ENDED_STAGE =
+            Fmt.nullsLast(JobLiveState.SessionRow::endedStage);
+    static final Comparator<JobLiveState.SessionRow> SESSIONS_BY_WALL_SEC =
+            Fmt.nullsLast(JobLiveState.SessionRow::wallSec);
+    static final Comparator<JobLiveState.SessionRow> SESSIONS_BY_PREFILL_WALL =
+            Fmt.nullsLast(JobLiveState.SessionRow::prefillWallSec);
+    static final Comparator<JobLiveState.SessionRow> SESSIONS_BY_DECODE_WALL =
+            Fmt.nullsLast(JobLiveState.SessionRow::decodeWallSec);
+    static final Comparator<JobLiveState.SessionRow> SESSIONS_BY_PREFILL_TPS =
+            Fmt.nullsLast(JobLiveState.SessionRow::avgPrefillTokPerSec);
+    static final Comparator<JobLiveState.SessionRow> SESSIONS_BY_DECODE_TPS =
+            Fmt.nullsLast(JobLiveState.SessionRow::avgDecodeTokPerSec);
+    static final Comparator<JobLiveState.SessionRow> SESSIONS_BY_TOTAL_TOKENS =
+            Fmt.nullsLast(JobLiveState.SessionRow::totalTokens);
 
     // Stable field references, updated in place.
     private final Span kindLine = new Span();
@@ -388,30 +412,42 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  stage (still "running") shows that explicitly rather than leaving the reader to guess. */
     private static Grid<JobLiveState.SessionRow> buildSessionsGrid() {
         final var sessions = new Grid<>(JobLiveState.SessionRow.class, false);
-        sessions.addColumn(JobLiveState.SessionRow::label).setHeader("session").setAutoWidth(true);
-        sessions.addColumn(JobLiveState.SessionRow::description).setHeader("description").setAutoWidth(true);
+        final var ts = sessions.addColumn(r -> Fmt.when(r.ts())).setHeader("ts").setAutoWidth(true)
+                .setComparator(SESSIONS_BY_TS);
+        sessions.addColumn(JobLiveState.SessionRow::label).setHeader("session").setAutoWidth(true)
+                .setComparator(SESSIONS_BY_LABEL);
+        sessions.addColumn(JobLiveState.SessionRow::description).setHeader("description").setAutoWidth(true)
+                .setComparator(SESSIONS_BY_DESCRIPTION);
         sessions.addColumn(r -> r.endedStage() == null ? "running" : r.endedStage())
-                .setHeader("ended at").setAutoWidth(true);
+                .setHeader("ended at").setAutoWidth(true)
+                .setComparator(SESSIONS_BY_ENDED_STAGE);
         // only known once the session ends (its own transcript's start-to-end ts) - "-" while running,
         // rather than a live-ticking elapsed time
         sessions.addColumn(r -> Fmt.duration(r.wallSec())).setHeader("wall time")
-                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
+                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true)
+                .setComparator(SESSIONS_BY_WALL_SEC);
         // summed per request: ttft_sec IS the prefill wall time, latency_sec - ttft_sec the decode wall
         // time - Fmt.seconds (not Fmt.duration) since prefill in particular is often sub-minute and an
         // hour+minute format would round it away to nothing
         sessions.addColumn(r -> Fmt.seconds(r.prefillWallSec())).setHeader("prefill wall")
-                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
+                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true)
+                .setComparator(SESSIONS_BY_PREFILL_WALL);
         sessions.addColumn(r -> Fmt.seconds(r.decodeWallSec())).setHeader("decode wall")
-                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
+                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true)
+                .setComparator(SESSIONS_BY_DECODE_WALL);
         // averaged across the session's requests as they arrive - oMLX-reported tok/s, not derived
         // from proxy-observed timings; "-" until the first request with real usage lands
         sessions.addColumn(r -> Fmt.num(r.avgPrefillTokPerSec())).setHeader("prefill tok/s")
-                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
+                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true)
+                .setComparator(SESSIONS_BY_PREFILL_TPS);
         sessions.addColumn(r -> Fmt.num(r.avgDecodeTokPerSec())).setHeader("decode tok/s")
-                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
+                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true)
+                .setComparator(SESSIONS_BY_DECODE_TPS);
         // a running sum across the session's requests - visible live, unlike wall time
         sessions.addColumn(r -> Fmt.count(r.totalTokens())).setHeader("total tokens")
-                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
+                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true)
+                .setComparator(SESSIONS_BY_TOTAL_TOKENS);
+        sessions.sort(List.of(new GridSortOrder<>(ts, SortDirection.ASCENDING)));
         sessions.setAllRowsVisible(true);
         sessions.setVisible(false);
         return sessions;
