@@ -885,7 +885,7 @@ public class RunBench {
             threads.add(th);
             th.start();
         }
-        for (Thread th : threads) th.join();
+        joinAll(threads);
         for (Map.Entry<String, Throwable> e : errors.entrySet())
             System.out.println("      !! parallel task " + e.getKey() + " failed: " + e.getValue());
         // merge in plan order; conflicts are kept (markers committed) and surfaced to the next packs and the integration task
@@ -1006,6 +1006,23 @@ public class RunBench {
         waveRec.put("verification_text", VerifyTask.verifyText(wv));
         waveRec.put("merge_conflicts", conflicts);
         return waveRec;
+    }
+
+    /** #99: waits for every parallel-wave thread, but a cancelled job (WorkerService's cancelWatch
+     *  interrupts the outer job-runner thread, which is blocked here in the common case) must reach
+     *  the wave threads themselves too, not just abandon them running to completion in the background -
+     *  the same "an interrupt must reach the actual blocking work" discipline the rest of the codebase
+     *  applies everywhere else (R10/R12, see ReferenceAgent/RecordingProxy). Interrupting each wave
+     *  thread lets its own runBounded() call unwind the same way any other cancelled session's does;
+     *  still WAITS for them to actually stop before returning, not just signals and moves on. */
+    static void joinAll(final List<Thread> threads) throws InterruptedException {
+        try {
+            for (Thread th : threads) th.join();
+        } catch (InterruptedException ie) {
+            for (Thread th : threads) th.interrupt();
+            for (Thread th : threads) th.join();
+            throw ie;
+        }
     }
 
     static void copyTree(final Path from, final Path to) throws Exception {
