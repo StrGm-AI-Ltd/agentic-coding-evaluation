@@ -150,7 +150,10 @@ public class BenchController {
                 spec.get("top_k") instanceof Number n8 ? n8.intValue() : intOf(spec.get("top_k")),
                 spec.get("repetition_penalty") instanceof Number n9 ? n9.doubleValue() : doubleOf(spec.get("repetition_penalty")),
                 spec.get("max_tokens") instanceof Number n10 ? n10.intValue() : intOf(spec.get("max_tokens")),
-                str(spec.get("reasoning_effort")));
+                str(spec.get("reasoning_effort")),
+                spec.get("parallel_plan_wall") instanceof Number n11 ? n11.intValue() : intOf(spec.get("parallel_plan_wall")),
+                spec.get("handoff_wall") instanceof Number n12 ? n12.intValue() : intOf(spec.get("handoff_wall")),
+                spec.get("wrapup_wall") instanceof Number n13 ? n13.intValue() : intOf(spec.get("wrapup_wall")));
         return queue.enqueue(rs, priority, props.resultsDir(), pin.current(), pin.current(), null, null, null);
     }
 

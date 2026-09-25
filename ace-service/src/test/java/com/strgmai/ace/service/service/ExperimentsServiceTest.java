@@ -181,6 +181,45 @@ class ExperimentsServiceTest {
         assertTrue(specs.stream().allMatch(s -> "direct".equals(s.spec().trajectoryUse())));
     }
 
+    /** #72: the sampler knobs are shared across every template, same as review/trajectory weight. */
+    @Test
+    void samplerParamsFlowThroughToEveryArmsRunSpec() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab",
+                Map.<String, Object>of("model_a", "a", "model_b", "b", "temperature", 0.7, "top_p", 0.9,
+                        "top_k", 40, "repetition_penalty", 1.1, "max_tokens", 2000, "reasoning_effort", "high"), 1);
+        assertFalse(specs.isEmpty());
+        assertTrue(specs.stream().allMatch(s -> Double.valueOf(0.7).equals(s.spec().temperature())));
+        assertTrue(specs.stream().allMatch(s -> Double.valueOf(0.9).equals(s.spec().topP())));
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(40).equals(s.spec().topK())));
+        assertTrue(specs.stream().allMatch(s -> Double.valueOf(1.1).equals(s.spec().repetitionPenalty())));
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(2000).equals(s.spec().maxTokens())));
+        assertTrue(specs.stream().allMatch(s -> "high".equals(s.spec().reasoningEffort())));
+    }
+
+    @Test
+    void samplerParamsAreNullOnRunSpecWhenNotGiven() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab", Map.of("model_a", "a", "model_b", "b"), 1);
+        assertFalse(specs.isEmpty());
+        assertTrue(specs.stream().allMatch(s -> s.spec().temperature() == null && s.spec().topK() == null
+                && s.spec().reasoningEffort() == null));
+    }
+
+    /** Found live 2026-09-25: PARALLEL_PLAN/handoff/wrap-up walls were fixed literals in
+     *  RunBench.java with no run-level control - shared by every template, same as the sampler knobs. */
+    @Test
+    void newWallParamsFlowThroughToEveryArmsRunSpec() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab",
+                Map.<String, Object>of("model_a", "a", "model_b", "b",
+                        "parallel_plan_wall", 900, "handoff_wall", 450, "wrapup_wall", 600), 1);
+        assertFalse(specs.isEmpty());
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(900).equals(s.spec().parallelPlanWall())));
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(450).equals(s.spec().handoffWall())));
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(600).equals(s.spec().wrapupWall())));
+    }
+
     // --- #3: enqueue() rolls back the whole experiment on a mid-loop failure ---------------------
 
     @Test

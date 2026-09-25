@@ -44,6 +44,18 @@ public final class ExperimentParams {
         putIfPresent(params, raw, "trajectory_reviewer_model", String.class);
         putIfPresent(params, raw, "trajectory_weight", Double.class);
         putIfPresent(params, raw, "trajectory_use", String.class);
+        // sampler knobs (#72): shared by every template, same as the review/context params above
+        putIfPresent(params, raw, "temperature", Double.class);
+        putIfPresent(params, raw, "top_p", Double.class);
+        putIfPresent(params, raw, "top_k", Integer.class);
+        putIfPresent(params, raw, "repetition_penalty", Double.class);
+        putIfPresent(params, raw, "max_tokens", Integer.class);
+        putIfPresent(params, raw, "reasoning_effort", String.class);
+        // PARALLEL_PLAN/handoff/wrap-up walls (found live 2026-09-25): were fixed literals in
+        // RunBench.java with no run-level control at all
+        putIfPresent(params, raw, "parallel_plan_wall", Integer.class);
+        putIfPresent(params, raw, "handoff_wall", Integer.class);
+        putIfPresent(params, raw, "wrapup_wall", Integer.class);
 
         switch (template) {
             case "harness_effect" -> {

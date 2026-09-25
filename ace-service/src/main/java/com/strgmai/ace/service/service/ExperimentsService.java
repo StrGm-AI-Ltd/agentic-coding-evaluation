@@ -77,6 +77,10 @@ public class ExperimentsService {
                 final String trajReviewerModel = trajectoryReviewerModel(params, reviewerModel);
                 final Double reviewWeight = reviewWeight(params), trajectoryWeight = trajectoryWeight(params);
                 final String trajectoryUse = trajectoryUse(params);
+                final Double temperature = temperature(params), topP = topP(params), repetitionPenalty = repetitionPenalty(params);
+                final Integer topK = topK(params), maxTokens = maxTokens(params);
+                final String reasoningEffort = reasoningEffort(params);
+                final Integer parallelPlanWall = parallelPlanWall(params), handoffWall = handoffWall(params), wrapupWall = wrapupWall(params);
                 for (int i = 1; i <= k; i++)
                     for (String arm : arms)
                         specs.add(new ArmSpec(arm, i, new RunSpec(RUNG, model, null, "orchestrated".equals(armMode(arm)) ? "orchestrated" : "monolithic",
@@ -84,7 +88,7 @@ public class ExperimentsService {
                                 "par".equals(arm) ? parallel : null, "mono+rules".equals(arm), review, review, reviewerModel, false, true, noProbe, false, window, firstTokenTimeout, compactionTrigger, reviewWallSec,
                                 blind, trajReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse,
                                 "he-" + tag + "-" + shortName(model) + "-" + arm.replace("+", "") + "-r" + i,
-                                null, null, null, null, null, null)));
+                                temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall)));
             }
             case "model_ab" -> {
                 final String a = str(params.get("model_a")), b = str(params.get("model_b"));
@@ -100,18 +104,22 @@ public class ExperimentsService {
                 final String trajReviewerModel = trajectoryReviewerModel(params, reviewerModel);
                 final Double reviewWeight = reviewWeight(params), trajectoryWeight = trajectoryWeight(params);
                 final String trajectoryUse = trajectoryUse(params);
+                final Double temperature = temperature(params), topP = topP(params), repetitionPenalty = repetitionPenalty(params);
+                final Integer topK = topK(params), maxTokens = maxTokens(params);
+                final String reasoningEffort = reasoningEffort(params);
+                final Integer parallelPlanWall = parallelPlanWall(params), handoffWall = handoffWall(params), wrapupWall = wrapupWall(params);
                 for (int i = 1; i <= k; i++) {
                     // the arm suffix keeps A and B distinct; model-ab.sh always reviews both sides (self + trajectory)
                     specs.add(new ArmSpec("A", i, new RunSpec(RUNG, a, null, "orchestrated", "reference", wall, null, null, null, null, false,
                             true, true, reviewerModel, false, true, noProbe, false, windowA, firstTokenTimeout, compactionTrigger, reviewWallSec,
                             blind, trajReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse,
                             "ab-" + tag + "-" + shortName(a) + "-a-r" + i,
-                            null, null, null, null, null, null)));
+                            temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall)));
                     specs.add(new ArmSpec("B", i, new RunSpec(RUNG, b, null, "orchestrated", "reference", wall, null, null, null, null, false,
                             true, true, reviewerModel, false, true, noProbe, false, windowB, firstTokenTimeout, compactionTrigger, reviewWallSec,
                             blind, trajReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse,
                             "ab-" + tag + "-" + shortName(b) + "-b-r" + i,
-                            null, null, null, null, null, null)));
+                            temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall)));
                 }
             }
             case "agent_ab" -> {
@@ -130,6 +138,10 @@ public class ExperimentsService {
                 final String trajReviewerModel = trajectoryReviewerModel(params, reviewerModel);
                 final Double reviewWeight = reviewWeight(params), trajectoryWeight = trajectoryWeight(params);
                 final String trajectoryUse = trajectoryUse(params);
+                final Double temperature = temperature(params), topP = topP(params), repetitionPenalty = repetitionPenalty(params);
+                final Integer topK = topK(params), maxTokens = maxTokens(params);
+                final String reasoningEffort = reasoningEffort(params);
+                final Integer parallelPlanWall = parallelPlanWall(params), handoffWall = handoffWall(params), wrapupWall = wrapupWall(params);
                 for (int i = 1; i <= k; i++)
                     for (String agent : List.of("ref", "pi"))   // --harness=ref|pi: the flag the comparison is ABOUT
                         specs.add(new ArmSpec(agent, i, new RunSpec(RUNG, model, agent, mode, "reference",
@@ -137,7 +149,7 @@ public class ExperimentsService {
                                 "monolithic".equals(mode) ? 60000 * taskCount() : null, null, false, review, review, reviewerModel, false, true, noProbe, false, window, firstTokenTimeout, compactionTrigger, reviewWallSec,
                                 blind, trajReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse,
                                 "aa-" + tag + "-" + shortName(model) + "-" + agent + "-r" + i,
-                                null, null, null, null, null, null)));
+                                temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall)));
             }
             default -> throw new IllegalArgumentException("unknown template " + template + "; known: harness_effect, model_ab, agent_ab");
         }
@@ -202,6 +214,48 @@ public class ExperimentsService {
      *  own "calibration" default */
     static String trajectoryUse(Map<String, Object> params) {
         return str(params.get("trajectory_use"));
+    }
+
+    // sampler knobs (#72): an explicit params.* wins; unset leaves RecordingProxy on the
+    // operator-wide ace.* default, or omits the field from the request entirely when there is
+    // no such default (top_k/repetition_penalty/reasoning_effort) - same "explicit wins,
+    // otherwise fall through to the existing default" shape as every helper above.
+    Double temperature(Map<String, Object> params) {
+        return params.get("temperature") == null ? null : numD(params.get("temperature"));
+    }
+
+    Double topP(Map<String, Object> params) {
+        return params.get("top_p") == null ? null : numD(params.get("top_p"));
+    }
+
+    Integer topK(Map<String, Object> params) {
+        return params.get("top_k") == null ? null : num(params.get("top_k"));
+    }
+
+    Double repetitionPenalty(Map<String, Object> params) {
+        return params.get("repetition_penalty") == null ? null : numD(params.get("repetition_penalty"));
+    }
+
+    Integer maxTokens(Map<String, Object> params) {
+        return params.get("max_tokens") == null ? null : num(params.get("max_tokens"));
+    }
+
+    static String reasoningEffort(Map<String, Object> params) {
+        return str(params.get("reasoning_effort"));
+    }
+
+    // PARALLEL_PLAN/handoff/wrap-up walls (found live 2026-09-25): were fixed literals in
+    // RunBench.java with no run-level control; explicit params.* wins, unset keeps that literal
+    Integer parallelPlanWall(Map<String, Object> params) {
+        return params.get("parallel_plan_wall") == null ? null : num(params.get("parallel_plan_wall"));
+    }
+
+    Integer handoffWall(Map<String, Object> params) {
+        return params.get("handoff_wall") == null ? null : num(params.get("handoff_wall"));
+    }
+
+    Integer wrapupWall(Map<String, Object> params) {
+        return params.get("wrapup_wall") == null ? null : num(params.get("wrapup_wall"));
     }
 
     /** id -> max_model_len for whatever the model server currently serves — the same /v1/models query
