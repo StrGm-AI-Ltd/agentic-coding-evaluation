@@ -159,4 +159,37 @@ class RunBenchTest {
         assertTrue(kept.get(1).contains("continuation line"));
         assertTrue(kept.get(2).contains("last line inside the run"));
     }
+
+    /** #99: a cancelled job interrupts the thread blocked in joinAll() - that interrupt must reach
+     *  every parallel-wave thread (not just get swallowed here while they keep running to completion
+     *  unattended), and joinAll() must actually wait for them to stop before returning. */
+    @Test
+    void joinAllInterruptsAndWaitsForEveryWaveThreadWhenCancelled() throws Exception {
+        final var interrupted = new java.util.concurrent.atomic.AtomicInteger();
+        final var started = new java.util.concurrent.CountDownLatch(2);
+        final List<Thread> workers = new java.util.ArrayList<>();
+        for (int i = 0; i < 2; i++) {
+            final Thread w = new Thread(() -> {
+                started.countDown();
+                try { Thread.sleep(60_000); }   // stands in for a still-running agent session
+                catch (InterruptedException ie) { interrupted.incrementAndGet(); }
+            });
+            workers.add(w);
+            w.start();
+        }
+        started.await();
+
+        final Thread caller = new Thread(() -> {
+            try { RunBench.joinAll(workers); }
+            catch (InterruptedException expected) { /* correctly propagated to the caller */ }
+        });
+        caller.start();
+        Thread.sleep(200);   // let joinAll() actually block in th.join() before interrupting it
+        caller.interrupt();
+        caller.join(5000);
+
+        assertFalse(caller.isAlive(), "joinAll() must return once its own interrupt is handled");
+        assertEquals(2, interrupted.get(), "every wave thread must receive its own interrupt, not be abandoned running");
+        for (Thread w : workers) assertFalse(w.isAlive(), "joinAll() must wait for the wave threads to actually stop, not just signal and move on");
+    }
 }
