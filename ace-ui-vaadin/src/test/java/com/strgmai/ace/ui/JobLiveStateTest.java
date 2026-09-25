@@ -206,8 +206,12 @@ class JobLiveStateTest {
         assertEquals(20.0, session.avgDecodeTokPerSec());
     }
 
+    /** The live requests grid used to cap at 20 and silently drop the rest, with no indication in the
+     *  grid that it was truncated and no way to scroll to see more, while the "requests: N" summary
+     *  line was never capped - visibly disagreeing with what the grid showed underneath it. Now every
+     *  request survives for the life of the job's live view. */
     @Test
-    void requestsCountTokensAndCapAt20NewestFirst() {
+    void requestsAccumulateAllNewestFirst() {
         final var state = new JobLiveState();
         final var stream = new StringBuilder();
         for (int i = 1; i <= 25; i++) {
@@ -223,9 +227,9 @@ class JobLiveStateTest {
         assertEquals(250L, state.lastTokens());
 
         final var recent = state.recentRequests();
-        assertEquals(JobLiveState.MAX_RECENT_REQUESTS, recent.size());
+        assertEquals(25, recent.size(), "every request is kept, not just the most recent 20");
         assertEquals("t25", recent.get(0).ts(), "newest first");
-        assertEquals("t6", recent.get(recent.size() - 1).ts(), "the 20 newest survive the cap");
+        assertEquals("t1", recent.get(recent.size() - 1).ts(), "the oldest request is still present");
         assertEquals(250L, recent.get(0).tokens());
         assertEquals(2.5, recent.get(0).latencySec(), "fixture latency for seq 25 is 25/10.0");
     }
@@ -318,7 +322,7 @@ class JobLiveStateTest {
         assertFalse(reader.isAlive(), "reader outlived the join timeout");
         assertNull(failure.get(), "no ConcurrentModificationException or other failure");
         assertEquals(events, state.requestCount(), "every request event is applied exactly once");
-        assertEquals(JobLiveState.MAX_RECENT_REQUESTS, state.recentRequests().size());
+        assertEquals(events, state.recentRequests().size(), "every request is retained, not just the most recent 20");
         assertEquals("line " + (events - 1), state.logTail());
     }
 
