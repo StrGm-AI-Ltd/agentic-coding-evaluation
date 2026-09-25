@@ -134,62 +134,9 @@ public class WorkerService {
             try {
                 queue.started(job.id(), (int) ProcessHandle.current().pid(), null);
                 log.info("job {}: started {} ({})", job.id(), job.runId(), job.argv());
-                final Map<String, Object> cfg = new LinkedHashMap<>();
-                cfg.put("results_root", props.resultsDir());
-                cfg.put("workspace_root", props.workspaceRoot());
-                cfg.put("model", job.argv().stream().filter(a -> a.startsWith("--model=")).map(a -> a.substring(8)).findFirst().orElse(props.model()));
-                cfg.put("system_base_url", null);
+                final Map<String, Object> cfg = JobCfgFactory.build(job.argv(), props);
                 final String mode = flag(job.argv(), "--mode") != null ? flag(job.argv(), "--mode") : "monolithic";
                 final String planSource = flag(job.argv(), "--plan-source") != null ? flag(job.argv(), "--plan-source") : "agent";
-                if (flag(job.argv(), "--task-wall") != null) cfg.put("task_wall_sec", Integer.parseInt(flag(job.argv(), "--task-wall")));
-                if (flag(job.argv(), "--task-tokens") != null) cfg.put("task_tokens", Long.parseLong(flag(job.argv(), "--task-tokens")));
-                if (flag(job.argv(), "--first-token-timeout") != null) cfg.put("first_token_timeout_sec", Integer.parseInt(flag(job.argv(), "--first-token-timeout")));
-                if (flag(job.argv(), "--compaction-trigger") != null) cfg.put("compaction_trigger", Integer.parseInt(flag(job.argv(), "--compaction-trigger")));
-                // sampler knobs (#72) - RunBench folds these into a SamplerOverrides pinned onto
-                // every request by RecordingProxy; unset means "use the operator-wide default"
-                if (flag(job.argv(), "--temperature") != null) cfg.put("temperature", Double.parseDouble(flag(job.argv(), "--temperature")));
-                if (flag(job.argv(), "--top-p") != null) cfg.put("top_p", Double.parseDouble(flag(job.argv(), "--top-p")));
-                if (flag(job.argv(), "--top-k") != null) cfg.put("top_k", Integer.parseInt(flag(job.argv(), "--top-k")));
-                if (flag(job.argv(), "--repetition-penalty") != null) cfg.put("repetition_penalty", Double.parseDouble(flag(job.argv(), "--repetition-penalty")));
-                if (flag(job.argv(), "--max-tokens") != null) cfg.put("max_tokens_override", Integer.parseInt(flag(job.argv(), "--max-tokens")));
-                if (flag(job.argv(), "--reasoning-effort") != null) cfg.put("reasoning_effort", flag(job.argv(), "--reasoning-effort"));
-                // PARALLEL_PLAN/handoff/wrap-up walls (found live 2026-09-25): were fixed literals
-                // in RunBench.java (600/300/300*scale) with no run-level control at all
-                if (flag(job.argv(), "--parallel-plan-wall") != null) cfg.put("parallel_plan_wall_sec", Integer.parseInt(flag(job.argv(), "--parallel-plan-wall")));
-                if (flag(job.argv(), "--handoff-wall") != null) cfg.put("handoff_wall_sec", Integer.parseInt(flag(job.argv(), "--handoff-wall")));
-                if (flag(job.argv(), "--wrapup-wall") != null) cfg.put("wrapup_wall_sec", Integer.parseInt(flag(job.argv(), "--wrapup-wall")));
-                // a pinned --context-window IS the window: it skips step 0, whose whole job is to measure one
-                final String window = flag(job.argv(), "--context-window");
-                if (window != null) cfg.put("context_window", Integer.parseInt(window));
-                // the context probe (step 0) is the default for direct runs; queue runs opt in via ACE_JLS_CONTEXT_PROBE;
-                // --no-context-probe is a per-run override that skips it even when nothing is pinned
-                cfg.put("context_probe", !job.argv().contains("--no-context-probe") && window == null
-                        && Boolean.parseBoolean(System.getenv().getOrDefault("ACE_JLS_CONTEXT_PROBE", "true")));   // Python default: the probe runs
-                cfg.put("context_probe_fresh", job.argv().contains("--context-probe-fresh"));
-                if (flag(job.argv(), "--parallel") != null) {
-                    if ("auto".equals(flag(job.argv(), "--parallel"))) cfg.put("parallel_auto", true);
-                    else cfg.put("parallel", Integer.parseInt(flag(job.argv(), "--parallel")));
-                }
-                cfg.put("manage_docker", job.argv().contains("--manage-docker"));
-                // Map.of() rejects a null value outright - "model" IS null whenever review is enabled
-                // without an explicit --reviewer-model (self-review alone still needs a reviewer picked
-                // downstream, but that is RunBench's decision to make, not a reason to crash the worker)
-                final Map<String, Object> review = new LinkedHashMap<>();
-                review.put("enabled", job.argv().contains("--self-review"));
-                review.put("model", flag(job.argv(), "--reviewer-model"));
-                review.put("blind", job.argv().contains("--review-blind"));
-                // shared by both self-review and trajectory-review (Reviews.runReviewerSession reads
-                // this same "review" map's wall_sec for either kind of reviewer session)
-                if (flag(job.argv(), "--review-wall-sec") != null) review.put("wall_sec", Integer.parseInt(flag(job.argv(), "--review-wall-sec")));
-                // unset -> Collect's own 0.1 default; only set when the run actually pinned one
-                if (flag(job.argv(), "--review-weight") != null) review.put("weight", Double.parseDouble(flag(job.argv(), "--review-weight")));
-                cfg.put("review", review);
-                final Map<String, Object> trajectoryReview = new LinkedHashMap<>();
-                trajectoryReview.put("enabled", job.argv().contains("--trajectory-review"));
-                trajectoryReview.put("model", flag(job.argv(), "--trajectory-reviewer-model"));
-                if (flag(job.argv(), "--trajectory-weight") != null) trajectoryReview.put("weight", Double.parseDouble(flag(job.argv(), "--trajectory-weight")));
-                trajectoryReview.put("use", flag(job.argv(), "--trajectory-use"));
-                cfg.put("trajectory_review", trajectoryReview);
                 runBench.runOnce(cfg, job.runId(), flag(job.argv(), "--task") == null ? "L7_full_platform" : flag(job.argv(), "--task"), mode, planSource);
                 queue.finish(job.id(), "succeeded", 0, resultLine(Path.of(props.resultsDir(), job.runId())));
                 importer.importRun(Path.of(props.resultsDir(), job.runId()), job.kind().equals("run") ? job.id() : null);
