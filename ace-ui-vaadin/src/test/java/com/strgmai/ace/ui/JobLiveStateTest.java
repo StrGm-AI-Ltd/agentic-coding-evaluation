@@ -8,6 +8,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The live panel's accumulation rules — the Jinja page's JS, in Java. */
 class JobLiveStateTest {
@@ -459,7 +460,23 @@ class JobLiveStateTest {
         assertNull(row.ttftSec());
         assertNull(row.tokens());
         assertFalse(row.clientAborted());
+        assertNull(row.abortReason());
         assertNull(state.lastTokens());
+    }
+
+    /** RecordingProxy journals abort_reason alongside client_aborted (2026-09-25) so the requests
+     *  grid can show WHY, not just that, a request was aborted. */
+    @Test
+    void requestEventCarriesTheAbortReasonIntoTheRow() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: request
+                data: {"type": "request", "seq": 1, "client_aborted": true, "abort_reason": "task-wall budget exceeded (900s)"}
+
+                """).forEach(state::apply);
+        final var row = state.recentRequests().get(0);
+        assertTrue(row.clientAborted());
+        assertEquals("task-wall budget exceeded (900s)", row.abortReason());
     }
 
     @Test

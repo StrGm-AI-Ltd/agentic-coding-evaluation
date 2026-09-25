@@ -25,7 +25,7 @@ public final class JobLiveState implements Serializable {
 
     /** One row of the recent-requests table. */
     public record RequestRow(String ts, Integer status, Double latencySec, Double ttftSec,
-            Long tokens, boolean clientAborted) implements Serializable {
+            Long tokens, boolean clientAborted, String abortReason) implements Serializable {
     }
 
     /** One row of the sessions table: its short label, a human-readable description of what the
@@ -100,7 +100,8 @@ public final class JobLiveState implements Serializable {
                         data.path("ttft_sec").isNumber() ? data.path("ttft_sec").doubleValue() : null,
                         data.hasNonNull("budget_spent_completion_tokens")
                                 ? data.get("budget_spent_completion_tokens").longValue() : null,
-                        data.path("client_aborted").asBoolean(false)));
+                        data.path("client_aborted").asBoolean(false),
+                        data.path("abort_reason").isTextual() ? data.path("abort_reason").asText() : null));
                 accumulateSpeed(data);
                 accumulateTokens(data);
                 accumulateRequestWallTime(data);

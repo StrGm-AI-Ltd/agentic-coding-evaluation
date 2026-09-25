@@ -374,6 +374,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 .setAutoWidth(true)
                 .setComparator(REQUESTS_BY_TOKENS);
         requests.addColumn(r -> r.clientAborted() ? "yes" : "").setHeader("aborted").setAutoWidth(true);
+        requests.addColumn(r -> r.abortReason() == null ? "" : r.abortReason()).setHeader("abort reason").setAutoWidth(true);
         // #new bug: setAllRowsVisible(true) renders every row with no internal scrollbar, which is fine
         // for a handful of rows but silently gives no way to reach anything beyond the live state's own
         // cap once there are more - a fixed height switches the grid to Vaadin's normal virtual
