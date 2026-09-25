@@ -147,12 +147,15 @@ public final class Api {
     public record ExperimentJob(String id, String arm, Integer repeat, String run_id, String status, String result_line) {
     }
 
-    /** GET/POST /api/preflight. */
-    public record PreflightState(
-            boolean running,
-            String started_at,
-            String finished_at,
-            JsonNode results,
-            String error) {
+    /** GET /api/preflight — #108: synchronous (BenchController.preflight() runs every check inline
+     *  and returns the final result in the same request; there is no separate "start" call and
+     *  nothing to poll), matching the Spring backend's actual shape (the old {running, started_at,
+     *  finished_at, results, error} shape was the pre-port Python/FastAPI service's async contract,
+     *  which this backend never implemented). */
+    public record PreflightState(List<PreflightCheck> checks, boolean blocked, String verdict) {
+    }
+
+    /** one Preflight.Check as BenchController.preflight() actually serializes it. */
+    public record PreflightCheck(String check, boolean ok, String detail, boolean fatal) {
     }
 }

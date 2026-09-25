@@ -100,10 +100,6 @@ public class ServiceClient implements Serializable {
         return http.get().uri("/api/runs/{id}", runId).retrieve().body(Api.Run.class);
     }
 
-    public Api.Job rescore(final String runId) {
-        return http.post().uri("/api/runs/{id}/rescore", runId).retrieve().body(Api.Job.class);
-    }
-
     /** Whatever the model server currently serves, per GET /api/models — an empty list (not an
      *  error) when the model server is unreachable, the same fallback the endpoint itself uses. */
     public List<String> models() {
@@ -154,7 +150,8 @@ public class ServiceClient implements Serializable {
     }
 
     public Api.Job setPriority(final String jobId, final int priority) {
-        return http.patch().uri("/api/jobs/{id}", jobId)
+        // #108: BenchController only exposes POST /api/jobs/{id}/priority, not PATCH /api/jobs/{id}
+        return http.post().uri("/api/jobs/{id}/priority", jobId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("priority", priority))
                 .retrieve()
@@ -184,12 +181,9 @@ public class ServiceClient implements Serializable {
                 .body(Api.Experiment.class);
     }
 
+    /** GET /api/preflight — synchronous: runs every check and returns the final result in one call. */
     public Api.PreflightState preflight() {
         return http.get().uri("/api/preflight").retrieve().body(Api.PreflightState.class);
-    }
-
-    public Api.PreflightState startPreflight() {
-        return http.post().uri("/api/preflight").retrieve().body(Api.PreflightState.class);
     }
 
     /**
@@ -254,24 +248,11 @@ public class ServiceClient implements Serializable {
         if (e instanceof RestClientResponseException responseException) {
             try {
                 final var body = Json.MAPPER.readTree(responseException.getResponseBodyAsString());
-                if (body.has("detail")) {
-                    final var detail = body.get("detail");
-                    if (detail.isTextual()) {
-                        return detail.asText();
-                    }
-                    if (detail.isArray()) { // pydantic validation errors; the field name is the LAST loc segment
-                        final var sb = new StringBuilder();
-                        for (final var err : detail) {
-                            if (sb.length() > 0) {
-                                sb.append("\n");
-                            }
-                            final var loc = err.path("loc");
-                            final var field = loc.isArray() && !loc.isEmpty()
-                                    ? Fmt.textOr(loc.get(loc.size() - 1), "?") : "?";
-                            sb.append(field).append(": ").append(Fmt.textOr(err.path("msg"), "invalid"));
-                        }
-                        return sb.toString();
-                    }
+                // #108: ApiExceptionHandler (the Spring backend) always returns "detail" as a plain
+                // string - the pydantic-array shape this used to also handle was the pre-port
+                // Python/FastAPI service's contract, which this backend never produces
+                if (body.has("detail") && body.get("detail").isTextual()) {
+                    return body.get("detail").asText();
                 }
             } catch (final Exception ignored) {
                 // fall through to the raw body
