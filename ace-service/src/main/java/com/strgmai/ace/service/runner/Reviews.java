@@ -6,6 +6,7 @@ import com.strgmai.ace.service.docker.DockerService;
 import com.strgmai.ace.service.metrics.Trajectory;
 import com.strgmai.ace.service.pack.Packs;
 import com.strgmai.ace.service.plan.PlanTask;
+import com.strgmai.ace.service.proxy.RecordingProxy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -243,7 +244,7 @@ public class Reviews {
         final long tokens = ((Number) reviewCfg.getOrDefault("tokens", 12000)).longValue();
         final String model = reviewer.startsWith("omlx/") ? reviewer.substring("omlx/".length()) : reviewer.substring(reviewer.indexOf('/') + 1);
         final RecordingProxyFactory.ProxySession proxy = external ? null
-                : proxies.start(rd.resolve("interactions.jsonl"), tokens, null, (Integer) cfg.get("max_output_tokens"));
+                : proxies.start(rd.resolve("interactions.jsonl"), tokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
         final Map<String, String> extraEnv = external ? externalCredentials(reviewCfg) : null;
         final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 180_000L;
         final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();

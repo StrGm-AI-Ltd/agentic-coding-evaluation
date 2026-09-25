@@ -118,7 +118,12 @@ public final class JournalFacts {
                     f.put("system_prompt_sha", sha(raw.replaceAll("\\d{4}-\\d{2}-\\d{2}", "<date>")));
                 }
                 final Map<String, Object> sampler = new LinkedHashMap<>();
-                for (String k : List.of("temperature", "top_p", "seed", "max_tokens", "max_completion_tokens"))
+                // top_k/repetition_penalty/reasoning_effort (#72): run-adjustable sampler knobs,
+                // absent from the request entirely when a run didn't set one - reads null here the
+                // same as every field above already does, so two runs differing only in one of
+                // these are correctly flagged non-comparable (StatsService.KEY_FIELDS "sampler")
+                for (String k : List.of("temperature", "top_p", "seed", "max_tokens", "max_completion_tokens",
+                        "top_k", "repetition_penalty", "reasoning_effort"))
                     sampler.put(k, req.path(k).isNumber() ? req.path(k).numberValue() : req.path(k).isTextual() ? req.path(k).asText() : null);
                 f.put("sampler_effective", sampler);
                 f.put("system_prompt_sha_raw", sha(jsonOf(req.path("messages"))));

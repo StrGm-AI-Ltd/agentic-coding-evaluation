@@ -83,7 +83,8 @@ public class ExperimentsService {
                                 "reference", wall, tokens, arm.contains("mono") ? wall * n : null, arm.contains("mono") ? tokens * n : null,
                                 "par".equals(arm) ? parallel : null, "mono+rules".equals(arm), review, review, reviewerModel, false, true, noProbe, false, window, firstTokenTimeout, compactionTrigger, reviewWallSec,
                                 blind, trajReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse,
-                                "he-" + tag + "-" + shortName(model) + "-" + arm.replace("+", "") + "-r" + i)));
+                                "he-" + tag + "-" + shortName(model) + "-" + arm.replace("+", "") + "-r" + i,
+                                null, null, null, null, null, null)));
             }
             case "model_ab" -> {
                 final String a = str(params.get("model_a")), b = str(params.get("model_b"));
@@ -104,11 +105,13 @@ public class ExperimentsService {
                     specs.add(new ArmSpec("A", i, new RunSpec(RUNG, a, null, "orchestrated", "reference", wall, null, null, null, null, false,
                             true, true, reviewerModel, false, true, noProbe, false, windowA, firstTokenTimeout, compactionTrigger, reviewWallSec,
                             blind, trajReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse,
-                            "ab-" + tag + "-" + shortName(a) + "-a-r" + i)));
+                            "ab-" + tag + "-" + shortName(a) + "-a-r" + i,
+                            null, null, null, null, null, null)));
                     specs.add(new ArmSpec("B", i, new RunSpec(RUNG, b, null, "orchestrated", "reference", wall, null, null, null, null, false,
                             true, true, reviewerModel, false, true, noProbe, false, windowB, firstTokenTimeout, compactionTrigger, reviewWallSec,
                             blind, trajReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse,
-                            "ab-" + tag + "-" + shortName(b) + "-b-r" + i)));
+                            "ab-" + tag + "-" + shortName(b) + "-b-r" + i,
+                            null, null, null, null, null, null)));
                 }
             }
             case "agent_ab" -> {
@@ -133,7 +136,8 @@ public class ExperimentsService {
                                 "orchestrated".equals(mode) ? wall : null, null, "monolithic".equals(mode) ? wall * taskCount() : null,
                                 "monolithic".equals(mode) ? 60000 * taskCount() : null, null, false, review, review, reviewerModel, false, true, noProbe, false, window, firstTokenTimeout, compactionTrigger, reviewWallSec,
                                 blind, trajReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse,
-                                "aa-" + tag + "-" + shortName(model) + "-" + agent + "-r" + i)));
+                                "aa-" + tag + "-" + shortName(model) + "-" + agent + "-r" + i,
+                                null, null, null, null, null, null)));
             }
             default -> throw new IllegalArgumentException("unknown template " + template + "; known: harness_effect, model_ab, agent_ab");
         }

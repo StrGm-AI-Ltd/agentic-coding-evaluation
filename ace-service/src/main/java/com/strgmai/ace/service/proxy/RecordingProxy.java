@@ -42,10 +42,23 @@ public class RecordingProxy {
     private Path journal;
     private Long tokenBudget;
     private String tag;
-    // the run's own context-probe-derived output-token cap, distinct from tokenBudget (the whole
-    // PHASE's completion-token budget across every turn) - this bounds ONE request's max_tokens.
-    // null (no probe, or a caller that predates this) falls back to the operator-wide default.
-    private Integer maxOutputTokens;
+    // the run's own per-run sampler overrides - null fields fall back to the operator-wide ace.*
+    // default (temperature/topP/maxOutputTokens) or are simply omitted from the request
+    // (topK/repetitionPenalty/reasoningEffort - no such process-wide default exists for these).
+    // See forward() below.
+    private SamplerOverrides overrides = SamplerOverrides.NONE;
+
+    /** Per-run sampler knobs pinned onto every chat request this proxy relays - "pins the sampler
+     *  params onto every chat request" (see the class doc): what the manifest claims is what is
+     *  sent. maxOutputTokens: the run's own context-probe-derived (or explicitly operator-set)
+     *  output-token cap for ONE request - distinct from tokenBudget (the whole phase's
+     *  completion-token budget across every turn). reasoningEffort overrides whatever
+     *  ReferenceAgent's own per-phase-kind DEFAULT_REASONING already put on the request - this
+     *  proxy runs last, closest to the wire, so it always wins when set. */
+    public record SamplerOverrides(Double temperature, Double topP, Integer topK, Double repetitionPenalty,
+                                    Integer maxOutputTokens, String reasoningEffort) {
+        public static final SamplerOverrides NONE = new SamplerOverrides(null, null, null, null, null, null);
+    }
     private volatile boolean stopping;
     private final Set<HttpResponse<InputStream>> inflight = ConcurrentHashMap.newKeySet();
     // set by whoever decides to give up on the current attempt (ReferenceAgent.chatWithRetry, or
@@ -69,12 +82,14 @@ public class RecordingProxy {
 
     /** start on a free port; the journal is APPENDED across restarts (one proxy per phase/task, like the Python original) */
     public synchronized String start(Path journal, Long tokenBudget, String tag) throws Exception {
-        return start(journal, tokenBudget, tag, null);
+        return start(journal, tokenBudget, tag, SamplerOverrides.NONE);
     }
 
-    public synchronized String start(Path journal, Long tokenBudget, String tag, Integer maxOutputTokens) throws Exception {
+    public synchronized String start(Path journal, Long tokenBudget, String tag, SamplerOverrides overrides) throws Exception {
         stop();
-        this.journal = journal; this.tokenBudget = tokenBudget; this.tag = tag; this.maxOutputTokens = maxOutputTokens; this.stopping = false;
+        this.journal = journal; this.tokenBudget = tokenBudget; this.tag = tag;
+        this.overrides = overrides == null ? SamplerOverrides.NONE : overrides;
+        this.stopping = false;
         Files.createDirectories(journal.toAbsolutePath().getParent());
         if (!Files.exists(journal)) Files.createFile(journal);
         // --append: the seq continues the journal, as the Python proxy does. A failed count here
@@ -148,10 +163,19 @@ public class RecordingProxy {
         final boolean isChat = path.startsWith("/v1/chat/completions") && req != null && req.isObject();
         if (isChat) {
             final ObjectNode r = (ObjectNode) req;
-            if (props.temperature() != null) r.put("temperature", props.temperature());
-            if (props.topP() != null) r.put("top_p", props.topP());
+            final Double temp = overrides.temperature() != null ? overrides.temperature() : props.temperature();
+            if (temp != null) r.put("temperature", temp);
+            final Double topP = overrides.topP() != null ? overrides.topP() : props.topP();
+            if (topP != null) r.put("top_p", topP);
             if (props.seed() != null) r.put("seed", props.seed());
-            r.put("max_tokens", maxOutputTokens != null ? maxOutputTokens : props.maxOutputTokens());
+            r.put("max_tokens", overrides.maxOutputTokens() != null ? overrides.maxOutputTokens() : props.maxOutputTokens());
+            // top_k/repetition_penalty/reasoning_effort: no operator-wide ace.* default for any of
+            // these - omitted entirely (letting oMLX/the model use its own default) unless a run
+            // explicitly set one. reasoning_effort overrides whatever ReferenceAgent's own
+            // per-phase-kind DEFAULT_REASONING already put here - this proxy runs last, so it wins.
+            if (overrides.topK() != null) r.put("top_k", overrides.topK());
+            if (overrides.repetitionPenalty() != null) r.put("repetition_penalty", overrides.repetitionPenalty());
+            if (overrides.reasoningEffort() != null) r.put("reasoning_effort", overrides.reasoningEffort());
             if (r.path("stream").asBoolean(false)) {   // ask the server to append a usage chunk (transparent to the client)
                 ((ObjectNode) r.with("stream_options")).put("include_usage", true);
                 body = json.writeValueAsBytes(r);

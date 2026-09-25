@@ -144,7 +144,13 @@ public class BenchController {
                 spec.get("review_weight") instanceof Number n4 ? n4.doubleValue() : doubleOf(spec.get("review_weight")),
                 spec.get("trajectory_weight") instanceof Number n5 ? n5.doubleValue() : doubleOf(spec.get("trajectory_weight")),
                 str(spec.get("trajectory_use")),
-                str(spec.get("run_id")));
+                str(spec.get("run_id")),
+                spec.get("temperature") instanceof Number n6 ? n6.doubleValue() : doubleOf(spec.get("temperature")),
+                spec.get("top_p") instanceof Number n7 ? n7.doubleValue() : doubleOf(spec.get("top_p")),
+                spec.get("top_k") instanceof Number n8 ? n8.intValue() : intOf(spec.get("top_k")),
+                spec.get("repetition_penalty") instanceof Number n9 ? n9.doubleValue() : doubleOf(spec.get("repetition_penalty")),
+                spec.get("max_tokens") instanceof Number n10 ? n10.intValue() : intOf(spec.get("max_tokens")),
+                str(spec.get("reasoning_effort")));
         return queue.enqueue(rs, priority, props.resultsDir(), pin.current(), pin.current(), null, null, null);
     }
 
