@@ -86,6 +86,16 @@ class PacksTest {
         assertTrue(Packs.findingCheckIds("the asOf boundary is inclusive").contains("F8"), "the keyword heuristic maps findings to oracle checks");
     }
 
+    /** #112: M2 ("BigDecimal imported where money is handled") had no FINDING_KEYWORDS entry at
+     *  all, even though ladder.json scores it on 4 rungs - a self-review finding correctly
+     *  identifying a missing/absent BigDecimal could never be matched to it. */
+    @Test
+    void findingKeywordsMapsBigDecimalFindingsToM2() {
+        assertTrue(Packs.findingCheckIds("amounts are not using BigDecimal, they are stored as int cents").contains("M2"));
+        assertTrue(Packs.findingCheckIds("BigDecimal is never imported anywhere in the money-handling code").contains("M2"));
+        assertFalse(Packs.findingCheckIds("the compose file has no healthcheck").contains("M2"));
+    }
+
     @Test
     void parseSelfReviewRejectsScorelessJson() throws Exception {
         final Path f = track(Files.createTempFile("review", ".json"));
