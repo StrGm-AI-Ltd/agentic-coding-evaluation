@@ -186,15 +186,24 @@ public final class StatsService {
         }
         Collections.sort(ds);
         final double lo = round1(ds.get((int) (4000 * 0.05))), hi = round1(ds.get((int) (4000 * 0.95)));
+        // #101: a coarse, sample-size-only rule of thumb - the SAME "under ~X points" warning for
+        // any two runs with the same k, regardless of how noisy or stable either side actually was.
+        // ciWidth is the actual, data-driven uncertainty in THIS comparison's own diff estimate
+        // (already computed above for ci90) - reported alongside the rule of thumb, not instead of
+        // it, so the warning reflects the comparison actually being asked about.
         final int mdd = Math.min(a.size(), b.size()) < 6 ? 20 : 12;
+        final double ciWidth = round1(hi - lo);
         final Map<String, Object> out = new LinkedHashMap<>();
         out.put("metric", metric);
         out.put("diff", round1(obs));
         out.put("ci90", List.of(lo, hi));
+        out.put("ci90_width", ciWidth);
         out.put("p", Math.round(p * 1000) / 1000.0);
         out.put("one_sided", true);
         out.put("verdict", p < 0.10 ? "A > B is supported (p<0.10)" : "NOT supported at alpha=0.10");
-        out.put("note", "with k=" + Math.min(a.size(), b.size()) + " per side, differences under ~" + mdd + " points should not be claimed");
+        out.put("note", "this comparison's own 90% CI is " + ciWidth + " points wide - a difference smaller than "
+                + "that is within its noise; as a coarser rule of thumb for k=" + Math.min(a.size(), b.size())
+                + " per side, differences under ~" + mdd + " points should generally not be claimed");
         return out;
     }
 
