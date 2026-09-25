@@ -1,5 +1,7 @@
 package com.strgmai.ace.service.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.config.JsonColumns;
 import com.strgmai.ace.service.jooq.tables.records.ExperimentsRecord;
@@ -36,6 +38,10 @@ public class ExperimentsService {
     private final BenchProperties props;
     private final org.springframework.transaction.support.TransactionTemplate tx;
     private final com.strgmai.ace.service.metrics.StatsService stats = new com.strgmai.ace.service.metrics.StatsService();
+    // #83: was `new ObjectMapper()` per call (functional(), leaderboardValues(), fromJson(), toJson())
+    // instead of one reused instance, inconsistent with ImporterService/JobQueue in the same package -
+    // Jackson's own docs recommend treating ObjectMapper as a reusable, thread-safe singleton.
+    private final ObjectMapper json = new ObjectMapper();
 
     public ExperimentsService(DSLContext dsl, JobQueue queue, BenchProperties props,
                               org.springframework.transaction.support.TransactionTemplate tx) {
@@ -395,8 +401,7 @@ public class ExperimentsService {
         final List<Double> out = new ArrayList<>();
         for (Path d : dirs) {
             try {
-                com.fasterxml.jackson.databind.JsonNode v = new com.fasterxml.jackson.databind.ObjectMapper()
-                        .readTree(d.resolve("oracle.json").toFile()).path("functional_score_pct");
+                JsonNode v = json.readTree(d.resolve("oracle.json").toFile()).path("functional_score_pct");
                 if (v.isNumber()) out.add(v.asDouble());
             } catch (Exception e) {
                 // a run silently dropped here still lets the comparison "succeed", just on a
@@ -415,8 +420,7 @@ public class ExperimentsService {
         final List<Double> out = new ArrayList<>();
         for (Path d : dirs) {
             try {
-                com.fasterxml.jackson.databind.JsonNode v = new com.fasterxml.jackson.databind.ObjectMapper()
-                        .readTree(d.resolve("metrics.json").toFile()).path("leaderboard").path(leaderboardKey);
+                JsonNode v = json.readTree(d.resolve("metrics.json").toFile()).path("leaderboard").path(leaderboardKey);
                 if (v.isNumber()) out.add(v.asDouble());
             } catch (Exception e) {
                 log.warn("could not read leaderboard.{} from {}/metrics.json, excluding it from the comparison: {}", leaderboardKey, d, e.toString());
@@ -427,7 +431,7 @@ public class ExperimentsService {
     }
 
     Map<String, Object> fromJson(String s) {
-        try { return new com.fasterxml.jackson.databind.ObjectMapper().readValue(s, Map.class); }
+        try { return json.readValue(s, Map.class); }
         catch (Exception e) {
             // falling back to {} silently drops the experiment's own params (e.g. agents_a/agents_b
             // for agent_ab), which templatePairs() reads - a wrong comparison pairing with no trace
@@ -437,7 +441,7 @@ public class ExperimentsService {
     }
 
     private String toJson(final Object o) {
-        try { return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(o); }
+        try { return json.writeValueAsString(o); }
         catch (Exception e) {
             // this stores the experiment's own comparison result - silently storing "{}" here loses
             // the actual A/B comparison the caller just computed
