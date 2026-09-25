@@ -375,6 +375,29 @@ class JobLiveStateTest {
         assertEquals(2.5, recent.get(0).latencySec(), "fixture latency for seq 25 is 25/10.0");
     }
 
+    /** #109: recentRequests is capped so a very long run's live view doesn't hold unbounded state -
+     *  requestCount() stays the true, uncapped total, and the grid keeps the NEWEST requests (the
+     *  ones an operator watching a live run actually wants), not the oldest. */
+    @Test
+    void recentRequestsIsCappedButRequestCountStaysUncapped() {
+        final var state = new JobLiveState();
+        final int total = JobLiveState.MAX_RECENT_REQUESTS + 50;
+        final var stream = new StringBuilder();
+        for (int i = 1; i <= total; i++) {
+            stream.append("event: request\ndata: {\"type\": \"request\", \"seq\": ").append(i)
+                    .append(", \"ts\": \"t").append(i)
+                    .append("\", \"status\": 200}\n\n");
+        }
+        SseParser.parseAll(stream.toString()).forEach(state::apply);
+
+        assertEquals(total, state.requestCount(), "the true total must never be capped");
+        final var recent = state.recentRequests();
+        assertEquals(JobLiveState.MAX_RECENT_REQUESTS, recent.size());
+        assertEquals("t" + total, recent.get(0).ts(), "newest first, and the newest must never be evicted");
+        assertEquals("t" + (total - JobLiveState.MAX_RECENT_REQUESTS + 1), recent.get(recent.size() - 1).ts(),
+                "the oldest kept request is exactly at the cap boundary");
+    }
+
     @Test
     void statusEventsCarryTheLogTail() {
         final var state = new JobLiveState();
@@ -462,8 +485,10 @@ class JobLiveStateTest {
         assertFalse(writer.isAlive(), "writer outlived the join timeout");
         assertFalse(reader.isAlive(), "reader outlived the join timeout");
         assertNull(failure.get(), "no ConcurrentModificationException or other failure");
-        assertEquals(events, state.requestCount(), "every request event is applied exactly once");
-        assertEquals(events, state.recentRequests().size(), "every request is retained, not just the most recent 20");
+        assertEquals(events, state.requestCount(), "every request event is applied exactly once, uncapped");
+        // #109: recentRequests is capped at MAX_RECENT_REQUESTS (bounded server-side state for a long
+        // run) - requestCount() above is the uncapped total this concurrency test actually cares about
+        assertEquals(JobLiveState.MAX_RECENT_REQUESTS, state.recentRequests().size(), "capped, not unbounded");
         assertEquals("line " + (events - 1), state.logTail());
     }
 

@@ -347,11 +347,16 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         }
         stepLine.setText("current step: " + (live.currentStep() == null ? "–" : live.currentStep()));
         sessionsGrid.setItems(live.sessions());
-        requestsLine.setText("requests: " + (live.requestCount() == 0 ? "–"
-                : live.requestCount() + (live.lastTokens() == null ? "" : " · last completion tokens "
-                + Fmt.count(live.lastTokens()))));
-
         final var recent = live.recentRequests();
+        // #109: recentRequests is capped (JobLiveState.MAX_RECENT_REQUESTS); say so once the total
+        // has actually exceeded it, instead of silently showing fewer rows than "requests: N" implies
+        final String requestsSummary = live.requestCount() == 0 ? "–"
+                : recent.size() < live.requestCount()
+                        ? "showing the most recent " + recent.size() + " of " + live.requestCount() + " requests"
+                        : String.valueOf(live.requestCount());
+        requestsLine.setText("requests: " + requestsSummary
+                + (live.lastTokens() == null ? "" : " · last completion tokens " + Fmt.count(live.lastTokens())));
+
         requestsGrid.setVisible(!recent.isEmpty());
         requestsGrid.setItems(recent);
 
