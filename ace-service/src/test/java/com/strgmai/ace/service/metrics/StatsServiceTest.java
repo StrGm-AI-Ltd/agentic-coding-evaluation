@@ -120,4 +120,21 @@ class StatsServiceTest {
         assertEquals("A > B is supported (p<0.10)", out.get("verdict"));
         assertEquals(true, out.get("one_sided"));
     }
+
+    /** #101: the fixed "under ~12/20 points" rule of thumb is the same for any two runs with the
+     *  same k, regardless of variance - ci90_width is the data-driven measure that actually reflects
+     *  THIS comparison, and must differ between a low-variance and a high-variance comparison of the
+     *  same size. */
+    @Test
+    void compareReportsACiWidthThatReflectsThisComparisonsActualVariance() {
+        final var lowVariance = stats.compare(List.of(80.0, 81.0, 80.0, 81.0, 80.0), List.of(60.0, 61.0, 60.0, 61.0, 60.0), "functional");
+        final var highVariance = stats.compare(List.of(95.0, 65.0, 85.0, 55.0, 90.0), List.of(30.0, 75.0, 20.0, 70.0, 45.0), "functional");
+        final double lowWidth = ((Number) lowVariance.get("ci90_width")).doubleValue();
+        final double highWidth = ((Number) highVariance.get("ci90_width")).doubleValue();
+        assertTrue(lowWidth < highWidth, "low-variance width " + lowWidth + " must be narrower than high-variance width " + highWidth);
+        // the coarse rule of thumb is identical for both (same k=5 per side) - the note must still
+        // surface the comparison-specific width, not just repeat the same fixed number either way
+        assertTrue(((String) lowVariance.get("note")).contains(String.valueOf(lowWidth)));
+        assertTrue(((String) highVariance.get("note")).contains(String.valueOf(highWidth)));
+    }
 }
