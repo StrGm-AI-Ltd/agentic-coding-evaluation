@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
+import java.util.function.Consumer;
 
 /** The factory RunBench uses for per-session recording proxies (one proxy per phase/task with
  *  that session's own token budget and journal tag; parallel tasks each get their own journal and
@@ -19,17 +20,25 @@ public class RecordingProxyFactory {
 
     public RecordingProxyFactory(BenchProperties props) { this.props = props; }
 
-    /** one proxy session: base() is the model endpoint to point the agent at; abort() closes
+    /** one proxy session: base() is the model endpoint to point the agent at; abort(reason) closes
      *  whatever is currently relaying through it WITHOUT stopping the listening server - for
      *  giving up on one retry attempt while staying on the same session/budget/journal for the
-     *  next one; stop() aborts in-flight streams (they are journaled as drain_aborted) AND tears
-     *  the whole proxy down, and returns the exit state. */
-    public record ProxySession(String base, Runnable abort, Runnable stop) {}
+     *  next one; the reason is journaled against the aborted request. stop() aborts in-flight
+     *  streams (they are journaled as drain_aborted) AND tears the whole proxy down, and returns
+     *  the exit state. */
+    public record ProxySession(String base, Consumer<String> abort, Runnable stop) {}
 
     public ProxySession start(final Path journal, final Long tokenBudget, final String tag) {
+        return start(journal, tokenBudget, tag, null);
+    }
+
+    /** maxOutputTokens: the run's own context-probe-derived output-token cap for ONE request
+     *  (distinct from tokenBudget, the whole phase's completion-token budget across every turn);
+     *  null uses the operator-wide default (see RecordingProxy.maxOutputTokens). */
+    public ProxySession start(final Path journal, final Long tokenBudget, final String tag, final Integer maxOutputTokens) {
         final var proxy = new RecordingProxy(props);
         final String[] base = new String[1];
-        try { base[0] = proxy.start(journal, tokenBudget, tag); }
+        try { base[0] = proxy.start(journal, tokenBudget, tag, maxOutputTokens); }
         catch (Exception e) {
             // release the partially-started server/executor, don't wait for GC - the real cause
             // is already carried by the ISE thrown below, this is just the cleanup-of-cleanup case

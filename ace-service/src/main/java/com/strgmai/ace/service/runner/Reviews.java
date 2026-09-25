@@ -242,17 +242,19 @@ public class Reviews {
         final Map<String, Object> reviewCfg = cfg.get("review") instanceof Map<?, ?> r ? (Map<String, Object>) r : Map.of();
         final long tokens = ((Number) reviewCfg.getOrDefault("tokens", 12000)).longValue();
         final String model = reviewer.startsWith("omlx/") ? reviewer.substring("omlx/".length()) : reviewer.substring(reviewer.indexOf('/') + 1);
-        final RecordingProxyFactory.ProxySession proxy = external ? null : proxies.start(rd.resolve("interactions.jsonl"), tokens, null);
+        final RecordingProxyFactory.ProxySession proxy = external ? null
+                : proxies.start(rd.resolve("interactions.jsonl"), tokens, null, (Integer) cfg.get("max_output_tokens"));
         final Map<String, String> extraEnv = external ? externalCredentials(reviewCfg) : null;
         final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 180_000L;
         final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
         try {
-            ReferenceAgent.SessionResult res = agent.run(name, Files.readString(packPath) + "\n\n" + (name.equals("REVIEW") ? Packs.REVIEW_INSTRUCTION : Packs.TRAJ_INSTRUCTION),
-                    ((Number) reviewCfg.getOrDefault("wall_sec", 900)).longValue(), tokens, rd.resolve("sessions"),
-                    UUID.nameUUIDFromBytes(("agentbench/" + manifest.get("run_id") + "/" + name).getBytes()).toString(),
-                    false, sysPath.toString(), ws.toString(),
-                    proxy == null ? externalBase(reviewer, cfg) : proxy.base(),
-                    proxy == null ? (() -> {}) : proxy.abort(), firstTokenTimeoutMs, compactionTrigger, model, extraEnv);
+            final long wallSec = ((Number) reviewCfg.getOrDefault("wall_sec", 900)).longValue();
+            final String reviewSid = UUID.nameUUIDFromBytes(("agentbench/" + manifest.get("run_id") + "/" + name).getBytes()).toString();
+            final var abort = proxy == null ? (java.util.function.Consumer<String>) reason -> {} : proxy.abort();
+            ReferenceAgent.SessionResult res = RunBenchSupport.runBounded(wallSec, name, rd.resolve("sessions"), reviewSid, abort,
+                    () -> agent.run(name, Files.readString(packPath) + "\n\n" + (name.equals("REVIEW") ? Packs.REVIEW_INSTRUCTION : Packs.TRAJ_INSTRUCTION),
+                            wallSec, tokens, rd.resolve("sessions"), reviewSid, false, sysPath.toString(), ws.toString(),
+                            proxy == null ? externalBase(reviewer, cfg) : proxy.base(), abort, firstTokenTimeoutMs, compactionTrigger, model, extraEnv));
             // both self-review and trajectory-review write to the SAME log path - append, or the
             // second review's line silently replaces the first's (default writeString() truncates)
             if (log != null) Files.writeString(log, "review session " + name + " rc=" + res.rc() + " turns=" + res.turns() + "\n",

@@ -14,7 +14,7 @@ class ContextProbeTest {
 
     private BenchProperties props(final Number windowCap) {
         return new BenchProperties("m", "http://127.0.0.1:9191/v1", "k", 1.0, 0.95, null, 8192,
-                windowCap == null ? null : windowCap.intValue(), 8, 28000, "./results", "/tmp/ab-ws", 10, 0.2, 0, "");
+                windowCap == null ? null : windowCap.intValue(), 8, 28000, "./results", "/tmp/ab-ws", 10, 0.2, 0, "", null);
     }
 
     @Test

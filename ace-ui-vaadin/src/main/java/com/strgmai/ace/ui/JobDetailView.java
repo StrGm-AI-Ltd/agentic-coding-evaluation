@@ -391,11 +391,25 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         sessions.addColumn(JobLiveState.SessionRow::description).setHeader("description").setAutoWidth(true);
         sessions.addColumn(r -> r.endedStage() == null ? "running" : r.endedStage())
                 .setHeader("ended at").setAutoWidth(true);
+        // only known once the session ends (its own transcript's start-to-end ts) - "-" while running,
+        // rather than a live-ticking elapsed time
+        sessions.addColumn(r -> Fmt.duration(r.wallSec())).setHeader("wall time")
+                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
+        // summed per request: ttft_sec IS the prefill wall time, latency_sec - ttft_sec the decode wall
+        // time - Fmt.seconds (not Fmt.duration) since prefill in particular is often sub-minute and an
+        // hour+minute format would round it away to nothing
+        sessions.addColumn(r -> Fmt.seconds(r.prefillWallSec())).setHeader("prefill wall")
+                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
+        sessions.addColumn(r -> Fmt.seconds(r.decodeWallSec())).setHeader("decode wall")
+                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
         // averaged across the session's requests as they arrive - oMLX-reported tok/s, not derived
         // from proxy-observed timings; "-" until the first request with real usage lands
         sessions.addColumn(r -> Fmt.num(r.avgPrefillTokPerSec())).setHeader("prefill tok/s")
                 .setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
         sessions.addColumn(r -> Fmt.num(r.avgDecodeTokPerSec())).setHeader("decode tok/s")
+                .setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
+        // a running sum across the session's requests - visible live, unlike wall time
+        sessions.addColumn(r -> Fmt.count(r.totalTokens())).setHeader("total tokens")
                 .setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
         sessions.setAllRowsVisible(true);
         sessions.setVisible(false);

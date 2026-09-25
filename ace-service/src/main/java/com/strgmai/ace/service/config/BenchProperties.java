@@ -19,7 +19,8 @@ public record BenchProperties(
         Integer pollSec,
         Double maxErrorRate,
         Integer referenceServerPort,
-        String javaHome) {
+        String javaHome,
+        String omlxServerLog) {
 
     public static final String HARNESS_VERSION = "jls-ref-1.0";   // goes into provenance + the comparability key
     public static final int RESULT_SCHEMA = 3;                   // port of registry.RESULT_SCHEMA

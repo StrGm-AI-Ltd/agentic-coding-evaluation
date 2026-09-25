@@ -20,6 +20,13 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 
 /** Port of runner/run_bench.py's run_once — now at full scope. Isolation: each run gets a fresh
@@ -178,6 +185,7 @@ public class RunBench {
             Packs.setWindow(window);
             Packs.setScale((Double) derived.get("pack_scale"), Map.of());
             cfg.put("usable_context", window);
+            cfg.put("max_output_tokens", derivedNoProbe.get("max_output_tokens"));
         }
         final int taskWall = cfg.get("task_wall_sec") instanceof Number n ? n.intValue() : 3600;
         long taskTokens = cfg.get("task_tokens") instanceof Number n2 ? n2.longValue()
@@ -260,10 +268,46 @@ public class RunBench {
         manifest.put("decode_tps_median_short", summary.get("decode_tps_median_short"));
         manifest.put("contention", Map.of("docker_up", DockerService.dockerRunning(), "docker_windows", manifest.get("docker_windows")));
         writeManifest(rd, manifest);
+        captureOmlxLog(rd, manifest);
         // never delete on an unconfirmed bundle (see bundleWorkspace above) - losing disk space on a
         // scratch dir is recoverable, losing the run's own output is not
         if (Files.isRegularFile(rd.resolve("workspace.bundle")) && !Boolean.TRUE.equals(cfg.get("keep_workspace"))) { deleteRecursive(ws); deleteRecursive(home); }
         return manifest;
+    }
+
+    /** Snapshots the run's own slice of the oMLX server log into rd/omlx_server.log, when
+     *  ace.omlx-server-log is configured. oMLX's own log spans every run on the machine and grows
+     *  without bound, so anything worth citing later (a throttling episode, an abort) is gone once
+     *  it rotates unless it's copied out here. Best-effort like bundleWorkspace above: a missing
+     *  config, missing file, or any read failure must never fail the run - this is diagnostic, not
+     *  part of the scored result. Lines are matched by oMLX's own "yyyy-MM-dd HH:mm:ss,SSS" prefix;
+     *  an unprefixed line (request-log continuation, a bare uvicorn line) inherits the in/out-of-range
+     *  verdict of the last dated line before it, so it stays grouped with the entry it belongs to. */
+    void captureOmlxLog(final Path rd, final Map<String, Object> manifest) {
+        final String logPath = props.omlxServerLog();
+        if (logPath == null || logPath.isBlank()) return;
+        final Path src = Path.of(logPath);
+        if (!Files.isRegularFile(src)) { log.debug("omlx server log not found at {}, skipping capture", src); return; }
+        try {
+            final var zone = java.time.ZoneId.systemDefault();
+            final LocalDateTime startLocal = LocalDateTime.ofInstant(Instant.parse((String) manifest.get("started")), zone);
+            final LocalDateTime endLocal = LocalDateTime.ofInstant(Instant.parse((String) manifest.get("ended")), zone);
+            final DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss,SSS");
+            final List<String> slice = new ArrayList<>();
+            boolean inRange = false;
+            for (String line : Files.readAllLines(src)) {
+                if (line.length() >= 23) {
+                    try {
+                        final LocalDateTime ts = LocalDateTime.parse(line.substring(0, 23), fmt);
+                        inRange = !ts.isBefore(startLocal) && !ts.isAfter(endLocal);
+                    } catch (Exception notADatedLine) { /* keep the previous verdict */ }
+                }
+                if (inRange) slice.add(line);
+            }
+            Files.write(rd.resolve("omlx_server.log"), slice);
+        } catch (Exception e) {
+            log.warn("could not capture omlx server log from {}: {}", src, e.toString());
+        }
     }
 
     /** git-bundles the CURRENT state of ws into rd/workspace.bundle - the durable copy of the run's
@@ -324,7 +368,7 @@ public class RunBench {
             long tokens = "p2_implementation".equals(pid) ? props.phaseTokens("p2_implementation")
                     : "implement".equals(pid) ? props.phaseTokens("implement") : props.phaseTokens("p1_plan");
             final boolean isImpl = pid.equals(impl);
-            final var proxy = proxies.start(journal, tokens, null);
+            final var proxy = proxies.start(journal, tokens, null, (Integer) cfg.get("max_output_tokens"));
             Map<String, Object> rec;
             try {
                 rec = sessionWithPolicy(cfg, runId, pid, PHASE_TEXT.get(pid)[1] + (isImpl ? "\n\n" + Packs.MONO_STATUS_INSTRUCTION : ""),
@@ -385,24 +429,27 @@ public class RunBench {
                 : instruction + "\n\n" + Packs.budgetSection(name, LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm")),
                         LocalDateTime.now().plusSeconds(wall).format(DateTimeFormatter.ofPattern("HH:mm")), (int) (wall / 60))
                 + "\n\n" + Packs.DOCKER_NOTE;
+        final String canonicalSessionId = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + name).getBytes()).toString();
+        final String sid = sessionId == null ? canonicalSessionId : sessionId;
         final Thread monitor = plainPlan ? null : monitorThread(dw, 600);
         ReferenceAgent.SessionResult rec;
         try {
-            rec = agent.run(name, full, wall, tokens, rd.resolve("sessions"),
-                    sessionId == null ? UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + name).getBytes()).toString() : sessionId,
-                    false, appendSystem, ws.toString(), proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, runModel, env);
+            rec = RunBenchSupport.runBounded(wall, name, rd.resolve("sessions"), sid, proxy.abort(), () -> agent.run(name, full, wall, tokens,
+                    rd.resolve("sessions"), sid, false, appendSystem, ws.toString(), proxy.base(), proxy.abort(),
+                    firstTokenTimeoutMs, compactionTrigger, runModel, env));
         } finally { if (monitor != null) monitor.interrupt(); }
         if (!plainPlan) appendWindows(manifestOf(cfg), dw, name);
         // P-1: a session that died on a `length` finish gets one continuation with what is LEFT (R4 C-7)
         if (!plainPlan && "length".equals(rec.finish()) && rec.rc() != 124 && wall - (System.currentTimeMillis() - t0) / 1000 > 120) {
             final long spent = ((Number) JournalFacts.facts(journal.toString(), rec.start().toString(), nowIso(), null, null, null).getOrDefault("completion_tokens", 0L)).longValue();
             long remaining = Math.max(1000, tokens - spent);   // what is LEFT, not a fresh budget (R4 C-7); a fresh proxy enforces it
-            final var contProxy = proxies.start(journal, remaining, null);
+            final var contProxy = proxies.start(journal, remaining, null, (Integer) cfg.get("max_output_tokens"));
             try {
-                rec = agent.run(name + "-continue", "Your previous turn was cut off at the output limit. Continue the task from where you stopped; be concise and act with tools.",
-                        (long) (wall - (System.currentTimeMillis() - t0) / 1000), remaining, rd.resolve("sessions"),
-                        sessionId == null ? UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + name).getBytes()).toString() : sessionId,
-                        true, appendSystem, ws.toString(), contProxy.base(), contProxy.abort(), firstTokenTimeoutMs, compactionTrigger, runModel, env);
+                final long contWall = wall - (System.currentTimeMillis() - t0) / 1000;
+                rec = RunBenchSupport.runBounded(contWall, name + "-continue", rd.resolve("sessions"), sid, contProxy.abort(), () -> agent.run(name + "-continue",
+                        "Your previous turn was cut off at the output limit. Continue the task from where you stopped; be concise and act with tools.",
+                        contWall, remaining, rd.resolve("sessions"), sid, true, appendSystem, ws.toString(), contProxy.base(), contProxy.abort(),
+                        firstTokenTimeoutMs, compactionTrigger, runModel, env));
             } finally { contProxy.stop(); }
         }
         final Map<String, Object> out = RunBench.sessionRecord(rec, name);
@@ -423,11 +470,13 @@ public class RunBench {
             final double scale = shortDps != null && here != null && here > 0 ? Math.min(4.0, Math.max(1.0, shortDps / here)) : 1.0;
             final String wrapInstr = name.startsWith("p") || name.equals("implement") ? Packs.MONO_WRAPUP_INSTRUCTION : Packs.wrapupInstruction(name);
             // the wrap-up is a continuation on top of the task budget: its own proxy with its own 2000 tokens (run_bench run_task)
-            final var wrapProxy = proxies.start(journal, 2000L, null);
+            final var wrapProxy = proxies.start(journal, 2000L, null, (Integer) cfg.get("max_output_tokens"));
+            final long wrapWall = (long) (300 * scale);
             final ReferenceAgent.SessionResult w;   // assigned exactly once below; a legal blank final
             try {
-                w = agent.run(name + "-wrapup", wrapInstr, (long) (300 * scale), 2000L, rd.resolve("sessions"),
-                        UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + name).getBytes()).toString(), true, appendSystem, ws.toString(), wrapProxy.base(), wrapProxy.abort(), firstTokenTimeoutMs, compactionTrigger, runModel, env);
+                w = RunBenchSupport.runBounded(wrapWall, name + "-wrapup", rd.resolve("sessions"), canonicalSessionId, wrapProxy.abort(),
+                        () -> agent.run(name + "-wrapup", wrapInstr, wrapWall, 2000L, rd.resolve("sessions"), canonicalSessionId,
+                                true, appendSystem, ws.toString(), wrapProxy.base(), wrapProxy.abort(), firstTokenTimeoutMs, compactionTrigger, runModel, env));
             } finally { wrapProxy.stop(); }
             out.put("wrapup_rc", w.rc());
             out.put("wrapup_seconds", w.seconds());
@@ -499,7 +548,7 @@ public class RunBench {
                 rec = new LinkedHashMap<>(Map.of("id", "p0_definition", "rc", 0, "resumed", true));
                 ((Map<String, String>) manifest.get("snapshots")).put("p0", RunBenchSupport.gitOut(ws, "rev-parse", "phase/p0"));
             } else {
-                final var proxy = proxies.start(journal, (long) props.phaseTokens("p0_definition"), null);
+                final var proxy = proxies.start(journal, (long) props.phaseTokens("p0_definition"), null, (Integer) cfg.get("max_output_tokens"));
                 try {
                     rec = sessionWithPolicy(cfg, runId, "p0_definition", PHASE_TEXT.get("p0_definition")[1],
                             props.phaseWall("p0_definition"), (long) props.phaseTokens("p0_definition"), rd, ws, journal, proxy, null, null, null, true);
@@ -534,7 +583,7 @@ public class RunBench {
                 p1rec = new LinkedHashMap<>(Map.of("id", "p1_plan", "rc", 0, "resumed", true));
                 planSha = RunBenchSupport.gitOut(ws, "rev-parse", "phase/p1");
             } else {
-                final var proxy = proxies.start(journal, (long) props.phaseTokens("p1_plan"), null);
+                final var proxy = proxies.start(journal, (long) props.phaseTokens("p1_plan"), null, (Integer) cfg.get("max_output_tokens"));
                 try {
                     p1rec = sessionWithPolicy(cfg, runId, "p1_plan", PHASE_TEXT.get("p1_plan")[1],
                             props.phaseWall("p1_plan"), (long) props.phaseTokens("p1_plan"), rd, ws, journal, proxy, null, null, null, true);
@@ -609,7 +658,7 @@ public class RunBench {
                     } else {
                         final String tp = Packs.taskPack(ws, t, tasks, snapshots, doneSet(snapshots), prev, prevSession, handoffs, prevVerified, mergeConflicts.isEmpty() ? null : mergeConflicts, null);
                         Files.writeString(rd.resolve("packs/" + t.id + ".md"), tp);
-                        final var proxy = proxies.start(journal, taskTokens, null);
+                        final var proxy = proxies.start(journal, taskTokens, null, (Integer) cfg.get("max_output_tokens"));
                         try {
                             rec = sessionWithPolicy(cfg, runId, t.id, Packs.taskInstruction(t.id) + "\n\n" + tp,
                                     taskWall, taskTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null);
@@ -645,7 +694,7 @@ public class RunBench {
         } else {
             final String tp = Packs.taskPack(ws, new PlanTask("INTEGRATION", "integrate and verify"), tasks, snapshots, doneSet(snapshots), prev, prevSession, handoffs, prevVerified, mergeConflicts.isEmpty() ? null : mergeConflicts, null);
             Files.writeString(rd.resolve("packs/INTEGRATION.md"), tp);
-            final var proxy = proxies.start(journal, taskTokens, null);
+            final var proxy = proxies.start(journal, taskTokens, null, (Integer) cfg.get("max_output_tokens"));
             try {
                 rec = sessionWithPolicy(cfg, runId, "INTEGRATION", Packs.INTEGRATION_INSTRUCTION + "\n\n" + tp,
                         (long) (taskWall * 0.2), taskTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null);
@@ -674,13 +723,15 @@ public class RunBench {
     }
 
     private void handoffStep(final Map<String, Object> cfg, final String runId, final PlanTask t, final Path rd, final Path ws, final Path journal, final Map<String, Object> manifest, Map<String, Object> rec) throws Exception {
-        final var proxy = proxies.start(journal, 3000L, null);
+        final var proxy = proxies.start(journal, 3000L, null, (Integer) cfg.get("max_output_tokens"));
         final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 180_000L;
         final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
         try {
-            ReferenceAgent.SessionResult h = agent.run(t.id + "-handoff", Packs.handoffInstruction(t.id), 300, 3000L,
-                    rd.resolve("sessions"), UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + t.id).getBytes()).toString(),
-                    true, rd.resolve("packs/stable.md").toString(), ws.toString(), proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, (String) cfg.get("model"), null);
+            final String handoffSid = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + t.id).getBytes()).toString();
+            ReferenceAgent.SessionResult h = RunBenchSupport.runBounded(300, t.id + "-handoff", rd.resolve("sessions"), handoffSid, proxy.abort(),
+                    () -> agent.run(t.id + "-handoff", Packs.handoffInstruction(t.id), 300, 3000L,
+                            rd.resolve("sessions"), handoffSid, true, rd.resolve("packs/stable.md").toString(), ws.toString(),
+                            proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, (String) cfg.get("model"), null));
             final Path hp = ws.resolve("handoff").resolve(t.id + ".md");
             if (Files.isRegularFile(hp)) {
                 final String txt = Files.readString(hp);
@@ -713,14 +764,16 @@ public class RunBench {
             log.info("run {}: phase/parallel_plan already completed in a prior attempt, resuming past it", runId);
             ((Map<String, String>) manifest.get("snapshots")).put("parallel_plan", RunBenchSupport.gitOut(ws, "rev-parse", "phase/parallel_plan"));
         } else {
-            final var proxy = proxies.start(journal, 8000L, null);
+            final var proxy = proxies.start(journal, 8000L, null, (Integer) cfg.get("max_output_tokens"));
             final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 180_000L;
             final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
+            final String planSid = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/PARALLEL_PLAN").getBytes()).toString();
             ReferenceAgent.SessionResult prec;
             try {
-                prec = agent.run("PARALLEL_PLAN", Packs.parallelPlanPack(tasks) + "\n\n" + Packs.PARALLEL_PLAN_INSTRUCTION, 600, 8000L,
-                        rd.resolve("sessions"), UUID.nameUUIDFromBytes(("agentbench/" + runId + "/PARALLEL_PLAN").getBytes()).toString(),
-                        false, rd.resolve("packs/stable.md").toString(), ws.toString(), proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, (String) cfg.get("model"), null);
+                prec = RunBenchSupport.runBounded(600, "PARALLEL_PLAN", rd.resolve("sessions"), planSid, proxy.abort(),
+                        () -> agent.run("PARALLEL_PLAN", Packs.parallelPlanPack(tasks) + "\n\n" + Packs.PARALLEL_PLAN_INSTRUCTION, 600, 8000L,
+                                rd.resolve("sessions"), planSid, false, rd.resolve("packs/stable.md").toString(), ws.toString(),
+                                proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, (String) cfg.get("model"), null));
             } finally { proxy.stop(); }
             rc = prec.rc(); seconds = prec.seconds();
             ((Map<String, String>) manifest.get("snapshots")).put("parallel_plan", RunBenchSupport.snapshot(ws, "phase/parallel_plan"));
@@ -792,7 +845,7 @@ public class RunBench {
                 try {
                     sem.acquire();
                     try {
-                        final var proxy = proxies.start(taskJournals.get(t.id), taskTokens, t.id);
+                        final var proxy = proxies.start(taskJournals.get(t.id), taskTokens, t.id, (Integer) cfg.get("max_output_tokens"));
                         Map<String, String> envT = RunBenchSupport.scrubbedEnv(Path.of(home + "-home-" + t.id).toString(), runId + "/" + t.id, (String) cfg.get("java_home"));   // the task's own HOME copy (R6)
                         Map<String, Object> rec;
                         try {
@@ -906,7 +959,7 @@ public class RunBench {
                 fafter = RunBenchSupport.gitOut(ws, "rev-parse", "phase/" + fid);
             } else {
                 Files.writeString(rd.resolve("packs/" + fid + ".md"), Packs.fixPack(ws, problems));
-                final var proxy = proxies.start(journal, 20000L, null);
+                final var proxy = proxies.start(journal, 20000L, null, (Integer) cfg.get("max_output_tokens"));
                 try {
                     frec = sessionWithPolicy(cfg, runId, fid, Packs.FIX_INSTRUCTION.replace("{tasks}", String.join(", ", waveIds)).replace("{id}", fid),
                             900, 20000L, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null);

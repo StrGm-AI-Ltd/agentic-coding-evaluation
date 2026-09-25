@@ -11,11 +11,17 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.*;
 
 /** The bug behind job #14 (and every other real task) failing with
  *  "java.nio.file.NoSuchFileException: .../task/PROMPT.md": the port read task/PROMPT.md as a
@@ -43,7 +49,11 @@ class RunBenchTest {
 
 
     private static RunBench runBench() {
-        return new RunBench(mock(BenchProperties.class), mock(ReferenceAgent.class), mock(RecordingProxyFactory.class),
+        return runBench(mock(BenchProperties.class));
+    }
+
+    private static RunBench runBench(BenchProperties props) {
+        return new RunBench(props, mock(ReferenceAgent.class), mock(RecordingProxyFactory.class),
                 mock(RunOracle.class), mock(Reviews.class), mock(ContextProbe.class));
     }
 
@@ -93,5 +103,60 @@ class RunBenchTest {
                 assertNotEquals(genericText, taskText, task + " must not silently fall back to the generic prompt");
             }
         }
+    }
+
+    /** Found live 2026-09-25: oMLX's own memory-pressure throttling was slow enough to trip the
+     *  agent's 180s stall detector, and oMLX's log - the only place that explained why - spans
+     *  every run on the machine and keeps growing. Each run now copies its own slice out. */
+    @Test
+    void captureOmlxLogDoesNothingWhenNotConfigured() throws Exception {
+        final BenchProperties props = mock(BenchProperties.class);
+        when(props.omlxServerLog()).thenReturn(null);
+        final Path rd = track(Files.createTempDirectory("rd"));
+
+        runBench(props).captureOmlxLog(rd, Map.of("started", "2026-09-25T07:00:00Z", "ended", "2026-09-25T08:00:00Z"));
+
+        assertFalse(Files.exists(rd.resolve("omlx_server.log")), "no config = no capture, not a failed capture");
+    }
+
+    @Test
+    void captureOmlxLogDoesNothingWhenTheConfiguredFileIsMissing() throws Exception {
+        final BenchProperties props = mock(BenchProperties.class);
+        when(props.omlxServerLog()).thenReturn("/no/such/omlx-log-for-this-test.log");
+        final Path rd = track(Files.createTempDirectory("rd"));
+
+        assertDoesNotThrow(() -> runBench(props).captureOmlxLog(rd,
+                Map.of("started", "2026-09-25T07:00:00Z", "ended", "2026-09-25T08:00:00Z")));
+        assertFalse(Files.exists(rd.resolve("omlx_server.log")));
+    }
+
+    @Test
+    void captureOmlxLogKeepsOnlyLinesWithinTheRunsOwnWindowPlusTheirContinuations() throws Exception {
+        final ZoneId zone = ZoneId.systemDefault();   // oMLX's own log has no zone offset - it's local time
+        final DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss,SSS");
+        final Instant start = Instant.parse("2026-09-25T07:00:00Z"), end = Instant.parse("2026-09-25T08:00:00Z");
+        final String before = fmt.format(LocalDateTime.ofInstant(start.minusSeconds(120), zone));
+        final String firstInRange = fmt.format(LocalDateTime.ofInstant(start.plusSeconds(60), zone));
+        final String lastInRange = fmt.format(LocalDateTime.ofInstant(end.minusSeconds(60), zone));
+        final String after = fmt.format(LocalDateTime.ofInstant(end.plusSeconds(120), zone));
+
+        final Path src = track(Files.createTempFile("omlx-server", ".log"));
+        Files.write(src, List.of(
+                before + " - omlx.server - INFO - before the run, must be dropped",
+                firstInRange + " - omlx.server - INFO - first line inside the run",
+                "    a continuation line with no timestamp, belongs to the entry above",
+                lastInRange + " - omlx.server - INFO - last line inside the run",
+                after + " - omlx.server - INFO - after the run, must be dropped"));
+        final BenchProperties props = mock(BenchProperties.class);
+        when(props.omlxServerLog()).thenReturn(src.toString());
+        final Path rd = track(Files.createTempDirectory("rd"));
+
+        runBench(props).captureOmlxLog(rd, Map.of("started", start.toString(), "ended", end.toString()));
+
+        final List<String> kept = Files.readAllLines(rd.resolve("omlx_server.log"));
+        assertEquals(3, kept.size(), "the two in-range dated lines plus the continuation, nothing outside the window: " + kept);
+        assertTrue(kept.get(0).contains("first line inside the run"));
+        assertTrue(kept.get(1).contains("continuation line"));
+        assertTrue(kept.get(2).contains("last line inside the run"));
     }
 }

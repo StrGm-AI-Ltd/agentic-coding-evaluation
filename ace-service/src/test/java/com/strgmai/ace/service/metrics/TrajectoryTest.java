@@ -60,6 +60,23 @@ class TrajectoryTest {
         assertEquals(1, ((Map<?, ?>) s.get("docker_window")).get("turns"));
     }
 
+    /** A real crash (NullPointerException in java.util.Map.of, live in production): when every turn
+     *  inside a docker window errored or was budget-refused before oMLX ever reported a decode speed,
+     *  medGenTps legitimately returns null - Map.of is null-hostile and threw. docker_window must
+     *  build the same way byCtx (the structurally identical, un-crashed case two lines above it in
+     *  Trajectory.analyze) already does. */
+    @Test
+    void dockerWindowWithNoDecodeSpeedInAnyInWindowTurnDoesNotThrow() {
+        final var inWindow = new Trajectory.Turn(1, "2026-09-16T10:00:00.000Z", 429, null, null, true, false, false,
+                null, 100, 0, null, 0.0, null, null, 0, 0, List.of(), false);
+        final List<Map<String, Object>> windows = List.of(Map.of("start_iso", "2026-09-16T09:00:00Z", "end_iso", "2026-09-16T11:00:00Z"));
+        final Map<String, Object> s = Trajectory.analyze(List.of(inWindow), Map.of(), windows);
+        final Map<?, ?> dockerWindow = (Map<?, ?>) s.get("docker_window");
+        assertNotNull(dockerWindow);
+        assertEquals(1, dockerWindow.get("turns"));
+        assertNull(dockerWindow.get("decode_tps_median"), "no turn in the window had a genTps to median");
+    }
+
     @Test
     void slowShortContextDecodeFlagsContention() {
         final var slow = List.of(turn(1, "ls", 100.0, 5.0, 200), turn(2, "ls", 200.0, 5.1, 200));

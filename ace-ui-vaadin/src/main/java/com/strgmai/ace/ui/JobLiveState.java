@@ -3,6 +3,7 @@ package com.strgmai.ace.ui;
 import tools.jackson.databind.JsonNode;
 
 import java.io.Serializable;
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -30,13 +31,21 @@ public final class JobLiveState implements Serializable {
     /** One row of the sessions table: its short label, a human-readable description of what the
      *  session actually is (its stage/task, from the session file's own "label" field - "T2", "T2
      *  (handoff)", "Definition", "Self review", ...), the reason it finished (its own transcript's
-     *  trailing {"type":"end","finish":...} line - null while still open), and its average
-     *  prefill/decode speed across the requests attributed to it (RecordingProxy tags each with the
-     *  session's full id via the X-Ace-Session-Id header; both null until a request with real
-     *  oMLX-reported usage.*_tokens_per_second lands). id is the full session id (correlation key) -
-     *  label is the truncated display form. */
+     *  trailing {"type":"end","finish":...} line - null while still open), its average prefill/decode
+     *  speed across the requests attributed to it (RecordingProxy tags each with the session's full id
+     *  via the X-Ace-Session-Id header; both null until a request with real oMLX-reported
+     *  usage.*_tokens_per_second lands), its wall time (its own transcript's start ts to its "end" ts -
+     *  null until it ends; a still-running session's elapsed time isn't shown live, only its final
+     *  duration), its total completion tokens (a running sum across its requests, visible live -
+     *  unlike wall time, this doesn't need the session to have ended), and how much of that time was
+     *  spent in prefill vs. decode (summed per request: ttft_sec IS the prefill wall time - the elapsed
+     *  time before the first token arrives; latency_sec - ttft_sec is the decode wall time for
+     *  everything after it - a request with no ttft_sec, e.g. non-streamed, contributes to neither
+     *  rather than guessing the split). id is the full session id (correlation key) - label is the
+     *  truncated display form. */
     public record SessionRow(String id, String label, String description, String endedStage,
-            Double avgPrefillTokPerSec, Double avgDecodeTokPerSec) implements Serializable {
+            Double avgPrefillTokPerSec, Double avgDecodeTokPerSec, Double wallSec, Long totalTokens,
+            Double prefillWallSec, Double decodeWallSec) implements Serializable {
     }
 
     private static final long serialVersionUID = 1L;
@@ -45,6 +54,10 @@ public final class JobLiveState implements Serializable {
     private final List<SessionRow> sessions = new ArrayList<>();
     // session id -> [prefillSum, prefillN, decodeSum, decodeN], for the running averages in SessionRow
     private final Map<String, double[]> speedSums = new LinkedHashMap<>();
+    private final Map<String, String> sessionStartTs = new LinkedHashMap<>();
+    private final Map<String, Long> tokenTotals = new LinkedHashMap<>();
+    // session id -> [prefillWallSum, decodeWallSum], for the running totals in SessionRow
+    private final Map<String, double[]> wallSums = new LinkedHashMap<>();
     private final Deque<RequestRow> recentRequests = new ArrayDeque<>();
     private long requestCount;
     private Long lastTokens;
@@ -63,8 +76,12 @@ public final class JobLiveState implements Serializable {
                 }
                 steps.add(label);
             }
-            case "session_started" -> sessions.add(new SessionRow(
-                    Fmt.textOr(data.path("session_id"), ""), sessionLabel(data), sessionDescription(data), null, null, null));
+            case "session_started" -> {
+                final var sessionId = Fmt.textOr(data.path("session_id"), "");
+                final var startTs = Fmt.textOr(data.path("ts"), null);
+                if (startTs != null) sessionStartTs.put(sessionId, startTs);
+                sessions.add(new SessionRow(sessionId, sessionLabel(data), sessionDescription(data), null, null, null, null, null, null, null));
+            }
             case "session_done" -> markSessionDone(data);
             case "execution_order" -> executionOrder = parseExecutionOrder(data);
             case "request" -> {
@@ -85,6 +102,8 @@ public final class JobLiveState implements Serializable {
                                 ? data.get("budget_spent_completion_tokens").longValue() : null,
                         data.path("client_aborted").asBoolean(false)));
                 accumulateSpeed(data);
+                accumulateTokens(data);
+                accumulateRequestWallTime(data);
             }
             case "status" -> {
                 if (data.hasNonNull("result_line")) {
@@ -155,12 +174,22 @@ public final class JobLiveState implements Serializable {
         final var sessionId = Fmt.textOr(data.path("session_id"), null);
         if (sessionId == null || sessionId.isBlank()) return;
         final var finish = Fmt.textOr(data.path("finish"), "?");
+        final var wallSec = wallSeconds(sessionStartTs.get(sessionId), Fmt.textOr(data.path("ts"), null));
         for (int i = 0; i < sessions.size(); i++) {
             final var s = sessions.get(i);
             if (!sessionId.equals(s.id())) continue;
-            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), finish, s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec()));
+            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), finish, s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), wallSec, s.totalTokens(), s.prefillWallSec(), s.decodeWallSec()));
             return;
         }
+    }
+
+    /** null if either timestamp is missing/unparseable (a degenerate payload, or the session started
+     *  before this Tailer version began forwarding "ts") - never a wrong duration from a bad parse. */
+    private static Double wallSeconds(final String startTs, final String endTs) {
+        final var start = Fmt.parseTime(startTs);
+        final var end = Fmt.parseTime(endTs);
+        if (start == null || end == null) return null;
+        return Duration.between(start, end).toMillis() / 1000.0;
     }
 
     /** Accumulates a request's prefill/decode speed (when it has them - not every request does,
@@ -178,7 +207,43 @@ public final class JobLiveState implements Serializable {
             if (data.path("decode_tok_per_sec").isNumber()) { sums[2] += data.path("decode_tok_per_sec").asDouble(); sums[3]++; }
             final Double avgPrefill = sums[1] > 0 ? sums[0] / sums[1] : null;
             final Double avgDecode = sums[3] > 0 ? sums[2] / sums[3] : null;
-            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), avgPrefill, avgDecode));
+            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), avgPrefill, avgDecode, s.wallSec(), s.totalTokens(), s.prefillWallSec(), s.decodeWallSec()));
+            return;
+        }
+    }
+
+    /** Sums a request's completion tokens (when present - not every request does, e.g. errors) into
+     *  its session's running total. Visible live, unlike wall time - a session's token spend is known
+     *  request by request, not just at the end. */
+    private void accumulateTokens(final JsonNode data) {
+        final var sessionId = Fmt.textOr(data.path("session_id"), null);
+        if (sessionId == null || sessionId.isBlank() || !data.path("completion_tokens").isNumber()) return;
+        for (int i = 0; i < sessions.size(); i++) {
+            final var s = sessions.get(i);
+            if (!sessionId.equals(s.id())) continue;
+            final var total = tokenTotals.merge(sessionId, data.path("completion_tokens").asLong(), Long::sum);
+            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), total, s.prefillWallSec(), s.decodeWallSec()));
+            return;
+        }
+    }
+
+    /** ttft_sec IS the prefill wall time for a request (the elapsed time before the first token
+     *  arrives); latency_sec - ttft_sec is the decode wall time for everything after it. A request
+     *  with no ttft_sec (not streamed, or a degenerate payload) contributes to neither sum rather than
+     *  guessing the split - matching the "don't pollute an average/total with a guess" rule already
+     *  applied to accumulateSpeed(). */
+    private void accumulateRequestWallTime(final JsonNode data) {
+        final var sessionId = Fmt.textOr(data.path("session_id"), null);
+        if (sessionId == null || sessionId.isBlank()) return;
+        if (!data.path("ttft_sec").isNumber() || !data.path("latency_sec").isNumber()) return;
+        for (int i = 0; i < sessions.size(); i++) {
+            final var s = sessions.get(i);
+            if (!sessionId.equals(s.id())) continue;
+            final var sums = wallSums.computeIfAbsent(sessionId, k -> new double[2]);
+            final var ttft = data.path("ttft_sec").asDouble();
+            sums[0] += ttft;
+            sums[1] += data.path("latency_sec").asDouble() - ttft;
+            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), s.totalTokens(), sums[0], sums[1]));
             return;
         }
     }

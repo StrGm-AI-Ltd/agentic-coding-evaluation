@@ -32,7 +32,7 @@ class ExperimentsServiceTest {
 
     private static BenchProperties props(final String endpoint) {
         return new BenchProperties(null, endpoint, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
     }
 
     private static ExperimentsService serviceWithUnreachableModelServer() {

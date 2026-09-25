@@ -23,6 +23,7 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /** Port of runner/agent_loop.py, the reference agent, on LangChain4j. The harness owns every part
  *  of the loop: four tools (read/write/edit/bash with mechanical output hygiene), structural
@@ -122,7 +123,7 @@ public class ReferenceAgent {
     public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
                              Path sessionDir, String sessionId, boolean continueSession,
                              String appendSystem, String cwd, String proxyBase, Map<String, String> extraEnv) throws Exception {
-        return run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase, () -> {}, DEFAULT_FIRST_TOKEN_TIMEOUT_MS, props.compactionTrigger(), null, extraEnv);
+        return run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase, reason -> {}, DEFAULT_FIRST_TOKEN_TIMEOUT_MS, props.compactionTrigger(), null, extraEnv);
     }
 
     /** full form: `model` overrides the configured one (a reviewer, a parallel task, a probe).
@@ -131,7 +132,8 @@ public class ReferenceAgent {
      *  StreamingHandle only closes the agent<->proxy hop; it does nothing for the proxy's
      *  separate, independently-blocking read from oMLX (R12). `firstTokenTimeoutMs` caps how long
      *  a stream may sit with NO chunk at all before it counts as stalled; once the first chunk
-     *  arrives, IDLE_TIMEOUT_MS governs instead (see awaitStream). `compactionTrigger` overrides
+     *  arrives, nothing in here bounds it any further - only the harness's own preemptive task-wall
+     *  timeout may cut it off (see RunBench.sessionWithPolicy, and awaitStream below). `compactionTrigger` overrides
      *  BenchProperties' operator default (R16): compaction stubs OLD tool outputs to shrink the
      *  prompt, but that edit invalidates oMLX's prefix cache for everything after it, forcing a
      *  full re-prefill under whatever memory pressure the machine is already under - confirmed live
@@ -140,7 +142,7 @@ public class ReferenceAgent {
      *  compaction entirely for a run where that trade is worse than just keeping the full prompt. */
     public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
                              Path sessionDir, String sessionId, boolean continueSession,
-                             String appendSystem, String cwd, String proxyBase, Runnable abortProxy, long firstTokenTimeoutMs, int compactionTrigger, String model, Map<String, String> extraEnv) throws Exception {
+                             String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, String model, Map<String, String> extraEnv) throws Exception {
         final long t0 = System.nanoTime();
         final var start = Instant.now();
         final String reasoningEffort = DEFAULT_REASONING.getOrDefault(reasoningKind(name), "medium");
@@ -184,8 +186,8 @@ public class ReferenceAgent {
         // .returnThinking(true) (R15): without it, onPartialThinking NEVER fires - reproduced in
         // isolation directly against oMLX (0 calls with reasoning_content genuinely streaming for
         // 40+s; 6 calls, immediately, once this flag is set - same request otherwise). Silently
-        // meant StreamCollector.touch() only ever saw content/tool-call deltas, so IDLE_TIMEOUT_MS/
-        // firstTokenTimeoutMs were blind to a session spending its whole budget reasoning before
+        // meant StreamCollector.touch() only ever saw content/tool-call deltas, so
+        // firstTokenTimeoutMs was blind to a session spending its whole budget reasoning before
         // its first visible content or tool call - exactly the "no first token in 180s" abort found
         // live on a PARALLEL_PLAN session that had 8861 chars of reasoning already in the proxy's
         // own journal at the moment it was killed.
@@ -269,7 +271,9 @@ public class ReferenceAgent {
                 msgs.add(ToolExecutionResultMessage.from(c, out.output()));
                 session.toolResult(c.id(), c.name(), out.output(), out.isError());
             }
-            if (System.currentTimeMillis() >= deadline) { rc = 124; break; }   // wall budget: the harness kills the tree too
+            // no wall-budget exit here anymore: the harness enforces task-wall preemptively, from
+            // outside, even mid-request (RunBench.sessionWithPolicy) - a session that overruns it is
+            // interrupted and the harness itself builds the rc=124 result, not this loop
         }
         // a turn-capped exit (rc still 0) means the model never stopped on its own: report a failure, not a success
         if (rc == 0 && turns >= MAX_TURNS) { rc = 1; finish = finish == null ? "turn_limit" : finish; }
@@ -304,15 +308,20 @@ public class ReferenceAgent {
      *  NonRetriableException. Status codes, not substrings, decide here - onError hands back the
      *  same exception shapes the old synchronous chat() threw, so this classification is unchanged.
      *
-     *  abortProxy.run() on every way out of an attempt (R12): confirmed live via jstack that
-     *  giving up here - idle-timeout, a real error, or interruption - left RecordingProxy's OWN
+     *  abortProxy.accept(reason) on every way out of an attempt (R12): confirmed live via jstack
+     *  that giving up here - idle-timeout, a real error, or interruption - left RecordingProxy's OWN
      *  relay thread for that attempt permanently blocked reading from oMLX, one per abandoned
      *  attempt, accumulating (6 stuck threads found after normal today's-worth of testing).
      *  collector.cancelIfPossible() inside awaitStream only closes the agent<->proxy hop; this is
      *  the proxy<->oMLX hop, where the actual GPU-consuming work was still happening. Harmless to
      *  call after the exchange already finished on its own (onError already fired) - closing an
-     *  already-closed/already-removed stream is a no-op in RecordingProxy.abortInflight(). */
-    static ChatResponse chatWithRetry(final StreamingChatModel model, final ChatRequest req, final long deadline, final Runnable abortProxy, final long firstTokenTimeoutMs) {
+     *  already-closed/already-removed stream is a no-op in RecordingProxy.abortInflight(). The
+     *  reason string is journaled (RecordingProxy) for display against the aborted request - an
+     *  interrupt here is ambiguous from inside chatWithRetry alone (a cancelled job and the
+     *  harness's own task-wall timeout both just look like Thread.interrupt()); the harness's own
+     *  runBounded names the more specific "task-wall budget exceeded" reason itself when that is
+     *  the actual cause, which may race harmlessly with this generic one (both diagnostic only). */
+    static ChatResponse chatWithRetry(final StreamingChatModel model, final ChatRequest req, final long deadline, final Consumer<String> abortProxy, final long firstTokenTimeoutMs) {
         RuntimeException last = null;
         long delay = 2000;
         for (int attempt = 0; attempt < 4; attempt++) {
@@ -326,11 +335,11 @@ public class ReferenceAgent {
                 // the flag and retrying anyway would absorb the cancellation as just one more transient
                 // failure and keep going for up to 3 more attempts; terminal, not classified below
                 Thread.currentThread().interrupt();
-                abortProxy.run();
+                abortProxy.accept("interrupted (job cancelled, or the task-wall budget was reached)");
                 throw new TransientError(ie);
             }
             catch (RuntimeException e) {
-                abortProxy.run();
+                abortProxy.accept(e.getMessage() != null ? e.getMessage() : e.toString());
                 last = e;
                 if (isBudgetRefusal(e)) throw new BudgetExhausted(e);
                 final Integer status = httpStatus(e);
@@ -348,56 +357,40 @@ public class ReferenceAgent {
         throw new TransientError(last);
     }
 
-    /** how long a stream already producing output may go quiet before it counts as stalled, not
-     *  slow. Was 90s; raised after live journal data on a slow local reasoning model
-     *  (Qwen3.8-27B-graft on oMLX, ~2-4 tok/s under load) showed 67% of one job's calls hitting
-     *  this exact threshold mid-reasoning - not stuck, still emitting reasoning_content deltas
-     *  (each correctly re-arming this timeout via StreamCollector.touch(), confirmed against
-     *  ChatCompletionEventDispatcher's bytecode), just occasionally slower between deltas than
-     *  90s allowed for. 180s matches DEFAULT_FIRST_TOKEN_TIMEOUT_MS below rather than introducing
-     *  a second magic number. */
-    static final long IDLE_TIMEOUT_MS = 180_000;
-    /** default cap on time-to-FIRST-token, before any chunk has arrived at all - a separate knob
-     *  from IDLE_TIMEOUT_MS (same default value today, but independently configurable per run):
-     *  a cold model server (loading weights, queued behind another request, prefill on a long
-     *  prompt) stalls for a structurally different reason than a mid-response stall does.
-     *  Per-run override: RunSpec.firstTokenTimeout / --first-token-timeout. */
+    /** default cap on time-to-FIRST-token, before any chunk has arrived at all: a cold model server
+     *  (loading weights, queued behind another request, prefill on a long prompt) stalls for a
+     *  structurally different reason than a mid-response stall does, and unlike a mid-stream stall
+     *  (see awaitStream below - no longer bounded in here at all, only by the harness's own
+     *  preemptive task-wall enforcement in RunBench.sessionWithPolicy) a request that never starts
+     *  producing anything has no other signal to wait on. Per-run override: RunSpec.firstTokenTimeout
+     *  / --first-token-timeout. */
     static final long DEFAULT_FIRST_TOKEN_TIMEOUT_MS = 180_000;
     private static final long POLL_MS = 2_000;
 
     /** Waits for one streaming attempt by polling instead of blocking on it, so an interrupt
-     *  (cancellation) is noticed within POLL_MS instead of depending on the HTTP call itself
-     *  honoring Thread.interrupt() - which the old synchronous client did not (see the chatModel
-     *  comment above). langchain4j 1.20.0's PartialResponseContext/PartialThinkingContext/
-     *  PartialToolCallContext (see StreamCollector) close the gap 1.1.0 had here: text, thinking
-     *  AND tool-call deltas all update lastActivityMs now, not just visible text - confirmed
-     *  against ChatCompletionEventDispatcher's bytecode, all three route through
-     *  InternalStreamingChatResponseHandlerUtils with a real StreamingHandle attached. That's why
-     *  IDLE_TIMEOUT_MS can be tighter than the 4 min the pre-upgrade version needed as a safety
-     *  margin against that blind spot - 90s is now a genuine "nothing at all is happening" signal,
-     *  not a guess that also has to cover ordinary tool-call generation.
-     *  Remaining gap, not closed by this upgrade: the handle is only populated once the FIRST
-     *  chunk of any kind arrives (langchain4j/langchain4j#6304, still open as of 1.20.0) - there
-     *  is no hook between "request sent" and "first byte back", so a stall in that specific window
-     *  (e.g. a reasoning model's silent thinking pause before anything streams, or a slow network
-     *  handshake) still can't be force-cancelled, only waited out for firstTokenTimeoutMs same as
-     *  before. collector.cancelIfPossible() below is a no-op until the handle exists.
-     *  Two thresholds, not one: before the first chunk of any kind, lastActivityMs is still the
-     *  attempt's start time, so this is really "time to first token" and gets the looser,
-     *  configurable firstTokenTimeoutMs; once collector.gotFirstToken flips (see StreamCollector),
-     *  the tighter, fixed IDLE_TIMEOUT_MS takes over for genuine mid-stream stalls. */
+     *  (cancellation, or the harness's own task-wall timeout - see RunBench.sessionWithPolicy) is
+     *  noticed within POLL_MS instead of depending on the HTTP call itself honoring
+     *  Thread.interrupt() - which the old synchronous client did not (see the chatModel comment
+     *  above). Once a first token of any kind has arrived, this polls indefinitely: there used to be
+     *  a second, fixed mid-stream idle ceiling here (IDLE_TIMEOUT_MS) that aborted-and-retried a
+     *  request still making real progress - found live 2026-09-25 firing on oMLX's own legitimate
+     *  memory-pressure throttling (prefill LRU eviction cycles running well past any fixed idle
+     *  value), discarding real partial generation and restarting the request from scratch each time.
+     *  Removed rather than re-tuned: the harness's own task-wall budget (enforced preemptively, not
+     *  just between turns - see sessionWithPolicy) is the only time limit a request needs; a second,
+     *  shorter, ReferenceAgent-local one can only fire earlier than that budget and cut off work the
+     *  operator already chose to pay for. */
     private static ChatResponse awaitStream(final StreamCollector collector, final long firstTokenTimeoutMs) throws InterruptedException {
         while (true) {
             try {
                 return collector.future.get(POLL_MS, TimeUnit.MILLISECONDS);
             } catch (java.util.concurrent.TimeoutException pollTimeout) {
-                final long limit = collector.gotFirstToken ? IDLE_TIMEOUT_MS : firstTokenTimeoutMs;
-                if (System.currentTimeMillis() - collector.lastActivityMs > limit) {
+                if (!collector.gotFirstToken && System.currentTimeMillis() - collector.lastActivityMs > firstTokenTimeoutMs) {
                     collector.cancelIfPossible();   // real abort now (R10), not just walking away
-                    throw new RuntimeException((collector.gotFirstToken ? "no data from the model in " : "no first token from the model in ")
-                            + (limit / 1000) + "s (stream stalled)");
+                    throw new RuntimeException("no first token from the model in " + (firstTokenTimeoutMs / 1000) + "s");
                 }
-                // still within budget, or receiving text/thinking/tool-call deltas - keep polling
+                // still within the first-token budget, or a first token has already arrived - once it
+                // has, only the harness's task-wall timeout (an external interrupt) may cut this off
             } catch (ExecutionException ee) {
                 final var cause = ee.getCause();
                 if (cause instanceof RuntimeException re) throw re;
