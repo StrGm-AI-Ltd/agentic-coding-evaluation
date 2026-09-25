@@ -400,6 +400,10 @@ public final class Packs {
             Map.entry("B2", Pattern.compile("\\btests? (fail|red|do not run|missing)|no tests", Pattern.CASE_INSENSITIVE)),
             Map.entry("B3", Pattern.compile("coverage|assert|mutation|tests? (do|does) not (check|verify)|weak test", Pattern.CASE_INSENSITIVE)),
             Map.entry("M1", Pattern.compile("\\bdouble\\b|\\bfloat\\b")),
+            // #112: M2 ("BigDecimal imported where money is handled") had no entry here at all,
+            // even though ladder.json scores it on 4 rungs (L1, L2, L3, L3p) - a self-review finding
+            // correctly identifying a missing/absent BigDecimal could never be matched to it.
+            Map.entry("M2", Pattern.compile("BigDecimal", Pattern.CASE_INSENSITIVE)),
             Map.entry("M3", Pattern.compile("\\.equals\\(|equals on")),
             Map.entry("M4", Pattern.compile("sells? (are|is) (not )?subtract|adding replay", Pattern.CASE_INSENSITIVE)));
 
