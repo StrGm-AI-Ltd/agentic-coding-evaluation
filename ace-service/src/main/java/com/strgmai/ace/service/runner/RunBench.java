@@ -492,7 +492,8 @@ public class RunBench {
             final String wrapInstr = name.startsWith("p") || name.equals("implement") ? Packs.MONO_WRAPUP_INSTRUCTION : Packs.wrapupInstruction(name);
             // the wrap-up is a continuation on top of the task budget: its own proxy with its own 2000 tokens (run_bench run_task)
             final var wrapProxy = proxies.start(journal, 2000L, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
-            final long wrapWall = (long) (300 * scale);
+            final int wrapupBase = cfg.get("wrapup_wall_sec") instanceof Number wb ? wb.intValue() : 300;
+            final long wrapWall = (long) (wrapupBase * scale);
             final ReferenceAgent.SessionResult w;   // assigned exactly once below; a legal blank final
             try {
                 w = RunBenchSupport.runBounded(wrapWall, name + "-wrapup", rd.resolve("sessions"), canonicalSessionId, wrapProxy.abort(),
@@ -749,8 +750,9 @@ public class RunBench {
         final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
         try {
             final String handoffSid = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + t.id).getBytes()).toString();
-            ReferenceAgent.SessionResult h = RunBenchSupport.runBounded(300, t.id + "-handoff", rd.resolve("sessions"), handoffSid, proxy.abort(),
-                    () -> agent.run(t.id + "-handoff", Packs.handoffInstruction(t.id), 300, 3000L,
+            final int handoffWall = cfg.get("handoff_wall_sec") instanceof Number hw ? hw.intValue() : 300;
+            ReferenceAgent.SessionResult h = RunBenchSupport.runBounded(handoffWall, t.id + "-handoff", rd.resolve("sessions"), handoffSid, proxy.abort(),
+                    () -> agent.run(t.id + "-handoff", Packs.handoffInstruction(t.id), handoffWall, 3000L,
                             rd.resolve("sessions"), handoffSid, true, rd.resolve("packs/stable.md").toString(), ws.toString(),
                             proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, (String) cfg.get("model"), null));
             final Path hp = ws.resolve("handoff").resolve(t.id + ".md");
@@ -789,10 +791,11 @@ public class RunBench {
             final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 180_000L;
             final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
             final String planSid = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/PARALLEL_PLAN").getBytes()).toString();
+            final int parallelPlanWall = cfg.get("parallel_plan_wall_sec") instanceof Number pw ? pw.intValue() : 600;
             ReferenceAgent.SessionResult prec;
             try {
-                prec = RunBenchSupport.runBounded(600, "PARALLEL_PLAN", rd.resolve("sessions"), planSid, proxy.abort(),
-                        () -> agent.run("PARALLEL_PLAN", Packs.parallelPlanPack(tasks) + "\n\n" + Packs.PARALLEL_PLAN_INSTRUCTION, 600, 8000L,
+                prec = RunBenchSupport.runBounded(parallelPlanWall, "PARALLEL_PLAN", rd.resolve("sessions"), planSid, proxy.abort(),
+                        () -> agent.run("PARALLEL_PLAN", Packs.parallelPlanPack(tasks) + "\n\n" + Packs.PARALLEL_PLAN_INSTRUCTION, parallelPlanWall, 8000L,
                                 rd.resolve("sessions"), planSid, false, rd.resolve("packs/stable.md").toString(), ws.toString(),
                                 proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, (String) cfg.get("model"), null));
             } finally { proxy.stop(); }

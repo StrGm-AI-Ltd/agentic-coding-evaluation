@@ -65,6 +65,9 @@ public class JobNewView extends VerticalLayout {
     private final IntegerField topK = new IntegerField("top_k");
     private final NumberField repetitionPenalty = new NumberField("repetition_penalty");
     private final IntegerField maxTokens = new IntegerField("max_tokens");
+    private final IntegerField parallelPlanWall = new IntegerField("parallel_plan_wall");
+    private final IntegerField handoffWall = new IntegerField("handoff_wall");
+    private final IntegerField wrapupWall = new IntegerField("wrapup_wall");
     private final Checkbox handoffNotes = new Checkbox("handoff_notes");
     private final Checkbox systemRules = new Checkbox("system_rules");
     private final Checkbox selfReview = new Checkbox("self_review");
@@ -138,6 +141,12 @@ public class JobNewView extends VerticalLayout {
         repetitionPenalty.setPlaceholder("blank = model default");
         maxTokens.setMin(1);
         maxTokens.setPlaceholder("blank = context-probe-derived cap");
+        parallelPlanWall.setMin(1);
+        parallelPlanWall.setPlaceholder("blank = default (600s)");
+        handoffWall.setMin(1);
+        handoffWall.setPlaceholder("blank = default (300s)");
+        wrapupWall.setMin(1);
+        wrapupWall.setPlaceholder("blank = default (300s, before the decode-speed scale)");
 
         add(new H2("New job"));
         add(new RouterLink("← Queue", JobsView.class));
@@ -149,7 +158,8 @@ public class JobNewView extends VerticalLayout {
                 Forms.row(phases, parallel, parallelPlan, parallelWeight)));
         add(Forms.section("Budgets",
                 Forms.row(taskWall, taskTokens, implWall, implTokens, planTokens, wallBudget, contextWindow),
-                Forms.row(firstTokenTimeout, compactionTrigger)));
+                Forms.row(firstTokenTimeout, compactionTrigger),
+                Forms.row(parallelPlanWall, handoffWall, wrapupWall)));
         add(Forms.section("Sampler",
                 Forms.row(temperature, topP, topK, repetitionPenalty),
                 Forms.row(maxTokens, reasoningEffort)));
@@ -202,6 +212,9 @@ public class JobNewView extends VerticalLayout {
         raw.put("top_k", topK.getValue());
         raw.put("repetition_penalty", repetitionPenalty.getValue());
         raw.put("max_tokens", maxTokens.getValue());
+        raw.put("parallel_plan_wall", parallelPlanWall.getValue());
+        raw.put("handoff_wall", handoffWall.getValue());
+        raw.put("wrapup_wall", wrapupWall.getValue());
         raw.put("task_wall", taskWall.getValue());
         raw.put("task_tokens", taskTokens.getValue());
         raw.put("impl_wall", implWall.getValue());

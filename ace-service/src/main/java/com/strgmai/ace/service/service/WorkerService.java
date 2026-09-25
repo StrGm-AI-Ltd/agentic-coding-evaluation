@@ -153,6 +153,11 @@ public class WorkerService {
                 if (flag(job.argv(), "--repetition-penalty") != null) cfg.put("repetition_penalty", Double.parseDouble(flag(job.argv(), "--repetition-penalty")));
                 if (flag(job.argv(), "--max-tokens") != null) cfg.put("max_tokens_override", Integer.parseInt(flag(job.argv(), "--max-tokens")));
                 if (flag(job.argv(), "--reasoning-effort") != null) cfg.put("reasoning_effort", flag(job.argv(), "--reasoning-effort"));
+                // PARALLEL_PLAN/handoff/wrap-up walls (found live 2026-09-25): were fixed literals
+                // in RunBench.java (600/300/300*scale) with no run-level control at all
+                if (flag(job.argv(), "--parallel-plan-wall") != null) cfg.put("parallel_plan_wall_sec", Integer.parseInt(flag(job.argv(), "--parallel-plan-wall")));
+                if (flag(job.argv(), "--handoff-wall") != null) cfg.put("handoff_wall_sec", Integer.parseInt(flag(job.argv(), "--handoff-wall")));
+                if (flag(job.argv(), "--wrapup-wall") != null) cfg.put("wrapup_wall_sec", Integer.parseInt(flag(job.argv(), "--wrapup-wall")));
                 // a pinned --context-window IS the window: it skips step 0, whose whole job is to measure one
                 final String window = flag(job.argv(), "--context-window");
                 if (window != null) cfg.put("context_window", Integer.parseInt(window));

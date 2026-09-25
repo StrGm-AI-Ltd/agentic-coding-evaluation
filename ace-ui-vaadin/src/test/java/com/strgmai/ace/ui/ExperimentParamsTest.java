@@ -50,6 +50,69 @@ class ExperimentParamsTest {
         assertFalse(params.containsKey("trajectory_weight"), "null weight is omitted");
     }
 
+    /** #72: shared by every template, same as review_weight/trajectory_use above. */
+    @Test
+    void samplerParamsPassThroughWhenSet() {
+        final var raw = common();
+        raw.put("model", "qwen");
+        raw.put("arms", List.of());
+        raw.put("parallel", null);
+        raw.put("temperature", 0.7);
+        raw.put("top_p", 0.9);
+        raw.put("top_k", 40);
+        raw.put("repetition_penalty", 1.1);
+        raw.put("max_tokens", 2000);
+        raw.put("reasoning_effort", "high");
+        final var params = ExperimentParams.build("harness_effect", raw);
+        assertEquals(0.7, params.get("temperature"));
+        assertEquals(0.9, params.get("top_p"));
+        assertEquals(40, params.get("top_k"));
+        assertEquals(1.1, params.get("repetition_penalty"));
+        assertEquals(2000, params.get("max_tokens"));
+        assertEquals("high", params.get("reasoning_effort"));
+    }
+
+    @Test
+    void samplerParamsOmittedWhenUnset() {
+        final var raw = common();
+        raw.put("model", "qwen");
+        raw.put("arms", List.of());
+        raw.put("parallel", null);
+        final var params = ExperimentParams.build("harness_effect", raw);
+        for (final var key : List.of("temperature", "top_p", "top_k", "repetition_penalty", "max_tokens", "reasoning_effort")) {
+            assertFalse(params.containsKey(key), key + " must be omitted, not sent as null");
+        }
+    }
+
+    /** Found live 2026-09-25: PARALLEL_PLAN/handoff/wrap-up walls were fixed literals in
+     *  RunBench.java with no run-level control - shared by every template, same as the sampler knobs. */
+    @Test
+    void newWallParamsPassThroughWhenSet() {
+        final var raw = common();
+        raw.put("model", "qwen");
+        raw.put("arms", List.of());
+        raw.put("parallel", null);
+        raw.put("parallel_plan_wall", 900);
+        raw.put("handoff_wall", 450);
+        raw.put("wrapup_wall", 600);
+        final var params = ExperimentParams.build("harness_effect", raw);
+        assertEquals(900, params.get("parallel_plan_wall"));
+        assertEquals(450, params.get("handoff_wall"));
+        assertEquals(600, params.get("wrapup_wall"));
+    }
+
+    @Test
+    void newWallParamsOmittedWhenUnset() {
+        final var raw = common();
+        raw.put("model", "qwen");
+        raw.put("arms", List.of());
+        raw.put("parallel", null);
+        final var params = ExperimentParams.build("harness_effect", raw);
+        for (final var key : List.of("parallel_plan_wall", "handoff_wall", "wrapup_wall")) {
+            assertFalse(params.containsKey(key), key + " must be omitted, not sent as null");
+        }
+    }
+
     @Test
     void harnessEffect_keepsCheckedArms() {
         final var raw = common();

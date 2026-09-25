@@ -54,6 +54,15 @@ public class ExperimentNewView extends VerticalLayout {
     private final ComboBox<String> trajectoryReviewerModel = modelPicker("trajectory_reviewer_model");
     private final NumberField trajectoryWeight = weightField("trajectory_weight");
     private final Select<String> trajectoryUse = new Select<>();
+    private final NumberField temperature = new NumberField("temperature");
+    private final NumberField topP = new NumberField("top_p");
+    private final IntegerField topK = new IntegerField("top_k");
+    private final NumberField repetitionPenalty = new NumberField("repetition_penalty");
+    private final IntegerField maxTokens = new IntegerField("max_tokens");
+    private final Select<String> reasoningEffort = new Select<>();
+    private final IntegerField parallelPlanWall = new IntegerField("parallel_plan_wall");
+    private final IntegerField handoffWall = new IntegerField("handoff_wall");
+    private final IntegerField wrapupWall = new IntegerField("wrapup_wall");
     private final Checkbox orch = new Checkbox("orch — orchestrated");
     private final Checkbox mono = new Checkbox("mono — monolithic");
     private final Checkbox monoRules = new Checkbox("mono+rules — monolithic with prompt-only rules");
@@ -117,6 +126,27 @@ public class ExperimentNewView extends VerticalLayout {
         trajectoryUse.setItems("", "calibration", "direct");
         trajectoryUse.setValue("");
         trajectoryUse.setItemLabelGenerator(value -> value.isEmpty() ? "—" : value);
+        temperature.setMin(0);
+        temperature.setPlaceholder("blank = operator default");
+        topP.setMin(0);
+        topP.setMax(1);
+        topP.setPlaceholder("blank = operator default");
+        topK.setMin(1);
+        topK.setPlaceholder("blank = model default");
+        repetitionPenalty.setMin(0);
+        repetitionPenalty.setPlaceholder("blank = model default");
+        maxTokens.setMin(1);
+        maxTokens.setPlaceholder("blank = context-probe-derived cap");
+        reasoningEffort.setLabel("reasoning_effort");
+        reasoningEffort.setItems("", "none", "low", "medium", "high");
+        reasoningEffort.setValue("");
+        reasoningEffort.setItemLabelGenerator(v -> v.isEmpty() ? "blank = default per phase" : v.equals("none") ? "none (disable thinking)" : v);
+        parallelPlanWall.setMin(1);
+        parallelPlanWall.setPlaceholder("blank = default (600s)");
+        handoffWall.setMin(1);
+        handoffWall.setPlaceholder("blank = default (300s)");
+        wrapupWall.setMin(1);
+        wrapupWall.setPlaceholder("blank = default (300s, before the decode-speed scale)");
 
         orch.setValue(true);
         mono.setValue(true);
@@ -129,7 +159,8 @@ public class ExperimentNewView extends VerticalLayout {
         add(Forms.section("Experiment",
                 Forms.row(name, template, k, model),
                 Forms.row(taskWall, taskTokens, contextWindow, noContextProbe),
-                Forms.row(firstTokenTimeout, compactionTrigger, reviewWallSec)));
+                Forms.row(firstTokenTimeout, compactionTrigger, reviewWallSec),
+                Forms.row(parallelPlanWall, handoffWall, wrapupWall)));
 
         // NB: Vaadin components have exactly ONE parent — a shared field must live in
         // one section only (this bug shipped the model picker away from harness_effect
@@ -152,6 +183,10 @@ public class ExperimentNewView extends VerticalLayout {
         add(Forms.section("Reviewers (all templates)",
                 Forms.row(reviewerModel, reviewWeight, reviewBlind),
                 Forms.row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse)));
+
+        add(Forms.section("Sampler (all templates, all arms)",
+                Forms.row(temperature, topP, topK, repetitionPenalty),
+                Forms.row(maxTokens, reasoningEffort)));
 
         updateVisibility();
         template.addValueChangeListener(e -> updateVisibility());
@@ -253,6 +288,15 @@ public class ExperimentNewView extends VerticalLayout {
         raw.put("trajectory_reviewer_model", trajectoryReviewerModel.getValue());
         raw.put("trajectory_weight", trajectoryWeight.getValue());
         raw.put("trajectory_use", trajectoryUse.getValue());
+        raw.put("temperature", temperature.getValue());
+        raw.put("top_p", topP.getValue());
+        raw.put("top_k", topK.getValue());
+        raw.put("repetition_penalty", repetitionPenalty.getValue());
+        raw.put("max_tokens", maxTokens.getValue());
+        raw.put("reasoning_effort", reasoningEffort.getValue());
+        raw.put("parallel_plan_wall", parallelPlanWall.getValue());
+        raw.put("handoff_wall", handoffWall.getValue());
+        raw.put("wrapup_wall", wrapupWall.getValue());
         switch (currentTemplate) {
             case "harness_effect" -> {
                 raw.put("model", model.getValue());

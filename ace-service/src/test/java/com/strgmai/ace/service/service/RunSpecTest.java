@@ -10,9 +10,16 @@ class RunSpecTest {
 
     private static RunSpec base(final Double temperature, final Double topP, final Integer topK,
                                  final Double repetitionPenalty, final Integer maxTokens, final String reasoningEffort) {
+        return walls(temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, null, null, null);
+    }
+
+    private static RunSpec walls(final Double temperature, final Double topP, final Integer topK,
+                                  final Double repetitionPenalty, final Integer maxTokens, final String reasoningEffort,
+                                  final Integer parallelPlanWall, final Integer handoffWall, final Integer wrapupWall) {
         return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", 3600, null, null, null, null,
                 false, false, false, null, false, true, false, false, null, null, null, null, false, null, null, null,
-                null, "r1", temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort);
+                null, "r1", temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort,
+                parallelPlanWall, handoffWall, wrapupWall);
     }
 
     @Test
@@ -72,5 +79,29 @@ class RunSpecTest {
     @Test
     void unrecognisedReasoningEffortIsRejected() {
         assertThrows(IllegalArgumentException.class, () -> base(null, null, null, null, null, "extreme"));
+    }
+
+    /** Found live 2026-09-25: PARALLEL_PLAN/handoff/wrap-up walls were fixed literals in
+     *  RunBench.java (600/300/300*scale) with no run-level control at all. */
+    @Test
+    void argvIncludesTheNewWallFlagsWhenSet() {
+        final var argv = walls(null, null, null, null, null, null, 900, 450, 600).argv("r1");
+        assertTrue(argv.contains("--parallel-plan-wall=900"));
+        assertTrue(argv.contains("--handoff-wall=450"));
+        assertTrue(argv.contains("--wrapup-wall=600"));
+    }
+
+    @Test
+    void argvOmitsTheNewWallFlagsWhenUnset() {
+        final var argv = base(null, null, null, null, null, null).argv("r1");
+        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--parallel-plan-wall")
+                || a.startsWith("--handoff-wall") || a.startsWith("--wrapup-wall")));
+    }
+
+    @Test
+    void nonPositiveNewWallsAreRejected() {
+        assertThrows(IllegalArgumentException.class, () -> walls(null, null, null, null, null, null, 0, null, null));
+        assertThrows(IllegalArgumentException.class, () -> walls(null, null, null, null, null, null, null, -1, null));
+        assertThrows(IllegalArgumentException.class, () -> walls(null, null, null, null, null, null, null, null, 0));
     }
 }

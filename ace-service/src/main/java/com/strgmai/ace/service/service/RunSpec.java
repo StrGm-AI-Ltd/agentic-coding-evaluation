@@ -12,7 +12,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
                       Integer contextWindow, Integer firstTokenTimeout, Integer compactionTrigger, Integer reviewWallSec,
                       boolean reviewBlind, String trajectoryReviewerModel, Double reviewWeight, Double trajectoryWeight,
                       String trajectoryUse, String runId,
-                      Double temperature, Double topP, Integer topK, Double repetitionPenalty, Integer maxTokens, String reasoningEffort) {
+                      Double temperature, Double topP, Integer topK, Double repetitionPenalty, Integer maxTokens, String reasoningEffort,
+                      Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall) {
 
     public static final String RUN_ID = "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$";
     public static final List<String> REASONING_EFFORTS = List.of("none", "low", "medium", "high");
@@ -21,6 +22,9 @@ public record RunSpec(String task, String model, String harness, String mode, St
         taskWall = positive(taskWall); taskTokens = positive(taskTokens); implWall = positive(implWall); implTokens = positive(implTokens);
         contextWindow = positive(contextWindow); firstTokenTimeout = positive(firstTokenTimeout); reviewWallSec = positive(reviewWallSec);
         maxTokens = positive(maxTokens);
+        // PARALLEL_PLAN/handoff/wrap-up walls (found live 2026-09-25): were fixed literals in
+        // RunBench.java (600/300/300*scale) with no run-level control at all
+        parallelPlanWall = positive(parallelPlanWall); handoffWall = positive(handoffWall); wrapupWall = positive(wrapupWall);
         // 0 is a legitimate value here (disables compaction) - unlike the budgets above, only reject negative
         if (compactionTrigger != null && compactionTrigger < 0) throw new IllegalArgumentException("compactionTrigger must be >= 0 (0 disables compaction): " + compactionTrigger);
         if (reviewWeight != null && (reviewWeight < 0 || reviewWeight > 1)) throw new IllegalArgumentException("reviewWeight must be within 0..1: " + reviewWeight);
@@ -82,6 +86,9 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (repetitionPenalty != null) args.add("--repetition-penalty=" + repetitionPenalty);
         if (maxTokens != null) args.add("--max-tokens=" + maxTokens);
         if (reasoningEffort != null && !reasoningEffort.isBlank()) args.add("--reasoning-effort=" + reasoningEffort);
+        if (parallelPlanWall != null) args.add("--parallel-plan-wall=" + parallelPlanWall);
+        if (handoffWall != null) args.add("--handoff-wall=" + handoffWall);
+        if (wrapupWall != null) args.add("--wrapup-wall=" + wrapupWall);
         return args;
     }
 
