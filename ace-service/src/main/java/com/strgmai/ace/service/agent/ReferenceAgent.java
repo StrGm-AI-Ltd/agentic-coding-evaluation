@@ -205,10 +205,7 @@ public class ReferenceAgent {
         final List<ToolSpecification> specs = toolSpecs();
         // the run's SCRUBBED environment (fresh HOME, docker shim, pinned JAVA_HOME, AB_RUN_ID) is the
         // base for every tool call; extraEnv null = a bare unit-test context
-        Map<String, String> env = extraEnv != null ? new LinkedHashMap<>(extraEnv)
-                : new LinkedHashMap<>(Map.of("HOME", System.getProperty("user.home"), "PATH", System.getenv().getOrDefault("PATH", "/usr/bin:/bin"), "LANG", "en_US.UTF-8"));
-        env.putIfAbsent("CI", "1");
-        env.putIfAbsent("NO_COLOR", "1");
+        Map<String, String> env = toolEnv(extraEnv);
 
         int turns = 0, toolErrors = 0, compactions = 0, lastPrompt = 0;
         String finish = null; int rc = 0;
@@ -366,6 +363,31 @@ public class ReferenceAgent {
      *  / --first-token-timeout. */
     static final long DEFAULT_FIRST_TOKEN_TIMEOUT_MS = 180_000;
     private static final long POLL_MS = 2_000;
+
+    /** provider API keys that may reach {@code extraEnv} (an external reviewer's own credential, or a
+     *  provider key from the operator's environment) - never let one of these into the tool-execution
+     *  environment handed to the (untrusted) model's own bash tool (#98). Kept in sync by hand with
+     *  {@code apiKeyFor()}'s and {@code Reviews.externalCredentials()}'s provider lists. */
+    static final Set<String> CREDENTIAL_ENV_KEYS = Set.of(
+            "OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "NEBIUS_API_KEY");
+
+    /** the tool-execution environment for a session: {@code extraEnv} when given (the run's own
+     *  scrubbed environment - RunBenchSupport.scrubbedEnv - or an external reviewer's credential-only
+     *  map from Reviews.externalCredentials), with any provider API key stripped (#98: the model's own
+     *  bash tool must never see the credential apiKeyFor() uses for the chat client) and a baseline
+     *  PATH/HOME/LANG guaranteed even when extraEnv didn't carry one (an external reviewer's
+     *  credential-only map otherwise leaves its bash tool unable to find any binary at all). */
+    static Map<String, String> toolEnv(final Map<String, String> extraEnv) {
+        final Map<String, String> env = extraEnv != null ? new LinkedHashMap<>(extraEnv)
+                : new LinkedHashMap<>(Map.of("HOME", System.getProperty("user.home"), "PATH", System.getenv().getOrDefault("PATH", "/usr/bin:/bin"), "LANG", "en_US.UTF-8"));
+        env.keySet().removeAll(CREDENTIAL_ENV_KEYS);
+        env.putIfAbsent("HOME", System.getProperty("user.home"));
+        env.putIfAbsent("PATH", System.getenv().getOrDefault("PATH", "/usr/bin:/bin"));
+        env.putIfAbsent("LANG", "en_US.UTF-8");
+        env.putIfAbsent("CI", "1");
+        env.putIfAbsent("NO_COLOR", "1");
+        return env;
+    }
 
     /** Waits for one streaming attempt by polling instead of blocking on it, so an interrupt
      *  (cancellation, or the harness's own task-wall timeout - see RunBench.sessionWithPolicy) is
