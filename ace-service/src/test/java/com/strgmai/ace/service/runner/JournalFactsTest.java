@@ -243,4 +243,19 @@ class JournalFactsTest {
         assertFalse(f.containsKey("avg_latency_sec"));
         assertFalse(f.containsKey("avg_first_byte_ms"));
     }
+
+    /** #100: CACHE used to be an unbounded ConcurrentHashMap - one entry per unique journal path
+     *  ever parsed, held for the JVM's life. Confirms it's now a bounded LRU instead: parsing well
+     *  more than the bound's worth of distinct journal files must never grow the cache past it. */
+    @Test
+    void journalCacheIsBoundedNotUnbounded() throws Exception {
+        final int wellPastTheBound = 100;   // JournalFacts.MAX_CACHED_JOURNALS is 64
+        for (int i = 0; i < wellPastTheBound; i++) {
+            final Path j = track(Files.createTempFile("j" + i, ".jsonl"));
+            Files.writeString(j, "{\"ts\": \"2026-09-14T10:00:00Z\", \"path\": \"/v1/models\", \"status\": 200}\n");
+            JournalFacts.facts(j.toString(), null, null, null, null, null);
+        }
+        assertTrue(JournalFacts.cacheSize() < wellPastTheBound,
+                "the cache must have evicted older entries, not grown to fit every file ever parsed: size=" + JournalFacts.cacheSize());
+    }
 }
