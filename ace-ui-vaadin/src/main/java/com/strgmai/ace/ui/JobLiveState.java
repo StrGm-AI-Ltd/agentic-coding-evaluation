@@ -45,7 +45,7 @@ public final class JobLiveState implements Serializable {
      *  truncated display form. */
     public record SessionRow(String id, String label, String description, String endedStage,
             Double avgPrefillTokPerSec, Double avgDecodeTokPerSec, Double wallSec, Long totalTokens,
-            Double prefillWallSec, Double decodeWallSec) implements Serializable {
+            Double prefillWallSec, Double decodeWallSec, String ts) implements Serializable {
     }
 
     private static final long serialVersionUID = 1L;
@@ -80,7 +80,7 @@ public final class JobLiveState implements Serializable {
                 final var sessionId = Fmt.textOr(data.path("session_id"), "");
                 final var startTs = Fmt.textOr(data.path("ts"), null);
                 if (startTs != null) sessionStartTs.put(sessionId, startTs);
-                sessions.add(new SessionRow(sessionId, sessionLabel(data), sessionDescription(data), null, null, null, null, null, null, null));
+                sessions.add(new SessionRow(sessionId, sessionLabel(data), sessionDescription(data), null, null, null, null, null, null, null, startTs));
             }
             case "session_done" -> markSessionDone(data);
             case "execution_order" -> executionOrder = parseExecutionOrder(data);
@@ -179,7 +179,7 @@ public final class JobLiveState implements Serializable {
         for (int i = 0; i < sessions.size(); i++) {
             final var s = sessions.get(i);
             if (!sessionId.equals(s.id())) continue;
-            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), finish, s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), wallSec, s.totalTokens(), s.prefillWallSec(), s.decodeWallSec()));
+            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), finish, s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), wallSec, s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts()));
             return;
         }
     }
@@ -208,7 +208,7 @@ public final class JobLiveState implements Serializable {
             if (data.path("decode_tok_per_sec").isNumber()) { sums[2] += data.path("decode_tok_per_sec").asDouble(); sums[3]++; }
             final Double avgPrefill = sums[1] > 0 ? sums[0] / sums[1] : null;
             final Double avgDecode = sums[3] > 0 ? sums[2] / sums[3] : null;
-            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), avgPrefill, avgDecode, s.wallSec(), s.totalTokens(), s.prefillWallSec(), s.decodeWallSec()));
+            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), avgPrefill, avgDecode, s.wallSec(), s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts()));
             return;
         }
     }
@@ -223,7 +223,7 @@ public final class JobLiveState implements Serializable {
             final var s = sessions.get(i);
             if (!sessionId.equals(s.id())) continue;
             final var total = tokenTotals.merge(sessionId, data.path("completion_tokens").asLong(), Long::sum);
-            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), total, s.prefillWallSec(), s.decodeWallSec()));
+            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), total, s.prefillWallSec(), s.decodeWallSec(), s.ts()));
             return;
         }
     }
@@ -244,7 +244,7 @@ public final class JobLiveState implements Serializable {
             final var ttft = data.path("ttft_sec").asDouble();
             sums[0] += ttft;
             sums[1] += data.path("latency_sec").asDouble() - ttft;
-            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), s.totalTokens(), sums[0], sums[1]));
+            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), s.totalTokens(), sums[0], sums[1], s.ts()));
             return;
         }
     }

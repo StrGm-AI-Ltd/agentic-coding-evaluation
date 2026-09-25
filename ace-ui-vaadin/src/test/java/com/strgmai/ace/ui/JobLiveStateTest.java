@@ -37,7 +37,31 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(new JobLiveState.SessionRow(
-                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc (high)", "", null, null, null, null, null, null, null)), state.sessions());
+                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc (high)", "", null, null, null, null, null, null, null, null)), state.sessions());
+    }
+
+    /** The sessions grid's new "ts" column (2026-09-25): the session's own start time, same field
+     *  already captured into sessionStartTs for wall-time computation - just also exposed on the row. */
+    @Test
+    void sessionStartedCarriesItsOwnTsIntoTheRow() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "755478fc-f323-565e-92f8-1a5b10584e41", "ts": "2026-09-25T13:42:28.955270Z"}
+
+                """).forEach(state::apply);
+        assertEquals("2026-09-25T13:42:28.955270Z", state.sessions().get(0).ts());
+    }
+
+    @Test
+    void sessionStartedWithNoTsLeavesTheRowsTsNull() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "755478fc-f323-565e-92f8-1a5b10584e41"}
+
+                """).forEach(state::apply);
+        assertNull(state.sessions().get(0).ts());
     }
 
     /** RunBench names every session with the stage/task it's actually for (AgentSession.header's
@@ -110,7 +134,7 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(new JobLiveState.SessionRow(
-                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc", "", "tool_calls", null, null, null, null, null, null)), state.sessions());
+                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc", "", "tool_calls", null, null, null, null, null, null, null)), state.sessions());
     }
 
     /** The whole point of matching by real id: a run's sessions need not finish in the order they
@@ -132,8 +156,8 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(
-                new JobLiveState.SessionRow("aaaaaaaa-0000-0000-0000-000000000000", "aaaaaaaa", "", null, null, null, null, null, null, null),
-                new JobLiveState.SessionRow("bbbbbbbb-0000-0000-0000-000000000000", "bbbbbbbb", "", "stop", null, null, null, null, null, null)), state.sessions(),
+                new JobLiveState.SessionRow("aaaaaaaa-0000-0000-0000-000000000000", "aaaaaaaa", "", null, null, null, null, null, null, null, null),
+                new JobLiveState.SessionRow("bbbbbbbb-0000-0000-0000-000000000000", "bbbbbbbb", "", "stop", null, null, null, null, null, null, null)), state.sessions(),
                 "the second-started session is the one marked done; the first (still open) is unaffected");
     }
 
@@ -503,7 +527,7 @@ class JobLiveStateTest {
                 data: {"reasoning_effort": null}
 
                 """).forEach(state::apply);
-        assertEquals(List.of(new JobLiveState.SessionRow("", "?", "", null, null, null, null, null, null, null)), state.sessions(),
+        assertEquals(List.of(new JobLiveState.SessionRow("", "?", "", null, null, null, null, null, null, null, null)), state.sessions(),
                 "missing ids render as ? without throwing");
     }
 

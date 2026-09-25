@@ -70,6 +70,33 @@ class JobDetailViewTest {
         assertEquals(List.of(404, 500), byStatusNullsLast);
     }
 
+    /** The sessions grid became sortable by every column alongside the new "ts" one (2026-09-25) -
+     *  same null-safety requirement as the requests grid above: a still-running session has most
+     *  fields null (wall time, speeds, ended stage), and must not throw when sorted on any of them. */
+    @Test
+    void sessionRowComparators_sortNullFieldsWithoutThrowing() {
+        final var rows = List.of(
+                new JobLiveState.SessionRow(null, null, null, null, null, null, null, null, null, null, null),
+                new JobLiveState.SessionRow("a", "T1", "task T1", "stop", 90.0, 20.0, 120.0, 500L, 30.0, 90.0, "2026-09-15T02:00:00Z"),
+                new JobLiveState.SessionRow("b", "T2", "task T2", null, null, null, null, null, null, null, "2026-09-14T23:00:00+01:00"));
+        final java.util.function.Consumer<Comparator<JobLiveState.SessionRow>> sortAll =
+                by -> rows.stream().sorted(by).forEach(JobLiveState.SessionRow::id); // any terminal op forces the sort
+        sortAll.accept(JobDetailView.SESSIONS_BY_LABEL);
+        sortAll.accept(JobDetailView.SESSIONS_BY_DESCRIPTION);
+        sortAll.accept(JobDetailView.SESSIONS_BY_ENDED_STAGE);
+        sortAll.accept(JobDetailView.SESSIONS_BY_WALL_SEC);
+        sortAll.accept(JobDetailView.SESSIONS_BY_PREFILL_WALL);
+        sortAll.accept(JobDetailView.SESSIONS_BY_DECODE_WALL);
+        sortAll.accept(JobDetailView.SESSIONS_BY_PREFILL_TPS);
+        sortAll.accept(JobDetailView.SESSIONS_BY_DECODE_TPS);
+        sortAll.accept(JobDetailView.SESSIONS_BY_TOTAL_TOKENS);
+
+        final var byTs = rows.stream().sorted(JobDetailView.SESSIONS_BY_TS)
+                .map(r -> r.ts() == null ? "null" : r.ts()).toList();
+        assertEquals(List.of("2026-09-14T23:00:00+01:00", "2026-09-15T02:00:00Z", "null"),
+                byTs, "chronological across formats, absent last");
+    }
+
     /** The 2026-09-16 confusing-hint fix: the message explains the job's own state. */
     @Test
     void notImportedHint_isStateAware() {
