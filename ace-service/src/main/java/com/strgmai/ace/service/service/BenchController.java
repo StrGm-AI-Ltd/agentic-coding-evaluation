@@ -122,38 +122,7 @@ public class BenchController {
         final Map<String, Object> spec = (Map<String, Object>) body.get("spec");
         if (spec == null) throw new IllegalArgumentException("missing 'spec' in request body");   // a null spec would NPE on the very next line
         final int priority = body.get("priority") instanceof Number n ? n.intValue() : 0;
-        RunSpec rs = new RunSpec(str(spec.get("task")), str(spec.get("model")), str(spec.get("harness")), str(spec.get("mode")), str(spec.get("plan_source")),
-                spec.get("task_wall") instanceof Number n ? n.intValue() : intOf(spec.get("task_wall")),
-                spec.get("task_tokens") instanceof Number n ? n.intValue() : intOf(spec.get("task_tokens")),
-                spec.get("impl_wall") instanceof Number n ? n.intValue() : intOf(spec.get("impl_wall")),
-                spec.get("impl_tokens") instanceof Number n ? n.intValue() : intOf(spec.get("impl_tokens")),
-                str(spec.get("parallel")), Boolean.parseBoolean(String.valueOf(spec.getOrDefault("system_rules", "false"))),
-                Boolean.parseBoolean(String.valueOf(spec.getOrDefault("self_review", "false"))),
-                Boolean.parseBoolean(String.valueOf(spec.getOrDefault("trajectory_review", "false"))),
-                str(spec.get("reviewer_model")),
-                Boolean.parseBoolean(String.valueOf(spec.getOrDefault("handoff_notes", "false"))),
-                Boolean.parseBoolean(String.valueOf(spec.getOrDefault("manage_docker", "true"))),
-                Boolean.parseBoolean(String.valueOf(spec.getOrDefault("no_context_probe", "false"))),
-                Boolean.parseBoolean(String.valueOf(spec.getOrDefault("context_probe_fresh", "false"))),
-                spec.get("context_window") instanceof Number n ? n.intValue() : intOf(spec.get("context_window")),
-                spec.get("first_token_timeout") instanceof Number n ? n.intValue() : intOf(spec.get("first_token_timeout")),
-                spec.get("compaction_trigger") instanceof Number n2 ? n2.intValue() : intOf(spec.get("compaction_trigger")),
-                spec.get("review_wall_sec") instanceof Number n3 ? n3.intValue() : intOf(spec.get("review_wall_sec")),
-                Boolean.parseBoolean(String.valueOf(spec.getOrDefault("review_blind", "false"))),
-                str(spec.get("trajectory_reviewer_model")),
-                spec.get("review_weight") instanceof Number n4 ? n4.doubleValue() : doubleOf(spec.get("review_weight")),
-                spec.get("trajectory_weight") instanceof Number n5 ? n5.doubleValue() : doubleOf(spec.get("trajectory_weight")),
-                str(spec.get("trajectory_use")),
-                str(spec.get("run_id")),
-                spec.get("temperature") instanceof Number n6 ? n6.doubleValue() : doubleOf(spec.get("temperature")),
-                spec.get("top_p") instanceof Number n7 ? n7.doubleValue() : doubleOf(spec.get("top_p")),
-                spec.get("top_k") instanceof Number n8 ? n8.intValue() : intOf(spec.get("top_k")),
-                spec.get("repetition_penalty") instanceof Number n9 ? n9.doubleValue() : doubleOf(spec.get("repetition_penalty")),
-                spec.get("max_tokens") instanceof Number n10 ? n10.intValue() : intOf(spec.get("max_tokens")),
-                str(spec.get("reasoning_effort")),
-                spec.get("parallel_plan_wall") instanceof Number n11 ? n11.intValue() : intOf(spec.get("parallel_plan_wall")),
-                spec.get("handoff_wall") instanceof Number n12 ? n12.intValue() : intOf(spec.get("handoff_wall")),
-                spec.get("wrapup_wall") instanceof Number n13 ? n13.intValue() : intOf(spec.get("wrapup_wall")));
+        final RunSpec rs = RunSpec.from(spec);
         return queue.enqueue(rs, priority, props.resultsDir(), pin.current(), pin.current(), null, null, null);
     }
 
@@ -342,8 +311,4 @@ public class BenchController {
         return Map.of("harness_version", BenchProperties.HARNESS_VERSION, "result_schema", BenchProperties.RESULT_SCHEMA,
                 "checks", CheckId.values().length, "worker_busy", worker.busyNow());
     }
-
-    static String str(Object o) { return o == null ? null : String.valueOf(o); }
-    static Integer intOf(Object o) { try { return o == null || String.valueOf(o).isBlank() ? null : Integer.parseInt(String.valueOf(o)); } catch (NumberFormatException e) { throw new IllegalArgumentException("not a number: " + o); } }
-    static Double doubleOf(Object o) { try { return o == null || String.valueOf(o).isBlank() ? null : Double.parseDouble(String.valueOf(o)); } catch (NumberFormatException e) { throw new IllegalArgumentException("not a number: " + o); } }
 }

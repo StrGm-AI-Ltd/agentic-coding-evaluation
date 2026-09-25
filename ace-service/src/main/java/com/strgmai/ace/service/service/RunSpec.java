@@ -95,4 +95,116 @@ public record RunSpec(String task, String model, String harness, String mode, St
     public static String defaultRunId(final String prefix) {
         return prefix + "-" + java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.now());
     }
+
+    public static Builder builder() { return new Builder(); }
+
+    /** #77/#78: a fluent, named way to build a RunSpec, so a caller sets fields by NAME instead of by
+     *  matching a value's position in a 36-argument constructor call - the exact hazard that let a
+     *  future field addition or reorder silently swap two same-typed fields with nothing short of a
+     *  test on that specific field able to catch it. build() is the one place field ORDER still
+     *  matters, immediately next to RunSpec's own field list, where the two are easiest to keep in
+     *  sync. */
+    public static final class Builder {
+        private String task, model, harness, mode, planSource, parallel, reviewerModel,
+                trajectoryReviewerModel, trajectoryUse, runId, reasoningEffort;
+        private Integer taskWall, taskTokens, implWall, implTokens, contextWindow, firstTokenTimeout,
+                compactionTrigger, reviewWallSec, topK, maxTokens, parallelPlanWall, handoffWall, wrapupWall;
+        private boolean systemRules, selfReview, trajectoryReview, handoffNotes, manageDocker,
+                noContextProbe, contextProbeFresh, reviewBlind;
+        private Double reviewWeight, trajectoryWeight, temperature, topP, repetitionPenalty;
+
+        public Builder task(final String v) { task = v; return this; }
+        public Builder model(final String v) { model = v; return this; }
+        public Builder harness(final String v) { harness = v; return this; }
+        public Builder mode(final String v) { mode = v; return this; }
+        public Builder planSource(final String v) { planSource = v; return this; }
+        public Builder taskWall(final Integer v) { taskWall = v; return this; }
+        public Builder taskTokens(final Integer v) { taskTokens = v; return this; }
+        public Builder implWall(final Integer v) { implWall = v; return this; }
+        public Builder implTokens(final Integer v) { implTokens = v; return this; }
+        public Builder parallel(final String v) { parallel = v; return this; }
+        public Builder systemRules(final boolean v) { systemRules = v; return this; }
+        public Builder selfReview(final boolean v) { selfReview = v; return this; }
+        public Builder trajectoryReview(final boolean v) { trajectoryReview = v; return this; }
+        public Builder reviewerModel(final String v) { reviewerModel = v; return this; }
+        public Builder handoffNotes(final boolean v) { handoffNotes = v; return this; }
+        public Builder manageDocker(final boolean v) { manageDocker = v; return this; }
+        public Builder noContextProbe(final boolean v) { noContextProbe = v; return this; }
+        public Builder contextProbeFresh(final boolean v) { contextProbeFresh = v; return this; }
+        public Builder contextWindow(final Integer v) { contextWindow = v; return this; }
+        public Builder firstTokenTimeout(final Integer v) { firstTokenTimeout = v; return this; }
+        public Builder compactionTrigger(final Integer v) { compactionTrigger = v; return this; }
+        public Builder reviewWallSec(final Integer v) { reviewWallSec = v; return this; }
+        public Builder reviewBlind(final boolean v) { reviewBlind = v; return this; }
+        public Builder trajectoryReviewerModel(final String v) { trajectoryReviewerModel = v; return this; }
+        public Builder reviewWeight(final Double v) { reviewWeight = v; return this; }
+        public Builder trajectoryWeight(final Double v) { trajectoryWeight = v; return this; }
+        public Builder trajectoryUse(final String v) { trajectoryUse = v; return this; }
+        public Builder runId(final String v) { runId = v; return this; }
+        public Builder temperature(final Double v) { temperature = v; return this; }
+        public Builder topP(final Double v) { topP = v; return this; }
+        public Builder topK(final Integer v) { topK = v; return this; }
+        public Builder repetitionPenalty(final Double v) { repetitionPenalty = v; return this; }
+        public Builder maxTokens(final Integer v) { maxTokens = v; return this; }
+        public Builder reasoningEffort(final String v) { reasoningEffort = v; return this; }
+        public Builder parallelPlanWall(final Integer v) { parallelPlanWall = v; return this; }
+        public Builder handoffWall(final Integer v) { handoffWall = v; return this; }
+        public Builder wrapupWall(final Integer v) { wrapupWall = v; return this; }
+
+        public RunSpec build() {
+            return new RunSpec(task, model, harness, mode, planSource, taskWall, taskTokens, implWall, implTokens,
+                    parallel, systemRules, selfReview, trajectoryReview, reviewerModel, handoffNotes, manageDocker,
+                    noContextProbe, contextProbeFresh, contextWindow, firstTokenTimeout, compactionTrigger, reviewWallSec,
+                    reviewBlind, trajectoryReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse, runId,
+                    temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall);
+        }
+    }
+
+    /** builds a RunSpec from a JSON spec map (BenchController's /api/jobs body), by FIELD NAME rather
+     *  than by matching a value's position against the constructor's 36-argument list (#77) - the same
+     *  extraction and defaulting BenchController.enqueue() used to do inline, moved here so it lives
+     *  next to the fields it populates. */
+    public static RunSpec from(final Map<String, Object> spec) {
+        return builder()
+                .task(str(spec, "task")).model(str(spec, "model")).harness(str(spec, "harness"))
+                .mode(str(spec, "mode")).planSource(str(spec, "plan_source"))
+                .taskWall(intOf(spec, "task_wall")).taskTokens(intOf(spec, "task_tokens"))
+                .implWall(intOf(spec, "impl_wall")).implTokens(intOf(spec, "impl_tokens"))
+                .parallel(str(spec, "parallel"))
+                .systemRules(bool(spec, "system_rules", false)).selfReview(bool(spec, "self_review", false))
+                .trajectoryReview(bool(spec, "trajectory_review", false)).reviewerModel(str(spec, "reviewer_model"))
+                .handoffNotes(bool(spec, "handoff_notes", false)).manageDocker(bool(spec, "manage_docker", true))
+                .noContextProbe(bool(spec, "no_context_probe", false)).contextProbeFresh(bool(spec, "context_probe_fresh", false))
+                .contextWindow(intOf(spec, "context_window")).firstTokenTimeout(intOf(spec, "first_token_timeout"))
+                .compactionTrigger(intOf(spec, "compaction_trigger")).reviewWallSec(intOf(spec, "review_wall_sec"))
+                .reviewBlind(bool(spec, "review_blind", false)).trajectoryReviewerModel(str(spec, "trajectory_reviewer_model"))
+                .reviewWeight(doubleOf(spec, "review_weight")).trajectoryWeight(doubleOf(spec, "trajectory_weight"))
+                .trajectoryUse(str(spec, "trajectory_use")).runId(str(spec, "run_id"))
+                .temperature(doubleOf(spec, "temperature")).topP(doubleOf(spec, "top_p"))
+                .topK(intOf(spec, "top_k")).repetitionPenalty(doubleOf(spec, "repetition_penalty"))
+                .maxTokens(intOf(spec, "max_tokens")).reasoningEffort(str(spec, "reasoning_effort"))
+                .parallelPlanWall(intOf(spec, "parallel_plan_wall")).handoffWall(intOf(spec, "handoff_wall"))
+                .wrapupWall(intOf(spec, "wrapup_wall"))
+                .build();
+    }
+
+    private static String str(final Map<String, Object> spec, final String key) {
+        final Object o = spec.get(key);
+        return o == null ? null : String.valueOf(o);
+    }
+    private static boolean bool(final Map<String, Object> spec, final String key, final boolean dflt) {
+        return Boolean.parseBoolean(String.valueOf(spec.getOrDefault(key, dflt)));
+    }
+    private static Integer intOf(final Map<String, Object> spec, final String key) {
+        final Object o = spec.get(key);
+        if (o instanceof Number n) return n.intValue();
+        try { return o == null || String.valueOf(o).isBlank() ? null : Integer.parseInt(String.valueOf(o)); }
+        catch (NumberFormatException e) { throw new IllegalArgumentException("not a number: " + key + "=" + o); }
+    }
+    private static Double doubleOf(final Map<String, Object> spec, final String key) {
+        final Object o = spec.get(key);
+        if (o instanceof Number n) return n.doubleValue();
+        try { return o == null || String.valueOf(o).isBlank() ? null : Double.parseDouble(String.valueOf(o)); }
+        catch (NumberFormatException e) { throw new IllegalArgumentException("not a number: " + key + "=" + o); }
+    }
 }
