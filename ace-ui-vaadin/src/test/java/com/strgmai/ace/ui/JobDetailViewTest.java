@@ -50,9 +50,9 @@ class JobDetailViewTest {
     @Test
     void requestRowComparators_sortNullFieldsWithoutThrowing() {
         final var rows = List.of(
-                new JobLiveState.RequestRow(null, null, null, null, null, false),
-                new JobLiveState.RequestRow("2026-09-15T02:00:00Z", 500, 1.5, 0.5, 10L, false),
-                new JobLiveState.RequestRow("2026-09-14T23:00:00+01:00", 404, null, null, null, true));
+                new JobLiveState.RequestRow(null, null, null, null, null, false, null),
+                new JobLiveState.RequestRow("2026-09-15T02:00:00Z", 500, 1.5, 0.5, 10L, false, null),
+                new JobLiveState.RequestRow("2026-09-14T23:00:00+01:00", 404, null, null, null, true, "task-wall budget exceeded (900s)"));
         final java.util.function.Consumer<Comparator<JobLiveState.RequestRow>> sortAll =
                 by -> rows.stream().sorted(by).forEach(r -> r.status()); // any terminal op forces the sort
         sortAll.accept(JobDetailView.REQUESTS_BY_STATUS);

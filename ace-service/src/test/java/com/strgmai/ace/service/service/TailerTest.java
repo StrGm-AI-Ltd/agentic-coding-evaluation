@@ -128,6 +128,28 @@ class TailerTest {
         assertEquals(340L, events.get(0).get("completion_tokens"));
     }
 
+    /** RecordingProxy journals abort_reason alongside client_aborted (2026-09-25) so the requests
+     *  grid can show WHY an aborted request was aborted, not just that it was. */
+    @Test
+    void abortReasonIsForwardedFromTheJournalIntoTheRequestEvent() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.writeString(runDir.resolve("interactions.jsonl"),
+                "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
+                        + "\"client_aborted\": true, \"abort_reason\": \"task-wall budget exceeded (900s)\"}\n");
+        final var events = new Tailer().poll(runDir).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        assertEquals(true, events.get(0).get("client_aborted"));
+        assertEquals("task-wall budget exceeded (900s)", events.get(0).get("abort_reason"));
+    }
+
+    @Test
+    void abortReasonIsNullWhenTheRequestWasNotAborted() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.writeString(runDir.resolve("interactions.jsonl"),
+                "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200}\n");
+        final var events = new Tailer().poll(runDir).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        assertNull(events.get(0).get("abort_reason"));
+    }
+
     @Test
     void aRunWithNoFilesReportsNothing() throws Exception {
         assertTrue(new Tailer().poll(Files.createTempDirectory("empty")).isEmpty());

@@ -137,6 +137,7 @@ public final class Tailer {
                 e.put("status", r.path("status").asInt());
                 e.put("budget_spent_completion_tokens", r.path("budget_spent_completion_tokens").asLong());
                 e.put("client_aborted", r.path("client_aborted").asBoolean(false));
+                e.put("abort_reason", r.path("abort_reason").isTextual() ? r.path("abort_reason").asText() : null);
                 e.put("tag", r.path("task").isTextual() ? r.path("task").asText() : null);
                 // RecordingProxy always journals latency_sec; first_byte_ms only for streamed
                 // requests - both were parsed here but never forwarded, so the live requests grid's
