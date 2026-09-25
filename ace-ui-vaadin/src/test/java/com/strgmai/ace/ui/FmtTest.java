@@ -70,6 +70,16 @@ class FmtTest {
         assertEquals("–", Fmt.num(null));
     }
 
+    /** #60: the sessions grid showed prefill/decode tok/s averages with raw floating-point noise
+     *  ("292.20799999999997", "8.187999999999999") - real values seen live on the job page. */
+    @Test
+    void num_roundsFloatingPointNoiseFromADivisionToTwoDecimals() {
+        assertEquals("292.21", Fmt.num(292.20799999999997));
+        assertEquals("8.19", Fmt.num(8.187999999999999));
+        assertEquals("145.79", Fmt.num(145.785));
+        assertEquals("0.3", Fmt.num(0.1 + 0.2), "0.1+0.2's own floating-point noise (0.30000000000000004)");
+    }
+
     @Test
     void json_nullMissingAndPrettyPrints() {
         assertEquals("–", Fmt.json(null));

@@ -128,6 +128,52 @@ class RunDetailViewTest {
         assertTrue(line.contains("avg TTFT 250ms"), line);
     }
 
+    /** New metric: metrics.speed_by_context rows become chart-ready (label, prefill, decode). The
+     *  label is just the bucket's right edge in K tokens (no range, no unit) - a range like "2K-3K"
+     *  repeated on 50+ ticks is clutter the axis title/tooltip already cover. */
+    @Test
+    void speedByContextRows_buildsLabelsFromTheBucketsRightEdge() {
+        var metrics = Json.MAPPER.readTree("""
+                {"speed_by_context": [
+                    {"context_lo": 0, "context_hi": 8192, "requests": 2, "avg_prefill_tok_per_sec": 150.0, "avg_decode_tok_per_sec": 30.0},
+                    {"context_lo": 8192, "context_hi": 16384, "requests": 1, "avg_prefill_tok_per_sec": 90.0, "avg_decode_tok_per_sec": null}
+                ]}""");
+
+        var rows = RunDetailView.speedByContextRows(metrics);
+
+        assertEquals(2, rows.size());
+        assertEquals("8", rows.get(0).label());
+        assertEquals(150.0, rows.get(0).avgPrefillTokPerSec());
+        assertEquals(30.0, rows.get(0).avgDecodeTokPerSec());
+        assertEquals(2, rows.get(0).requests());
+        assertEquals("16", rows.get(1).label());
+        assertNull(rows.get(1).avgDecodeTokPerSec(), "a bucket with no streamed requests has no decode speed to average");
+        assertEquals(1, rows.get(1).requests());
+    }
+
+    @Test
+    void speedByContextRows_emptyWhenAbsentOrNotAnArray() {
+        assertEquals(List.of(), RunDetailView.speedByContextRows(null));
+        assertEquals(List.of(), RunDetailView.speedByContextRows(Json.MAPPER.readTree("{}")));
+        assertEquals(List.of(), RunDetailView.speedByContextRows(Json.MAPPER.readTree("{\"speed_by_context\": []}")));
+    }
+
+    /** #new metric: at a fixed 1024-token bucket width a run can easily have 50+ points, so some rest
+     *  on very few requests - the tooltip must surface each bucket's own request count (not just the
+     *  averages), baked in as a JS array literal indexed by dataPointIndex since ApexCharts' custom
+     *  tooltip is a raw JS function string with no per-point Java callback hook in this wrapper. */
+    @Test
+    void speedByContextTooltipJs_embedsEachBucketsRequestCountInOrder() {
+        final var rows = List.of(
+                new RunDetailView.SpeedBucketRow("5", 150.0, 30.0, 27),
+                new RunDetailView.SpeedBucketRow("10", 700.0, 15.0, 7));
+
+        final var js = RunDetailView.speedByContextTooltipJs(rows);
+
+        assertTrue(js.contains("[27,7]"), js);
+        assertTrue(js.contains("struct.dataPointIndex"), "indexes into the embedded array by the hovered point");
+    }
+
     @Test
     void metaLine_omitsLatencyAndTtftWhenAbsent() {
         var run = new Api.Run("r1", null, null, "L3p_point_in_time", "orchestrated", "m", null, 3, true,

@@ -1,6 +1,7 @@
 package com.strgmai.ace.ui;
 
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
 
 import java.util.List;
 
@@ -35,28 +36,88 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(new JobLiveState.SessionRow(
-                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc (high)", null, null, null)), state.sessions());
+                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc (high)", "", null, null, null)), state.sessions());
     }
 
-    /** #47: session_done carries the *.log file's name, not a session_id - the oldest still-open
-     *  session is taken as the one it refers to. */
+    /** RunBench names every session with the stage/task it's actually for (AgentSession.header's
+     *  "label" field); this turns that raw internal name into what the sessions grid's new
+     *  "description" column shows - what the session actually is, not just its id. */
     @Test
-    void sessionDoneMarksTheOldestOpenSessionWithItsStage() {
+    void sessionDescription_mapsEveryRealLabelToHumanText() {
+        assertEquals("Definition", JobLiveState.sessionDescription(labelNode("p0_definition")));
+        assertEquals("Plan", JobLiveState.sessionDescription(labelNode("p1_plan")));
+        assertEquals("Parallel plan", JobLiveState.sessionDescription(labelNode("PARALLEL_PLAN")));
+        assertEquals("Integration", JobLiveState.sessionDescription(labelNode("INTEGRATION")));
+        assertEquals("Self review", JobLiveState.sessionDescription(labelNode("REVIEW")));
+        assertEquals("Trajectory review", JobLiveState.sessionDescription(labelNode("TRAJECTORY_REVIEW")));
+        assertEquals("Task T2", JobLiveState.sessionDescription(labelNode("T2")));
+    }
+
+    @Test
+    void sessionDescription_showsTheContinuationKindOnASuffixedLabel() {
+        assertEquals("Task T3 (continue)", JobLiveState.sessionDescription(labelNode("T3-continue")));
+        assertEquals("Task T3 (wrapup)", JobLiveState.sessionDescription(labelNode("T3-wrapup")));
+        assertEquals("Task T3 (handoff)", JobLiveState.sessionDescription(labelNode("T3-handoff")));
+    }
+
+    @Test
+    void sessionDescription_emptyWhenTheSessionHasNoLabel() {
+        assertEquals("", JobLiveState.sessionDescription(Json.MAPPER.readTree("{}")));
+    }
+
+    private static JsonNode labelNode(final String label) {
+        return Json.MAPPER.readTree("{\"label\": \"" + label + "\"}");
+    }
+
+    /** RunBench writes execution_order.json (the real planned task waves) before any task session
+     *  starts, so the live page can show it - explaining e.g. T4 legitimately starting before T3 as
+     *  the declared plan, not the runner going backwards. */
+    @Test
+    void executionOrderAccumulatesFromTheOneShotEvent() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: execution_order
+                data: {"type": "execution_order", "waves": [["T1"], ["T2", "T4"], ["T3"]]}
+
+                """).forEach(state::apply);
+        assertEquals(List.of(List.of("T1"), List.of("T2", "T4"), List.of("T3")), state.executionOrder());
+    }
+
+    @Test
+    void executionOrderIsEmptyBeforeTheEventArrives() {
+        assertEquals(List.of(), new JobLiveState().executionOrder());
+    }
+
+    @Test
+    void parseExecutionOrder_ignoresNonArrayWaves() {
+        assertEquals(List.of(), JobLiveState.parseExecutionOrder(Json.MAPPER.readTree("{}")));
+        assertEquals(List.of(), JobLiveState.parseExecutionOrder(Json.MAPPER.readTree("{\"waves\": \"bogus\"}")));
+    }
+
+    /** session_done now carries the real session_id (Tailer reads it from the session file's own
+     *  header) and the finish reason from its trailing {"type":"end"} line - matched exactly, not
+     *  guessed as "the oldest still-open session". */
+    @Test
+    void sessionDoneMarksTheMatchingSessionByIdWithItsFinishReason() {
         final var state = new JobLiveState();
         SseParser.parseAll("""
                 event: session_started
                 data: {"session_id": "755478fc-f323-565e-92f8-1a5b10584e41"}
 
                 event: session_done
-                data: {"type": "session_done", "log": "T1.log", "finish": "tool_calls"}
+                data: {"type": "session_done", "session_id": "755478fc-f323-565e-92f8-1a5b10584e41", "finish": "tool_calls"}
 
                 """).forEach(state::apply);
         assertEquals(List.of(new JobLiveState.SessionRow(
-                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc", "T1", null, null)), state.sessions());
+                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc", "", "tool_calls", null, null)), state.sessions());
     }
 
+    /** The whole point of matching by real id: a run's sessions need not finish in the order they
+     *  started (true even outside genuine parallel waves - the second-started session here is a
+     *  short reviewer pass that completes first). Exact id matching gets this right where "oldest
+     *  still-open session" guessing would have marked the wrong row done. */
     @Test
-    void sessionDoneCorrelatesInFifoOrderAcrossMultipleSessions() {
+    void sessionDoneMatchesByIdEvenWhenSessionsFinishOutOfStartOrder() {
         final var state = new JobLiveState();
         SseParser.parseAll("""
                 event: session_started
@@ -66,21 +127,21 @@ class JobLiveStateTest {
                 data: {"session_id": "bbbbbbbb-0000-0000-0000-000000000000"}
 
                 event: session_done
-                data: {"type": "session_done", "log": "P0_DEFINITION.log", "finish": "stop"}
+                data: {"type": "session_done", "session_id": "bbbbbbbb-0000-0000-0000-000000000000", "finish": "stop"}
 
                 """).forEach(state::apply);
         assertEquals(List.of(
-                new JobLiveState.SessionRow("aaaaaaaa-0000-0000-0000-000000000000", "aaaaaaaa", "P0_DEFINITION", null, null),
-                new JobLiveState.SessionRow("bbbbbbbb-0000-0000-0000-000000000000", "bbbbbbbb", null, null, null)), state.sessions(),
-                "the oldest open session is matched first; the newer one is still running");
+                new JobLiveState.SessionRow("aaaaaaaa-0000-0000-0000-000000000000", "aaaaaaaa", "", null, null, null),
+                new JobLiveState.SessionRow("bbbbbbbb-0000-0000-0000-000000000000", "bbbbbbbb", "", "stop", null, null)), state.sessions(),
+                "the second-started session is the one marked done; the first (still open) is unaffected");
     }
 
     @Test
-    void sessionDoneWithNoOpenSessionIsIgnored() {
+    void sessionDoneWithNoMatchingSessionIsIgnored() {
         final var state = new JobLiveState();
         SseParser.parseAll("""
                 event: session_done
-                data: {"type": "session_done", "log": "T1.log", "finish": "stop"}
+                data: {"type": "session_done", "session_id": "no-such-session", "finish": "stop"}
 
                 """).forEach(state::apply);
         assertEquals(List.of(), state.sessions(), "no session to match - dropped, not a crash");
@@ -217,8 +278,9 @@ class JobLiveStateTest {
                         state.apply(event("{\"type\": \"session_started\", \"session_id\": \"s-0000000-" + i
                                 + "\", \"reasoning_effort\": \"high\"}"));
                     }
-                    if (i % 11 == 0) {   // mutates an existing sessions entry (not just appends) under the same lock
-                        state.apply(event("{\"type\": \"session_done\", \"log\": \"T" + (i / 11) + ".log\", \"finish\": \"stop\"}"));
+                    if (i % 11 == 0) {   // mutates an existing sessions entry (not just appends) under the same lock -
+                                          // "s-0000000-0" is created at i=0 (i % 7 == 0 too), before any of these fire
+                        state.apply(event("{\"type\": \"session_done\", \"session_id\": \"s-0000000-0\", \"finish\": \"stop\"}"));
                     }
                     state.apply(event("{\"type\": \"request\", \"seq\": " + i + ", \"ts\": \"t" + i
                             + "\", \"status\": 200, \"latency_sec\": " + (i / 10.0)
@@ -304,7 +366,7 @@ class JobLiveStateTest {
                 data: {"reasoning_effort": null}
 
                 """).forEach(state::apply);
-        assertEquals(List.of(new JobLiveState.SessionRow("", "?", null, null, null)), state.sessions(),
+        assertEquals(List.of(new JobLiveState.SessionRow("", "?", "", null, null, null)), state.sessions(),
                 "missing ids render as ? without throwing");
     }
 

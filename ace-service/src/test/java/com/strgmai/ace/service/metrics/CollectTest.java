@@ -77,6 +77,31 @@ class CollectTest {
         assertEquals(250L, ((Number) leaderboard.get("avg_first_byte_ms")).longValue());
     }
 
+    /** New metric: speed_by_context is a chart data blob, not a leaderboard scalar, so it lives
+     *  alongside "steps" at the top level - forwarded straight from journal_facts. */
+    @Test
+    void speedByContextFlowsFromJournalFactsToTheTopLevel(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);
+        final List<Map<String, Object>> buckets = List.of(
+                Map.of("context_lo", 0L, "context_hi", 8192L, "requests", 2L,
+                        "avg_prefill_tok_per_sec", 150.0, "avg_decode_tok_per_sec", 30.0));
+        final Map<String, Object> manifest = Map.of(
+                "phases", List.of(), "tasks", List.of(), "waves", List.of(),
+                "journal_facts", Map.of("speed_by_context", buckets));
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        assertEquals(buckets, out.get("speed_by_context"));
+    }
+
+    /** No journal_facts.speed_by_context (e.g. a run with no chat completions carrying
+     *  prompt_tokens) - an empty list, not a missing key or a null. */
+    @Test
+    void speedByContextIsAnEmptyListWhenJournalFactsHasNone(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);
+        final Map<String, Object> manifest = Map.of("phases", List.of(), "tasks", List.of(), "waves", List.of());
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        assertEquals(List.of(), out.get("speed_by_context"));
+    }
+
     /** the default (unset trajectory_use, or "calibration"): unchanged from before #30 - rewarded
      *  for agreeing with the harness's own objective trajectory index, not for the raw score. */
     @Test

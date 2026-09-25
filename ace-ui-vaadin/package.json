@@ -10,8 +10,11 @@
     "@vaadin/vaadin-lumo-styles": "25.2.11",
     "@vaadin/vaadin-themable-mixin": "25.2.11",
     "@vaadin/vaadin-usage-statistics": "2.1.3",
+    "@webcomponents/shadycss": "1.11.2",
+    "apexcharts": "3.54.1",
     "date-fns": "4.1.0",
     "lit": "3.3.3",
+    "onecolor": "4.1.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-router": "7.18.3"
@@ -47,8 +50,11 @@
       "@vaadin/vaadin-lumo-styles": "25.2.11",
       "@vaadin/vaadin-themable-mixin": "25.2.11",
       "@vaadin/vaadin-usage-statistics": "2.1.3",
+      "@webcomponents/shadycss": "1.11.2",
+      "apexcharts": "3.54.1",
       "date-fns": "4.1.0",
       "lit": "3.3.3",
+      "onecolor": "4.1.0",
       "react": "19.2.8",
       "react-dom": "19.2.8",
       "react-router": "7.18.3"
@@ -75,7 +81,7 @@
       "vite": "8.0.16",
       "vite-plugin-checker": "0.14.5"
     },
-    "hash": "9c285b29adad3a11d3ef9786e9be8c73bf3f50e403e865bab053e37ae8e3856d"
+    "hash": "88a5375b774097df1ec5293e23b545c24b51bc856e0e0a64fe4fe98163d12907"
   },
   "overrides": {
     "@vaadin/a11y-base": "25.2.11",
@@ -147,8 +153,11 @@
     "@vaadin/vaadin-usage-statistics": "$@vaadin/vaadin-usage-statistics",
     "@vaadin/vertical-layout": "25.2.11",
     "@vaadin/virtual-list": "25.2.11",
+    "@webcomponents/shadycss": "$@webcomponents/shadycss",
+    "apexcharts": "$apexcharts",
     "date-fns": "$date-fns",
     "lit": "$lit",
+    "onecolor": "$onecolor",
     "react": "$react",
     "react-dom": "$react-dom",
     "react-router": "$react-router"

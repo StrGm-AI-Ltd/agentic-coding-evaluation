@@ -32,7 +32,19 @@ public final class JournalFacts {
     record Entry(long off, String task, OffsetDateTime ts, int status, boolean budget, boolean upstream,
                  boolean clientAbort, boolean drainAbort, boolean truncated, long ct, boolean est, Object pt,
                  String fin, String effort, boolean reqDict, List<String> ws,
-                 double latencySec, Long firstByteMs) {}
+                 double latencySec, Long firstByteMs, Double prefillTps, Double decodeTps) {}
+
+    /** context-size buckets for speed_by_context: a fixed 1024-token width - fine enough to show real
+     *  texture in the prefill/decode-vs-context trend across the range typical runs actually span. */
+    private static final long SPEED_BY_CONTEXT_BUCKET_WIDTH = 1024;
+
+    static int contextBucket(final long promptTokens) {
+        return (int) (promptTokens / SPEED_BY_CONTEXT_BUCKET_WIDTH);
+    }
+
+    static long[] bucketRange(final int bucket) {
+        return new long[]{bucket * SPEED_BY_CONTEXT_BUCKET_WIDTH, (bucket + 1) * SPEED_BY_CONTEXT_BUCKET_WIDTH};
+    }
 
     public static Map<String, Object> facts(String path, String sinceIso, String untilIso,
                                             List<String[]> exclude, List<String> normalise, String tag) {
@@ -49,6 +61,9 @@ public final class JournalFacts {
         final boolean window = lo != null || hi != null || !ex.isEmpty();
         double latencySum = 0; int latencyN = 0;
         long ttftSum = 0; int ttftN = 0;
+        final Map<Integer, long[]> bucketRequests = new TreeMap<>();
+        final Map<Integer, double[]> bucketPrefill = new TreeMap<>();   // bucket -> [sum, n]
+        final Map<Integer, double[]> bucketDecode = new TreeMap<>();    // bucket -> [sum, n]
         for (Entry e : entries(Path.of(path))) {
             if (tag != null && !Objects.equals(e.task(), tag)) continue;          // a parallel task's own records
             if (window) {
@@ -70,6 +85,21 @@ public final class JournalFacts {
             if (!e.budget()) { latencySum += e.latencySec(); latencyN++; }
             // only streamed requests carry a first byte time - the request's actual time-to-first-token
             if (e.firstByteMs() != null) { ttftSum += e.firstByteMs(); ttftN++; }
+            // how prefill/decode speed depends on context size (#new metric): prompt_tokens as the
+            // context-size proxy, oMLX's own reported tok/s per request - bucketed so the run page can
+            // chart a trend without re-parsing the (possibly tens-of-MB) journal itself
+            if (e.pt() instanceof Long pt) {
+                final int bucket = contextBucket(pt);
+                bucketRequests.computeIfAbsent(bucket, k -> new long[1])[0]++;
+                if (e.prefillTps() != null) {
+                    final double[] s = bucketPrefill.computeIfAbsent(bucket, k -> new double[2]);
+                    s[0] += e.prefillTps(); s[1]++;
+                }
+                if (e.decodeTps() != null) {
+                    final double[] s = bucketDecode.computeIfAbsent(bucket, k -> new double[2]);
+                    s[0] += e.decodeTps(); s[1]++;
+                }
+            }
             f.merge("completion_tokens", e.ct(), (a, b) -> (long) a + (long) b);
             if (e.est()) f.merge("estimated_completion_tokens", e.ct(), (a, b) -> (long) a + (long) b);
             if (e.effort() != null) {
@@ -97,6 +127,22 @@ public final class JournalFacts {
         }
         if (latencyN > 0) f.put("avg_latency_sec", Math.round(latencySum / latencyN * 100) / 100.0);
         if (ttftN > 0) f.put("avg_first_byte_ms", Math.round((double) ttftSum / ttftN));
+        if (!bucketRequests.isEmpty()) {
+            final List<Map<String, Object>> buckets = new ArrayList<>();
+            for (final var b : bucketRequests.entrySet()) {
+                final long[] range = bucketRange(b.getKey());
+                final Map<String, Object> row = new LinkedHashMap<>();
+                row.put("context_lo", range[0]);
+                row.put("context_hi", range[1]);
+                row.put("requests", b.getValue()[0]);
+                final double[] pfx = bucketPrefill.get(b.getKey());
+                row.put("avg_prefill_tok_per_sec", pfx == null ? null : Math.round(pfx[0] / pfx[1] * 100) / 100.0);
+                final double[] dec = bucketDecode.get(b.getKey());
+                row.put("avg_decode_tok_per_sec", dec == null ? null : Math.round(dec[0] / dec[1] * 100) / 100.0);
+                buckets.add(row);
+            }
+            f.put("speed_by_context", buckets);
+        }
         return f;
     }
 
@@ -171,7 +217,9 @@ public final class JournalFacts {
                 resp == null || !resp.isObject() ? null : resp.path("finish_reason").asText(null),
                 effort, req != null && req.isObject(), ws,
                 r.path("latency_sec").asDouble(0.0),
-                r.path("first_byte_ms").isMissingNode() ? null : r.path("first_byte_ms").asLong());
+                r.path("first_byte_ms").isMissingNode() ? null : r.path("first_byte_ms").asLong(),
+                u == null || !u.path("prompt_tokens_per_second").isNumber() ? null : u.path("prompt_tokens_per_second").asDouble(),
+                u == null || !u.path("generation_tokens_per_second").isNumber() ? null : u.path("generation_tokens_per_second").asDouble());
     }
 
     static JsonNode requestAt(final Path p, final long off) {

@@ -579,6 +579,13 @@ public class RunBench {
         if (Boolean.TRUE.equals(cfg.get("parallel_auto")) && mp instanceof Number n2) parallel = Math.max(1, n2.intValue());
         manifest.put("parallel", parallel > 1 ? parallel : null);
         manifest.put("waves", new ArrayList<Map<String, Object>>());
+        // the DECLARED task order, written before any task session starts: manifest.waves only ever
+        // records waves that actually ran through runParallelWave (parallel<=1 skips it entirely, so
+        // a same-wave pair like T2/T4 would leave no trace there) - this is what actually explains a
+        // live run's step order (e.g. T3 legitimately starting right after T4, not T2, when T3 only
+        // depends on T2: both are in wave 2, run one at a time in list order under parallel=1)
+        Files.writeString(rd.resolve("execution_order.json"),
+                json.writeValueAsString(planWaves.stream().map(w -> w.stream().map(t -> t.id).toList()).toList()));
 
         String prev = null; Path prevSession = null; String prevVerified = null;
         final List<String[]> handoffs = Boolean.TRUE.equals(cfg.get("handoff_notes")) ? new ArrayList<>() : null;

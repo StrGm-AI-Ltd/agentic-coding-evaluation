@@ -60,11 +60,20 @@ public final class Fmt {
         return t.length() > 16 ? t.substring(0, 16) : t;
     }
 
+    /**
+     * #60: a raw computed average (e.g. tok/s from summed doubles divided by a count) carries
+     * floating-point noise Double.toString() prints in full ("292.20799999999997"). Rounding to 2
+     * decimal places first removes the noise; toString() on THAT value still gives the shortest
+     * clean form for an already-tidy input (3.5 stays "3.5", not "3.50").
+     */
     public static String num(final Double value) {
         if (value == null) {
             return "–";
         }
-        return value == Math.floor(value) ? String.valueOf(value.longValue()) : String.valueOf(value);
+        if (value == Math.floor(value)) {
+            return String.valueOf(value.longValue());
+        }
+        return String.valueOf(Math.round(value * 100) / 100.0);
     }
 
     public static String json(final JsonNode node) {

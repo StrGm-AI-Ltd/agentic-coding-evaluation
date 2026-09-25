@@ -52,9 +52,11 @@ public final class AgentSession {
         Files.writeString(file, JSON.writeValueAsString(rec) + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
     }
 
-    public void header(final String agentVersion, final String model, final String cwd, final String reasoningEffort) throws IOException {
+    public void header(final String agentVersion, final String model, final String cwd, final String reasoningEffort,
+                        final String label) throws IOException {
         write(Map.of("type", "session", "id", sessionId, "agent", agentVersion, "model", model,
-                "cwd", cwd, "reasoning_effort", reasoningEffort == null ? "" : reasoningEffort, "ts", Instant.now().toString()));
+                "cwd", cwd, "reasoning_effort", reasoningEffort == null ? "" : reasoningEffort,
+                "label", label == null ? "" : label, "ts", Instant.now().toString()));
     }
 
     public void system(String text) throws IOException { message("system", text); }

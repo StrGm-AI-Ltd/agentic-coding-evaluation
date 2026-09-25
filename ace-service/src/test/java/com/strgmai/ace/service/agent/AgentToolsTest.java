@@ -88,7 +88,7 @@ class AgentToolsTest {
     void theSessionFileResumesWithItsMessages() throws IOException {
         final var dir = Files.createTempDirectory("sessions");
         final var s = new AgentSession(dir, "sid-1", false);
-        s.header(AgentToolsTest.class.getSimpleName(), "m", "/ws", null);
+        s.header(AgentToolsTest.class.getSimpleName(), "m", "/ws", null, "T1");
         s.system("system prompt");
         s.user("do it");
         final var req = dev.langchain4j.agent.tool.ToolExecutionRequest.builder().id("c1").name("bash").arguments("{\"command\":\"ls\"}").build();

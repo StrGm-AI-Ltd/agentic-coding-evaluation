@@ -68,6 +68,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     private final Div blockedHolder = new Div();
     private final Div actionsHolder = new Div();
     private final VerticalLayout liveSection = new VerticalLayout();
+    private final Span plannedOrderLine = new Span();
     private final Span stepLine = new Span();
     private final Span requestsLine = new Span();
     private final Div logTail = new Div();
@@ -165,8 +166,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         liveSection.getStyle().set("margin-top", "16px");
         final var liveTitle = new H3("Live");
         liveTitle.getStyle().set("margin", "0 0 4px 0");
-        liveSection.add(liveTitle, stepLine, sessionsGrid, requestsLine, lostNotice, terminalNote,
+        liveSection.add(liveTitle, plannedOrderLine, stepLine, sessionsGrid, requestsLine, lostNotice, terminalNote,
                 requestsGrid, logTail);
+        plannedOrderLine.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.9em");
         stepLine.getStyle().set("font-weight", "600");
         lostNotice.getStyle().set("color", "var(--lumo-warning-text-color, orange)").set("font-size", "0.85em");
         terminalNote.getStyle().set("color", "var(--lumo-secondary-text-color)");
@@ -299,6 +301,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         lostNotice.setVisible(sseThread != null && !sseThread.isAlive()
                 && !terminal && !sseStopped);
         terminalNote.setVisible(terminal);
+        plannedOrderLine.setVisible(!terminal && !live.executionOrder().isEmpty());
         stepLine.setVisible(!terminal);
         sessionsGrid.setVisible(!terminal);
         requestsLine.setVisible(!terminal);
@@ -315,6 +318,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             return;
         }
 
+        if (!live.executionOrder().isEmpty()) {
+            plannedOrderLine.setText("planned order: " + plannedOrderText(live.executionOrder()));
+        }
         stepLine.setText("current step: " + (live.currentStep() == null ? "–" : live.currentStep()));
         sessionsGrid.setItems(live.sessions());
         requestsLine.setText("requests: " + (live.requestCount() == 0 ? "–"
@@ -378,6 +384,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     private static Grid<JobLiveState.SessionRow> buildSessionsGrid() {
         final var sessions = new Grid<>(JobLiveState.SessionRow.class, false);
         sessions.addColumn(JobLiveState.SessionRow::label).setHeader("session").setAutoWidth(true);
+        sessions.addColumn(JobLiveState.SessionRow::description).setHeader("description").setAutoWidth(true);
         sessions.addColumn(r -> r.endedStage() == null ? "running" : r.endedStage())
                 .setHeader("ended at").setAutoWidth(true);
         // averaged across the session's requests as they arrive - oMLX-reported tok/s, not derived
@@ -438,6 +445,17 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             return true;
         }
         return JobStatuses.isTerminal(currentStatus) && !JobStatuses.isTerminal(previousStatus == null ? "" : previousStatus);
+    }
+
+    /** "T1 → T2, T4 → T3": a wave with more than one task ran one at a time under this job's own
+     *  argv (parallel=1 unless --parallel/--parallel-auto was passed), never concurrently unless the
+     *  job's argv actually enabled that - shown so a later, numerically-lower task starting right
+     *  after an earlier, numerically-higher one (e.g. T3 after T4, both only needing T1/T2 done) reads
+     *  as the declared plan, not the runner going backwards. */
+    static String plannedOrderText(final List<List<String>> waves) {
+        final List<String> waveStrs = new ArrayList<>();
+        for (final var wave : waves) waveStrs.add(String.join(", ", wave));
+        return String.join(" → ", waveStrs);
     }
 
     private String metaLine(final Api.Job job) {

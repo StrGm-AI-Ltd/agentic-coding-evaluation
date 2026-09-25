@@ -110,6 +110,9 @@ public final class Collect {
             leaderboard.put("agent_result_terms", Map.of("base", round1(base), "code", round1(codeTerm), "trajectory", round1(trajTerm), "parallel", round1(parTerm)));
         }
         out.put("steps", steps(manifest, o));
+        // how prefill/decode speed depends on context size, bucketed by JournalFacts over the whole
+        // run - a chart data blob, not a leaderboard scalar, so it lives alongside "steps"
+        out.put("speed_by_context", jf.getOrDefault("speed_by_context", List.of()));
         return out;
     }
 
