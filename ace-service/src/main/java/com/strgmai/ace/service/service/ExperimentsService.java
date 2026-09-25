@@ -83,12 +83,20 @@ public class ExperimentsService {
                 final Integer parallelPlanWall = parallelPlanWall(params), handoffWall = handoffWall(params), wrapupWall = wrapupWall(params);
                 for (int i = 1; i <= k; i++)
                     for (String arm : arms)
-                        specs.add(new ArmSpec(arm, i, new RunSpec(RUNG, model, null, "orchestrated".equals(armMode(arm)) ? "orchestrated" : "monolithic",
-                                "reference", wall, tokens, arm.contains("mono") ? wall * n : null, arm.contains("mono") ? tokens * n : null,
-                                "par".equals(arm) ? parallel : null, "mono+rules".equals(arm), review, review, reviewerModel, false, true, noProbe, false, window, firstTokenTimeout, compactionTrigger, reviewWallSec,
-                                blind, trajReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse,
-                                "he-" + tag + "-" + shortName(model) + "-" + arm.replace("+", "") + "-r" + i,
-                                temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall)));
+                        specs.add(new ArmSpec(arm, i, RunSpec.builder()
+                                .task(RUNG).model(model).mode("orchestrated".equals(armMode(arm)) ? "orchestrated" : "monolithic")
+                                .planSource("reference").taskWall(wall).taskTokens(tokens)
+                                .implWall(arm.contains("mono") ? wall * n : null).implTokens(arm.contains("mono") ? tokens * n : null)
+                                .parallel("par".equals(arm) ? parallel : null).systemRules("mono+rules".equals(arm))
+                                .selfReview(review).trajectoryReview(review).reviewerModel(reviewerModel)
+                                .manageDocker(true).noContextProbe(noProbe)
+                                .contextWindow(window).firstTokenTimeout(firstTokenTimeout).compactionTrigger(compactionTrigger).reviewWallSec(reviewWallSec)
+                                .reviewBlind(blind).trajectoryReviewerModel(trajReviewerModel).reviewWeight(reviewWeight).trajectoryWeight(trajectoryWeight)
+                                .trajectoryUse(trajectoryUse)
+                                .runId("he-" + tag + "-" + shortName(model) + "-" + arm.replace("+", "") + "-r" + i)
+                                .temperature(temperature).topP(topP).topK(topK).repetitionPenalty(repetitionPenalty).maxTokens(maxTokens).reasoningEffort(reasoningEffort)
+                                .parallelPlanWall(parallelPlanWall).handoffWall(handoffWall).wrapupWall(wrapupWall)
+                                .build()));
             }
             case "model_ab" -> {
                 final String a = str(params.get("model_a")), b = str(params.get("model_b"));
@@ -110,16 +118,28 @@ public class ExperimentsService {
                 final Integer parallelPlanWall = parallelPlanWall(params), handoffWall = handoffWall(params), wrapupWall = wrapupWall(params);
                 for (int i = 1; i <= k; i++) {
                     // the arm suffix keeps A and B distinct; model-ab.sh always reviews both sides (self + trajectory)
-                    specs.add(new ArmSpec("A", i, new RunSpec(RUNG, a, null, "orchestrated", "reference", wall, null, null, null, null, false,
-                            true, true, reviewerModel, false, true, noProbe, false, windowA, firstTokenTimeout, compactionTrigger, reviewWallSec,
-                            blind, trajReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse,
-                            "ab-" + tag + "-" + shortName(a) + "-a-r" + i,
-                            temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall)));
-                    specs.add(new ArmSpec("B", i, new RunSpec(RUNG, b, null, "orchestrated", "reference", wall, null, null, null, null, false,
-                            true, true, reviewerModel, false, true, noProbe, false, windowB, firstTokenTimeout, compactionTrigger, reviewWallSec,
-                            blind, trajReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse,
-                            "ab-" + tag + "-" + shortName(b) + "-b-r" + i,
-                            temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall)));
+                    specs.add(new ArmSpec("A", i, RunSpec.builder()
+                            .task(RUNG).model(a).mode("orchestrated").planSource("reference").taskWall(wall)
+                            .selfReview(true).trajectoryReview(true).reviewerModel(reviewerModel)
+                            .manageDocker(true).noContextProbe(noProbe)
+                            .contextWindow(windowA).firstTokenTimeout(firstTokenTimeout).compactionTrigger(compactionTrigger).reviewWallSec(reviewWallSec)
+                            .reviewBlind(blind).trajectoryReviewerModel(trajReviewerModel).reviewWeight(reviewWeight).trajectoryWeight(trajectoryWeight)
+                            .trajectoryUse(trajectoryUse)
+                            .runId("ab-" + tag + "-" + shortName(a) + "-a-r" + i)
+                            .temperature(temperature).topP(topP).topK(topK).repetitionPenalty(repetitionPenalty).maxTokens(maxTokens).reasoningEffort(reasoningEffort)
+                            .parallelPlanWall(parallelPlanWall).handoffWall(handoffWall).wrapupWall(wrapupWall)
+                            .build()));
+                    specs.add(new ArmSpec("B", i, RunSpec.builder()
+                            .task(RUNG).model(b).mode("orchestrated").planSource("reference").taskWall(wall)
+                            .selfReview(true).trajectoryReview(true).reviewerModel(reviewerModel)
+                            .manageDocker(true).noContextProbe(noProbe)
+                            .contextWindow(windowB).firstTokenTimeout(firstTokenTimeout).compactionTrigger(compactionTrigger).reviewWallSec(reviewWallSec)
+                            .reviewBlind(blind).trajectoryReviewerModel(trajReviewerModel).reviewWeight(reviewWeight).trajectoryWeight(trajectoryWeight)
+                            .trajectoryUse(trajectoryUse)
+                            .runId("ab-" + tag + "-" + shortName(b) + "-b-r" + i)
+                            .temperature(temperature).topP(topP).topK(topK).repetitionPenalty(repetitionPenalty).maxTokens(maxTokens).reasoningEffort(reasoningEffort)
+                            .parallelPlanWall(parallelPlanWall).handoffWall(handoffWall).wrapupWall(wrapupWall)
+                            .build()));
                 }
             }
             case "agent_ab" -> {
@@ -144,12 +164,20 @@ public class ExperimentsService {
                 final Integer parallelPlanWall = parallelPlanWall(params), handoffWall = handoffWall(params), wrapupWall = wrapupWall(params);
                 for (int i = 1; i <= k; i++)
                     for (String agent : List.of("ref", "pi"))   // --harness=ref|pi: the flag the comparison is ABOUT
-                        specs.add(new ArmSpec(agent, i, new RunSpec(RUNG, model, agent, mode, "reference",
-                                "orchestrated".equals(mode) ? wall : null, null, "monolithic".equals(mode) ? wall * taskCount() : null,
-                                "monolithic".equals(mode) ? 60000 * taskCount() : null, null, false, review, review, reviewerModel, false, true, noProbe, false, window, firstTokenTimeout, compactionTrigger, reviewWallSec,
-                                blind, trajReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse,
-                                "aa-" + tag + "-" + shortName(model) + "-" + agent + "-r" + i,
-                                temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall)));
+                        specs.add(new ArmSpec(agent, i, RunSpec.builder()
+                                .task(RUNG).model(model).harness(agent).mode(mode).planSource("reference")
+                                .taskWall("orchestrated".equals(mode) ? wall : null)
+                                .implWall("monolithic".equals(mode) ? wall * taskCount() : null)
+                                .implTokens("monolithic".equals(mode) ? 60000 * taskCount() : null)
+                                .selfReview(review).trajectoryReview(review).reviewerModel(reviewerModel)
+                                .manageDocker(true).noContextProbe(noProbe)
+                                .contextWindow(window).firstTokenTimeout(firstTokenTimeout).compactionTrigger(compactionTrigger).reviewWallSec(reviewWallSec)
+                                .reviewBlind(blind).trajectoryReviewerModel(trajReviewerModel).reviewWeight(reviewWeight).trajectoryWeight(trajectoryWeight)
+                                .trajectoryUse(trajectoryUse)
+                                .runId("aa-" + tag + "-" + shortName(model) + "-" + agent + "-r" + i)
+                                .temperature(temperature).topP(topP).topK(topK).repetitionPenalty(repetitionPenalty).maxTokens(maxTokens).reasoningEffort(reasoningEffort)
+                                .parallelPlanWall(parallelPlanWall).handoffWall(handoffWall).wrapupWall(wrapupWall)
+                                .build()));
             }
             default -> throw new IllegalArgumentException("unknown template " + template + "; known: harness_effect, model_ab, agent_ab");
         }
