@@ -180,7 +180,7 @@ class RecordingProxyTest {
         final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
         try {
             final var proxyBase = proxy.start(journal, 1000L, null,
-                    new RecordingProxy.SamplerOverrides(null, null, null, null, 555, null));
+                    new RecordingProxy.SamplerOverrides(null, null, null, null, 555, null, null));
             sendPlainChatRequest(proxyBase);
             assertEquals(555, upstreamSawMaxTokens.get(), "the run's own derived cap must reach the actual request");
         } finally {
@@ -231,7 +231,7 @@ class RecordingProxyTest {
         final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
         try {
             final var proxyBase = proxy.start(journal, 1000L, null,
-                    new RecordingProxy.SamplerOverrides(0.7, 0.9, 40, 1.1, null, "high"));
+                    new RecordingProxy.SamplerOverrides(0.7, 0.9, 40, 1.1, null, "high", null));
             sendPlainChatRequest(proxyBase);
             final var body = sawBody.get();
             assertEquals(0.7, body.path("temperature").asDouble(), 0.001);
@@ -243,6 +243,21 @@ class RecordingProxyTest {
             proxy.stop();
             upstream.stop(0);
         }
+    }
+
+    /** #92: the proxy's own upstream connect wait must scale with the run's first-token-timeout
+     *  setting, plus a margin so it's never the TIGHTER of the two - it used to be a hardcoded 290s
+     *  regardless of what --first-token-timeout was actually configured to, silently capping any run
+     *  that raised it past ~290s. */
+    @Test
+    void upstreamTimeoutScalesWithTheRunsFirstTokenTimeout() {
+        assertEquals(180 + 30, RecordingProxy.upstreamTimeoutSec(RecordingProxy.SamplerOverrides.NONE),
+                "unset falls back to ReferenceAgent's own 180s default, plus the margin");
+        assertEquals(600 + 30, RecordingProxy.upstreamTimeoutSec(
+                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 600)),
+                "an operator-configured value well above the old hardcoded 290s ceiling must actually apply");
+        assertEquals(60 + 30, RecordingProxy.upstreamTimeoutSec(
+                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 60)));
     }
 
     @Test

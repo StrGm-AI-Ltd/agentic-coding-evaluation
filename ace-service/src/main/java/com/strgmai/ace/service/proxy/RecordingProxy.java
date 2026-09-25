@@ -54,10 +54,29 @@ public class RecordingProxy {
      *  output-token cap for ONE request - distinct from tokenBudget (the whole phase's
      *  completion-token budget across every turn). reasoningEffort overrides whatever
      *  ReferenceAgent's own per-phase-kind DEFAULT_REASONING already put on the request - this
-     *  proxy runs last, closest to the wire, so it always wins when set. */
+     *  proxy runs last, closest to the wire, so it always wins when set. firstTokenTimeoutSec
+     *  (#92) is not a sampler param, but bounds forward()'s own upstream connect wait - null falls
+     *  back to DEFAULT_FIRST_TOKEN_TIMEOUT_SEC, the same default ReferenceAgent itself uses. */
     public record SamplerOverrides(Double temperature, Double topP, Integer topK, Double repetitionPenalty,
-                                    Integer maxOutputTokens, String reasoningEffort) {
-        public static final SamplerOverrides NONE = new SamplerOverrides(null, null, null, null, null, null);
+                                    Integer maxOutputTokens, String reasoningEffort, Integer firstTokenTimeoutSec) {
+        public static final SamplerOverrides NONE = new SamplerOverrides(null, null, null, null, null, null, null);
+    }
+
+    /** matches ReferenceAgent.DEFAULT_FIRST_TOKEN_TIMEOUT_MS's default of 180s. */
+    static final int DEFAULT_FIRST_TOKEN_TIMEOUT_SEC = 180;
+    /** the proxy's own upstream connect wait is kept a little more generous than the run's
+     *  first-token timeout, never tighter - it must never be the reason a request the operator
+     *  configured a longer wait for gets cut off first (#92: used to be a hardcoded 290s regardless
+     *  of what --first-token-timeout was actually set to). */
+    static final int UPSTREAM_TIMEOUT_MARGIN_SEC = 30;
+
+    /** #92: the proxy's own upstream connect wait, derived from the run's first-token-timeout
+     *  setting (plus a margin) instead of a hardcoded value disconnected from it - used to be a
+     *  fixed 290s regardless of what --first-token-timeout was actually configured to, silently
+     *  capping any run that raised it past ~290s. */
+    static int upstreamTimeoutSec(final SamplerOverrides overrides) {
+        final int firstTokenTimeoutSec = overrides.firstTokenTimeoutSec() != null ? overrides.firstTokenTimeoutSec() : DEFAULT_FIRST_TOKEN_TIMEOUT_SEC;
+        return firstTokenTimeoutSec + UPSTREAM_TIMEOUT_MARGIN_SEC;
     }
     private volatile boolean stopping;
     private final Set<HttpResponse<InputStream>> inflight = ConcurrentHashMap.newKeySet();
@@ -195,9 +214,7 @@ public class RecordingProxy {
                 // bounds only the wait for oMLX to start responding (headers), not a streamed body
                 // read afterward - without this, an upstream hang here blocks this handler thread
                 // forever, same class of bug as ReferenceAgent's chatModel timeout (see its comment).
-                // Kept under the agent's own 300s so this proxy fails first with a clean 502 the
-                // agent's retry logic can classify, instead of both sides timing out independently.
-                .timeout(java.time.Duration.ofSeconds(290));
+                .timeout(java.time.Duration.ofSeconds(upstreamTimeoutSec(overrides)));
         // java.net.http.HttpRequest.Builder throws IllegalArgumentException on these - the JDK
         // manages them itself. Matched case-insensitively: com.sun.net.httpserver.Headers presents
         // "Content-Length" (title case), not the "Content-length" this used to compare against, so
