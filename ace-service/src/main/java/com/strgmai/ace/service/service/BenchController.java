@@ -198,7 +198,7 @@ public class BenchController {
                 final Map<String, Object> setupDiff = new LinkedHashMap<>();
                 for (String k : StatsService.MODEL_AB_EXEMPT)
                     setupDiff.put(k, List.of(String.valueOf(ra.get(0).key().get(k)), String.valueOf(rb.get(0).key().get(k))));
-                System.out.println("  setup differences (properties of the setups under test, not of the harness): " + setupDiff);
+                log.info("model-ab compare: setup differences (properties of the setups under test, not of the harness): {}", setupDiff);
             } else {
                 stats.requireMatchedBudgets(ra.get(0), rb.get(0), allowMismatch);
                 if (!Objects.equals(ra.get(0).model(), rb.get(0).model()))
