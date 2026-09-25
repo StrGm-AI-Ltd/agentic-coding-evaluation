@@ -149,6 +149,7 @@ class ServiceClientMappingTest {
 
         final var preflight = client.preflight();
         assertNotNull(preflight);
-        assertNotNull(preflight.running());
+        assertNotNull(preflight.checks());
+        assertNotNull(preflight.verdict());
     }
 }

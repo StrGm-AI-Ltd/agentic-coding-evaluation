@@ -29,28 +29,11 @@ class ServiceClientErrorTextTest {
                 CLIENT.errorText(response(404, "{\"detail\": \"run x is not imported\"}")));
     }
 
-    /** The S-2 regression: nested loc ["body","spec","harness"] must show "harness", not "spec". */
-    @Test
-    void fastApi422NestedLocShowsFieldName() {
-        final var body = """
-                {"detail": [
-                  {"type": "literal_error", "loc": ["body", "spec", "harness"],
-                   "msg": "Input should be 'ref' or 'pi'", "input": "x"},
-                  {"type": "literal_error", "loc": ["body", "spec", "mode"],
-                   "msg": "Input should be 'monolithic' or 'orchestrated'", "input": "y"}
-                ]}""";
-        assertEquals("""
-                harness: Input should be 'ref' or 'pi'
-                mode: Input should be 'monolithic' or 'orchestrated'""",
-                CLIENT.errorText(response(422, body)));
-    }
-
-    @Test
-    void fastApi422TopLevelLocStillWorks() {
-        final var body = """
-                {"detail": [{"type": "string_type", "loc": ["body", "task"], "msg": "should be a string"}]}""";
-        assertEquals("task: should be a string", CLIENT.errorText(response(422, body)));
-    }
+    // #108: the pydantic array-detail shape these two tests used to cover (a FastAPI 422
+    // validation-error response) was the pre-port Python service's contract - ApiExceptionHandler
+    // (the current Spring backend) always returns "detail" as a plain string, and never a 422 at
+    // all (IllegalArgumentException maps to 400). Removed along with the dead parsing branch in
+    // ServiceClient.errorText() that only ever existed to handle this now-unreachable shape.
 
     @Test
     void nonJsonBodyFallsBackToStatusAndRawBody() {

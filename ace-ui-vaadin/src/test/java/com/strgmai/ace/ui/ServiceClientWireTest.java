@@ -81,9 +81,14 @@ class ServiceClientWireTest {
              "jobs":[{"id":"5","arm":"orch","repeat":1,"run_id":"r1","status":"queued","result_line":null},
                      {"id":"6","arm":"mono","repeat":1,"run_id":"r2","status":"queued","result_line":null}]}""";
 
+    // #108: the REAL shape BenchController.preflight() returns - the old async
+    // {running, started_at, finished_at, results, error} fixture was the pre-port Python/FastAPI
+    // service's contract, which this backend never implemented (masking that the client's DTO
+    // and this fixture had quietly drifted from ace-service's actual response)
     private static final String PREFLIGHT_JSON = """
-            {"running":false,"started_at":"2026-09-15 23:57:00","finished_at":"2026-09-15 23:58:00",
-             "results":{"preflight":"ok"},"error":null}""";
+            {"checks":[{"check":"docker daemon","ok":true,"detail":"28.x","fatal":false},
+                       {"check":"pinned JDK 21","ok":false,"detail":"none found","fatal":true}],
+             "blocked":true,"verdict":"BLOCKED"}""";
 
     private static HttpServer server;
     private static ServiceClient client;
@@ -100,8 +105,10 @@ class ServiceClientWireTest {
             captured.add(new Captured(method, uri, body));
 
             switch (method + " " + uri) {
-                case "GET /api/runs/bad422" -> respond(exchange, 422, """
-                        {"detail":[{"loc":["body","spec","harness"],"msg":"Input should be 'ref' or 'pi'"}]}""");
+                // #108: ApiExceptionHandler's real shape - plain string detail, never a pydantic
+                // array (that was the pre-port Python/FastAPI service's 422 validation-error shape,
+                // which this backend's IllegalArgumentException -> 400 mapping never produces)
+                case "GET /api/runs/bad400" -> respond(exchange, 400, "{\"detail\":\"harness must be ref or pi\"}");
                 case "GET /api/runs/missing" -> respond(exchange, 404, "{\"detail\":\"run missing is not imported\"}");
                 case "GET /api/jobs/30/events" -> respond(exchange, 200, """
                         event: step_started
@@ -154,7 +161,6 @@ class ServiceClientWireTest {
             return RUN_LIST_JSON;
         }
         if ("GET /api/runs/r1".equals(method + " " + uri)) return RUN_DETAIL_JSON;
-        if ("POST /api/runs/r1/rescore".equals(method + " " + uri)) return JOB_JSON;
         if ("GET /api/runs/r1/files/oracle.json".equals(method + " " + uri)) return "file content";
         if ("GET /api/runs/r1/files/a%20b.txt".equals(method + " " + uri)) return "spaced";
         if ("GET /api/runs/r1/files/empty.log".equals(method + " " + uri)) return "";
@@ -162,7 +168,7 @@ class ServiceClientWireTest {
         if ("POST /api/jobs".equals(method + " " + uri)) return JOB_JSON;
         if ("POST /api/jobs/5/cancel".equals(method + " " + uri)) return JOB_JSON.replace("queued", "cancelled");
         if ("POST /api/jobs/5/requeue".equals(method + " " + uri)) return JOB_JSON;
-        if ("PATCH /api/jobs/5".equals(method + " " + uri)) return JOB_JSON;
+        if ("POST /api/jobs/5/priority".equals(method + " " + uri)) return JOB_JSON;
         if ("GET /api/jobs/5".equals(method + " " + uri)) return JOB_JSON;
         if ("GET /api/groups".equals(method + " " + uri)) return GROUPS_JSON;
         if ("POST /api/compare".equals(method + " " + uri)) {
@@ -246,15 +252,6 @@ class ServiceClientWireTest {
     }
 
     @Test
-    void rescore_postsToCorrectPathAndMapsJob() {
-        Api.Job job = client.rescore("r1");
-        assertEquals("POST", last().method());
-        assertEquals("/api/runs/r1/rescore", last().uri());
-        assertEquals("5", job.id());
-        assertEquals("run", job.kind(), "fixture carries the kind");
-    }
-
-    @Test
     void enqueueJob_bodyShapeMatchesJobRequest() {
         Api.Job job = client.enqueueJob(Map.of("task", "L1", "manage_docker", true, "model", "qwen"), 2);
         assertEquals("POST", last().method());
@@ -287,10 +284,10 @@ class ServiceClientWireTest {
     }
 
     @Test
-    void setPriority_patchesJobsIdWithPriority() {
+    void setPriority_postsToTheDedicatedPriorityPath() {
         Api.Job job = client.setPriority("5", 2);
-        assertEquals("PATCH", last().method());
-        assertEquals("/api/jobs/5", last().uri());
+        assertEquals("POST", last().method());
+        assertEquals("/api/jobs/5/priority", last().uri());
         assertEquals(2, Json.MAPPER.readTree(last().body()).path("priority").asInt());
         assertEquals("5", job.id());
     }
@@ -377,13 +374,16 @@ class ServiceClientWireTest {
     }
 
     @Test
-    void preflight_getAndPost() {
+    void preflight_isOneSynchronousGetCall() {
         Api.PreflightState state = client.preflight();
         assertEquals("GET /api/preflight", last().method() + " " + last().uri());
-        assertFalse(state.running());
-        assertEquals("ok", state.results().get("preflight").asText());
-        client.startPreflight();
-        assertEquals("POST /api/preflight", last().method() + " " + last().uri());
+        assertTrue(state.blocked());
+        assertEquals("BLOCKED", state.verdict());
+        assertEquals(2, state.checks().size());
+        assertEquals("docker daemon", state.checks().get(0).check());
+        assertTrue(state.checks().get(0).ok());
+        assertFalse(state.checks().get(1).ok());
+        assertTrue(state.checks().get(1).fatal());
     }
 
     @Test
@@ -403,10 +403,10 @@ class ServiceClientWireTest {
     }
 
     @Test
-    void http422_surfacesFieldNameThroughErrorText() {
+    void http400_surfacesTheDetailStringThroughErrorText() {
         RestClientResponseException e = assertThrows(RestClientResponseException.class,
-                () -> client.run("bad422"));
-        assertEquals("harness: Input should be 'ref' or 'pi'", client.errorText(e));
+                () -> client.run("bad400"));
+        assertEquals("harness must be ref or pi", client.errorText(e));
     }
 
     @Test

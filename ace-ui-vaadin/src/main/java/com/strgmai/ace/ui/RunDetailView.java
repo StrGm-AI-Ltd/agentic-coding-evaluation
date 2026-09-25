@@ -34,7 +34,7 @@ import java.util.Comparator;
 import java.util.List;
 
 /** Run detail — the UI twin of GET /api/runs/{id}: scores, badges, checks, plan tasks,
- * per-step scores, provenance, re-score, and the embedded file browser. */
+ * per-step scores, provenance, and the embedded file browser. */
 @Route(value = "runs/:runId", layout = MainLayout.class)
 public class RunDetailView extends VerticalLayout implements BeforeEnterObserver {
     private static final Logger log = LoggerFactory.getLogger(RunDetailView.class);
@@ -139,19 +139,12 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         }
 
         if (!run.poolable()) {
-            final var rescore = new Button("Queue re-score", e -> {
-                try {
-                    final var job = client.rescore(runId);
-                    Notification.show("Queued re-score job #" + job.id(), 3000, Notification.Position.BOTTOM_END);
-                    getUI().ifPresent(ui -> ui.navigate("jobs"));
-                } catch (final Exception ex) {
-                    log.warn("could not queue re-score for run {}: {}", runId, ex.toString());
-                    Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
-                }
-            });
-            rescore.getStyle().set("margin-top", "8px");
-            add(rescore);
-            add(new Span("Re-scoring with the current oracle makes this run poolable (needs its workspace.bundle)."));
+            // #108: this used to offer a "Queue re-score" button wired to POST /api/runs/{id}/rescore,
+            // a route ace-service (the Spring port) never implemented - it failed on every click.
+            // Re-scoring isn't currently a supported feature; queue a fresh run instead.
+            final var notPoolable = new Span("Not poolable with the current oracle. Queue a fresh run to get a comparable, poolable result.");
+            notPoolable.getStyle().set("margin-top", "8px");
+            add(notPoolable);
         }
 
         addChecks(run.checks());
