@@ -281,8 +281,6 @@ public final class Packs {
         return String.join("\n\n", parts);
     }
 
-    private static JsonNode t0node(JsonNode n) { return n; }
-
     static String field(final PlanTask t, String k) {
         return switch (k) {
             case "id" -> t.id; case "title" -> t.title == null ? "" : t.title; case "goal" -> t.goal == null ? "" : t.goal;
