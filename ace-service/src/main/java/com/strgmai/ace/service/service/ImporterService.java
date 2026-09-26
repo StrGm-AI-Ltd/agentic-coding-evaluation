@@ -44,57 +44,41 @@ public class ImporterService {
         // a re-import/rescore refreshes EVERY column the insert sets (importer.py builds `updates`
         // from the whole row); job_id is the one exception — importAll passes null and must not
         // orphan the run from the job that produced it (COALESCE onto the existing row's job_id).
+        // #89: one shared column->value map for insert and update, so a column added to it can't be
+        // forgotten on the other side the way two hand-duplicated .set() chains could silently drift.
+        final Map<org.jooq.Field<?>, Object> values = new LinkedHashMap<>();
+        values.put(RUNS.RESULTS_DIR, runDir.toAbsolutePath().toString());
+        values.put(RUNS.TASK, str(oracle.get("task")));
+        values.put(RUNS.MODE, str(manifest.getOrDefault("mode", "monolithic")));
+        values.put(RUNS.MODEL, str(prov.get("model")));
+        values.put(RUNS.HARNESS, str(prov.get("harness")));
+        values.put(RUNS.SCHEMA_VERSION, num(oracle.get("schema_version")));
+        values.put(RUNS.POOLABLE, poolable);
+        values.put(RUNS.FUNCTIONAL_SCORE_PCT, flt(oracle.get("functional_score_pct")));
+        values.put(RUNS.FUNCTIONAL_POINTS_GOT, num(oracle.get("functional_points_got")));
+        values.put(RUNS.FUNCTIONAL_DENOMINATOR, num(oracle.get("functional_denominator")));
+        values.put(RUNS.WEIGHTED_SCORE_PCT, flt(oracle.get("weighted_score_pct")));
+        values.put(RUNS.POINTS_GOT, num(oracle.get("points_got")));
+        values.put(RUNS.DENOMINATOR, num(oracle.get("denominator")));
+        values.put(RUNS.PARTIAL_SCORE_PCT, flt(oracle.get("partial_score_pct")));
+        values.put(RUNS.VALID, (Boolean) validity.getOrDefault("valid", true));
+        values.put(RUNS.VALIDITY_REASONS, toJson(validity.getOrDefault("reasons", List.of())));
+        values.put(RUNS.CONTENDED, Boolean.TRUE.equals(contention.get("docker_up")) || Boolean.TRUE.equals(contention.get("slow_decode")));
+        values.put(RUNS.KEY_HASH, keyHash(oracle, manifest));
+        values.put(RUNS.WALL_SEC, flt(leaderboard.get("total_wall_sec")));
+        values.put(RUNS.COMPLETION_TOKENS, num(leaderboard.get("completion_tokens")));
+        values.put(RUNS.MANIFEST, toJson(manifest));
+        values.put(RUNS.ORACLE, toJson(oracle));
+        values.put(RUNS.METRICS, toJson(metrics));
+        final Map<org.jooq.Field<?>, Object> updates = new LinkedHashMap<>();
+        values.forEach((field, v) -> updates.put(field, excluded(field)));
         dsl.insertInto(RUNS)
                 .set(RUNS.RUN_ID, runId)
-                .set(RUNS.RESULTS_DIR, runDir.toAbsolutePath().toString())
                 .set(RUNS.JOB_ID, jobId)
-                .set(RUNS.TASK, str(oracle.get("task")))
-                .set(RUNS.MODE, str(manifest.getOrDefault("mode", "monolithic")))
-                .set(RUNS.MODEL, str(prov.get("model")))
-                .set(RUNS.HARNESS, str(prov.get("harness")))
-                .set(RUNS.SCHEMA_VERSION, num(oracle.get("schema_version")))
-                .set(RUNS.POOLABLE, poolable)
-                .set(RUNS.FUNCTIONAL_SCORE_PCT, flt(oracle.get("functional_score_pct")))
-                .set(RUNS.FUNCTIONAL_POINTS_GOT, num(oracle.get("functional_points_got")))
-                .set(RUNS.FUNCTIONAL_DENOMINATOR, num(oracle.get("functional_denominator")))
-                .set(RUNS.WEIGHTED_SCORE_PCT, flt(oracle.get("weighted_score_pct")))
-                .set(RUNS.POINTS_GOT, num(oracle.get("points_got")))
-                .set(RUNS.DENOMINATOR, num(oracle.get("denominator")))
-                .set(RUNS.PARTIAL_SCORE_PCT, flt(oracle.get("partial_score_pct")))
-                .set(RUNS.VALID, (Boolean) validity.getOrDefault("valid", true))
-                .set(RUNS.VALIDITY_REASONS, toJson(validity.getOrDefault("reasons", List.of())))
-                .set(RUNS.CONTENDED, Boolean.TRUE.equals(contention.get("docker_up")) || Boolean.TRUE.equals(contention.get("slow_decode")))
-                .set(RUNS.KEY_HASH, keyHash(oracle, manifest))
-                .set(RUNS.WALL_SEC, flt(leaderboard.get("total_wall_sec")))
-                .set(RUNS.COMPLETION_TOKENS, num(leaderboard.get("completion_tokens")))
-                .set(RUNS.MANIFEST, toJson(manifest))
-                .set(RUNS.ORACLE, toJson(oracle))
-                .set(RUNS.METRICS, toJson(metrics))
+                .set(values)
                 .onConflict(RUNS.RUN_ID).doUpdate()
-                .set(RUNS.RESULTS_DIR, excluded(RUNS.RESULTS_DIR))
+                .set(updates)
                 .set(RUNS.JOB_ID, coalesce(excluded(RUNS.JOB_ID), RUNS.JOB_ID))
-                .set(RUNS.TASK, excluded(RUNS.TASK))
-                .set(RUNS.MODE, excluded(RUNS.MODE))
-                .set(RUNS.MODEL, excluded(RUNS.MODEL))
-                .set(RUNS.HARNESS, excluded(RUNS.HARNESS))
-                .set(RUNS.SCHEMA_VERSION, excluded(RUNS.SCHEMA_VERSION))
-                .set(RUNS.POOLABLE, excluded(RUNS.POOLABLE))
-                .set(RUNS.FUNCTIONAL_SCORE_PCT, excluded(RUNS.FUNCTIONAL_SCORE_PCT))
-                .set(RUNS.FUNCTIONAL_POINTS_GOT, excluded(RUNS.FUNCTIONAL_POINTS_GOT))
-                .set(RUNS.FUNCTIONAL_DENOMINATOR, excluded(RUNS.FUNCTIONAL_DENOMINATOR))
-                .set(RUNS.WEIGHTED_SCORE_PCT, excluded(RUNS.WEIGHTED_SCORE_PCT))
-                .set(RUNS.POINTS_GOT, excluded(RUNS.POINTS_GOT))
-                .set(RUNS.DENOMINATOR, excluded(RUNS.DENOMINATOR))
-                .set(RUNS.PARTIAL_SCORE_PCT, excluded(RUNS.PARTIAL_SCORE_PCT))
-                .set(RUNS.VALID, excluded(RUNS.VALID))
-                .set(RUNS.VALIDITY_REASONS, excluded(RUNS.VALIDITY_REASONS))
-                .set(RUNS.CONTENDED, excluded(RUNS.CONTENDED))
-                .set(RUNS.KEY_HASH, excluded(RUNS.KEY_HASH))
-                .set(RUNS.WALL_SEC, excluded(RUNS.WALL_SEC))
-                .set(RUNS.COMPLETION_TOKENS, excluded(RUNS.COMPLETION_TOKENS))
-                .set(RUNS.MANIFEST, excluded(RUNS.MANIFEST))
-                .set(RUNS.ORACLE, excluded(RUNS.ORACLE))
-                .set(RUNS.METRICS, excluded(RUNS.METRICS))
                 .set(RUNS.IMPORTED_AT, Instant.now().toString())
                 .execute();
         dsl.deleteFrom(CHECK_RESULTS).where(CHECK_RESULTS.RUN_ID.eq(runId)).execute();
