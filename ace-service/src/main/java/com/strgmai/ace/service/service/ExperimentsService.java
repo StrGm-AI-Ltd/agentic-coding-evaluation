@@ -89,7 +89,7 @@ public class ExperimentsService {
                 final String model = str(params.get("model"));
                 final int wall = num(params.getOrDefault("task_wall", 3600)), tokens = params.get("task_tokens") == null || "auto".equals(str(params.get("task_tokens"))) ? 60000 : num(params.get("task_tokens"));
                 final List<String> arms = params.get("arms") instanceof List<?> l ? (List<String>) l : List.of("orch", "mono");
-                int n = taskCount();   // the monolithic impl budget = N x task budget from the reference plan (matched, P-1)
+                int n = taskCount(params);   // the monolithic impl budget = N x task budget from the reference plan (matched, P-1)
                 final String parallel = params.get("parallel") == null ? "3" : str(params.get("parallel"));
                 final Integer window = contextWindow(params, model);
                 final var cp = resolveCommon(params);
@@ -161,8 +161,8 @@ public class ExperimentsService {
                         specs.add(new ArmSpec(agent, i, RunSpec.builder()
                                 .task(RUNG).model(model).harness(agent).mode(mode).planSource("reference")
                                 .taskWall("orchestrated".equals(mode) ? wall : null)
-                                .implWall("monolithic".equals(mode) ? wall * taskCount() : null)
-                                .implTokens("monolithic".equals(mode) ? 60000 * taskCount() : null)
+                                .implWall("monolithic".equals(mode) ? wall * taskCount(params) : null)
+                                .implTokens("monolithic".equals(mode) ? 60000 * taskCount(params) : null)
                                 .selfReview(review).trajectoryReview(review).reviewerModel(cp.reviewerModel())
                                 .manageDocker(true).noContextProbe(cp.noProbe())
                                 .contextWindow(window).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec())
@@ -304,15 +304,21 @@ public class ExperimentsService {
     static String armMode(String arm) { return arm.startsWith("mono") ? "monolithic" : "orchestrated"; }
 
     /** tasks in the rung's reference plan + the fixed integration task (experiments.py task_count) */
-    static int taskCount() {
+    static int taskCount(final Map<String, Object> params) {
         try {
             var plan = com.strgmai.ace.service.plan.PlanParser.parseFile(java.nio.file.Path.of(
                     str(System.getProperty("ace.repo_root", ".")), "task/REFERENCE_PLAN.md"));
             return plan.size() + 1;
         } catch (Exception e) {
             // this feeds task_wall/task_tokens budget multipliers for every monolithic arm - a
-            // silent wrong fallback here silently mis-budgets every experiment created
+            // silent wrong fallback here silently mis-budgets every experiment created. #90:
+            // stamped onto params (the SAME map enqueue() stores as EXPERIMENTS.params), so the
+            // operator sees it on the experiment they created, not only in a log line they have no
+            // reason to go looking at. params can be the caller's own immutable Map.of() (e.g. a
+            // request that omitted "params" entirely, or a direct plan() call in a test) - best
+            // effort, never let surfacing the fallback crash the experiment it's warning about.
             log.warn("could not read/parse task/REFERENCE_PLAN.md, falling back to a task count of 8: {}", e.toString());
+            try { params.put("task_count_fallback", true); } catch (UnsupportedOperationException ignore) {}
             return 8;
         }
     }

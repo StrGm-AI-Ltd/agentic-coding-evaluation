@@ -44,7 +44,7 @@ class ExperimentsServiceTest {
     @Test
     void harnessEffectDefaultArmsCarryTheMonolithicBudgetMultiplierAndNullContextWindow() {
         final ExperimentsService svc = serviceWithUnreachableModelServer();
-        final int n = ExperimentsService.taskCount();
+        final int n = ExperimentsService.taskCount(new java.util.LinkedHashMap<>());
         final List<ExperimentsService.ArmSpec> specs = svc.plan("harness_effect", Map.of("model", "modelX"), 1);
 
         assertEquals(2, specs.size());
@@ -229,6 +229,22 @@ class ExperimentsServiceTest {
                 Map.<String, Object>of("model_a", "a", "model_b", "b", "max_turns", 50), 1);
         assertFalse(specs.isEmpty());
         assertTrue(specs.stream().allMatch(s -> Integer.valueOf(50).equals(s.spec().maxTurns())));
+    }
+
+    /** #90: taskCount()'s fallback used to be visible only via a WARN log an operator creating an
+     *  experiment through the UI has no reason to ever see. */
+    @Test
+    void taskCountFallbackIsStampedOntoAMutableParamsMap() {
+        // task/REFERENCE_PLAN.md doesn't exist relative to this test's working directory, so
+        // taskCount() always falls back here - exactly the case this flag needs to surface
+        final Map<String, Object> params = new java.util.LinkedHashMap<>(Map.of("model", "modelX"));
+        ExperimentsService.taskCount(params);
+        assertEquals(true, params.get("task_count_fallback"));
+    }
+
+    @Test
+    void taskCountFallbackNeverCrashesOnAnImmutableParamsMap() {
+        assertEquals(8, ExperimentsService.taskCount(Map.of("model", "modelX")));
     }
 
     @Test
