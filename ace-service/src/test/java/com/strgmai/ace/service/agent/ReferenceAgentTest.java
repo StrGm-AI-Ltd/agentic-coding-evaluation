@@ -1,5 +1,6 @@
 package com.strgmai.ace.service.agent;
 
+import com.strgmai.ace.service.config.BenchProperties;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -55,6 +56,21 @@ class ReferenceAgentTest {
         final var bare = ReferenceAgent.toolEnv(null);
         assertTrue(bare.containsKey("PATH"));
         assertTrue(bare.containsKey("HOME"));
+    }
+
+    /** #96: the provider switch used to mix exact-match (OpenAI/OpenRouter/Anthropic) with
+     *  .contains(...) (Gemini/Nebius); a URL variant a human would still call "OpenAI" (trailing
+     *  slash, a versioned/regional path) silently fell through to "" for the exact-matched three only. */
+    @Test
+    void apiKeyForRecognisesProviderUrlVariantsConsistently() {
+        final var agent = new ReferenceAgent(new BenchProperties(
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null));
+        assertEquals("sk-openai", agent.apiKeyFor("https://api.openai.com/v1/", "m",
+                Map.of("OPENAI_API_KEY", "sk-openai")));
+        assertEquals("sk-anthropic", agent.apiKeyFor("https://api.anthropic.com/v1/2023-06-01", "m",
+                Map.of("ANTHROPIC_API_KEY", "sk-anthropic")));
+        assertEquals("sk-openrouter", agent.apiKeyFor("https://openrouter.ai/api/v1/chat", "m",
+                Map.of("OPENROUTER_API_KEY", "sk-openrouter")));
     }
 
     @Test
