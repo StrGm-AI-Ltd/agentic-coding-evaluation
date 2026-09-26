@@ -152,7 +152,7 @@ public final class StatsService {
                 Map.entry("agent_result", (java.util.function.Function<RunSummary, Double>) RunSummary::agentResult))) {
             final List<Double> xs = runs.stream().map(metric.getValue()).filter(Objects::nonNull).toList();
             if (xs.isEmpty()) continue;
-            final double[] ci = bootCi(xs, 4000, 0.10, 0);
+            final double[] ci = bootCi(xs, 4000, 0.10, 0);   // seed=0: re-running this same run set later must reproduce a byte-identical CI
             final Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("mean", round1(xs.stream().mapToDouble(Double::doubleValue).sum() / xs.size()));
             entry.put("ci90", List.of(ci[0], ci[1]));
@@ -178,6 +178,8 @@ public final class StatsService {
     /** the compare verdict: diff, CI, one-sided p, and the minimum-detectable-difference warning */
     public Map<String, Object> compare(final List<Double> a, final List<Double> b, final String metric) {
         final double obs = mean(a.stream().mapToDouble(Double::doubleValue).toArray()) - mean(b.stream().mapToDouble(Double::doubleValue).toArray());
+        // seed=0 everywhere in this method: re-comparing the same two run sets later must reproduce
+        // a byte-identical p-value and CI, not a different one every time compare() happens to run
         final double p = permutationTest(a.stream().mapToDouble(Double::doubleValue).toArray(), b.stream().mapToDouble(Double::doubleValue).toArray(), 10000, 0);
         final var rnd = new Random(0);
         final List<Double> ds = new ArrayList<>();
