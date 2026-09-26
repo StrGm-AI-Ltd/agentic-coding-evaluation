@@ -268,8 +268,10 @@ public class Reviews {
     }
 
     Map<String, String> externalCredentials(Map<String, Object> reviewCfg) {
+        final List<String> defaultKeys = java.util.Arrays.stream(com.strgmai.ace.service.agent.ProviderConfig.values())
+                .map(p -> p.credentialEnvVar).toList();
         final Map<String, String> extra = new LinkedHashMap<>();
-        for (String k : (List<String>) reviewCfg.getOrDefault("credential_env", List.of("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY")))
+        for (String k : (List<String>) reviewCfg.getOrDefault("credential_env", defaultKeys))
             if (System.getenv(k) != null) extra.put(k, System.getenv(k));
         return extra;
     }
@@ -277,14 +279,8 @@ public class Reviews {
     /** external providers bypass the proxy (their credentials and endpoints are their own) */
     String externalBase(String reviewer, Map<String, Object> cfg) {
         final String provider = reviewer.substring(0, reviewer.indexOf('/'));
-        return switch (provider) {
-            case "openai" -> "https://api.openai.com/v1";
-            case "openrouter" -> "https://openrouter.ai/api/v1";
-            case "anthropic" -> "https://api.anthropic.com/v1";
-            case "gemini" -> "https://generativelanguage.googleapis.com/v1beta/openai";
-            case "nebius" -> "https://api.tokenfactory.us-central1.nebius.com/v1";
-            default -> String.valueOf(cfg.getOrDefault("endpoint", props.endpoint()));
-        };
+        final var known = com.strgmai.ace.service.agent.ProviderConfig.byName(provider);
+        return known != null ? known.baseUrl : String.valueOf(cfg.getOrDefault("endpoint", props.endpoint()));
     }
 
     @SuppressWarnings("unchecked")

@@ -497,15 +497,8 @@ public class ReferenceAgent {
     /** the oMLX key for the proxy; an EXTERNAL reviewer's provider key from its env var (run_bench Agent.run) */
     String apiKeyFor(String proxyBase, String model, Map<String, String> extraEnv) {
         if (extraEnv != null && (proxyBase == null || !proxyBase.contains("127.0.0.1"))) {
-            String provider = proxyBase == null ? "" : switch (proxyBase) {
-                case String u when u.contains("api.openai.com") -> "OPENAI_API_KEY";
-                case String u when u.contains("openrouter.ai") -> "OPENROUTER_API_KEY";
-                case String u when u.contains("api.anthropic.com") -> "ANTHROPIC_API_KEY";
-                case String u when u.contains("generativelanguage") -> "GEMINI_API_KEY";
-                case String u when u.contains("nebius") -> "NEBIUS_API_KEY";
-                default -> "";
-            };
-            if (!provider.isEmpty() && extraEnv.containsKey(provider)) return extraEnv.get(provider);
+            final ProviderConfig provider = ProviderConfig.byBaseUrl(proxyBase);
+            if (provider != null && extraEnv.containsKey(provider.credentialEnvVar)) return extraEnv.get(provider.credentialEnvVar);
         }
         return props.apiKey() == null || props.apiKey().isBlank() ? "none" : props.apiKey();
     }
