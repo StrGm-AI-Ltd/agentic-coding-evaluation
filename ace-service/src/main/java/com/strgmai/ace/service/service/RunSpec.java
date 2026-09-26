@@ -13,7 +13,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                       boolean reviewBlind, String trajectoryReviewerModel, Double reviewWeight, Double trajectoryWeight,
                       String trajectoryUse, String runId,
                       Double temperature, Double topP, Integer topK, Double repetitionPenalty, Integer maxTokens, String reasoningEffort,
-                      Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall) {
+                      Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns) {
 
     public static final String RUN_ID = "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$";
     public static final List<String> REASONING_EFFORTS = List.of("none", "low", "medium", "high");
@@ -25,6 +25,9 @@ public record RunSpec(String task, String model, String harness, String mode, St
         // PARALLEL_PLAN/handoff/wrap-up walls (found live 2026-09-25): were fixed literals in
         // RunBench.java (600/300/300*scale) with no run-level control at all
         parallelPlanWall = positive(parallelPlanWall); handoffWall = positive(handoffWall); wrapupWall = positive(wrapupWall);
+        // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded
+        // ReferenceAgent-local constant (400) with no run-level override at all
+        maxTurns = positive(maxTurns);
         // 0 is a legitimate value here (disables compaction) - unlike the budgets above, only reject negative
         if (compactionTrigger != null && compactionTrigger < 0) throw new IllegalArgumentException("compactionTrigger must be >= 0 (0 disables compaction): " + compactionTrigger);
         if (reviewWeight != null && (reviewWeight < 0 || reviewWeight > 1)) throw new IllegalArgumentException("reviewWeight must be within 0..1: " + reviewWeight);
@@ -89,6 +92,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (parallelPlanWall != null) args.add("--parallel-plan-wall=" + parallelPlanWall);
         if (handoffWall != null) args.add("--handoff-wall=" + handoffWall);
         if (wrapupWall != null) args.add("--wrapup-wall=" + wrapupWall);
+        if (maxTurns != null) args.add("--max-turns=" + maxTurns);
         return args;
     }
 
@@ -108,7 +112,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         private String task, model, harness, mode, planSource, parallel, reviewerModel,
                 trajectoryReviewerModel, trajectoryUse, runId, reasoningEffort;
         private Integer taskWall, taskTokens, implWall, implTokens, contextWindow, firstTokenTimeout,
-                compactionTrigger, reviewWallSec, topK, maxTokens, parallelPlanWall, handoffWall, wrapupWall;
+                compactionTrigger, reviewWallSec, topK, maxTokens, parallelPlanWall, handoffWall, wrapupWall, maxTurns;
         private boolean systemRules, selfReview, trajectoryReview, handoffNotes, manageDocker,
                 noContextProbe, contextProbeFresh, reviewBlind;
         private Double reviewWeight, trajectoryWeight, temperature, topP, repetitionPenalty;
@@ -150,13 +154,14 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public Builder parallelPlanWall(final Integer v) { parallelPlanWall = v; return this; }
         public Builder handoffWall(final Integer v) { handoffWall = v; return this; }
         public Builder wrapupWall(final Integer v) { wrapupWall = v; return this; }
+        public Builder maxTurns(final Integer v) { maxTurns = v; return this; }
 
         public RunSpec build() {
             return new RunSpec(task, model, harness, mode, planSource, taskWall, taskTokens, implWall, implTokens,
                     parallel, systemRules, selfReview, trajectoryReview, reviewerModel, handoffNotes, manageDocker,
                     noContextProbe, contextProbeFresh, contextWindow, firstTokenTimeout, compactionTrigger, reviewWallSec,
                     reviewBlind, trajectoryReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse, runId,
-                    temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall);
+                    temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, maxTurns);
         }
     }
 
@@ -184,7 +189,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 .topK(intOf(spec, "top_k")).repetitionPenalty(doubleOf(spec, "repetition_penalty"))
                 .maxTokens(intOf(spec, "max_tokens")).reasoningEffort(str(spec, "reasoning_effort"))
                 .parallelPlanWall(intOf(spec, "parallel_plan_wall")).handoffWall(intOf(spec, "handoff_wall"))
-                .wrapupWall(intOf(spec, "wrapup_wall"))
+                .wrapupWall(intOf(spec, "wrapup_wall")).maxTurns(intOf(spec, "max_turns"))
                 .build();
     }
 

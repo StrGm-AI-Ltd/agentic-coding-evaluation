@@ -19,7 +19,7 @@ class RunSpecTest {
         return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", 3600, null, null, null, null,
                 false, false, false, null, false, true, false, false, null, null, null, null, false, null, null, null,
                 null, "r1", temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort,
-                parallelPlanWall, handoffWall, wrapupWall);
+                parallelPlanWall, handoffWall, wrapupWall, null);
     }
 
     @Test
@@ -105,6 +105,25 @@ class RunSpecTest {
         assertThrows(IllegalArgumentException.class, () -> walls(null, null, null, null, null, null, null, null, 0));
     }
 
+    /** #95: MAX_TURNS was a ReferenceAgent-local hardcoded constant with no run-level override at all. */
+    @Test
+    void argvIncludesMaxTurnsWhenSet() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").maxTurns(50).build().argv("r1");
+        assertTrue(argv.contains("--max-turns=50"));
+    }
+
+    @Test
+    void argvOmitsMaxTurnsWhenUnset() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
+        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--max-turns")));
+    }
+
+    @Test
+    void nonPositiveMaxTurnsIsRejected() {
+        assertThrows(IllegalArgumentException.class,
+                () -> RunSpec.builder().task("t").model("m").runId("r1").maxTurns(0).build());
+    }
+
     /** #77: every field set to a DISTINCT, recognizable value via the map, so a from()/Builder bug
      *  that transposes two same-typed fields (the exact class of bug from() exists to make impossible)
      *  fails this test on the specific field it mixed up, not just on "something changed". */
@@ -185,7 +204,7 @@ class RunSpecTest {
         final var viaBuilder = RunSpec.builder().task("t").model("m").runId("r1").temperature(0.5).build();
         final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null,
                 false, false, false, null, false, false, false, false, null, null, null, null, false, null, null, null,
-                null, "r1", 0.5, null, null, null, null, null, null, null, null);
+                null, "r1", 0.5, null, null, null, null, null, null, null, null, null);
         assertEquals(viaConstructor, viaBuilder);
     }
 }

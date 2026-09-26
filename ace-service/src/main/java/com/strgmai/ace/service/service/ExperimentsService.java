@@ -68,7 +68,7 @@ public class ExperimentsService {
                                 Double reviewWeight, Double trajectoryWeight, String trajectoryUse,
                                 Double temperature, Double topP, Integer topK, Double repetitionPenalty,
                                 Integer maxTokens, String reasoningEffort,
-                                Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall) {}
+                                Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns) {}
 
     private CommonParams resolveCommon(final Map<String, Object> params) {
         final String reviewerModel = str(params.get("reviewer_model"));
@@ -78,7 +78,7 @@ public class ExperimentsService {
                 reviewWeight(params), trajectoryWeight(params), trajectoryUse(params),
                 temperature(params), topP(params), topK(params), repetitionPenalty(params),
                 maxTokens(params), reasoningEffort(params),
-                parallelPlanWall(params), handoffWall(params), wrapupWall(params));
+                parallelPlanWall(params), handoffWall(params), wrapupWall(params), maxTurns(params));
     }
 
     public List<ArmSpec> plan(String template, Map<String, Object> params, final int k) {
@@ -111,6 +111,7 @@ public class ExperimentsService {
                                 .runId("he-" + tag + "-" + shortName(model) + "-" + arm.replace("+", "") + "-r" + i)
                                 .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                                 .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
+                                .maxTurns(cp.maxTurns())
                                 .build()));
             }
             case "model_ab" -> {
@@ -131,6 +132,7 @@ public class ExperimentsService {
                             .runId("ab-" + tag + "-" + shortName(a) + "-a-r" + i)
                             .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                             .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
+                            .maxTurns(cp.maxTurns())
                             .build()));
                     specs.add(new ArmSpec("B", i, RunSpec.builder()
                             .task(RUNG).model(b).mode("orchestrated").planSource("reference").taskWall(wall)
@@ -142,6 +144,7 @@ public class ExperimentsService {
                             .runId("ab-" + tag + "-" + shortName(b) + "-b-r" + i)
                             .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                             .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
+                            .maxTurns(cp.maxTurns())
                             .build()));
                 }
             }
@@ -168,6 +171,7 @@ public class ExperimentsService {
                                 .runId("aa-" + tag + "-" + shortName(model) + "-" + agent + "-r" + i)
                                 .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                                 .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
+                                .maxTurns(cp.maxTurns())
                                 .build()));
             }
             default -> throw new IllegalArgumentException("unknown template " + template + "; known: harness_effect, model_ab, agent_ab");
@@ -275,6 +279,13 @@ public class ExperimentsService {
 
     Integer wrapupWall(Map<String, Object> params) {
         return params.get("wrapup_wall") == null ? null : num(params.get("wrapup_wall"));
+    }
+
+    // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded
+    // ReferenceAgent-local constant with no run-level override; explicit params.* wins, unset
+    // keeps ReferenceAgent.DEFAULT_MAX_TURNS
+    Integer maxTurns(Map<String, Object> params) {
+        return params.get("max_turns") == null ? null : num(params.get("max_turns"));
     }
 
     /** id -> max_model_len for whatever the model server currently serves — the same /v1/models query

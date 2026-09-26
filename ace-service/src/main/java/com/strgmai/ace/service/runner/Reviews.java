@@ -248,6 +248,7 @@ public class Reviews {
         final Map<String, String> extraEnv = external ? externalCredentials(reviewCfg) : null;
         final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 180_000L;
         final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
+        final int maxTurns = cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS;
         try {
             final long wallSec = ((Number) reviewCfg.getOrDefault("wall_sec", 900)).longValue();
             final String reviewSid = UUID.nameUUIDFromBytes(("agentbench/" + manifest.get("run_id") + "/" + name).getBytes()).toString();
@@ -255,7 +256,7 @@ public class Reviews {
             ReferenceAgent.SessionResult res = RunBenchSupport.runBounded(wallSec, name, rd.resolve("sessions"), reviewSid, abort,
                     () -> agent.run(name, Files.readString(packPath) + "\n\n" + (name.equals("REVIEW") ? Packs.REVIEW_INSTRUCTION : Packs.TRAJ_INSTRUCTION),
                             wallSec, tokens, rd.resolve("sessions"), reviewSid, false, sysPath.toString(), ws.toString(),
-                            proxy == null ? externalBase(reviewer, cfg) : proxy.base(), abort, firstTokenTimeoutMs, compactionTrigger, model, extraEnv));
+                            proxy == null ? externalBase(reviewer, cfg) : proxy.base(), abort, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv));
             // both self-review and trajectory-review write to the SAME log path - append, or the
             // second review's line silently replaces the first's (default writeString() truncates)
             if (log != null) Files.writeString(log, "review session " + name + " rc=" + res.rc() + " turns=" + res.turns() + "\n",
