@@ -213,10 +213,9 @@ public class RecordingProxy {
             if (overrides.topK() != null) r.put("top_k", overrides.topK());
             if (overrides.repetitionPenalty() != null) r.put("repetition_penalty", overrides.repetitionPenalty());
             if (overrides.reasoningEffort() != null) r.put("reasoning_effort", overrides.reasoningEffort());
-            if (r.path("stream").asBoolean(false)) {   // ask the server to append a usage chunk (transparent to the client)
+            if (r.path("stream").asBoolean(false))   // ask the server to append a usage chunk (transparent to the client)
                 ((ObjectNode) r.with("stream_options")).put("include_usage", true);
-                body = json.writeValueAsBytes(r);
-            } else body = json.writeValueAsBytes(r);
+            body = json.writeValueAsBytes(r);
             if (tokenBudget != null && spent.get() >= tokenBudget) {
                 byte[] out = json.writeValueAsBytes(json.createObjectNode().set("error",
                         json.createObjectNode().put("message", BUDGET_REFUSAL_MARKER + " (" + spent.get() + "/" + tokenBudget + " completion tokens)").put("type", "budget_exceeded")));
