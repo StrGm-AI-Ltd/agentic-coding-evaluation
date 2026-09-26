@@ -785,8 +785,6 @@ public class RunBench {
         return (List<String[]>) manifest.get("handoffs");
     }
 
-    private Object derived(Map<String, Object> cfg) { return null; }
-
     /** the agent's parallelisation-plan step; the harness evaluates the schedule and uses it when valid */
     private Map<String, Object> parallelPlanStep(final Map<String, Object> cfg, final String runId, final Path rd, final Path ws, final Path journal, final Map<String, Object> manifest, final List<PlanTask> tasks, final String stable) throws Exception {
         Files.writeString(rd.resolve("packs/PARALLEL_PLAN.md"), Packs.parallelPlanPack(tasks));
