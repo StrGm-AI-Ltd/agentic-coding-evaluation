@@ -59,6 +59,12 @@ class JobCfgFactoryTest {
     }
 
     @Test
+    void maxTurnsIsParsedWhenPresentAndAbsentOtherwise() {
+        assertEquals(50, JobCfgFactory.build(List.of("--max-turns=50"), props()).get("max_turns"));
+        assertNull(JobCfgFactory.build(List.of(), props()).get("max_turns"));
+    }
+
+    @Test
     void contextProbeDefaultsOnUnlessNoContextProbeOrAPinnedWindowIsGiven() {
         assertEquals(true, JobCfgFactory.build(List.of(), props()).get("context_probe"));
         assertEquals(false, JobCfgFactory.build(List.of("--no-context-probe"), props()).get("context_probe"));

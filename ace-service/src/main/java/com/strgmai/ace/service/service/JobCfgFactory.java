@@ -22,6 +22,9 @@ final class JobCfgFactory {
         if (WorkerService.flag(argv, "--task-tokens") != null) cfg.put("task_tokens", Long.parseLong(WorkerService.flag(argv, "--task-tokens")));
         if (WorkerService.flag(argv, "--first-token-timeout") != null) cfg.put("first_token_timeout_sec", Integer.parseInt(WorkerService.flag(argv, "--first-token-timeout")));
         if (WorkerService.flag(argv, "--compaction-trigger") != null) cfg.put("compaction_trigger", Integer.parseInt(WorkerService.flag(argv, "--compaction-trigger")));
+        // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded
+        // ReferenceAgent-local constant with no run-level override at all
+        if (WorkerService.flag(argv, "--max-turns") != null) cfg.put("max_turns", Integer.parseInt(WorkerService.flag(argv, "--max-turns")));
         // sampler knobs (#72) - RunBench folds these into a SamplerOverrides pinned onto
         // every request by RecordingProxy; unset means "use the operator-wide default"
         if (WorkerService.flag(argv, "--temperature") != null) cfg.put("temperature", Double.parseDouble(WorkerService.flag(argv, "--temperature")));

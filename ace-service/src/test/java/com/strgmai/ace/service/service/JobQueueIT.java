@@ -104,6 +104,6 @@ class JobQueueIT {
     }
 
     private static RunSpec spec(final String runId) {
-        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", 3600, null, null, null, null, false, false, false, null, false, true, false, false, null, null, null, null, false, null, null, null, null, runId, null, null, null, null, null, null, null, null, null);
+        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", 3600, null, null, null, null, false, false, false, null, false, true, false, false, null, null, null, null, false, null, null, null, null, runId, null, null, null, null, null, null, null, null, null, null);
     }
 }

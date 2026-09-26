@@ -36,6 +36,8 @@ import java.util.function.Consumer;
 public class ReferenceAgent {
     private static final Logger log = LoggerFactory.getLogger(ReferenceAgent.class);
     public static final String AGENT_VERSION = "jls-ref-1.0";
+    /** #95: the default turn cap when a run doesn't override it via --max-turns. */
+    public static final int DEFAULT_MAX_TURNS = 400;
     /** ObjectMapper is thread-safe and designed for reuse; constructing one per tool call (up to 400
      * turns x several calls) would allocate hundreds of expensive serializer/deserializer instances. */
     private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
@@ -123,7 +125,7 @@ public class ReferenceAgent {
     public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
                              Path sessionDir, String sessionId, boolean continueSession,
                              String appendSystem, String cwd, String proxyBase, Map<String, String> extraEnv) throws Exception {
-        return run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase, reason -> {}, DEFAULT_FIRST_TOKEN_TIMEOUT_MS, props.compactionTrigger(), null, extraEnv);
+        return run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase, reason -> {}, DEFAULT_FIRST_TOKEN_TIMEOUT_MS, props.compactionTrigger(), DEFAULT_MAX_TURNS, null, extraEnv);
     }
 
     /** full form: `model` overrides the configured one (a reviewer, a parallel task, a probe).
@@ -139,10 +141,13 @@ public class ReferenceAgent {
      *  full re-prefill under whatever memory pressure the machine is already under - confirmed live
      *  (oMLX's own log: "Prefill interrupted at 16384/18602 tokens" during exactly such a
      *  post-compaction re-prefill, repeatedly, never completing across 4 retries). 0 disables
-     *  compaction entirely for a run where that trade is worse than just keeping the full prompt. */
+     *  compaction entirely for a run where that trade is worse than just keeping the full prompt.
+     *  `maxTurns` (#95) overrides DEFAULT_MAX_TURNS: unlike every other phase/session budget, this
+     *  turn cap used to be a hardcoded local constant with no run-level override at all - a session
+     *  behaving correctly but genuinely needing more turns for a large task had no knob to reach for. */
     public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
                              Path sessionDir, String sessionId, boolean continueSession,
-                             String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, String model, Map<String, String> extraEnv) throws Exception {
+                             String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, int maxTurns, String model, Map<String, String> extraEnv) throws Exception {
         final long t0 = System.nanoTime();
         final var start = Instant.now();
         final String reasoningEffort = DEFAULT_REASONING.getOrDefault(reasoningKind(name), "medium");
@@ -209,9 +214,8 @@ public class ReferenceAgent {
 
         int turns = 0, toolErrors = 0, compactions = 0, lastPrompt = 0;
         String finish = null; int rc = 0;
-        final int MAX_TURNS = 400;
         final long deadline = System.currentTimeMillis() + wallSec * 1000;
-        while (turns < MAX_TURNS) {
+        while (turns < maxTurns) {
             if (compactionTrigger > 0 && lastPrompt > 0 && lastPrompt > compactionTrigger) {
                 final int n = AgentSession.compact(msgs, props.keepRecentTurns());
                 if (n > 0) { compactions++; session.compaction(n, lastPrompt); }
@@ -273,7 +277,7 @@ public class ReferenceAgent {
             // interrupted and the harness itself builds the rc=124 result, not this loop
         }
         // a turn-capped exit (rc still 0) means the model never stopped on its own: report a failure, not a success
-        if (rc == 0 && turns >= MAX_TURNS) { rc = 1; finish = finish == null ? "turn_limit" : finish; }
+        if (rc == 0 && turns >= maxTurns) { rc = 1; finish = finish == null ? "turn_limit" : finish; }
         session.end(turns, toolErrors, compactions, finish);
         return result(name, rc, t0, finish, turns, toolErrors, compactions, session, start);
     }

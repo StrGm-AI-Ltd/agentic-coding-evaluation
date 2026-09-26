@@ -220,6 +220,25 @@ class ExperimentsServiceTest {
         assertTrue(specs.stream().allMatch(s -> Integer.valueOf(600).equals(s.spec().wrapupWall())));
     }
 
+    /** #95: MAX_TURNS was a ReferenceAgent-local hardcoded constant with no run-level override;
+     *  experiments must be able to pin it per-run the same way they pin every other budget. */
+    @Test
+    void maxTurnsFlowsThroughToEveryArmsRunSpec() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab",
+                Map.<String, Object>of("model_a", "a", "model_b", "b", "max_turns", 50), 1);
+        assertFalse(specs.isEmpty());
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(50).equals(s.spec().maxTurns())));
+    }
+
+    @Test
+    void maxTurnsIsNullOnRunSpecWhenNotGiven() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab", Map.of("model_a", "a", "model_b", "b"), 1);
+        assertFalse(specs.isEmpty());
+        assertTrue(specs.stream().allMatch(s -> s.spec().maxTurns() == null));
+    }
+
     // --- #3: enqueue() rolls back the whole experiment on a mid-loop failure ---------------------
 
     @Test
