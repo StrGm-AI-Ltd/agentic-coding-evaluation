@@ -498,9 +498,9 @@ public class ReferenceAgent {
     String apiKeyFor(String proxyBase, String model, Map<String, String> extraEnv) {
         if (extraEnv != null && (proxyBase == null || !proxyBase.contains("127.0.0.1"))) {
             String provider = proxyBase == null ? "" : switch (proxyBase) {
-                case "https://api.openai.com/v1" -> "OPENAI_API_KEY";
-                case "https://openrouter.ai/api/v1" -> "OPENROUTER_API_KEY";
-                case "https://api.anthropic.com/v1" -> "ANTHROPIC_API_KEY";
+                case String u when u.contains("api.openai.com") -> "OPENAI_API_KEY";
+                case String u when u.contains("openrouter.ai") -> "OPENROUTER_API_KEY";
+                case String u when u.contains("api.anthropic.com") -> "ANTHROPIC_API_KEY";
                 case String u when u.contains("generativelanguage") -> "GEMINI_API_KEY";
                 case String u when u.contains("nebius") -> "NEBIUS_API_KEY";
                 default -> "";
