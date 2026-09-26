@@ -466,14 +466,14 @@ public class ReferenceAgent {
     /** the recording proxy's own 429: it is the phase budget's verdict, not a rate limit, and it ends
      *  the session. The proxy is ours, so the marker is its exact literal (RecordingProxy's error body)
      *  — there is no status code that separates it from a real 429, and LangChain4j hands the body on
-     *  only as the exception message. */
-    static final String BUDGET_REFUSAL = "ace-service: phase output-token budget exhausted";
-
+     *  only as the exception message. #94: referenced directly from RecordingProxy.BUDGET_REFUSAL_MARKER
+     *  rather than re-declared here as its own separate literal - a future wording edit to the message
+     *  can no longer silently desync the two. */
     static boolean isBudgetRefusal(final Throwable e) {
         final Integer status = httpStatus(e);
         if (status != null && status != 429) return false;
         for (Throwable t = e; t != null && t != t.getCause(); t = t.getCause())
-            if (t.getMessage() != null && t.getMessage().contains(BUDGET_REFUSAL)) return true;
+            if (t.getMessage() != null && t.getMessage().contains(com.strgmai.ace.service.proxy.RecordingProxy.BUDGET_REFUSAL_MARKER)) return true;
         return false;
     }
 

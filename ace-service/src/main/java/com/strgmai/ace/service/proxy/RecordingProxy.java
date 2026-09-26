@@ -96,6 +96,11 @@ public class RecordingProxy {
     // java.net.http.HttpRequest.Builder.header() rejects these - lower-case, matched case-insensitively
     private static final Set<String> RESTRICTED_HEADERS = Set.of("connection", "content-length", "expect", "host", "upgrade",
             SESSION_HEADER.toLowerCase(Locale.ROOT));
+    /** #94: the prefix ReferenceAgent.isBudgetRefusal() matches on to recognize this proxy's own 429
+     *  budget refusal (there is no status code that separates it from a real 429 - the message body
+     *  is the only signal). Referenced directly from ReferenceAgent instead of being re-declared
+     *  there as its own separate literal, so a future wording edit can't silently desync the two. */
+    public static final String BUDGET_REFUSAL_MARKER = "ace-service: phase output-token budget exhausted";
 
     public RecordingProxy(BenchProperties props) { this.props = props; }
 
@@ -214,7 +219,7 @@ public class RecordingProxy {
             } else body = json.writeValueAsBytes(r);
             if (tokenBudget != null && spent.get() >= tokenBudget) {
                 byte[] out = json.writeValueAsBytes(json.createObjectNode().set("error",
-                        json.createObjectNode().put("message", "ace-service: phase output-token budget exhausted (" + spent.get() + "/" + tokenBudget + " completion tokens)").put("type", "budget_exceeded")));
+                        json.createObjectNode().put("message", BUDGET_REFUSAL_MARKER + " (" + spent.get() + "/" + tokenBudget + " completion tokens)").put("type", "budget_exceeded")));
                 reply(x, 429, out);
                 journalRecord(rec.put("status", 429).put("budget_exceeded", true)
                         .put("latency_sec", 0.0), req, null);
