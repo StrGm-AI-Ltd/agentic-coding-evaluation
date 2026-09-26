@@ -745,11 +745,11 @@ public class RunBench {
     static Set<String> doneSet(Map<String, String[]> snapshots) { return snapshots.keySet(); }
 
     Path agentSessionFile(Path rd, String runId, String id) {
-        for (Path p : StructureChecksGlob(rd.resolve("sessions")))
+        for (Path p : sessionFiles(rd.resolve("sessions")))
             if (p.getFileName().toString().contains(UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + id).getBytes()).toString())) return p;
         return null;
     }
-    static List<Path> StructureChecksGlob(final Path dir) {
+    static List<Path> sessionFiles(final Path dir) {
         try (var s = Files.list(dir)) { return s.filter(Files::isRegularFile).toList(); } catch (Exception e) { return List.of(); }
     }
 
