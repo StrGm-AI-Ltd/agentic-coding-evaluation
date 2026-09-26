@@ -422,6 +422,7 @@ public class RunBench {
             out.put("impl_sec", sec - plan);
             return out;
         } catch (Exception e) {
+            log.warn("could not read ladder.json budgets for task {}; falling back to the generic budget: {}", task, e.toString());
             return Map.of("sec", 14400, "plan_sec", 900, "impl_sec", 13500);
         }
     }
