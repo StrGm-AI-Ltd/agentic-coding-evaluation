@@ -1,5 +1,7 @@
 package com.strgmai.ace.service.docker;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,18 +27,27 @@ public final class DockerService {
      *  with a long timeoutSec spent most of it waiting on a relaunch attempt that itself failed to
      *  take, instead of trying again. */
     private static final int RELAUNCH_INTERVAL_SEC = 90;
+    /** the operator's default VM memory cap when a run doesn't pin its own - conservative enough to
+     *  leave room for a local model server sharing the same host (the actual root cause behind
+     *  Docker Desktop's VM competing for memory at the worst possible moment). */
+    public static final int DEFAULT_MEMORY_MIB = 4096;
+    private static final Path DOCKER_SETTINGS_STORE = Path.of(System.getProperty("user.home"), "Library/Group Containers/group.com.docker/settings-store.json");
+    private static final Path DOCKER_SETTINGS_LEGACY = Path.of(System.getProperty("user.home"), "Library/Group Containers/group.com.docker/settings.json");
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     /** cheap, daemon-free: is Docker Desktop's backend alive right now */
     public static boolean dockerRunning() {
         return sh(8, "pgrep", "-f", "com.docker.backend").rc == 0;
     }
 
-    /** start Docker Desktop and wait for the daemon. Relaunches on a fixed cadence rather than once
-     *  at the halfway mark, and relaunches IMMEDIATELY - rather than waiting out the rest of the
-     *  interval - when the backend process is gone entirely (a crash mid-boot), as opposed to merely
-     *  still booting (its VM's cold start under memory pressure from a co-resident model server is
-     *  expected to take a while, not a reason to kill and retry). */
-    public static boolean dockerUp(final int timeoutSec) {
+    /** start Docker Desktop and wait for the daemon, first capping its VM memory when desiredMemoryMib
+     *  is given (null skips it entirely - the run isn't managing this knob). Relaunches on a fixed
+     *  cadence rather than once at the halfway mark, and relaunches IMMEDIATELY - rather than waiting
+     *  out the rest of the interval - when the backend process is gone entirely (a crash mid-boot), as
+     *  opposed to merely still booting (its VM's cold start under memory pressure from a co-resident
+     *  model server is expected to take a while, not a reason to kill and retry). */
+    public static boolean dockerUp(final int timeoutSec, final Integer desiredMemoryMib) {
+        if (desiredMemoryMib != null) applyMemoryCap(desiredMemoryMib);
         sh(10, "open", "-a", "Docker");
         final long deadline = System.currentTimeMillis() + timeoutSec * 1000L;
         long nextRelaunch = System.currentTimeMillis() + RELAUNCH_INTERVAL_SEC * 1000L;
@@ -51,6 +62,51 @@ public final class DockerService {
             sleep(5);
         }
         return false;
+    }
+
+    /** caps Docker Desktop's VM memory for whenever it NEXT starts - by dockerUp() below, or by the
+     *  agent's own shim during task work (docker_shim.sh, a separate launch path this class doesn't
+     *  control). If Desktop happens to already be running under a DIFFERENT value, kills it now so
+     *  the very first real start of this run already reflects the cap, rather than leaving a stale
+     *  VM running - uncapped - until dockerUp()'s own explicit call much later in the run (oracle
+     *  scoring), by which point the agent's own task work already ran under the old setting. */
+    public static void applyMemoryCap(final int desiredMib) {
+        if (ensureMemoryCap(desiredMib) && dockerRunning()) {
+            sh(10, "pkill", "-9", "-f", "com.docker.backend");
+            sleep(5);
+        }
+    }
+
+    /** caps Docker Desktop's VM memory by editing its own settings file directly - the same file its
+     *  Settings > Resources > Memory slider writes to (there is no documented `docker desktop` CLI
+     *  subcommand for this). No-ops (returns false) when the settings file doesn't exist yet (Docker
+     *  Desktop has never been launched on this host) rather than fabricate one blind. */
+    static boolean ensureMemoryCap(final int desiredMib) {
+        final Path settings = Files.exists(DOCKER_SETTINGS_STORE) ? DOCKER_SETTINGS_STORE
+                : Files.exists(DOCKER_SETTINGS_LEGACY) ? DOCKER_SETTINGS_LEGACY : null;
+        if (settings == null) {
+            log.warn("Docker Desktop settings file not found at {} or {} - cannot cap its VM memory (has it ever been launched?)", DOCKER_SETTINGS_STORE, DOCKER_SETTINGS_LEGACY);
+            return false;
+        }
+        return ensureMemoryCap(settings, desiredMib);
+    }
+
+    /** the actual read/edit/write, taking the settings file explicitly so it's unit-testable against
+     *  a temp file instead of touching this host's real Docker Desktop configuration. Leaves every
+     *  other setting (cpus, disk size, file sharing, ...) untouched. Returns whether the file
+     *  actually changed - the caller must force a restart if Docker was already running under the
+     *  old value, since it won't pick up a settings-file edit on its own. */
+    static boolean ensureMemoryCap(final Path settings, final int desiredMib) {
+        try {
+            final var node = (ObjectNode) JSON.readTree(settings.toFile());
+            if (node.path("memoryMiB").asInt(-1) == desiredMib) return false;
+            node.put("memoryMiB", desiredMib);
+            Files.writeString(settings, JSON.writerWithDefaultPrettyPrinter().writeValueAsString(node));
+            return true;
+        } catch (IOException e) {
+            log.warn("could not cap Docker Desktop's VM memory via {}: {}", settings, e.toString());
+            return false;
+        }
     }
 
     /** the actual retry POLICY dockerUp() follows, pulled out so it's unit-testable without

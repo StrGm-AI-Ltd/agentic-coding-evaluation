@@ -1,6 +1,10 @@
 package com.strgmai.ace.service.docker;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -50,5 +54,34 @@ class DockerServiceTest {
     @Test
     void shouldCloseWindowPastTheIdleThresholdWhenNothingIsActuallyRunning() {
         assertTrue(DockerService.shouldCloseWindow(true, 9999, 600, false));
+    }
+
+    /** the settings-file edit (found live 2026-09-28): the same file Docker Desktop's own
+     *  Settings > Resources > Memory slider writes to, taking the file explicitly so this is
+     *  testable against a temp file instead of the host's real Docker Desktop configuration. */
+    @Test
+    void ensureMemoryCapWritesTheNewValueAndReturnsTrueWhenItChanges(@TempDir final Path tmp) throws Exception {
+        final Path settings = tmp.resolve("settings-store.json");
+        Files.writeString(settings, "{\"cpus\": 4, \"memoryMiB\": 8192, \"diskSizeMiB\": 122880}");
+
+        assertTrue(DockerService.ensureMemoryCap(settings, 4096));
+
+        final String written = Files.readString(settings);
+        assertTrue(written.contains("\"memoryMiB\" : 4096") || written.contains("\"memoryMiB\":4096"), written);
+        assertTrue(written.contains("122880"), "every other setting must survive untouched: " + written);
+    }
+
+    @Test
+    void ensureMemoryCapIsANoOpWhenAlreadyAtTheDesiredValue(@TempDir final Path tmp) throws Exception {
+        final Path settings = tmp.resolve("settings-store.json");
+        Files.writeString(settings, "{\"cpus\": 4, \"memoryMiB\": 4096}");
+
+        assertFalse(DockerService.ensureMemoryCap(settings, 4096));
+        assertTrue(Files.readString(settings).contains("4096"));
+    }
+
+    @Test
+    void ensureMemoryCapReturnsFalseRatherThanThrowWhenTheSettingsFileIsMissing(@TempDir final Path tmp) {
+        assertFalse(DockerService.ensureMemoryCap(tmp.resolve("does-not-exist.json"), 4096));
     }
 }

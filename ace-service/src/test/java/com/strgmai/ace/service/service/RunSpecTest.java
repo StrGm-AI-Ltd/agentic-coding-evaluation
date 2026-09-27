@@ -16,7 +16,7 @@ class RunSpecTest {
     private static RunSpec walls(final Double temperature, final Double topP, final Integer topK,
                                   final Double repetitionPenalty, final Integer maxTokens, final String reasoningEffort,
                                   final Integer parallelPlanWall, final Integer handoffWall, final Integer wrapupWall) {
-        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", 3600, null, null, null, null, false, false, false, null, false, true, false, false, null, null, null, null, false, null, null, null, null, "r1", temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, null, null, null, null, null, null, null);
+        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", 3600, null, null, null, null, false, false, false, null, false, true, false, false, null, null, null, null, false, null, null, null, null, "r1", temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, null, null, null, null, null, null, null, null, false);
     }
 
     @Test
@@ -228,6 +228,26 @@ class RunSpecTest {
         assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").implTokens(0).build());
         assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").contextWindow(0).build());
         assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").maxTokens(0).build());
+        // dockerMemoryMib is a capacity too - a 0-MiB VM is just as meaningless
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").dockerMemoryMib(0).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").dockerMemoryMib(-1).build());
+    }
+
+    /** Found live 2026-09-28: capping Docker Desktop's VM memory (its VM competing with the model
+     *  for memory at the worst possible moment is the actual root cause behind "Docker Desktop
+     *  unreliable during the benchmark window") and keeping it warm for the whole run (skipping the
+     *  idle monitor's mid-run stop/restart cycling) had no run-level control at all. */
+    @Test
+    void argvIncludesDockerMemoryCapAndKeepWarmWhenSet() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").dockerMemoryMib(4096).dockerKeepWarm(true).build().argv("r1");
+        assertTrue(argv.contains("--docker-memory-mib=4096"));
+        assertTrue(argv.contains("--docker-keep-warm"));
+    }
+
+    @Test
+    void argvOmitsDockerMemoryCapAndKeepWarmWhenUnset() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
+        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--docker-memory-mib") || a.equals("--docker-keep-warm")));
     }
 
     /** #77: every field set to a DISTINCT, recognizable value via the map, so a from()/Builder bug
@@ -254,6 +274,7 @@ class RunSpecTest {
         spec.put("parallel_plan_wall", 100); spec.put("handoff_wall", 200); spec.put("wrapup_wall", 300);
         spec.put("fix_wall", 1200); spec.put("fix_tokens", 30000);
         spec.put("parallel_plan_tokens", 9000); spec.put("handoff_tokens", 4000); spec.put("wrapup_tokens", 2500);
+        spec.put("docker_memory_mib", 6144); spec.put("docker_keep_warm", true);
 
         final var rs = RunSpec.from(spec);
 
@@ -300,6 +321,8 @@ class RunSpecTest {
         assertEquals(9000, rs.parallelPlanTokens());
         assertEquals(4000, rs.handoffTokens());
         assertEquals(2500, rs.wrapupTokens());
+        assertEquals(6144, rs.dockerMemoryMib());
+        assertTrue(rs.dockerKeepWarm());
     }
 
     @Test
@@ -316,7 +339,7 @@ class RunSpecTest {
     @Test
     void builderProducesTheSameRunSpecAsThePositionalConstructor() {
         final var viaBuilder = RunSpec.builder().task("t").model("m").runId("r1").temperature(0.5).build();
-        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, false, null, null, null, null, false, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, false, null, null, null, null, false, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false);
         assertEquals(viaConstructor, viaBuilder);
     }
 }

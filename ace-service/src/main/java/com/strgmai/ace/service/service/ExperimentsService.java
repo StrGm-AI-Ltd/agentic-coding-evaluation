@@ -70,7 +70,8 @@ public class ExperimentsService {
                                 Integer maxTokens, String reasoningEffort,
                                 Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns,
                                 Integer reviewTokens, Integer fixWall, Integer fixTokens,
-                                Integer parallelPlanTokens, Integer handoffTokens, Integer wrapupTokens) {}
+                                Integer parallelPlanTokens, Integer handoffTokens, Integer wrapupTokens,
+                                Integer dockerMemoryMib, boolean dockerKeepWarm) {}
 
     private CommonParams resolveCommon(final Map<String, Object> params) {
         final String reviewerModel = str(params.get("reviewer_model"));
@@ -82,7 +83,8 @@ public class ExperimentsService {
                 maxTokens(params), reasoningEffort(params),
                 parallelPlanWall(params), handoffWall(params), wrapupWall(params), maxTurns(params),
                 reviewTokens(params), fixWall(params), fixTokens(params),
-                parallelPlanTokens(params), handoffTokens(params), wrapupTokens(params));
+                parallelPlanTokens(params), handoffTokens(params), wrapupTokens(params),
+                dockerMemoryMib(params), dockerKeepWarm(params));
     }
 
     public List<ArmSpec> plan(String template, Map<String, Object> params, final int k) {
@@ -121,8 +123,7 @@ public class ExperimentsService {
                                 .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                                 .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                                 .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
-                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens())
-                                .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm())
                                 .build()));
             }
             case "model_ab" -> {
@@ -144,7 +145,7 @@ public class ExperimentsService {
                             .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                             .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                             .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
-                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm())
                             .build()));
                     specs.add(new ArmSpec("B", i, RunSpec.builder()
                             .task(RUNG).model(b).mode("orchestrated").planSource("reference").taskWall(wall)
@@ -157,7 +158,7 @@ public class ExperimentsService {
                             .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                             .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                             .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
-                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm())
                             .build()));
                 }
             }
@@ -189,8 +190,7 @@ public class ExperimentsService {
                                 .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                                 .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                                 .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
-                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens())
-                                .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm())
                                 .build()));
             }
             default -> throw new IllegalArgumentException("unknown template " + template + "; known: harness_effect, model_ab, agent_ab");
@@ -329,6 +329,16 @@ public class ExperimentsService {
 
     Integer wrapupTokens(Map<String, Object> params) {
         return params.get("wrapup_tokens") == null ? null : num(params.get("wrapup_tokens"));
+    }
+
+    // caps Docker Desktop's VM memory so it doesn't compete as hard with a co-resident model server;
+    // explicit params.* wins, unset leaves RunBench on its own DockerService.DEFAULT_MEMORY_MIB default
+    Integer dockerMemoryMib(Map<String, Object> params) {
+        return params.get("docker_memory_mib") == null ? null : num(params.get("docker_memory_mib"));
+    }
+
+    static boolean dockerKeepWarm(Map<String, Object> params) {
+        return Boolean.TRUE.equals(params.get("docker_keep_warm"));
     }
 
     // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded

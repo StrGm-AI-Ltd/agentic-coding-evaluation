@@ -14,7 +14,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
                       String trajectoryUse, String runId,
                       Double temperature, Double topP, Integer topK, Double repetitionPenalty, Integer maxTokens, String reasoningEffort,
                       Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns, Integer reviewTokens,
-                      Integer fixWall, Integer fixTokens, Integer parallelPlanTokens, Integer handoffTokens, Integer wrapupTokens) {
+                      Integer fixWall, Integer fixTokens, Integer parallelPlanTokens, Integer handoffTokens, Integer wrapupTokens,
+                      Integer dockerMemoryMib, boolean dockerKeepWarm) {
 
     public static final String RUN_ID = "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$";
     public static final List<String> REASONING_EFFORTS = List.of("none", "low", "medium", "high");
@@ -25,6 +26,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
         // these still require a genuinely positive value.
         implWall = positive(implWall); implTokens = positive(implTokens);
         contextWindow = positive(contextWindow); maxTokens = positive(maxTokens);
+        // a 0 or negative memory cap is just as meaningless as a 0-wide context window
+        dockerMemoryMib = positive(dockerMemoryMib);
         // every other wall/token budget: 0 means unlimited (the system-wide "0 = no budget"
         // convention) rather than an error - was rejected outright before this, the same class of
         // bug as #90's ExperimentsService.taskCount() silent-fallback, just enforced as a hard 400
@@ -120,6 +123,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (parallelPlanTokens != null) args.add("--parallel-plan-tokens=" + parallelPlanTokens);
         if (handoffTokens != null) args.add("--handoff-tokens=" + handoffTokens);
         if (wrapupTokens != null) args.add("--wrapup-tokens=" + wrapupTokens);
+        if (dockerMemoryMib != null) args.add("--docker-memory-mib=" + dockerMemoryMib);
+        if (dockerKeepWarm) args.add("--docker-keep-warm");
         return args;
     }
 
@@ -140,9 +145,9 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 trajectoryReviewerModel, trajectoryUse, runId, reasoningEffort;
         private Integer taskWall, taskTokens, implWall, implTokens, contextWindow, firstTokenTimeout,
                 compactionTrigger, reviewWallSec, topK, maxTokens, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
-                fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens;
+                fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, dockerMemoryMib;
         private boolean systemRules, selfReview, trajectoryReview, handoffNotes, manageDocker,
-                noContextProbe, contextProbeFresh, reviewBlind;
+                noContextProbe, contextProbeFresh, reviewBlind, dockerKeepWarm;
         private Double reviewWeight, trajectoryWeight, temperature, topP, repetitionPenalty;
 
         public Builder task(final String v) { task = v; return this; }
@@ -189,6 +194,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public Builder parallelPlanTokens(final Integer v) { parallelPlanTokens = v; return this; }
         public Builder handoffTokens(final Integer v) { handoffTokens = v; return this; }
         public Builder wrapupTokens(final Integer v) { wrapupTokens = v; return this; }
+        public Builder dockerMemoryMib(final Integer v) { dockerMemoryMib = v; return this; }
+        public Builder dockerKeepWarm(final boolean v) { dockerKeepWarm = v; return this; }
 
         public RunSpec build() {
             return new RunSpec(task, model, harness, mode, planSource, taskWall, taskTokens, implWall, implTokens,
@@ -196,7 +203,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                     noContextProbe, contextProbeFresh, contextWindow, firstTokenTimeout, compactionTrigger, reviewWallSec,
                     reviewBlind, trajectoryReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse, runId,
                     temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
-                    fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens);
+                    fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, dockerMemoryMib, dockerKeepWarm);
         }
     }
 
@@ -229,6 +236,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 .fixWall(intOf(spec, "fix_wall")).fixTokens(intOf(spec, "fix_tokens"))
                 .parallelPlanTokens(intOf(spec, "parallel_plan_tokens")).handoffTokens(intOf(spec, "handoff_tokens"))
                 .wrapupTokens(intOf(spec, "wrapup_tokens"))
+                .dockerMemoryMib(intOf(spec, "docker_memory_mib")).dockerKeepWarm(bool(spec, "docker_keep_warm", false))
                 .build();
     }
 
