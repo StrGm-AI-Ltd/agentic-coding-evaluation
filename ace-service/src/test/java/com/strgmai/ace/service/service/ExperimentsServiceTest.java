@@ -261,6 +261,21 @@ class ExperimentsServiceTest {
         assertTrue(specs.stream().allMatch(s -> Integer.valueOf(30000).equals(s.spec().fixTokens())));
     }
 
+    /** Found live 2026-09-27: the PARALLEL_PLAN/handoff/wrap-up TOKEN budgets (unlike their walls,
+     *  fixed in PR #153) were still fixed literals (8000/3000/2000) with no run-level control;
+     *  experiments must be able to pin them per-arm too. */
+    @Test
+    void newTokenBudgetsFlowThroughToEveryArmsRunSpec() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab",
+                Map.<String, Object>of("model_a", "a", "model_b", "b",
+                        "parallel_plan_tokens", 9000, "handoff_tokens", 4000, "wrapup_tokens", 2500), 1);
+        assertFalse(specs.isEmpty());
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(9000).equals(s.spec().parallelPlanTokens())));
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(4000).equals(s.spec().handoffTokens())));
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(2500).equals(s.spec().wrapupTokens())));
+    }
+
     /** #95: MAX_TURNS was a ReferenceAgent-local hardcoded constant with no run-level override;
      *  experiments must be able to pin it per-run the same way they pin every other budget. */
     @Test

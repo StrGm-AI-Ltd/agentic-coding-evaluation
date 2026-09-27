@@ -71,6 +71,22 @@ class JobCfgFactoryTest {
         assertFalse(without.containsKey("fix_tokens"));
     }
 
+    /** Found live 2026-09-27: the PARALLEL_PLAN/handoff/wrap-up TOKEN budgets (unlike their walls,
+     *  fixed in PR #153) were still fixed literals (8000/3000/2000) with no run-level control. */
+    @Test
+    void newTokenBudgetFlagsAreParsedWhenPresentAndAbsentOtherwise() {
+        final var cfg = JobCfgFactory.build(List.of(
+                "--parallel-plan-tokens=9000", "--handoff-tokens=4000", "--wrapup-tokens=2500"), props());
+        assertEquals(9000, cfg.get("parallel_plan_tokens"));
+        assertEquals(4000, cfg.get("handoff_tokens"));
+        assertEquals(2500, cfg.get("wrapup_tokens"));
+
+        final var without = JobCfgFactory.build(List.of(), props());
+        assertFalse(without.containsKey("parallel_plan_tokens"));
+        assertFalse(without.containsKey("handoff_tokens"));
+        assertFalse(without.containsKey("wrapup_tokens"));
+    }
+
     @Test
     void maxTurnsIsParsedWhenPresentAndAbsentOtherwise() {
         assertEquals(50, JobCfgFactory.build(List.of("--max-turns=50"), props()).get("max_turns"));
