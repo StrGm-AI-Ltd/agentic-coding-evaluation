@@ -69,7 +69,7 @@ public class ExperimentsService {
                                 Double temperature, Double topP, Integer topK, Double repetitionPenalty,
                                 Integer maxTokens, String reasoningEffort,
                                 Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns,
-                                Integer reviewTokens) {}
+                                Integer reviewTokens, Integer fixWall, Integer fixTokens) {}
 
     private CommonParams resolveCommon(final Map<String, Object> params) {
         final String reviewerModel = str(params.get("reviewer_model"));
@@ -80,7 +80,7 @@ public class ExperimentsService {
                 temperature(params), topP(params), topK(params), repetitionPenalty(params),
                 maxTokens(params), reasoningEffort(params),
                 parallelPlanWall(params), handoffWall(params), wrapupWall(params), maxTurns(params),
-                reviewTokens(params));
+                reviewTokens(params), fixWall(params), fixTokens(params));
     }
 
     public List<ArmSpec> plan(String template, Map<String, Object> params, final int k) {
@@ -118,7 +118,7 @@ public class ExperimentsService {
                                 .runId("he-" + tag + "-" + shortName(model) + "-" + arm.replace("+", "") + "-r" + i)
                                 .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                                 .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
-                                .maxTurns(cp.maxTurns())
+                                .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
                                 .build()));
             }
             case "model_ab" -> {
@@ -139,7 +139,7 @@ public class ExperimentsService {
                             .runId("ab-" + tag + "-" + shortName(a) + "-a-r" + i)
                             .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                             .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
-                            .maxTurns(cp.maxTurns())
+                            .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
                             .build()));
                     specs.add(new ArmSpec("B", i, RunSpec.builder()
                             .task(RUNG).model(b).mode("orchestrated").planSource("reference").taskWall(wall)
@@ -151,7 +151,7 @@ public class ExperimentsService {
                             .runId("ab-" + tag + "-" + shortName(b) + "-b-r" + i)
                             .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                             .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
-                            .maxTurns(cp.maxTurns())
+                            .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
                             .build()));
                 }
             }
@@ -182,7 +182,7 @@ public class ExperimentsService {
                                 .runId("aa-" + tag + "-" + shortName(model) + "-" + agent + "-r" + i)
                                 .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                                 .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
-                                .maxTurns(cp.maxTurns())
+                                .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
                                 .build()));
             }
             default -> throw new IllegalArgumentException("unknown template " + template + "; known: harness_effect, model_ab, agent_ab");
@@ -297,6 +297,16 @@ public class ExperimentsService {
 
     Integer wrapupWall(Map<String, Object> params) {
         return params.get("wrapup_wall") == null ? null : num(params.get("wrapup_wall"));
+    }
+
+    // the FIX step (merge-conflict repair after a broken parallel wave): was a fixed literal
+    // (900s/20000 tokens) with no run-level control; explicit params.* wins, unset keeps that literal
+    Integer fixWall(Map<String, Object> params) {
+        return params.get("fix_wall") == null ? null : num(params.get("fix_wall"));
+    }
+
+    Integer fixTokens(Map<String, Object> params) {
+        return params.get("fix_tokens") == null ? null : num(params.get("fix_tokens"));
     }
 
     // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded

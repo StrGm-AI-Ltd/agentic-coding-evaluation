@@ -1020,11 +1020,16 @@ public class RunBench {
                 frec = new LinkedHashMap<>(Map.of("id", fid, "rc", 0, "resumed", true));
                 fafter = RunBenchSupport.gitOut(ws, "rev-parse", "phase/" + fid);
             } else {
+                // the FIX step's own budget (found live 2026-09-27): was a fixed literal (900s/20000
+                // tokens) with no run-level control at all - 0 means unlimited (the system-wide
+                // "0 = no budget" convention)
+                final int fixWall = cfg.get("fix_wall_sec") instanceof Number fw ? fw.intValue() : 0;
+                final long fixTokens = cfg.get("fix_tokens") instanceof Number ft ? ft.longValue() : 0L;
                 Files.writeString(rd.resolve("packs/" + fid + ".md"), Packs.fixPack(ws, problems));
-                final var proxy = proxies.start(journal, 20000L, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+                final var proxy = proxies.start(journal, fixTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
                 try {
                     frec = sessionWithPolicy(cfg, runId, fid, Packs.FIX_INSTRUCTION.replace("{tasks}", String.join(", ", waveIds)).replace("{id}", fid),
-                            900, 20000L, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null);
+                            fixWall, fixTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null);
                 } finally { proxy.stop(); }
                 fafter = RunBenchSupport.snapshot(ws, "phase/" + fid);
             }

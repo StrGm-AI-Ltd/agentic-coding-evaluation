@@ -38,6 +38,10 @@ final class JobCfgFactory {
         if (WorkerService.flag(argv, "--parallel-plan-wall") != null) cfg.put("parallel_plan_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--parallel-plan-wall")));
         if (WorkerService.flag(argv, "--handoff-wall") != null) cfg.put("handoff_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--handoff-wall")));
         if (WorkerService.flag(argv, "--wrapup-wall") != null) cfg.put("wrapup_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--wrapup-wall")));
+        // the FIX step (merge-conflict repair after a broken parallel wave): was a fixed literal
+        // (900s/20000 tokens) with no run-level control at all
+        if (WorkerService.flag(argv, "--fix-wall") != null) cfg.put("fix_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--fix-wall")));
+        if (WorkerService.flag(argv, "--fix-tokens") != null) cfg.put("fix_tokens", Integer.parseInt(WorkerService.flag(argv, "--fix-tokens")));
         // a pinned --context-window IS the window: it skips step 0, whose whole job is to measure one
         final String window = WorkerService.flag(argv, "--context-window");
         if (window != null) cfg.put("context_window", Integer.parseInt(window));
