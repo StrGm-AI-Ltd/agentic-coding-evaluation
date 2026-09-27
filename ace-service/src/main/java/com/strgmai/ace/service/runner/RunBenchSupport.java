@@ -140,7 +140,9 @@ public final class RunBenchSupport {
         try (ExecutorService exec = Executors.newVirtualThreadPerTaskExecutor()) {
             final Future<ReferenceAgent.SessionResult> future = exec.submit(call);
             try {
-                return future.get(wallSec, TimeUnit.SECONDS);
+                // wallSec <= 0 means unlimited (the system-wide "0 = no budget" convention) -
+                // future.get(0, SECONDS) would mean "timeout immediately", the opposite of that
+                return wallSec > 0 ? future.get(wallSec, TimeUnit.SECONDS) : future.get();
             } catch (TimeoutException te) {
                 abortProxy.accept("task-wall budget exceeded (" + wallSec + "s)");
                 future.cancel(true);

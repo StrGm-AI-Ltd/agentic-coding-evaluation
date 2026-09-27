@@ -39,6 +39,25 @@ class RunBenchSupportTest {
         temps.clear();
     }
 
+    /** wallSec <= 0 means unlimited (the system-wide "0 = no budget" convention) -
+     *  future.get(0, SECONDS) means "time out immediately", the exact opposite; a real bug this
+     *  guards against with a call slow enough to fail loudly if 0 were ever treated that way. */
+    @Test
+    void runBoundedWithZeroWallSecNeverTimesOut() throws Exception {
+        final Path sessionDir = track(Files.createTempDirectory("sessions"));
+        final Instant start = Instant.now();
+        final Callable<ReferenceAgent.SessionResult> call = () -> {
+            Thread.sleep(300);
+            return new ReferenceAgent.SessionResult("T1", 0, 0.3, "stop", 1, 0, 0, null, start, Instant.now());
+        };
+
+        final var result = RunBenchSupport.runBounded(0, "T1", sessionDir, "sid",
+                reason -> fail("abort must not run when wallSec means unlimited (reason: " + reason + ")"), call);
+
+        assertEquals(0, result.rc());
+        assertEquals(1, result.turns());
+    }
+
     @Test
     void runBoundedReturnsTheRealResultWhenItFinishesInTime() throws Exception {
         final Path sessionDir = track(Files.createTempDirectory("sessions"));

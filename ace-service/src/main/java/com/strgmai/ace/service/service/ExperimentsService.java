@@ -68,7 +68,8 @@ public class ExperimentsService {
                                 Double reviewWeight, Double trajectoryWeight, String trajectoryUse,
                                 Double temperature, Double topP, Integer topK, Double repetitionPenalty,
                                 Integer maxTokens, String reasoningEffort,
-                                Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns) {}
+                                Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns,
+                                Integer reviewTokens) {}
 
     private CommonParams resolveCommon(final Map<String, Object> params) {
         final String reviewerModel = str(params.get("reviewer_model"));
@@ -78,7 +79,8 @@ public class ExperimentsService {
                 reviewWeight(params), trajectoryWeight(params), trajectoryUse(params),
                 temperature(params), topP(params), topK(params), repetitionPenalty(params),
                 maxTokens(params), reasoningEffort(params),
-                parallelPlanWall(params), handoffWall(params), wrapupWall(params), maxTurns(params));
+                parallelPlanWall(params), handoffWall(params), wrapupWall(params), maxTurns(params),
+                reviewTokens(params));
     }
 
     public List<ArmSpec> plan(String template, Map<String, Object> params, final int k) {
@@ -87,7 +89,8 @@ public class ExperimentsService {
         switch (template) {
             case "harness_effect" -> {
                 final String model = str(params.get("model"));
-                final int wall = num(params.getOrDefault("task_wall", 3600)), tokens = params.get("task_tokens") == null || "auto".equals(str(params.get("task_tokens"))) ? 60000 : num(params.get("task_tokens"));
+                // 0 means unlimited (the system-wide "0 = no budget" convention)
+                final int wall = num(params.getOrDefault("task_wall", 0)), tokens = params.get("task_tokens") == null || "auto".equals(str(params.get("task_tokens"))) ? 0 : num(params.get("task_tokens"));
                 final List<String> arms = params.get("arms") instanceof List<?> l ? (List<String>) l : List.of("orch", "mono");
                 int n = taskCount(params);   // the monolithic impl budget = N x task budget from the reference plan (matched, P-1)
                 final String parallel = params.get("parallel") == null ? "3" : str(params.get("parallel"));
@@ -101,11 +104,15 @@ public class ExperimentsService {
                         specs.add(new ArmSpec(arm, i, RunSpec.builder()
                                 .task(RUNG).model(model).mode("orchestrated".equals(armMode(arm)) ? "orchestrated" : "monolithic")
                                 .planSource("reference").taskWall(wall).taskTokens(tokens)
-                                .implWall(arm.contains("mono") ? wall * n : null).implTokens(arm.contains("mono") ? tokens * n : null)
+                                // implWall/implTokens are validated as genuine capacities (RunSpec.positive()),
+                                // not 0-means-unlimited budgets - wall/tokens==0 (the new "unlimited" default)
+                                // must not multiply through into a rejected literal 0
+                                .implWall(arm.contains("mono") && wall > 0 ? wall * n : null)
+                                .implTokens(arm.contains("mono") && tokens > 0 ? tokens * n : null)
                                 .parallel("par".equals(arm) ? parallel : null).systemRules("mono+rules".equals(arm))
                                 .selfReview(review).trajectoryReview(review).reviewerModel(cp.reviewerModel())
                                 .manageDocker(true).noContextProbe(cp.noProbe())
-                                .contextWindow(window).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec())
+                                .contextWindow(window).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec()).reviewTokens(cp.reviewTokens())
                                 .reviewBlind(cp.blind()).trajectoryReviewerModel(cp.trajReviewerModel()).reviewWeight(cp.reviewWeight()).trajectoryWeight(cp.trajectoryWeight())
                                 .trajectoryUse(cp.trajectoryUse())
                                 .runId("he-" + tag + "-" + shortName(model) + "-" + arm.replace("+", "") + "-r" + i)
@@ -116,7 +123,7 @@ public class ExperimentsService {
             }
             case "model_ab" -> {
                 final String a = str(params.get("model_a")), b = str(params.get("model_b"));
-                final int wall = num(params.getOrDefault("task_wall", 3600));
+                final int wall = num(params.getOrDefault("task_wall", 0));   // 0 = unlimited
                 // per arm: A and B can be different-sized models, so the window fallback must resolve per model
                 final Integer windowA = contextWindow(params, a), windowB = contextWindow(params, b);
                 final var cp = resolveCommon(params);
@@ -126,7 +133,7 @@ public class ExperimentsService {
                             .task(RUNG).model(a).mode("orchestrated").planSource("reference").taskWall(wall)
                             .selfReview(true).trajectoryReview(true).reviewerModel(cp.reviewerModel())
                             .manageDocker(true).noContextProbe(cp.noProbe())
-                            .contextWindow(windowA).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec())
+                            .contextWindow(windowA).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec()).reviewTokens(cp.reviewTokens())
                             .reviewBlind(cp.blind()).trajectoryReviewerModel(cp.trajReviewerModel()).reviewWeight(cp.reviewWeight()).trajectoryWeight(cp.trajectoryWeight())
                             .trajectoryUse(cp.trajectoryUse())
                             .runId("ab-" + tag + "-" + shortName(a) + "-a-r" + i)
@@ -138,7 +145,7 @@ public class ExperimentsService {
                             .task(RUNG).model(b).mode("orchestrated").planSource("reference").taskWall(wall)
                             .selfReview(true).trajectoryReview(true).reviewerModel(cp.reviewerModel())
                             .manageDocker(true).noContextProbe(cp.noProbe())
-                            .contextWindow(windowB).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec())
+                            .contextWindow(windowB).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec()).reviewTokens(cp.reviewTokens())
                             .reviewBlind(cp.blind()).trajectoryReviewerModel(cp.trajReviewerModel()).reviewWeight(cp.reviewWeight()).trajectoryWeight(cp.trajectoryWeight())
                             .trajectoryUse(cp.trajectoryUse())
                             .runId("ab-" + tag + "-" + shortName(b) + "-b-r" + i)
@@ -150,7 +157,7 @@ public class ExperimentsService {
             }
             case "agent_ab" -> {
                 final String model = str(params.get("model"));
-                final int wall = num(params.getOrDefault("task_wall", 3600));
+                final int wall = num(params.getOrDefault("task_wall", 0));   // 0 = unlimited
                 final String mode = params.get("mode") == null ? "orchestrated" : str(params.get("mode"));
                 final Integer window = contextWindow(params, model);
                 final var cp = resolveCommon(params);
@@ -161,11 +168,15 @@ public class ExperimentsService {
                         specs.add(new ArmSpec(agent, i, RunSpec.builder()
                                 .task(RUNG).model(model).harness(agent).mode(mode).planSource("reference")
                                 .taskWall("orchestrated".equals(mode) ? wall : null)
-                                .implWall("monolithic".equals(mode) ? wall * taskCount(params) : null)
-                                .implTokens("monolithic".equals(mode) ? 60000 * taskCount(params) : null)
+                                // implWall/implTokens are validated as genuine capacities (RunSpec.positive()),
+                                // not 0-means-unlimited budgets, and neither is ever actually read downstream
+                                // (RunBench has no impl_wall/impl_tokens cfg lookup at all) - wall==0 (the new
+                                // "unlimited" default) must not multiply through into a rejected literal 0
+                                .implWall("monolithic".equals(mode) && wall > 0 ? wall * taskCount(params) : null)
+                                .implTokens(null)
                                 .selfReview(review).trajectoryReview(review).reviewerModel(cp.reviewerModel())
                                 .manageDocker(true).noContextProbe(cp.noProbe())
-                                .contextWindow(window).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec())
+                                .contextWindow(window).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec()).reviewTokens(cp.reviewTokens())
                                 .reviewBlind(cp.blind()).trajectoryReviewerModel(cp.trajReviewerModel()).reviewWeight(cp.reviewWeight()).trajectoryWeight(cp.trajectoryWeight())
                                 .trajectoryUse(cp.trajectoryUse())
                                 .runId("aa-" + tag + "-" + shortName(model) + "-" + agent + "-r" + i)
@@ -202,9 +213,16 @@ public class ExperimentsService {
         return params.get("compaction_trigger") == null ? null : num(params.get("compaction_trigger"));
     }
 
-    /** an explicit params.review_wall_sec wins; unset leaves reviewer sessions on Reviews' own default (900s) */
+    /** an explicit params.review_wall_sec wins; unset leaves reviewer sessions on Reviews' own
+     *  default (0 = unlimited, the system-wide "0 = no budget" convention) */
     Integer reviewWallSec(Map<String, Object> params) {
         return params.get("review_wall_sec") == null ? null : num(params.get("review_wall_sec"));
+    }
+
+    /** an explicit params.review_tokens wins; unset leaves reviewer sessions on Reviews' own
+     *  default (0 = unlimited) */
+    Integer reviewTokens(Map<String, Object> params) {
+        return params.get("review_tokens") == null ? null : num(params.get("review_tokens"));
     }
 
     static boolean noContextProbe(Map<String, Object> params) {

@@ -44,7 +44,6 @@ class ExperimentsServiceTest {
     @Test
     void harnessEffectDefaultArmsCarryTheMonolithicBudgetMultiplierAndNullContextWindow() {
         final ExperimentsService svc = serviceWithUnreachableModelServer();
-        final int n = ExperimentsService.taskCount(new java.util.LinkedHashMap<>());
         final List<ExperimentsService.ArmSpec> specs = svc.plan("harness_effect", Map.of("model", "modelX"), 1);
 
         assertEquals(2, specs.size());
@@ -57,11 +56,28 @@ class ExperimentsServiceTest {
         assertTrue(orch.spec().runId().matches("he-\\d{8}-\\d{6}-modelX-orch-r1"), orch.spec().runId());
         assertNull(orch.spec().contextWindow());
 
+        // 0 (task_wall/task_tokens' new "unlimited" default, the system-wide "0 = no budget"
+        // convention) must not multiply through into a rejected literal 0 for implWall/implTokens
+        // (RunSpec.positive() fields, not 0-means-unlimited ones) - null, same as the orch arm
         assertEquals("monolithic", mono.spec().mode());
-        assertEquals(3600 * n, mono.spec().implWall());       // the monolithic impl budget = N x task budget
-        assertEquals(60000 * n, mono.spec().implTokens());
+        assertNull(mono.spec().implWall());
+        assertNull(mono.spec().implTokens());
         assertTrue(mono.spec().runId().matches("he-\\d{8}-\\d{6}-modelX-mono-r1"), mono.spec().runId());
         assertNull(mono.spec().contextWindow());
+    }
+
+    /** with an explicit, positive task_wall/task_tokens the monolithic multiplier still applies -
+     *  only the new 0-default (unlimited) skips it (implWall/implTokens reject a literal 0). */
+    @Test
+    void harnessEffectMonolithicMultiplierStillAppliesWithAnExplicitPositiveBudget() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final int n = ExperimentsService.taskCount(new java.util.LinkedHashMap<>());
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("harness_effect",
+                Map.of("model", "modelX", "task_wall", 3600, "task_tokens", 60000), 1);
+
+        final ExperimentsService.ArmSpec mono = specs.stream().filter(s -> s.arm().equals("mono")).findFirst().orElseThrow();
+        assertEquals(3600 * n, mono.spec().implWall());
+        assertEquals(60000 * n, mono.spec().implTokens());
     }
 
     @Test
@@ -107,8 +123,9 @@ class ExperimentsServiceTest {
         final ExperimentsService.ArmSpec pi = specs.stream().filter(s -> s.arm().equals("pi")).findFirst().orElseThrow();
         assertEquals("ref", ref.spec().harness());
         assertEquals("pi", pi.spec().harness());
-        assertEquals(3600, ref.spec().taskWall());
-        assertEquals(3600, pi.spec().taskWall());              // --harness is the ONLY thing that differs
+        // 0 = unlimited (the system-wide "0 = no budget" convention), the new default
+        assertEquals(0, ref.spec().taskWall());
+        assertEquals(0, pi.spec().taskWall());              // --harness is the ONLY thing that differs
         assertTrue(ref.spec().runId().matches("aa-\\d{8}-\\d{6}-modelX-ref-r1"));
         assertTrue(pi.spec().runId().matches("aa-\\d{8}-\\d{6}-modelX-pi-r1"));
     }
@@ -218,6 +235,17 @@ class ExperimentsServiceTest {
         assertTrue(specs.stream().allMatch(s -> Integer.valueOf(900).equals(s.spec().parallelPlanWall())));
         assertTrue(specs.stream().allMatch(s -> Integer.valueOf(450).equals(s.spec().handoffWall())));
         assertTrue(specs.stream().allMatch(s -> Integer.valueOf(600).equals(s.spec().wrapupWall())));
+    }
+
+    /** #90: self-review's token budget was a Reviews.java-local hardcoded 12000 with no
+     *  --review-tokens flag at all; experiments must be able to pin it per-arm too. */
+    @Test
+    void reviewTokensFlowsThroughToEveryArmsRunSpec() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab",
+                Map.<String, Object>of("model_a", "a", "model_b", "b", "review_tokens", 5000), 1);
+        assertFalse(specs.isEmpty());
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(5000).equals(s.spec().reviewTokens())));
     }
 
     /** #95: MAX_TURNS was a ReferenceAgent-local hardcoded constant with no run-level override;

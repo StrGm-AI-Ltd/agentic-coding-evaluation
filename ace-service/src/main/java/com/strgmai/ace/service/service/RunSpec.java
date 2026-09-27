@@ -13,20 +13,30 @@ public record RunSpec(String task, String model, String harness, String mode, St
                       boolean reviewBlind, String trajectoryReviewerModel, Double reviewWeight, Double trajectoryWeight,
                       String trajectoryUse, String runId,
                       Double temperature, Double topP, Integer topK, Double repetitionPenalty, Integer maxTokens, String reasoningEffort,
-                      Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns) {
+                      Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns, Integer reviewTokens) {
 
     public static final String RUN_ID = "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$";
     public static final List<String> REASONING_EFFORTS = List.of("none", "low", "medium", "high");
 
     public RunSpec {
-        taskWall = positive(taskWall); taskTokens = positive(taskTokens); implWall = positive(implWall); implTokens = positive(implTokens);
-        contextWindow = positive(contextWindow); firstTokenTimeout = positive(firstTokenTimeout); reviewWallSec = positive(reviewWallSec);
-        maxTokens = positive(maxTokens);
+        // implWall/implTokens/contextWindow/maxTokens are capacities, not spending budgets a run can
+        // choose to leave uncapped (a 0-token generation or a 0-wide context window is meaningless) -
+        // these still require a genuinely positive value.
+        implWall = positive(implWall); implTokens = positive(implTokens);
+        contextWindow = positive(contextWindow); maxTokens = positive(maxTokens);
+        // every other wall/token budget: 0 means unlimited (the system-wide "0 = no budget"
+        // convention) rather than an error - was rejected outright before this, the same class of
+        // bug as #90's ExperimentsService.taskCount() silent-fallback, just enforced as a hard 400
+        // instead of a silent wrong value.
+        taskWall = nonNegative(taskWall); taskTokens = nonNegative(taskTokens);
+        firstTokenTimeout = nonNegative(firstTokenTimeout); reviewWallSec = nonNegative(reviewWallSec);
+        reviewTokens = nonNegative(reviewTokens);
         // PARALLEL_PLAN/handoff/wrap-up walls (found live 2026-09-25): were fixed literals in
         // RunBench.java (600/300/300*scale) with no run-level control at all
-        parallelPlanWall = positive(parallelPlanWall); handoffWall = positive(handoffWall); wrapupWall = positive(wrapupWall);
+        parallelPlanWall = nonNegative(parallelPlanWall); handoffWall = nonNegative(handoffWall); wrapupWall = nonNegative(wrapupWall);
         // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded
-        // ReferenceAgent-local constant (400) with no run-level override at all
+        // ReferenceAgent-local constant (400) with no run-level override at all. Turn count, not a
+        // token/time budget - 0 turns is meaningless, so this still requires a positive value.
         maxTurns = positive(maxTurns);
         // 0 is a legitimate value here (disables compaction) - unlike the budgets above, only reject negative
         if (compactionTrigger != null && compactionTrigger < 0) throw new IllegalArgumentException("compactionTrigger must be >= 0 (0 disables compaction): " + compactionTrigger);
@@ -50,7 +60,11 @@ public record RunSpec(String task, String model, String harness, String mode, St
     }
 
     private static Integer positive(Integer v) { return v == null || v > 0 ? v : failPositive(v); }
-    private static Integer failPositive(Integer v) { throw new IllegalArgumentException("budgets must be positive: " + v); }
+    private static Integer failPositive(Integer v) { throw new IllegalArgumentException("must be positive: " + v); }
+    /** for a budget where 0 is a legitimate value (unlimited - the system-wide "0 = no budget"
+     *  convention): only negative is rejected. */
+    private static Integer nonNegative(Integer v) { return v == null || v >= 0 ? v : failNonNegative(v); }
+    private static Integer failNonNegative(Integer v) { throw new IllegalArgumentException("budgets must be >= 0 (0 = unlimited): " + v); }
 
     public static final Set<String> TERMINAL = Set.of("succeeded", "failed", "cancelled");
 
@@ -78,6 +92,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (firstTokenTimeout != null) args.add("--first-token-timeout=" + firstTokenTimeout);
         if (compactionTrigger != null) args.add("--compaction-trigger=" + compactionTrigger);
         if (reviewWallSec != null) args.add("--review-wall-sec=" + reviewWallSec);
+        if (reviewTokens != null) args.add("--review-tokens=" + reviewTokens);
         if (reviewBlind) args.add("--review-blind");
         if (trajectoryReviewerModel != null) args.add("--trajectory-reviewer-model=" + trajectoryReviewerModel);
         if (reviewWeight != null) args.add("--review-weight=" + reviewWeight);
@@ -112,7 +127,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         private String task, model, harness, mode, planSource, parallel, reviewerModel,
                 trajectoryReviewerModel, trajectoryUse, runId, reasoningEffort;
         private Integer taskWall, taskTokens, implWall, implTokens, contextWindow, firstTokenTimeout,
-                compactionTrigger, reviewWallSec, topK, maxTokens, parallelPlanWall, handoffWall, wrapupWall, maxTurns;
+                compactionTrigger, reviewWallSec, topK, maxTokens, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens;
         private boolean systemRules, selfReview, trajectoryReview, handoffNotes, manageDocker,
                 noContextProbe, contextProbeFresh, reviewBlind;
         private Double reviewWeight, trajectoryWeight, temperature, topP, repetitionPenalty;
@@ -139,6 +154,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public Builder firstTokenTimeout(final Integer v) { firstTokenTimeout = v; return this; }
         public Builder compactionTrigger(final Integer v) { compactionTrigger = v; return this; }
         public Builder reviewWallSec(final Integer v) { reviewWallSec = v; return this; }
+        public Builder reviewTokens(final Integer v) { reviewTokens = v; return this; }
         public Builder reviewBlind(final boolean v) { reviewBlind = v; return this; }
         public Builder trajectoryReviewerModel(final String v) { trajectoryReviewerModel = v; return this; }
         public Builder reviewWeight(final Double v) { reviewWeight = v; return this; }
@@ -161,7 +177,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                     parallel, systemRules, selfReview, trajectoryReview, reviewerModel, handoffNotes, manageDocker,
                     noContextProbe, contextProbeFresh, contextWindow, firstTokenTimeout, compactionTrigger, reviewWallSec,
                     reviewBlind, trajectoryReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse, runId,
-                    temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, maxTurns);
+                    temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens);
         }
     }
 
@@ -182,6 +198,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 .noContextProbe(bool(spec, "no_context_probe", false)).contextProbeFresh(bool(spec, "context_probe_fresh", false))
                 .contextWindow(intOf(spec, "context_window")).firstTokenTimeout(intOf(spec, "first_token_timeout"))
                 .compactionTrigger(intOf(spec, "compaction_trigger")).reviewWallSec(intOf(spec, "review_wall_sec"))
+                .reviewTokens(intOf(spec, "review_tokens"))
                 .reviewBlind(bool(spec, "review_blind", false)).trajectoryReviewerModel(str(spec, "trajectory_reviewer_model"))
                 .reviewWeight(doubleOf(spec, "review_weight")).trajectoryWeight(doubleOf(spec, "trajectory_weight"))
                 .trajectoryUse(str(spec, "trajectory_use")).runId(str(spec, "run_id"))

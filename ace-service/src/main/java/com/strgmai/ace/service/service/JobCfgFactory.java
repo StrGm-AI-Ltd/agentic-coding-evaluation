@@ -59,8 +59,9 @@ final class JobCfgFactory {
         review.put("model", WorkerService.flag(argv, "--reviewer-model"));
         review.put("blind", argv.contains("--review-blind"));
         // shared by both self-review and trajectory-review (Reviews.runReviewerSession reads
-        // this same "review" map's wall_sec for either kind of reviewer session)
+        // this same "review" map's wall_sec/tokens for either kind of reviewer session)
         if (WorkerService.flag(argv, "--review-wall-sec") != null) review.put("wall_sec", Integer.parseInt(WorkerService.flag(argv, "--review-wall-sec")));
+        if (WorkerService.flag(argv, "--review-tokens") != null) review.put("tokens", Integer.parseInt(WorkerService.flag(argv, "--review-tokens")));
         // unset -> Collect's own 0.1 default; only set when the run actually pinned one
         if (WorkerService.flag(argv, "--review-weight") != null) review.put("weight", Double.parseDouble(WorkerService.flag(argv, "--review-weight")));
         cfg.put("review", review);

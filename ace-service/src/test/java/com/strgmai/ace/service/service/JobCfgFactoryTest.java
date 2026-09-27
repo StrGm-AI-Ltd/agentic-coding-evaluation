@@ -85,12 +85,13 @@ class JobCfgFactoryTest {
     void reviewMapCarriesEnabledModelBlindAndOptionalWallAndWeight() {
         final var cfg = JobCfgFactory.build(List.of(
                 "--self-review", "--reviewer-model=judge", "--review-blind",
-                "--review-wall-sec=900", "--review-weight=0.2"), props());
+                "--review-wall-sec=900", "--review-tokens=5000", "--review-weight=0.2"), props());
         final var review = (Map<String, Object>) cfg.get("review");
         assertEquals(true, review.get("enabled"));
         assertEquals("judge", review.get("model"));
         assertEquals(true, review.get("blind"));
         assertEquals(900, review.get("wall_sec"));
+        assertEquals(5000, review.get("tokens"));
         assertEquals(0.2, review.get("weight"));
     }
 
@@ -102,6 +103,7 @@ class JobCfgFactoryTest {
         assertNull(review.get("model"));
         assertEquals(false, review.get("blind"));
         assertFalse(review.containsKey("wall_sec"));
+        assertFalse(review.containsKey("tokens"));
         assertFalse(review.containsKey("weight"));
     }
 

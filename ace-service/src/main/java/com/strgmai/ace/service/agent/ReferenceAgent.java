@@ -214,7 +214,11 @@ public class ReferenceAgent {
 
         int turns = 0, toolErrors = 0, compactions = 0, lastPrompt = 0;
         String finish = null; int rc = 0;
-        final long deadline = System.currentTimeMillis() + wallSec * 1000;
+        // wallSec <= 0 means unlimited (the harness's own runBounded() is the real enforcement for
+        // that - see its javadoc); deadline here only clamps chatWithRetry's exponential backoff
+        // sleep, so it must stay far in the future rather than collapsing to "now" (which would
+        // hammer the model server with ~100ms retries instead of a real backoff).
+        final long deadline = wallSec > 0 ? System.currentTimeMillis() + wallSec * 1000 : Long.MAX_VALUE;
         while (turns < maxTurns) {
             if (compactionTrigger > 0 && lastPrompt > 0 && lastPrompt > compactionTrigger) {
                 final int n = AgentSession.compact(msgs, props.keepRecentTurns());
@@ -364,8 +368,8 @@ public class ReferenceAgent {
      *  (see awaitStream below - no longer bounded in here at all, only by the harness's own
      *  preemptive task-wall enforcement in RunBench.sessionWithPolicy) a request that never starts
      *  producing anything has no other signal to wait on. Per-run override: RunSpec.firstTokenTimeout
-     *  / --first-token-timeout. */
-    static final long DEFAULT_FIRST_TOKEN_TIMEOUT_MS = 180_000;
+     *  / --first-token-timeout. 0 means unlimited (the system-wide "0 = no budget" convention). */
+    static final long DEFAULT_FIRST_TOKEN_TIMEOUT_MS = 0;
     private static final long POLL_MS = 2_000;
 
     /** provider API keys that may reach {@code extraEnv} (an external reviewer's own credential, or a
@@ -421,7 +425,9 @@ public class ReferenceAgent {
             try {
                 return collector.future.get(POLL_MS, TimeUnit.MILLISECONDS);
             } catch (java.util.concurrent.TimeoutException pollTimeout) {
-                if (!collector.gotFirstToken && System.currentTimeMillis() - collector.lastActivityMs > firstTokenTimeoutMs) {
+                // firstTokenTimeoutMs <= 0 means unlimited (the system-wide "0 = no budget"
+                // convention) - never time out waiting for a first token in that case
+                if (firstTokenTimeoutMs > 0 && !collector.gotFirstToken && System.currentTimeMillis() - collector.lastActivityMs > firstTokenTimeoutMs) {
                     collector.cancelIfPossible();   // real abort now (R10), not just walking away
                     throw new RuntimeException("no first token from the model in " + (firstTokenTimeoutMs / 1000) + "s");
                 }

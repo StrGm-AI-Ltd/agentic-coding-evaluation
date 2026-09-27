@@ -324,6 +324,12 @@ public final class Packs {
         return "## Budget for " + taskId + "\n- Started " + startLocal + ", hard deadline **" + deadlineLocal + "** (local time, " + minutes
                 + " min). The harness stops the session at the deadline.\n- Run `date` between steps. When fewer than 5 minutes remain, stop coding and write the docs/PROGRESS.md status line described in the instruction.";
     }
+    /** wall==0 (the system-wide "0 = no budget" convention): telling the agent it has a "hard
+     *  deadline" of right now (minutes=0) would be actively misleading - there genuinely is none. */
+    public static String unlimitedBudgetSection(final String taskId) {
+        return "## Budget for " + taskId + "\n- No wall-clock deadline for this session (the operator configured an unlimited budget).\n"
+                + "- Still write the docs/PROGRESS.md status line described in the instruction once the task is genuinely done.";
+    }
     public static final String INTEGRATION_INSTRUCTION = "Run the complete test suite of every service from the repository root and fix every failure. Check that "
             + "docker-compose.yml, the Dockerfiles and the healthchecks are consistent with the code and that `docker compose build` "
             + "and `docker compose up` work when Docker is available (it starts on demand but may not boot on this host - see the Docker "
