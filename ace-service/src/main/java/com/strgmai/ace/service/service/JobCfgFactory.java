@@ -60,6 +60,10 @@ final class JobCfgFactory {
             else cfg.put("parallel", Integer.parseInt(WorkerService.flag(argv, "--parallel")));
         }
         cfg.put("manage_docker", argv.contains("--manage-docker"));
+        // caps Docker Desktop's VM memory so it doesn't compete as hard with a co-resident model
+        // server; --docker-keep-warm skips the idle monitor's mid-run stop/restart cycling
+        if (WorkerService.flag(argv, "--docker-memory-mib") != null) cfg.put("docker_memory_mib", Integer.parseInt(WorkerService.flag(argv, "--docker-memory-mib")));
+        cfg.put("docker_keep_warm", argv.contains("--docker-keep-warm"));
         // Map.of() rejects a null value outright - "model" IS null whenever review is enabled
         // without an explicit --reviewer-model (self-review alone still needs a reviewer picked
         // downstream, but that is RunBench's decision to make, not a reason to crash the worker)

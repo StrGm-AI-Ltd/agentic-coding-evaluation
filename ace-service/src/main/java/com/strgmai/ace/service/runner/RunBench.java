@@ -142,6 +142,12 @@ public class RunBench {
         final String promptText = setUpTaskPrompt(ws, task);
         cfg.put("java_home", props.javaHome() == null || props.javaHome().isBlank()
                 ? DockerService.sh(20, "/usr/libexec/java_home", "-v", String.valueOf(cfg.getOrDefault("java_major", 21))).out().strip() : props.javaHome());
+        // capped as early as possible, before the agent's own shim (a separate launch path this class
+        // doesn't otherwise control) gets a chance to start Docker Desktop uncapped during task work -
+        // its VM competing with the model for memory at the worst possible moment is the actual root
+        // cause behind "Docker Desktop unreliable during the benchmark window" (found live 2026-09-28)
+        if (Boolean.TRUE.equals(cfg.get("manage_docker")))
+            DockerService.applyMemoryCap(cfg.get("docker_memory_mib") instanceof Number dm ? dm.intValue() : DockerService.DEFAULT_MEMORY_MIB);
 
         // ---- step 0: probe the window this setup offers, derive every knob (ports apply_context) ----
         Map<String, Object> probeRec = null, derived = Map.of();
@@ -376,7 +382,10 @@ public class RunBench {
 
     private Map<String, Object> oracleWithDocker(final Map<String, Object> cfg, final Path ws, String task, final Path rd, final Map<String, Object> manifest) throws Exception {
         final boolean manageDocker = Boolean.TRUE.equals(cfg.get("manage_docker"));
-        if (manageDocker) DockerService.dockerUp(360);
+        // the cap was already applied early in runOnce(); dockerUp() re-applying the same value here
+        // is a cheap no-op (ensureMemoryCap short-circuits when it already matches) and keeps this
+        // call correct standalone, for any other caller that skips runOnce()'s early cap
+        if (manageDocker) DockerService.dockerUp(360, cfg.get("docker_memory_mib") instanceof Number dm ? dm.intValue() : DockerService.DEFAULT_MEMORY_MIB);
         try {
             return oracle.score(ws, task, (String) cfg.get("system_base_url"), manifest);
         } finally {
@@ -471,7 +480,12 @@ public class RunBench {
                 + "\n\n" + Packs.DOCKER_NOTE;
         final String canonicalSessionId = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + name).getBytes()).toString();
         final String sid = sessionId == null ? canonicalSessionId : sessionId;
-        final Thread monitor = plainPlan ? null : monitorThread(dw, 600);
+        // --docker-keep-warm: skip the idle-based teardown for the whole run - the frequent
+        // start/stop cycling this monitor otherwise does is a real contributor to Docker Desktop's
+        // VM wedging (found live 2026-09-27). A crashed backend (!up) still closes the window
+        // regardless (DockerService.shouldCloseWindow) - there's nothing left to keep warm.
+        final boolean dockerKeepWarm = Boolean.TRUE.equals(cfg.get("docker_keep_warm"));
+        final Thread monitor = plainPlan ? null : monitorThread(dw, dockerKeepWarm ? Integer.MAX_VALUE : 600);
         ReferenceAgent.SessionResult rec;
         try {
             rec = RunBenchSupport.runBounded(wall, name, rd.resolve("sessions"), sid, proxy.abort(), () -> agent.run(name, full, wall, tokens,
@@ -979,7 +993,10 @@ public class RunBench {
         }
         final String merged = DockerService.sh(20, "git", "-C", ws.toString(), "rev-parse", "HEAD").out().strip();
         ((Map<String, String>) manifest.get("snapshots")).put("wave-" + String.join("-", waveIds), merged);
-        if (Boolean.TRUE.equals(cfg.get("manage_docker")) && DockerService.dockerRunning()) DockerService.dockerDown(30);
+        // --docker-keep-warm: skip this wave-boundary teardown too - it's the same mid-run
+        // stop/restart cycling the idle monitor's keep-warm skip targets, just at a different trigger
+        if (Boolean.TRUE.equals(cfg.get("manage_docker")) && !Boolean.TRUE.equals(cfg.get("docker_keep_warm")) && DockerService.dockerRunning())
+            DockerService.dockerDown(30);
         final Map<String, Object> wv = VerifyTask.verify(ws, cfg, rd.resolve("verify/wave-" + String.join("-", waveIds) + ".log"));
         // problems caused by the parallelisation: what the merge broke, and who edited what they should not have
         final Map<String, List<String>> changed = new LinkedHashMap<>();

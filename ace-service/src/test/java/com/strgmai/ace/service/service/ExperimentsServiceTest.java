@@ -276,6 +276,18 @@ class ExperimentsServiceTest {
         assertTrue(specs.stream().allMatch(s -> Integer.valueOf(2500).equals(s.spec().wrapupTokens())));
     }
 
+    /** Found live 2026-09-28: capping Docker Desktop's VM memory and keeping it warm for the whole
+     *  run had no run-level control at all; experiments must be able to pin them per-arm too. */
+    @Test
+    void dockerMemoryCapAndKeepWarmFlowThroughToEveryArmsRunSpec() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab",
+                Map.<String, Object>of("model_a", "a", "model_b", "b", "docker_memory_mib", 6144, "docker_keep_warm", true), 1);
+        assertFalse(specs.isEmpty());
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(6144).equals(s.spec().dockerMemoryMib())));
+        assertTrue(specs.stream().allMatch(s -> s.spec().dockerKeepWarm()));
+    }
+
     /** #95: MAX_TURNS was a ReferenceAgent-local hardcoded constant with no run-level override;
      *  experiments must be able to pin it per-run the same way they pin every other budget. */
     @Test

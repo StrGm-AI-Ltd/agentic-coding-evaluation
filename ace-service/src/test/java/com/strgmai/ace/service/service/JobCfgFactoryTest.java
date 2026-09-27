@@ -154,4 +154,17 @@ class JobCfgFactoryTest {
         assertEquals(true, JobCfgFactory.build(List.of("--manage-docker"), props()).get("manage_docker"));
         assertEquals(false, JobCfgFactory.build(List.of(), props()).get("manage_docker"));
     }
+
+    /** Found live 2026-09-28: capping Docker Desktop's VM memory and keeping it warm for the whole
+     *  run had no run-level control at all. */
+    @Test
+    void dockerMemoryCapAndKeepWarmAreParsedWhenPresentAndAbsentOtherwise() {
+        final var cfg = JobCfgFactory.build(List.of("--docker-memory-mib=6144", "--docker-keep-warm"), props());
+        assertEquals(6144, cfg.get("docker_memory_mib"));
+        assertEquals(true, cfg.get("docker_keep_warm"));
+
+        final var without = JobCfgFactory.build(List.of(), props());
+        assertFalse(without.containsKey("docker_memory_mib"));
+        assertEquals(false, without.get("docker_keep_warm"));
+    }
 }
