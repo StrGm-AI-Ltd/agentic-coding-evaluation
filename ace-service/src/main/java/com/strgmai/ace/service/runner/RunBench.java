@@ -99,7 +99,7 @@ public class RunBench {
                 cur = new LinkedHashMap<>(Map.of("start_iso", nowIso(), "started_by", "agent-direct", "calls_before", callsBefore, "start_epoch", System.currentTimeMillis() / 1000.0));
             if (cur != null) {
                 final double idle = System.currentTimeMillis() / 1000.0 - Math.max(c[1] == 0 ? ((Number) cur.get("start_epoch")).doubleValue() : c[1], ((Number) cur.get("start_epoch")).doubleValue());
-                if (!up || idle > idleSec) {
+                if (DockerService.shouldCloseWindow(up, idle, idleSec, DockerService.dockerCliBusy())) {
                     if (up) DockerService.dockerDown(30);
                     final Map<String, Object> w = new LinkedHashMap<>(cur);
                     w.put("end_iso", nowIso());
