@@ -19,7 +19,7 @@ class RunSpecTest {
         return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", 3600, null, null, null, null,
                 false, false, false, null, false, true, false, false, null, null, null, null, false, null, null, null,
                 null, "r1", temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort,
-                parallelPlanWall, handoffWall, wrapupWall, null);
+                parallelPlanWall, handoffWall, wrapupWall, null, null);
     }
 
     @Test
@@ -99,10 +99,13 @@ class RunSpecTest {
     }
 
     @Test
-    void nonPositiveNewWallsAreRejected() {
-        assertThrows(IllegalArgumentException.class, () -> walls(null, null, null, null, null, null, 0, null, null));
+    void negativeNewWallsAreRejectedButZeroIsUnlimited() {
+        // 0 means unlimited (the system-wide "0 = no budget" convention) - only negative is an error
+        assertDoesNotThrow(() -> walls(null, null, null, null, null, null, 0, null, null));
+        assertDoesNotThrow(() -> walls(null, null, null, null, null, null, null, null, 0));
+        assertThrows(IllegalArgumentException.class, () -> walls(null, null, null, null, null, null, -1, null, null));
         assertThrows(IllegalArgumentException.class, () -> walls(null, null, null, null, null, null, null, -1, null));
-        assertThrows(IllegalArgumentException.class, () -> walls(null, null, null, null, null, null, null, null, 0));
+        assertThrows(IllegalArgumentException.class, () -> walls(null, null, null, null, null, null, null, null, -1));
     }
 
     /** #95: MAX_TURNS was a ReferenceAgent-local hardcoded constant with no run-level override at all. */
@@ -124,6 +127,51 @@ class RunSpecTest {
                 () -> RunSpec.builder().task("t").model("m").runId("r1").maxTurns(0).build());
     }
 
+    /** #90: self-review's token budget was a Reviews.java-local hardcoded 12000 with no
+     *  --review-tokens flag at all; 0 means unlimited (the system-wide "0 = no budget" convention). */
+    @Test
+    void argvIncludesReviewTokensWhenSet() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").reviewTokens(5000).build().argv("r1");
+        assertTrue(argv.contains("--review-tokens=5000"));
+    }
+
+    @Test
+    void argvOmitsReviewTokensWhenUnset() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
+        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--review-tokens")));
+    }
+
+    @Test
+    void negativeReviewTokensIsRejectedButZeroIsUnlimited() {
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").reviewTokens(0).build());
+        assertThrows(IllegalArgumentException.class,
+                () -> RunSpec.builder().task("t").model("m").runId("r1").reviewTokens(-1).build());
+    }
+
+    /** every wall/token budget - not just the ones with their own dedicated tests above - accepts 0
+     *  as unlimited (the system-wide "0 = no budget" convention) and rejects only negative. */
+    @Test
+    void everyBudgetFieldAcceptsZeroAndRejectsNegative() {
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").taskWall(0).build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").taskTokens(0).build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").firstTokenTimeout(0).build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").reviewWallSec(0).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").taskWall(-1).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").taskTokens(-1).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").firstTokenTimeout(-1).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").reviewWallSec(-1).build());
+    }
+
+    /** implWall/implTokens/contextWindow/maxTokens are capacities, not spending budgets - a 0
+     *  generation or a 0-wide window is meaningless, so they still reject 0 (unlike every field above). */
+    @Test
+    void capacityFieldsStillRejectZero() {
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").implWall(0).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").implTokens(0).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").contextWindow(0).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").maxTokens(0).build());
+    }
+
     /** #77: every field set to a DISTINCT, recognizable value via the map, so a from()/Builder bug
      *  that transposes two same-typed fields (the exact class of bug from() exists to make impossible)
      *  fails this test on the specific field it mixed up, not just on "something changed". */
@@ -138,7 +186,7 @@ class RunSpecTest {
         spec.put("handoff_notes", true); spec.put("manage_docker", false);
         spec.put("no_context_probe", true); spec.put("context_probe_fresh", true);
         spec.put("context_window", 555); spec.put("first_token_timeout", 666);
-        spec.put("compaction_trigger", 777); spec.put("review_wall_sec", 888);
+        spec.put("compaction_trigger", 777); spec.put("review_wall_sec", 888); spec.put("review_tokens", 8880);
         spec.put("review_blind", true); spec.put("trajectory_reviewer_model", "traj-reviewer-m");
         spec.put("review_weight", 0.11); spec.put("trajectory_weight", 0.22);
         spec.put("trajectory_use", "direct"); spec.put("run_id", "run-xyz");
@@ -171,6 +219,7 @@ class RunSpecTest {
         assertEquals(666, rs.firstTokenTimeout());
         assertEquals(777, rs.compactionTrigger());
         assertEquals(888, rs.reviewWallSec());
+        assertEquals(8880, rs.reviewTokens());
         assertTrue(rs.reviewBlind());
         assertEquals("traj-reviewer-m", rs.trajectoryReviewerModel());
         assertEquals(0.11, rs.reviewWeight());
@@ -204,7 +253,7 @@ class RunSpecTest {
         final var viaBuilder = RunSpec.builder().task("t").model("m").runId("r1").temperature(0.5).build();
         final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null,
                 false, false, false, null, false, false, false, false, null, null, null, null, false, null, null, null,
-                null, "r1", 0.5, null, null, null, null, null, null, null, null, null);
+                null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null);
         assertEquals(viaConstructor, viaBuilder);
     }
 }

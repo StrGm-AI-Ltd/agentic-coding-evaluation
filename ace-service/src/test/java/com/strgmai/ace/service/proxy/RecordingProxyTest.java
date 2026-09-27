@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** RecordingProxy attributes each journaled request to its session via the agent's
@@ -46,6 +47,38 @@ class RecordingProxyTest {
             Thread.sleep(20);
         }
         return Files.readAllLines(journal);
+    }
+
+    /** a token budget of exactly 0 means unlimited (the system-wide "0 = no budget" convention),
+     *  not "already exhausted" - spent.get() >= 0 is always true, so without the fix this would
+     *  429-refuse the very first request of every "unlimited" run. */
+    @Test
+    void aTokenBudgetOfZeroNeverRefuses() throws Exception {
+        final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        upstream.createContext("/v1/chat/completions", ex -> {
+            ex.getRequestBody().readAllBytes();
+            final byte[] body = ("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"}}],"
+                    + "\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}").getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().set("Content-Type", "application/json");
+            ex.sendResponseHeaders(200, body.length);
+            try (var os = ex.getResponseBody()) { os.write(body); }
+        });
+        upstream.start();
+        final var journal = Files.createTempFile("proxy-test", ".jsonl");
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        try {
+            final var proxyBase = proxy.start(journal, 0L, null);   // 0 = unlimited
+            final var client = HttpClient.newHttpClient();
+            final var request = HttpRequest.newBuilder(URI.create(proxyBase + "/chat/completions"))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString("{\"messages\":[],\"stream\":false}"))
+                    .build();
+            final var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, response.statusCode(), "a 0 budget must never refuse: " + response.body());
+        } finally {
+            proxy.stop();
+            upstream.stop(0);
+        }
     }
 
     @Test
@@ -251,8 +284,11 @@ class RecordingProxyTest {
      *  that raised it past ~290s. */
     @Test
     void upstreamTimeoutScalesWithTheRunsFirstTokenTimeout() {
-        assertEquals(180 + 30, RecordingProxy.upstreamTimeoutSec(RecordingProxy.SamplerOverrides.NONE),
-                "unset falls back to ReferenceAgent's own 180s default, plus the margin");
+        // 0/unset means unlimited (the system-wide "0 = no budget" convention): null, so the caller
+        // omits HttpRequest.Builder.timeout(...) entirely rather than a degenerate near-zero duration
+        assertNull(RecordingProxy.upstreamTimeoutSec(RecordingProxy.SamplerOverrides.NONE));
+        assertNull(RecordingProxy.upstreamTimeoutSec(
+                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 0)));
         assertEquals(600 + 30, RecordingProxy.upstreamTimeoutSec(
                 new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 600)),
                 "an operator-configured value well above the old hardcoded 290s ceiling must actually apply");

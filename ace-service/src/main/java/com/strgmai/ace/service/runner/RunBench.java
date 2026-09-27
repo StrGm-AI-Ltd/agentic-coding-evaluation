@@ -191,7 +191,8 @@ public class RunBench {
         // an explicit --max-tokens is an operator override, not a measurement: it wins over
         // whatever step 0 (probed or not) derived
         if (cfg.get("max_tokens_override") instanceof Number mt) cfg.put("max_output_tokens", mt.intValue());
-        final int firstTokenTimeoutSec = cfg.get("first_token_timeout_sec") instanceof Number n3 ? n3.intValue() : 180;
+        // 0 means unlimited (the system-wide "0 = no budget" convention)
+        final int firstTokenTimeoutSec = cfg.get("first_token_timeout_sec") instanceof Number n3 ? n3.intValue() : 0;
         cfg.put("first_token_timeout_ms", firstTokenTimeoutSec * 1000L);
         // pinned once per run and reused at every proxies.start(...) call site (RunBench, Reviews) -
         // the run's own sampler knobs (#72): null fields fall back to the operator-wide ace.*
@@ -208,9 +209,10 @@ public class RunBench {
                 cfg.get("max_output_tokens") instanceof Number mo ? mo.intValue() : null,
                 cfg.get("reasoning_effort") instanceof String re && !re.isBlank() ? re : null,
                 firstTokenTimeoutSec));
-        final int taskWall = cfg.get("task_wall_sec") instanceof Number n ? n.intValue() : 3600;
+        // 0 means unlimited (the system-wide "0 = no budget" convention)
+        final int taskWall = cfg.get("task_wall_sec") instanceof Number n ? n.intValue() : 0;
         long taskTokens = cfg.get("task_tokens") instanceof Number n2 ? n2.longValue()
-                : ((Number) derived.getOrDefault("task_tokens", 60000)).longValue();
+                : ((Number) derived.getOrDefault("task_tokens", 0)).longValue();
         if (!(cfg.get("compaction_trigger") instanceof Number)) cfg.put("compaction_trigger", props.compactionTrigger());
 
         final Map<String, Object> manifest = new LinkedHashMap<>();
@@ -410,20 +412,23 @@ public class RunBench {
         }
     }
 
-    /** ladder.json budgets: L7-style from config; rung budget split plan/implementation for the rest */
+    /** ladder.json budgets: L7-style from config; rung budget split plan/implementation for the rest.
+     *  0 means unlimited (the system-wide "0 = no budget" convention) - both when ladder.json omits
+     *  budget_sec for this task and when the whole rung is genuinely unlimited, plan/impl split to 0
+     *  too rather than a stale 900s/negative remainder. */
     private Map<String, Integer> rungBudgets(String task) {
         try {
             final var rung = json.readTree(getClass().getResourceAsStream("/tasks/ladder.json")).path(task);
-            final int sec = rung.path("budget_sec").asInt(14400);
-            int plan = 900;   // orchestration.plan_phase_sec
+            final int sec = rung.path("budget_sec").asInt(0);
+            final int plan = sec > 0 ? 900 : 0;   // orchestration.plan_phase_sec
             final Map<String, Integer> out = new LinkedHashMap<>();
             out.put("sec", sec);
             out.put("plan_sec", plan);
-            out.put("impl_sec", sec - plan);
+            out.put("impl_sec", sec > 0 ? sec - plan : 0);
             return out;
         } catch (Exception e) {
-            log.warn("could not read ladder.json budgets for task {}; falling back to the generic budget: {}", task, e.toString());
-            return Map.of("sec", 14400, "plan_sec", 900, "impl_sec", 13500);
+            log.warn("could not read ladder.json budgets for task {}; falling back to unlimited: {}", task, e.toString());
+            return Map.of("sec", 0, "plan_sec", 0, "impl_sec", 0);
         }
     }
 
@@ -449,15 +454,20 @@ public class RunBench {
         // silently run every task against whatever model happens to be configured process-wide instead
         // of the model this run actually asked for (a real, previously silent mismatch)
         final String runModel = (String) cfg.get("model");
-        final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number ftt ? ftt.longValue() : 180_000L;
+        // 0 means unlimited (the system-wide "0 = no budget" convention)
+        final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number ftt ? ftt.longValue() : 0L;
         final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
         // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded
         // ReferenceAgent-local constant with no run-level override at all
         final int maxTurns = cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS;
         final long t0 = System.currentTimeMillis();
+        // wall <= 0 means unlimited (the system-wide "0 = no budget" convention) - a "hard deadline"
+        // of right now would be actively misleading, not just an edge case of the normal wording
         String full = plainPlan ? instruction
-                : instruction + "\n\n" + Packs.budgetSection(name, LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm")),
-                        LocalDateTime.now().plusSeconds(wall).format(DateTimeFormatter.ofPattern("HH:mm")), (int) (wall / 60))
+                : instruction + "\n\n" + (wall > 0
+                        ? Packs.budgetSection(name, LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm")),
+                                LocalDateTime.now().plusSeconds(wall).format(DateTimeFormatter.ofPattern("HH:mm")), (int) (wall / 60))
+                        : Packs.unlimitedBudgetSection(name))
                 + "\n\n" + Packs.DOCKER_NOTE;
         final String canonicalSessionId = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + name).getBytes()).toString();
         final String sid = sessionId == null ? canonicalSessionId : sessionId;
@@ -469,13 +479,17 @@ public class RunBench {
                     firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env));
         } finally { if (monitor != null) monitor.interrupt(); }
         if (!plainPlan) appendWindows(manifestOf(cfg), dw, name);
-        // P-1: a session that died on a `length` finish gets one continuation with what is LEFT (R4 C-7)
-        if (!plainPlan && "length".equals(rec.finish()) && rec.rc() != 124 && wall - (System.currentTimeMillis() - t0) / 1000 > 120) {
+        // P-1: a session that died on a `length` finish gets one continuation with what is LEFT (R4
+        // C-7). wall/tokens <= 0 means unlimited (the system-wide "0 = no budget" convention): there
+        // is always "enough" remaining wall-clock, and what's LEFT of an unlimited token budget is
+        // still unlimited, not a collapsed-to-minimum 1000.
+        if (!plainPlan && "length".equals(rec.finish()) && rec.rc() != 124
+                && (wall <= 0 || wall - (System.currentTimeMillis() - t0) / 1000 > 120)) {
             final long spent = ((Number) JournalFacts.facts(journal.toString(), rec.start().toString(), nowIso(), null, null, null).getOrDefault("completion_tokens", 0L)).longValue();
-            long remaining = Math.max(1000, tokens - spent);   // what is LEFT, not a fresh budget (R4 C-7); a fresh proxy enforces it
+            long remaining = tokens <= 0 ? 0 : Math.max(1000, tokens - spent);   // what is LEFT, not a fresh budget (R4 C-7); a fresh proxy enforces it
             final var contProxy = proxies.start(journal, remaining, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
             try {
-                final long contWall = wall - (System.currentTimeMillis() - t0) / 1000;
+                final long contWall = wall <= 0 ? 0 : wall - (System.currentTimeMillis() - t0) / 1000;
                 rec = RunBenchSupport.runBounded(contWall, name + "-continue", rd.resolve("sessions"), sid, contProxy.abort(), () -> agent.run(name + "-continue",
                         "Your previous turn was cut off at the output limit. Continue the task from where you stopped; be concise and act with tools.",
                         contWall, remaining, rd.resolve("sessions"), sid, true, appendSystem, ws.toString(), contProxy.base(), contProxy.abort(),
@@ -501,7 +515,8 @@ public class RunBench {
             final String wrapInstr = name.startsWith("p") || name.equals("implement") ? Packs.MONO_WRAPUP_INSTRUCTION : Packs.wrapupInstruction(name);
             // the wrap-up is a continuation on top of the task budget: its own proxy with its own 2000 tokens (run_bench run_task)
             final var wrapProxy = proxies.start(journal, 2000L, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
-            final int wrapupBase = cfg.get("wrapup_wall_sec") instanceof Number wb ? wb.intValue() : 300;
+            // 0 means unlimited (the system-wide "0 = no budget" convention)
+            final int wrapupBase = cfg.get("wrapup_wall_sec") instanceof Number wb ? wb.intValue() : 0;
             final long wrapWall = (long) (wrapupBase * scale);
             final ReferenceAgent.SessionResult w;   // assigned exactly once below; a legal blank final
             try {
@@ -755,12 +770,13 @@ public class RunBench {
 
     private void handoffStep(final Map<String, Object> cfg, final String runId, final PlanTask t, final Path rd, final Path ws, final Path journal, final Map<String, Object> manifest, Map<String, Object> rec) throws Exception {
         final var proxy = proxies.start(journal, 3000L, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
-        final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 180_000L;
+        final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 0L;   // 0 = unlimited
         final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
         final int maxTurns = cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS;
         try {
             final String handoffSid = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + t.id).getBytes()).toString();
-            final int handoffWall = cfg.get("handoff_wall_sec") instanceof Number hw ? hw.intValue() : 300;
+            // 0 means unlimited (the system-wide "0 = no budget" convention)
+            final int handoffWall = cfg.get("handoff_wall_sec") instanceof Number hw ? hw.intValue() : 0;
             ReferenceAgent.SessionResult h = RunBenchSupport.runBounded(handoffWall, t.id + "-handoff", rd.resolve("sessions"), handoffSid, proxy.abort(),
                     () -> agent.run(t.id + "-handoff", Packs.handoffInstruction(t.id), handoffWall, 3000L,
                             rd.resolve("sessions"), handoffSid, true, rd.resolve("packs/stable.md").toString(), ws.toString(),
@@ -796,11 +812,12 @@ public class RunBench {
             ((Map<String, String>) manifest.get("snapshots")).put("parallel_plan", RunBenchSupport.gitOut(ws, "rev-parse", "phase/parallel_plan"));
         } else {
             final var proxy = proxies.start(journal, 8000L, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
-            final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 180_000L;
+            final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 0L;   // 0 = unlimited
             final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
             final int maxTurns = cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS;
             final String planSid = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/PARALLEL_PLAN").getBytes()).toString();
-            final int parallelPlanWall = cfg.get("parallel_plan_wall_sec") instanceof Number pw ? pw.intValue() : 600;
+            // 0 means unlimited (the system-wide "0 = no budget" convention)
+            final int parallelPlanWall = cfg.get("parallel_plan_wall_sec") instanceof Number pw ? pw.intValue() : 0;
             ReferenceAgent.SessionResult prec;
             try {
                 prec = RunBenchSupport.runBounded(parallelPlanWall, "PARALLEL_PLAN", rd.resolve("sessions"), planSid, proxy.abort(),

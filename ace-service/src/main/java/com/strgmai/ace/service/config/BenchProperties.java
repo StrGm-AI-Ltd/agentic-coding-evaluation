@@ -25,22 +25,13 @@ public record BenchProperties(
     public static final String HARNESS_VERSION = "jls-ref-1.0";   // goes into provenance + the comparability key
     public static final int RESULT_SCHEMA = 3;                   // port of registry.RESULT_SCHEMA
 
-    /** budgets per phase, wall seconds — port of cfg["budgets"] */
-    public int phaseWall(final String phase) {
-        return switch (phase) {
-            case "p0_definition", "p1_plan" -> 3600;
-            case "p2_implementation" -> 14400;
-            default -> 7200;
-        };
-    }
+    /** budgets per phase, wall seconds — port of cfg["budgets"]. 0 means unlimited (the system-wide
+     *  "0 = no budget" convention); every phase defaults to that unless the operator pins one. */
+    public int phaseWall(final String phase) { return 0; }
 
-    /** completion-token budgets per phase, enforced by the recording proxy — port of cfg["token_budgets"] */
-    public int phaseTokens(final String phase) {
-        return switch (phase) {
-            case "p0_definition", "p1_plan" -> 60000;
-            default -> 400000;
-        };
-    }
+    /** completion-token budgets per phase, enforced by the recording proxy — port of
+     *  cfg["token_budgets"]. 0 means unlimited, same convention as phaseWall(). */
+    public int phaseTokens(final String phase) { return 0; }
 
     /** the operator's UPPER BOUND on the window; null = none (the probe owns the window, Python default) */
     public Integer effectiveContextWindow() { return contextWindow() == null || contextWindow() <= 0 ? null : contextWindow(); }
