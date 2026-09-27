@@ -248,6 +248,19 @@ class ExperimentsServiceTest {
         assertTrue(specs.stream().allMatch(s -> Integer.valueOf(5000).equals(s.spec().reviewTokens())));
     }
 
+    /** Found live 2026-09-27: the FIX step (merge-conflict repair after a broken parallel wave) was
+     *  a fixed literal (900s/20000 tokens) with no run-level control at all; experiments must be
+     *  able to pin it per-arm too. */
+    @Test
+    void fixBudgetFlowsThroughToEveryArmsRunSpec() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab",
+                Map.<String, Object>of("model_a", "a", "model_b", "b", "fix_wall", 1200, "fix_tokens", 30000), 1);
+        assertFalse(specs.isEmpty());
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(1200).equals(s.spec().fixWall())));
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(30000).equals(s.spec().fixTokens())));
+    }
+
     /** #95: MAX_TURNS was a ReferenceAgent-local hardcoded constant with no run-level override;
      *  experiments must be able to pin it per-run the same way they pin every other budget. */
     @Test

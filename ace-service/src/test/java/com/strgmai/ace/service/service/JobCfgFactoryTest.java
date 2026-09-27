@@ -58,6 +58,19 @@ class JobCfgFactoryTest {
         assertEquals(300, cfg.get("wrapup_wall_sec"));
     }
 
+    /** Found live 2026-09-27: the FIX step (merge-conflict repair after a broken parallel wave) was
+     *  a fixed literal (900s/20000 tokens) with no run-level control at all. */
+    @Test
+    void fixBudgetFlagsAreParsedWhenPresentAndAbsentOtherwise() {
+        final var cfg = JobCfgFactory.build(List.of("--fix-wall=1200", "--fix-tokens=30000"), props());
+        assertEquals(1200, cfg.get("fix_wall_sec"));
+        assertEquals(30000, cfg.get("fix_tokens"));
+
+        final var without = JobCfgFactory.build(List.of(), props());
+        assertFalse(without.containsKey("fix_wall_sec"));
+        assertFalse(without.containsKey("fix_tokens"));
+    }
+
     @Test
     void maxTurnsIsParsedWhenPresentAndAbsentOtherwise() {
         assertEquals(50, JobCfgFactory.build(List.of("--max-turns=50"), props()).get("max_turns"));
