@@ -7,6 +7,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** reasoningKind() maps a session name to a DEFAULT_REASONING key; this pins the mapping so a
@@ -41,21 +42,45 @@ class ReferenceAgentTest {
         // an external reviewer's extraEnv (Reviews.externalCredentials) is ONLY its provider key -
         // no PATH/HOME - and must never reach the model's own bash tool (#98)
         final var credentialsOnly = Map.of("ANTHROPIC_API_KEY", "sk-live-secret");
-        final var env = ReferenceAgent.toolEnv(credentialsOnly);
+        final var env = ReferenceAgent.toolEnv(credentialsOnly, "/task/ws");
         assertFalse(env.containsKey("ANTHROPIC_API_KEY"), "a provider credential must never reach the tool-execution env");
         assertTrue(env.containsKey("PATH"), "a credential-only extraEnv must still get a usable PATH");
         assertTrue(env.containsKey("HOME"));
 
         // a normal run's own scrubbed environment (RunBenchSupport.scrubbedEnv) passes through unchanged
         final var scrubbed = Map.of("HOME", "/scratch/home", "PATH", "/scratch/home/bin:/usr/bin", "LANG", "en_US.UTF-8");
-        final var passthrough = ReferenceAgent.toolEnv(scrubbed);
+        final var passthrough = ReferenceAgent.toolEnv(scrubbed, "/task/ws");
         assertEquals("/scratch/home", passthrough.get("HOME"));
         assertEquals("/scratch/home/bin:/usr/bin", passthrough.get("PATH"));
 
         // no extraEnv at all (a bare unit-test context) still gets a sane default
-        final var bare = ReferenceAgent.toolEnv(null);
+        final var bare = ReferenceAgent.toolEnv(null, "/task/ws");
         assertTrue(bare.containsKey("PATH"));
         assertTrue(bare.containsKey("HOME"));
+    }
+
+    /** #149 (live incident, 2026-09-27): a benchmarked agent's `gradle --stop` killed two unrelated
+     *  host Gradle daemons because HOME-env scrubbing never reaches a JVM tool's own user.home
+     *  (populated from the OS password database, not $HOME, unless JAVA_TOOL_OPTIONS pins it). */
+    @Test
+    void toolEnvNeverFallsBackToTheRealOperatorHomeAndPinsJvmUserHomeToMatch() {
+        final String realHome = System.getProperty("user.home");
+
+        // no extraEnv at all
+        final var bare = ReferenceAgent.toolEnv(null, "/task/ws");
+        assertNotEquals(realHome, bare.get("HOME"), "a bare context must never fall back to the real operator home");
+        assertEquals("-Duser.home=" + bare.get("HOME"), bare.get("JAVA_TOOL_OPTIONS"),
+                "a JVM tool's own user.home must be pinned to match, or gradle/maven escape the sandbox entirely");
+
+        // an external reviewer's credential-only extraEnv (Reviews.externalCredentials) has no HOME either
+        final var reviewer = ReferenceAgent.toolEnv(Map.of("ANTHROPIC_API_KEY", "sk-x"), "/task/ws");
+        assertNotEquals(realHome, reviewer.get("HOME"));
+        assertEquals("-Duser.home=" + reviewer.get("HOME"), reviewer.get("JAVA_TOOL_OPTIONS"));
+
+        // a normal run's already-scrubbed HOME (RunBenchSupport.scrubbedEnv) still gets the pin -
+        // scrubbedEnv only sets the HOME env var, which alone never reaches a JVM tool's user.home
+        final var scrubbed = ReferenceAgent.toolEnv(Map.of("HOME", "/scratch/run-home"), "/task/ws");
+        assertEquals("-Duser.home=/scratch/run-home", scrubbed.get("JAVA_TOOL_OPTIONS"));
     }
 
     /** #96: the provider switch used to mix exact-match (OpenAI/OpenRouter/Anthropic) with

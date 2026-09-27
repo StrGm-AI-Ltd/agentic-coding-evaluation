@@ -210,7 +210,7 @@ public class ReferenceAgent {
         final List<ToolSpecification> specs = toolSpecs();
         // the run's SCRUBBED environment (fresh HOME, docker shim, pinned JAVA_HOME, AB_RUN_ID) is the
         // base for every tool call; extraEnv null = a bare unit-test context
-        Map<String, String> env = toolEnv(extraEnv);
+        Map<String, String> env = toolEnv(extraEnv, cwd);
 
         int turns = 0, toolErrors = 0, compactions = 0, lastPrompt = 0;
         String finish = null; int rc = 0;
@@ -380,16 +380,26 @@ public class ReferenceAgent {
      *  map from Reviews.externalCredentials), with any provider API key stripped (#98: the model's own
      *  bash tool must never see the credential apiKeyFor() uses for the chat client) and a baseline
      *  PATH/HOME/LANG guaranteed even when extraEnv didn't carry one (an external reviewer's
-     *  credential-only map otherwise leaves its bash tool unable to find any binary at all). */
-    static Map<String, String> toolEnv(final Map<String, String> extraEnv) {
-        final Map<String, String> env = extraEnv != null ? new LinkedHashMap<>(extraEnv)
-                : new LinkedHashMap<>(Map.of("HOME", System.getProperty("user.home"), "PATH", System.getenv().getOrDefault("PATH", "/usr/bin:/bin"), "LANG", "en_US.UTF-8"));
+     *  credential-only map otherwise leaves its bash tool unable to find any binary at all).
+     *
+     *  #149 (live incident, 2026-09-27): HOME here NEVER falls back to the real operator home - a
+     *  reviewer/bare-context session that reaches this fallback gets one isolated under cwd instead.
+     *  That alone is not enough, though: a JVM-based tool the agent runs (gradle, maven, a bare
+     *  `java`) resolves its OWN home via System.getProperty("user.home"), which on this JVM/OS reads
+     *  the OS password database (getpwuid), not the HOME env var - so even scrubbedEnv's already-
+     *  isolated HOME never reached it. `gradle --stop` run inside a "sandboxed" session therefore
+     *  targeted the REAL ~/.gradle/daemon registry and killed two unrelated host bootRun daemons.
+     *  JAVA_TOOL_OPTIONS is honored by every JVM (not just the java launcher) and pins user.home to
+     *  match, closing that specific vector for every tool-execution env that passes through here. */
+    static Map<String, String> toolEnv(final Map<String, String> extraEnv, final String cwd) {
+        final Map<String, String> env = extraEnv != null ? new LinkedHashMap<>(extraEnv) : new LinkedHashMap<>();
         env.keySet().removeAll(CREDENTIAL_ENV_KEYS);
-        env.putIfAbsent("HOME", System.getProperty("user.home"));
+        env.putIfAbsent("HOME", Path.of(cwd, ".ace-tool-home").toString());
         env.putIfAbsent("PATH", System.getenv().getOrDefault("PATH", "/usr/bin:/bin"));
         env.putIfAbsent("LANG", "en_US.UTF-8");
         env.putIfAbsent("CI", "1");
         env.putIfAbsent("NO_COLOR", "1");
+        env.put("JAVA_TOOL_OPTIONS", "-Duser.home=" + env.get("HOME"));
         return env;
     }
 
