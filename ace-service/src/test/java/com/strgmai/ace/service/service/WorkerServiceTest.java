@@ -146,6 +146,59 @@ class WorkerServiceTest {
         verify(queue, never()).finish(eq(JOB_1), eq("failed"), anyInt(), anyString());
     }
 
+    /** Live bug found 2026-09-27: the cancel-watch thread called probe.abortInflight() exactly once
+     *  (its old loop condition, `!cancelCurrent`, went false right after that first reaction) - but
+     *  ContextProbe.askRetry() opens a BRAND NEW request right after an aborted one fails, and
+     *  probe()'s own loop across context sizes does too. Neither of those later requests was ever
+     *  aborted, so a cancelled job could sit "running" indefinitely past cancellation. This drives a
+     *  real cancel-watch thread against a runOnce() that "runs" for several seconds and asserts the
+     *  watch keeps re-aborting every poll cycle, not just the first time. */
+    @Test
+    void cancelWatchKeepsAbortingTheProbeUntilTheJobActuallyStops() throws Exception {
+        final var tmpHome = Files.createTempDirectory("fake-home");
+        final var resultsDir = Files.createTempDirectory("results");
+        final JobQueue queue = mock(JobQueue.class);
+        when(queue.list()).thenReturn(List.of());
+        final TreatmentPin pin = mock(TreatmentPin.class);
+        when(pin.current()).thenReturn("build-abc123");
+        final Preflight preflight = mock(Preflight.class);
+        when(preflight.check(any())).thenReturn(new Preflight.Report(List.of(), false));
+        final BenchProperties props = mock(BenchProperties.class);
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(Files.createTempDirectory("ws").toString());
+        when(props.model()).thenReturn("m");
+        final RunBench runBench = mock(RunBench.class);
+        final ContextProbe probe = mock(ContextProbe.class);
+        // stands in for a probe stuck retrying after each abort: deliberately UNINTERRUPTIBLE, the
+        // same way a blocking HttpResponseInputStream.read() ignores Thread.interrupt() (R14) - a
+        // sleep()-based stand-in would exit the instant currentJobFuture.cancel(true) interrupts it,
+        // masking exactly the bug this test exists to catch. Long enough to observe more than one
+        // 2-second cancel-watch poll cycle once cancellation is requested mid-run.
+        when(runBench.runOnce(any(), any(), any(), any(), any())).thenAnswer(inv -> {
+            final long deadline = System.currentTimeMillis() + 7000;
+            while (System.currentTimeMillis() < deadline) {
+                try { Thread.sleep(200); } catch (InterruptedException ignored) { /* uninterruptible, like the real stuck read */ }
+            }
+            return Map.of();
+        });
+
+        final JobQueue.Job job = new JobQueue.Job(JOB_1, null, "A", 1, "run", "run-1",
+                List.of("--task=L3p_point_in_time", "--model=m"),
+                "queued", null, 0, null, null, false, null, null, "build-abc123", "build-abc123");
+        when(queue.claim()).thenReturn(job);
+        final var cancelRequested = new java.util.concurrent.atomic.AtomicBoolean(false);
+        when(queue.get(JOB_1)).thenAnswer(inv -> Map.of("cancel_requested", cancelRequested.get()));
+
+        final WorkerService ws = new WorkerService(queue, runBench, mock(ImporterService.class),
+                mock(ExperimentsService.class), preflight, pin, props, probe);
+
+        withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
+        Thread.sleep(500);           // let the job actually start running first
+        cancelRequested.set(true);   // simulate the user clicking cancel mid-run
+
+        verify(probe, timeout(6000).atLeast(2)).abortInflight();
+    }
+
     @Test
     void fatalPreflightCheckIsBlocked() throws Exception {
         final var tmpHome = Files.createTempDirectory("fake-home");
