@@ -16,7 +16,7 @@ class RunSpecTest {
     private static RunSpec walls(final Double temperature, final Double topP, final Integer topK,
                                   final Double repetitionPenalty, final Integer maxTokens, final String reasoningEffort,
                                   final Integer parallelPlanWall, final Integer handoffWall, final Integer wrapupWall) {
-        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", 3600, null, null, null, null, false, false, false, null, false, true, false, false, null, null, null, null, false, null, null, null, null, "r1", temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, null, null, null, null);
+        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", 3600, null, null, null, null, false, false, false, null, false, true, false, false, null, null, null, null, false, null, null, null, null, "r1", temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, null, null, null, null, null, null, null);
     }
 
     @Test
@@ -168,6 +168,34 @@ class RunSpecTest {
         assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").fixTokens(-1).build());
     }
 
+    /** Found live 2026-09-27: the PARALLEL_PLAN/handoff/wrap-up TOKEN budgets (unlike their walls,
+     *  fixed in PR #153) were still fixed literals (8000/3000/2000) with no run-level control. */
+    @Test
+    void argvIncludesTheNewTokenBudgetsWhenSet() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1")
+                .parallelPlanTokens(9000).handoffTokens(4000).wrapupTokens(2500).build().argv("r1");
+        assertTrue(argv.contains("--parallel-plan-tokens=9000"));
+        assertTrue(argv.contains("--handoff-tokens=4000"));
+        assertTrue(argv.contains("--wrapup-tokens=2500"));
+    }
+
+    @Test
+    void argvOmitsTheNewTokenBudgetsWhenUnset() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
+        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--parallel-plan-tokens")
+                || a.startsWith("--handoff-tokens") || a.startsWith("--wrapup-tokens")));
+    }
+
+    @Test
+    void negativeNewTokenBudgetsAreRejectedButZeroIsUnlimited() {
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").parallelPlanTokens(0).build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").handoffTokens(0).build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").wrapupTokens(0).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").parallelPlanTokens(-1).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").handoffTokens(-1).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").wrapupTokens(-1).build());
+    }
+
     /** every wall/token budget - not just the ones with their own dedicated tests above - accepts 0
      *  as unlimited (the system-wide "0 = no budget" convention) and rejects only negative. */
     @Test
@@ -184,6 +212,12 @@ class RunSpecTest {
         assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").reviewWallSec(-1).build());
         assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").fixWall(-1).build());
         assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").fixTokens(-1).build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").parallelPlanTokens(0).build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").handoffTokens(0).build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").wrapupTokens(0).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").parallelPlanTokens(-1).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").handoffTokens(-1).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").wrapupTokens(-1).build());
     }
 
     /** implWall/implTokens/contextWindow/maxTokens are capacities, not spending budgets - a 0
@@ -219,6 +253,7 @@ class RunSpecTest {
         spec.put("reasoning_effort", "high");
         spec.put("parallel_plan_wall", 100); spec.put("handoff_wall", 200); spec.put("wrapup_wall", 300);
         spec.put("fix_wall", 1200); spec.put("fix_tokens", 30000);
+        spec.put("parallel_plan_tokens", 9000); spec.put("handoff_tokens", 4000); spec.put("wrapup_tokens", 2500);
 
         final var rs = RunSpec.from(spec);
 
@@ -262,6 +297,9 @@ class RunSpecTest {
         assertEquals(300, rs.wrapupWall());
         assertEquals(1200, rs.fixWall());
         assertEquals(30000, rs.fixTokens());
+        assertEquals(9000, rs.parallelPlanTokens());
+        assertEquals(4000, rs.handoffTokens());
+        assertEquals(2500, rs.wrapupTokens());
     }
 
     @Test
@@ -278,7 +316,7 @@ class RunSpecTest {
     @Test
     void builderProducesTheSameRunSpecAsThePositionalConstructor() {
         final var viaBuilder = RunSpec.builder().task("t").model("m").runId("r1").temperature(0.5).build();
-        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, false, null, null, null, null, false, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null);
+        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, false, null, null, null, null, false, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         assertEquals(viaConstructor, viaBuilder);
     }
 }

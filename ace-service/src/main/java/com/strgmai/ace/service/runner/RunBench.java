@@ -513,15 +513,17 @@ public class RunBench {
             final Double shortDps = ((Map<String, Object>) manifestOf(cfg).get("derived")).get("decode_tps_short") instanceof Number n ? n.doubleValue() : null;
             final double scale = shortDps != null && here != null && here > 0 ? Math.min(4.0, Math.max(1.0, shortDps / here)) : 1.0;
             final String wrapInstr = name.startsWith("p") || name.equals("implement") ? Packs.MONO_WRAPUP_INSTRUCTION : Packs.wrapupInstruction(name);
-            // the wrap-up is a continuation on top of the task budget: its own proxy with its own 2000 tokens (run_bench run_task)
-            final var wrapProxy = proxies.start(journal, 2000L, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+            // the wrap-up is a continuation on top of the task budget: its own proxy with its own token
+            // budget (run_bench run_task) - 0 means unlimited (the system-wide "0 = no budget" convention)
+            final long wrapupTokens = cfg.get("wrapup_tokens") instanceof Number wt ? wt.longValue() : 0L;
+            final var wrapProxy = proxies.start(journal, wrapupTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
             // 0 means unlimited (the system-wide "0 = no budget" convention)
             final int wrapupBase = cfg.get("wrapup_wall_sec") instanceof Number wb ? wb.intValue() : 0;
             final long wrapWall = (long) (wrapupBase * scale);
             final ReferenceAgent.SessionResult w;   // assigned exactly once below; a legal blank final
             try {
                 w = RunBenchSupport.runBounded(wrapWall, name + "-wrapup", rd.resolve("sessions"), canonicalSessionId, wrapProxy.abort(),
-                        () -> agent.run(name + "-wrapup", wrapInstr, wrapWall, 2000L, rd.resolve("sessions"), canonicalSessionId,
+                        () -> agent.run(name + "-wrapup", wrapInstr, wrapWall, wrapupTokens, rd.resolve("sessions"), canonicalSessionId,
                                 true, appendSystem, ws.toString(), wrapProxy.base(), wrapProxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env));
             } finally { wrapProxy.stop(); }
             out.put("wrapup_rc", w.rc());
@@ -769,7 +771,9 @@ public class RunBench {
     }
 
     private void handoffStep(final Map<String, Object> cfg, final String runId, final PlanTask t, final Path rd, final Path ws, final Path journal, final Map<String, Object> manifest, Map<String, Object> rec) throws Exception {
-        final var proxy = proxies.start(journal, 3000L, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+        // 0 means unlimited (the system-wide "0 = no budget" convention)
+        final long handoffTokens = cfg.get("handoff_tokens") instanceof Number ht ? ht.longValue() : 0L;
+        final var proxy = proxies.start(journal, handoffTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
         final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 0L;   // 0 = unlimited
         final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
         final int maxTurns = cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS;
@@ -778,7 +782,7 @@ public class RunBench {
             // 0 means unlimited (the system-wide "0 = no budget" convention)
             final int handoffWall = cfg.get("handoff_wall_sec") instanceof Number hw ? hw.intValue() : 0;
             ReferenceAgent.SessionResult h = RunBenchSupport.runBounded(handoffWall, t.id + "-handoff", rd.resolve("sessions"), handoffSid, proxy.abort(),
-                    () -> agent.run(t.id + "-handoff", Packs.handoffInstruction(t.id), handoffWall, 3000L,
+                    () -> agent.run(t.id + "-handoff", Packs.handoffInstruction(t.id), handoffWall, handoffTokens,
                             rd.resolve("sessions"), handoffSid, true, rd.resolve("packs/stable.md").toString(), ws.toString(),
                             proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("model"), null));
             final Path hp = ws.resolve("handoff").resolve(t.id + ".md");
@@ -811,7 +815,9 @@ public class RunBench {
             log.info("run {}: phase/parallel_plan already completed in a prior attempt, resuming past it", runId);
             ((Map<String, String>) manifest.get("snapshots")).put("parallel_plan", RunBenchSupport.gitOut(ws, "rev-parse", "phase/parallel_plan"));
         } else {
-            final var proxy = proxies.start(journal, 8000L, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+            // 0 means unlimited (the system-wide "0 = no budget" convention)
+            final long parallelPlanTokens = cfg.get("parallel_plan_tokens") instanceof Number ppt ? ppt.longValue() : 0L;
+            final var proxy = proxies.start(journal, parallelPlanTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
             final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 0L;   // 0 = unlimited
             final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
             final int maxTurns = cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS;
@@ -821,7 +827,7 @@ public class RunBench {
             ReferenceAgent.SessionResult prec;
             try {
                 prec = RunBenchSupport.runBounded(parallelPlanWall, "PARALLEL_PLAN", rd.resolve("sessions"), planSid, proxy.abort(),
-                        () -> agent.run("PARALLEL_PLAN", Packs.parallelPlanPack(tasks) + "\n\n" + Packs.PARALLEL_PLAN_INSTRUCTION, parallelPlanWall, 8000L,
+                        () -> agent.run("PARALLEL_PLAN", Packs.parallelPlanPack(tasks) + "\n\n" + Packs.PARALLEL_PLAN_INSTRUCTION, parallelPlanWall, parallelPlanTokens,
                                 rd.resolve("sessions"), planSid, false, rd.resolve("packs/stable.md").toString(), ws.toString(),
                                 proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("model"), null));
             } finally { proxy.stop(); }

@@ -42,6 +42,11 @@ final class JobCfgFactory {
         // (900s/20000 tokens) with no run-level control at all
         if (WorkerService.flag(argv, "--fix-wall") != null) cfg.put("fix_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--fix-wall")));
         if (WorkerService.flag(argv, "--fix-tokens") != null) cfg.put("fix_tokens", Integer.parseInt(WorkerService.flag(argv, "--fix-tokens")));
+        // PARALLEL_PLAN/handoff/wrap-up TOKEN budgets (found live 2026-09-27): were fixed literals
+        // (8000/3000/2000) with no run-level control, same class of bug as their walls above
+        if (WorkerService.flag(argv, "--parallel-plan-tokens") != null) cfg.put("parallel_plan_tokens", Integer.parseInt(WorkerService.flag(argv, "--parallel-plan-tokens")));
+        if (WorkerService.flag(argv, "--handoff-tokens") != null) cfg.put("handoff_tokens", Integer.parseInt(WorkerService.flag(argv, "--handoff-tokens")));
+        if (WorkerService.flag(argv, "--wrapup-tokens") != null) cfg.put("wrapup_tokens", Integer.parseInt(WorkerService.flag(argv, "--wrapup-tokens")));
         // a pinned --context-window IS the window: it skips step 0, whose whole job is to measure one
         final String window = WorkerService.flag(argv, "--context-window");
         if (window != null) cfg.put("context_window", Integer.parseInt(window));

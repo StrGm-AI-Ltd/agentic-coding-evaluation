@@ -69,7 +69,8 @@ public class ExperimentsService {
                                 Double temperature, Double topP, Integer topK, Double repetitionPenalty,
                                 Integer maxTokens, String reasoningEffort,
                                 Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns,
-                                Integer reviewTokens, Integer fixWall, Integer fixTokens) {}
+                                Integer reviewTokens, Integer fixWall, Integer fixTokens,
+                                Integer parallelPlanTokens, Integer handoffTokens, Integer wrapupTokens) {}
 
     private CommonParams resolveCommon(final Map<String, Object> params) {
         final String reviewerModel = str(params.get("reviewer_model"));
@@ -80,7 +81,8 @@ public class ExperimentsService {
                 temperature(params), topP(params), topK(params), repetitionPenalty(params),
                 maxTokens(params), reasoningEffort(params),
                 parallelPlanWall(params), handoffWall(params), wrapupWall(params), maxTurns(params),
-                reviewTokens(params), fixWall(params), fixTokens(params));
+                reviewTokens(params), fixWall(params), fixTokens(params),
+                parallelPlanTokens(params), handoffTokens(params), wrapupTokens(params));
     }
 
     public List<ArmSpec> plan(String template, Map<String, Object> params, final int k) {
@@ -118,7 +120,9 @@ public class ExperimentsService {
                                 .runId("he-" + tag + "-" + shortName(model) + "-" + arm.replace("+", "") + "-r" + i)
                                 .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                                 .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
-                                .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
+                                .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens())
+                                .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens())
                                 .build()));
             }
             case "model_ab" -> {
@@ -140,6 +144,7 @@ public class ExperimentsService {
                             .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                             .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                             .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens())
                             .build()));
                     specs.add(new ArmSpec("B", i, RunSpec.builder()
                             .task(RUNG).model(b).mode("orchestrated").planSource("reference").taskWall(wall)
@@ -152,6 +157,7 @@ public class ExperimentsService {
                             .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                             .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                             .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens())
                             .build()));
                 }
             }
@@ -182,7 +188,9 @@ public class ExperimentsService {
                                 .runId("aa-" + tag + "-" + shortName(model) + "-" + agent + "-r" + i)
                                 .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                                 .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
-                                .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
+                                .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens())
+                                .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens())
                                 .build()));
             }
             default -> throw new IllegalArgumentException("unknown template " + template + "; known: harness_effect, model_ab, agent_ab");
@@ -307,6 +315,20 @@ public class ExperimentsService {
 
     Integer fixTokens(Map<String, Object> params) {
         return params.get("fix_tokens") == null ? null : num(params.get("fix_tokens"));
+    }
+
+    // PARALLEL_PLAN/handoff/wrap-up TOKEN budgets (found live 2026-09-27): were fixed literals
+    // (8000/3000/2000) with no run-level control; explicit params.* wins, unset keeps that literal
+    Integer parallelPlanTokens(Map<String, Object> params) {
+        return params.get("parallel_plan_tokens") == null ? null : num(params.get("parallel_plan_tokens"));
+    }
+
+    Integer handoffTokens(Map<String, Object> params) {
+        return params.get("handoff_tokens") == null ? null : num(params.get("handoff_tokens"));
+    }
+
+    Integer wrapupTokens(Map<String, Object> params) {
+        return params.get("wrapup_tokens") == null ? null : num(params.get("wrapup_tokens"));
     }
 
     // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded
