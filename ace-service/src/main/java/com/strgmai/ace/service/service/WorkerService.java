@@ -114,16 +114,23 @@ public class WorkerService {
         busy.set(true);
         cancelCurrent = false;
         Thread cancelWatch = new Thread(() -> {   // worker.py supervise(): poll cancel_requested, kill the run
-            while (busy.get() && !cancelCurrent) {
+            while (busy.get()) {
                 if (Boolean.TRUE.equals(queue.get(job.id()).get("cancel_requested"))) {
                     cancelCurrent = true;
                     // interrupt the worker thread: a blocking model-server call or Thread.sleep must
                     // unwind NOW, not wait out the rest of the run's budget for the flag to be noticed.
                     // interrupt() alone does not reach a blocking HttpResponseInputStream.read() (R14,
-                    // same class of bug as RecordingProxy pre-R12) - probe.abortInflight() closes it directly
+                    // same class of bug as RecordingProxy pre-R12) - probe.abortInflight() closes it directly.
+                    // Found live: a single one-shot abort here only closes whatever request happens to
+                    // be in flight AT THAT INSTANT. ContextProbe.askRetry() opens a brand new request
+                    // right after an aborted one fails (so does probe()'s own loop across context
+                    // sizes), and this thread used to stop watching immediately after its first
+                    // reaction (the old loop condition was `!cancelCurrent`, true forever once set) -
+                    // the job sat "running" indefinitely past cancellation, blocked on that new,
+                    // never-aborted request. Keep polling and re-aborting every cycle instead, until
+                    // the job itself actually finishes.
                     if (currentJobFuture != null) currentJobFuture.cancel(true);
                     probe.abortInflight();
-                    return;
                 }
                 try { Thread.sleep(2000); } catch (InterruptedException e) { return; }
             }
