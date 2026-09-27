@@ -20,28 +20,55 @@ public final class DockerService {
     private DockerService() {}
 
     private static final Logger log = LoggerFactory.getLogger(DockerService.class);
+    /** how often dockerUp() will relaunch a backend that's still not answering - found live
+     *  2026-09-27: the old code relaunched exactly ONCE, at the timeout's halfway mark, so a run
+     *  with a long timeoutSec spent most of it waiting on a relaunch attempt that itself failed to
+     *  take, instead of trying again. */
+    private static final int RELAUNCH_INTERVAL_SEC = 90;
 
     /** cheap, daemon-free: is Docker Desktop's backend alive right now */
     public static boolean dockerRunning() {
         return sh(8, "pgrep", "-f", "com.docker.backend").rc == 0;
     }
 
-    /** start Docker Desktop and wait for the daemon; relaunch once halfway (after a hard kill it can need a second start) */
+    /** start Docker Desktop and wait for the daemon. Relaunches on a fixed cadence rather than once
+     *  at the halfway mark, and relaunches IMMEDIATELY - rather than waiting out the rest of the
+     *  interval - when the backend process is gone entirely (a crash mid-boot), as opposed to merely
+     *  still booting (its VM's cold start under memory pressure from a co-resident model server is
+     *  expected to take a while, not a reason to kill and retry). */
     public static boolean dockerUp(final int timeoutSec) {
         sh(10, "open", "-a", "Docker");
-        final long t0 = System.currentTimeMillis();
-        boolean relaunched = false;
-        while (System.currentTimeMillis() - t0 < timeoutSec * 1000L) {
+        final long deadline = System.currentTimeMillis() + timeoutSec * 1000L;
+        long nextRelaunch = System.currentTimeMillis() + RELAUNCH_INTERVAL_SEC * 1000L;
+        while (System.currentTimeMillis() < deadline) {
             if (sh(10, "docker", "info", "--format", "{{.ServerVersion}}").rc == 0) return true;
-            if (!relaunched && System.currentTimeMillis() - t0 > timeoutSec * 500L) {
+            if (shouldRelaunch(dockerRunning(), System.currentTimeMillis(), nextRelaunch)) {
                 sh(10, "pkill", "-9", "-f", "com.docker.backend");
                 sleep(5);
                 sh(10, "open", "-a", "Docker");
-                relaunched = true;
+                nextRelaunch = System.currentTimeMillis() + RELAUNCH_INTERVAL_SEC * 1000L;
             }
             sleep(5);
         }
         return false;
+    }
+
+    /** the actual retry POLICY dockerUp() follows, pulled out so it's unit-testable without
+     *  spawning real processes: relaunch now if the backend process is gone entirely (crashed - no
+     *  reason to wait out the rest of the interval), or if it's still alive but the relaunch
+     *  interval has elapsed without the daemon answering (booting too long to just be cold-start). */
+    static boolean shouldRelaunch(final boolean backendAlive, final long nowMs, final long nextRelaunchAtMs) {
+        return !backendAlive || nowMs >= nextRelaunchAtMs;
+    }
+
+    /** never treat an idle window as safe to close-and-kill while a docker CLI operation (compose
+     *  up, build) is still actively running as a child process - found live 2026-09-27:
+     *  dockerCliBusy() existed for exactly this but had no caller anywhere, so the idle monitor could
+     *  hard-kill the backend mid-operation, because the shim only logs at INVOCATION time and a
+     *  long-running compose/build with no fresh shim-log entry looked identical to genuine idleness.
+     *  A dead backend (!up) still closes the window regardless - there's nothing left to protect. */
+    public static boolean shouldCloseWindow(final boolean up, final double idleSec, final int idleThresholdSec, final boolean cliBusy) {
+        return !up || (idleSec > idleThresholdSec && !cliBusy);
     }
 
     /** quit Docker Desktop so its VM stops competing with the model; it wedges, so fall back to a hard kill quickly */
