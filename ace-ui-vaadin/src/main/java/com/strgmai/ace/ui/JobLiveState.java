@@ -86,6 +86,7 @@ public final class JobLiveState implements Serializable {
                 final var sessionId = Fmt.textOr(data.path("session_id"), "");
                 final var startTs = Fmt.textOr(data.path("ts"), null);
                 if (startTs != null) sessionStartTs.put(sessionId, startTs);
+                closeAbandonedAttempt(sessionId);
                 sessions.add(new SessionRow(sessionId, sessionLabel(data), sessionDescription(data), null, null, null, null, null, null, null, startTs));
             }
             case "session_done" -> markSessionDone(data);
@@ -188,12 +189,10 @@ public final class JobLiveState implements Serializable {
         if (sessionId == null || sessionId.isBlank()) return;
         final var finish = Fmt.textOr(data.path("finish"), "?");
         final var wallSec = wallSeconds(sessionStartTs.get(sessionId), Fmt.textOr(data.path("ts"), null));
-        for (int i = 0; i < sessions.size(); i++) {
-            final var s = sessions.get(i);
-            if (!sessionId.equals(s.id())) continue;
-            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), finish, s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), wallSec, s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts()));
-            return;
-        }
+        final int i = currentRowIndex(sessionId);
+        if (i < 0) return;
+        final var s = sessions.get(i);
+        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), finish, s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), wallSec, s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts()));
     }
 
     /** null if either timestamp is missing/unparseable (a degenerate payload, or the session started
@@ -212,17 +211,15 @@ public final class JobLiveState implements Serializable {
     private void accumulateSpeed(final JsonNode data) {
         final var sessionId = Fmt.textOr(data.path("session_id"), null);
         if (sessionId == null || sessionId.isBlank()) return;
-        for (int i = 0; i < sessions.size(); i++) {
-            final var s = sessions.get(i);
-            if (!sessionId.equals(s.id())) continue;
-            final var sums = speedSums.computeIfAbsent(sessionId, k -> new double[4]);
-            if (data.path("prefill_tok_per_sec").isNumber()) { sums[0] += data.path("prefill_tok_per_sec").asDouble(); sums[1]++; }
-            if (data.path("decode_tok_per_sec").isNumber()) { sums[2] += data.path("decode_tok_per_sec").asDouble(); sums[3]++; }
-            final Double avgPrefill = sums[1] > 0 ? sums[0] / sums[1] : null;
-            final Double avgDecode = sums[3] > 0 ? sums[2] / sums[3] : null;
-            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), avgPrefill, avgDecode, s.wallSec(), s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts()));
-            return;
-        }
+        final int i = currentRowIndex(sessionId);
+        if (i < 0) return;
+        final var s = sessions.get(i);
+        final var sums = speedSums.computeIfAbsent(sessionId, k -> new double[4]);
+        if (data.path("prefill_tok_per_sec").isNumber()) { sums[0] += data.path("prefill_tok_per_sec").asDouble(); sums[1]++; }
+        if (data.path("decode_tok_per_sec").isNumber()) { sums[2] += data.path("decode_tok_per_sec").asDouble(); sums[3]++; }
+        final Double avgPrefill = sums[1] > 0 ? sums[0] / sums[1] : null;
+        final Double avgDecode = sums[3] > 0 ? sums[2] / sums[3] : null;
+        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), avgPrefill, avgDecode, s.wallSec(), s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts()));
     }
 
     /** Sums a request's completion tokens (when present - not every request does, e.g. errors) into
@@ -231,13 +228,11 @@ public final class JobLiveState implements Serializable {
     private void accumulateTokens(final JsonNode data) {
         final var sessionId = Fmt.textOr(data.path("session_id"), null);
         if (sessionId == null || sessionId.isBlank() || !data.path("completion_tokens").isNumber()) return;
-        for (int i = 0; i < sessions.size(); i++) {
-            final var s = sessions.get(i);
-            if (!sessionId.equals(s.id())) continue;
-            final var total = tokenTotals.merge(sessionId, data.path("completion_tokens").asLong(), Long::sum);
-            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), total, s.prefillWallSec(), s.decodeWallSec(), s.ts()));
-            return;
-        }
+        final int i = currentRowIndex(sessionId);
+        if (i < 0) return;
+        final var s = sessions.get(i);
+        final var total = tokenTotals.merge(sessionId, data.path("completion_tokens").asLong(), Long::sum);
+        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), total, s.prefillWallSec(), s.decodeWallSec(), s.ts()));
     }
 
     /** ttft_sec IS the prefill wall time for a request (the elapsed time before the first token
@@ -249,16 +244,41 @@ public final class JobLiveState implements Serializable {
         final var sessionId = Fmt.textOr(data.path("session_id"), null);
         if (sessionId == null || sessionId.isBlank()) return;
         if (!data.path("ttft_sec").isNumber() || !data.path("latency_sec").isNumber()) return;
-        for (int i = 0; i < sessions.size(); i++) {
-            final var s = sessions.get(i);
-            if (!sessionId.equals(s.id())) continue;
-            final var sums = wallSums.computeIfAbsent(sessionId, k -> new double[2]);
-            final var ttft = data.path("ttft_sec").asDouble();
-            sums[0] += ttft;
-            sums[1] += data.path("latency_sec").asDouble() - ttft;
-            sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), s.totalTokens(), sums[0], sums[1], s.ts()));
-            return;
-        }
+        final int i = currentRowIndex(sessionId);
+        if (i < 0) return;
+        final var s = sessions.get(i);
+        final var sums = wallSums.computeIfAbsent(sessionId, k -> new double[2]);
+        final var ttft = data.path("ttft_sec").asDouble();
+        sums[0] += ttft;
+        sums[1] += data.path("latency_sec").asDouble() - ttft;
+        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), s.totalTokens(), sums[0], sums[1], s.ts()));
+    }
+
+    /** the row a per-session event applies to: the MOST RECENTLY STARTED session with this id.
+     *  closeAbandonedAttempt() ensures at most one row per id is ever "open" at a time, but a retry
+     *  always gets its OWN new row (preserving the abandoned attempt's history rather than erasing
+     *  it) - matching "the last one" is what correctly routes a live request/done event to the
+     *  CURRENT attempt instead of an earlier interrupted one sharing the same canonical id. */
+    private int currentRowIndex(final String sessionId) {
+        for (int i = sessions.size() - 1; i >= 0; i--) if (sessionId.equals(sessions.get(i).id())) return i;
+        return -1;
+    }
+
+    /** Found live 2026-09-28: when a phase gets retried after the harness's own process was
+     *  interrupted mid-session (a host sleep/wake cycle killed ace-service in the case that
+     *  surfaced this - see launchd's own log: "exited due to exit(1)" then "launching: inefficient"),
+     *  its canonical session id gets a SECOND session_started event. Left alone, the abandoned first
+     *  attempt's row never receives its own session_done (that event genuinely never happened) and
+     *  sits showing "running" forever in the live view, alongside whatever is actually active now.
+     *  Marks it "interrupted" instead - preserves the row (still useful: this phase WAS attempted
+     *  before, and for how long, even though a later attempt is what actually finished it) rather
+     *  than deleting it outright. */
+    private void closeAbandonedAttempt(final String sessionId) {
+        final int i = currentRowIndex(sessionId);
+        if (i < 0) return;
+        final var s = sessions.get(i);
+        if (s.endedStage() != null) return;   // already resolved - nothing to close
+        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), "interrupted", s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts()));
     }
 
     /** A snapshot copy — never the live list. */
