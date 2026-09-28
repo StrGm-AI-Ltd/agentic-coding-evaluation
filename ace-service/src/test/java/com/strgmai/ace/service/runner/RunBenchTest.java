@@ -246,4 +246,45 @@ class RunBenchTest {
         assertTrue(elapsedMs < 5_000, "stopMonitor() must give up around its own bound, not wait out a thread that ignores interrupt: " + elapsedMs + "ms");
         t.join(15_000);   // let the real background thread actually finish so it doesn't leak past this test
     }
+
+    /** Found live 2026-09-28: a run's generated code lived ONLY in ws, a scratch dir under $TMPDIR
+     *  that survives only until the OS decides to reclaim it - a run from days earlier had already
+     *  lost its working tree AND part of its own git object store by the time anyone went looking,
+     *  recoverable only by hand. exportSource() puts a plain, ready-to-run copy in rd/source/ instead
+     *  of leaving that as the only backup a `git clone` of workspace.bundle could someday reconstruct. */
+    private static void git(final Path dir, final String... args) throws Exception {
+        final var cmd = new java.util.ArrayList<String>(List.of("git", "-C", dir.toString()));
+        cmd.addAll(List.of(args));
+        final Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+        final String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertEquals(0, p.waitFor(), "git " + args[0] + " failed: " + out);
+    }
+
+    @Test
+    void exportSourceProducesAPlainReadyToRunDirectoryFromTheCommittedState(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
+        final Path ws = track(Files.createDirectory(tmp.resolve("ws")));
+        final Path rd = track(Files.createDirectory(tmp.resolve("rd")));
+        git(ws, "init", "-q");
+        git(ws, "config", "user.email", "bench@local");
+        git(ws, "config", "user.name", "bench");
+        Files.writeString(ws.resolve(".git/info/exclude"), "build/\n");   // matches RunBenchSupport.snapshot()
+        Files.writeString(ws.resolve("docker-compose.yml"), "services: {}\n");
+        Files.createDirectories(ws.resolve("build"));
+        Files.writeString(ws.resolve("build/compiled.class"), "not source");   // untracked, must not be exported
+        git(ws, "add", "-A");
+        git(ws, "commit", "-q", "-m", "T1");
+
+        assertTrue(RunBench.exportSource(ws, rd));
+
+        assertEquals("services: {}\n", Files.readString(rd.resolve("source/docker-compose.yml")));
+        assertFalse(Files.exists(rd.resolve("source/build")), "only git-TRACKED files belong in the export, not build output");
+    }
+
+    @Test
+    void exportSourceReturnsFalseRatherThanThrowWhenWsIsNotAGitRepository(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
+        final Path ws = track(Files.createDirectory(tmp.resolve("not-a-repo")));
+        final Path rd = track(Files.createDirectory(tmp.resolve("rd2")));
+
+        assertFalse(RunBench.exportSource(ws, rd));
+    }
 }
