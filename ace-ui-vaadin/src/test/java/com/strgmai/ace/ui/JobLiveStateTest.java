@@ -172,6 +172,76 @@ class JobLiveStateTest {
         assertEquals(List.of(), state.sessions(), "no session to match - dropped, not a crash");
     }
 
+    /** Found live 2026-09-28: a phase retried after ace-service itself was interrupted mid-session
+     *  (a host sleep/wake cycle killed the process in the case that surfaced this) reuses its
+     *  canonical session id for a brand new session_started - the abandoned first attempt never got
+     *  its own session_done (that event genuinely never happened), so it must not be left showing
+     *  "running" forever alongside the retry that's actually live now. */
+    @Test
+    void aRetriedSessionMarksTheAbandonedAttemptInterruptedAndKeepsBothRows() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "2026-09-28T00:00:00Z"}
+
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "2026-09-28T00:10:00Z"}
+
+                """).forEach(state::apply);
+        final var sessions = state.sessions();
+        assertEquals(2, sessions.size(), "the abandoned attempt's row is preserved, not replaced");
+        assertEquals("interrupted", sessions.get(0).endedStage());
+        assertNull(sessions.get(1).endedStage(), "the retry's own row starts open");
+    }
+
+    @Test
+    void aSecondSessionStartedForAnAlreadyResolvedSessionDoesNotReopenIt() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: session_done
+                data: {"type": "session_done", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "finish": "stop"}
+
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                """).forEach(state::apply);
+        final var sessions = state.sessions();
+        assertEquals(2, sessions.size());
+        assertEquals("stop", sessions.get(0).endedStage(), "already resolved - not overwritten as interrupted");
+        assertNull(sessions.get(1).endedStage());
+    }
+
+    /** The point of routing by "most recently started" rather than "first match": once a retry has
+     *  happened, every later per-session event (request, session_done) belongs to the CURRENT
+     *  attempt, not the abandoned one sharing the same canonical id. */
+    @Test
+    void afterARetryRequestsAndDoneEventsRouteToTheCurrentAttemptNotTheAbandonedOne() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "completion_tokens": 42}
+
+                event: session_done
+                data: {"type": "session_done", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "finish": "stop"}
+
+                """).forEach(state::apply);
+        final var sessions = state.sessions();
+        assertEquals(2, sessions.size());
+        assertEquals("interrupted", sessions.get(0).endedStage());
+        assertNull(sessions.get(0).totalTokens(), "the abandoned attempt never saw this request");
+        assertEquals("stop", sessions.get(1).endedStage(), "the retry is the one that actually finished");
+        assertEquals(42L, sessions.get(1).totalTokens());
+    }
+
     /** RecordingProxy tags every request with the session's full id (X-Ace-Session-Id, unambiguous
      *  even under concurrent parallel-wave sessions); oMLX reports prefill/decode speed itself per
      *  response - this averages those across the requests attributed to each session. */
