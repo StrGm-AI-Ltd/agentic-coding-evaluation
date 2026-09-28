@@ -193,7 +193,7 @@ public class RunBench {
         } else {
             // the job's own pinned window (queue runs, per arm) wins over the operator's global one
             int window = cfg.get("context_window") instanceof Number n ? n.intValue()
-                    : props.contextWindow() == null ? 65536 : props.contextWindow();
+                    : props.contextWindow() == null ? 262144 : props.contextWindow();
             // Map.of() rejects a null value outright - min_decode_tps IS null here: skipping the probe
             // (step 0's whole job is measuring it) means there is no measured decode throughput
             final Map<String, Object> derivedNoProbe = new LinkedHashMap<>();
@@ -230,7 +230,8 @@ public class RunBench {
                 cfg.get("repetition_penalty") instanceof Number rp ? rp.doubleValue() : null,
                 cfg.get("max_output_tokens") instanceof Number mo ? mo.intValue() : null,
                 cfg.get("reasoning_effort") instanceof String re && !re.isBlank() ? re : null,
-                firstTokenTimeoutSec));
+                firstTokenTimeoutSec,
+                cfg.get("usable_context") instanceof Number uc ? uc.intValue() : null));
         // 0 means unlimited (the system-wide "0 = no budget" convention)
         final int taskWall = cfg.get("task_wall_sec") instanceof Number n ? n.intValue() : 0;
         long taskTokens = cfg.get("task_tokens") instanceof Number n2 ? n2.longValue()

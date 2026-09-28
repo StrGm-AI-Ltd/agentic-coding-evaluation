@@ -213,7 +213,7 @@ class RecordingProxyTest {
         final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
         try {
             final var proxyBase = proxy.start(journal, 1000L, null,
-                    new RecordingProxy.SamplerOverrides(null, null, null, null, 555, null, null));
+                    new RecordingProxy.SamplerOverrides(null, null, null, null, 555, null, null, null));
             sendPlainChatRequest(proxyBase);
             assertEquals(555, upstreamSawMaxTokens.get(), "the run's own derived cap must reach the actual request");
         } finally {
@@ -264,7 +264,7 @@ class RecordingProxyTest {
         final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
         try {
             final var proxyBase = proxy.start(journal, 1000L, null,
-                    new RecordingProxy.SamplerOverrides(0.7, 0.9, 40, 1.1, null, "high", null));
+                    new RecordingProxy.SamplerOverrides(0.7, 0.9, 40, 1.1, null, "high", null, null));
             sendPlainChatRequest(proxyBase);
             final var body = sawBody.get();
             assertEquals(0.7, body.path("temperature").asDouble(), 0.001);
@@ -288,12 +288,12 @@ class RecordingProxyTest {
         // omits HttpRequest.Builder.timeout(...) entirely rather than a degenerate near-zero duration
         assertNull(RecordingProxy.upstreamTimeoutSec(RecordingProxy.SamplerOverrides.NONE));
         assertNull(RecordingProxy.upstreamTimeoutSec(
-                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 0)));
+                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 0, null)));
         assertEquals(600 + 30, RecordingProxy.upstreamTimeoutSec(
-                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 600)),
+                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 600, null)),
                 "an operator-configured value well above the old hardcoded 290s ceiling must actually apply");
         assertEquals(60 + 30, RecordingProxy.upstreamTimeoutSec(
-                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 60)));
+                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 60, null)));
     }
 
     @Test
@@ -335,6 +335,81 @@ class RecordingProxyTest {
                 .POST(HttpRequest.BodyPublishers.ofString("{\"messages\":[],\"stream\":false}"))
                 .build();
         client.send(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** Nothing upstream validated max_tokens against the run's context window - oMLX was left to
+     *  fail on an overshoot however it saw fit. This refuses it here instead, the same way the
+     *  budget check refuses rather than forwards. */
+    @Test
+    void maxTokensPlusEstimatedPromptExceedingTheContextWindowIsRefused() throws Exception {
+        final var upstreamCalled = new AtomicReference<>(false);
+        final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        upstream.createContext("/", ex -> {
+            upstreamCalled.set(true);
+            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(200, resp.length);
+            try (var os = ex.getResponseBody()) { os.write(resp); }
+        });
+        upstream.start();
+        final var journal = Files.createTempFile("proxy-test", ".jsonl");
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        try {
+            // maxOutputTokens=9000 alone already exceeds a 8000-token window, whatever the prompt is
+            final var proxyBase = proxy.start(journal, 1000L, null,
+                    new RecordingProxy.SamplerOverrides(null, null, null, null, 9000, null, null, 8000));
+            final var client = HttpClient.newHttpClient();
+            final var request = HttpRequest.newBuilder(URI.create(proxyBase + "/chat/completions"))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":false}"))
+                    .build();
+            final var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            assertEquals(400, response.statusCode(), response.body());
+            assertTrue(response.body().contains("context_window_exceeded"), response.body());
+            assertFalse(upstreamCalled.get(), "an overshooting request must never reach upstream");
+
+            final var rec = new ObjectMapper().readTree(awaitJournalLines(journal).get(0));
+            assertTrue(rec.path("context_window_exceeded").asBoolean(false));
+        } finally {
+            proxy.stop();
+            upstream.stop(0);
+        }
+    }
+
+    @Test
+    void maxTokensWellWithinTheContextWindowIsForwardedNormally() throws Exception {
+        final AtomicReference<Integer> upstreamSawMaxTokens = new AtomicReference<>();
+        final HttpServer upstream = upstreamCapturingMaxTokens(upstreamSawMaxTokens);
+        upstream.start();
+        final var journal = Files.createTempFile("proxy-test", ".jsonl");
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        try {
+            final var proxyBase = proxy.start(journal, 1000L, null,
+                    new RecordingProxy.SamplerOverrides(null, null, null, null, 100, null, null, 65536));
+            sendPlainChatRequest(proxyBase);
+            assertEquals(100, upstreamSawMaxTokens.get(), "well within the window - forwarded, not refused");
+        } finally {
+            proxy.stop();
+            upstream.stop(0);
+        }
+    }
+
+    @Test
+    void noContextWindowOverrideSkipsTheCheckEntirely() throws Exception {
+        final AtomicReference<Integer> upstreamSawMaxTokens = new AtomicReference<>();
+        final HttpServer upstream = upstreamCapturingMaxTokens(upstreamSawMaxTokens);
+        upstream.start();
+        final var journal = Files.createTempFile("proxy-test", ".jsonl");
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        try {
+            // a huge max_tokens with no contextWindow set (null) - nothing to check against, must not refuse
+            final var proxyBase = proxy.start(journal, 1000L, null,
+                    new RecordingProxy.SamplerOverrides(null, null, null, null, 999_999, null, null, null));
+            sendPlainChatRequest(proxyBase);
+            assertEquals(999_999, upstreamSawMaxTokens.get());
+        } finally {
+            proxy.stop();
+            upstream.stop(0);
+        }
     }
 
     /** #93: a chat request that isn't a parseable JSON object must be refused outright - not
