@@ -11,7 +11,10 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /** Port of run_bench.py's Docker-on-demand machinery (R7): Docker Desktop is DOWN while the agent
  *  works (its VM competes with the model for memory and CPU), comes up through the shim on the
@@ -34,6 +37,13 @@ public final class DockerService {
     private static final Path DOCKER_SETTINGS_STORE = Path.of(System.getProperty("user.home"), "Library/Group Containers/group.com.docker/settings-store.json");
     private static final Path DOCKER_SETTINGS_LEGACY = Path.of(System.getProperty("user.home"), "Library/Group Containers/group.com.docker/settings.json");
     private static final ObjectMapper JSON = new ObjectMapper();
+    /** found live 2026-09-28: opening ~/Library/Group Containers/group.com.docker/settings-store.json
+     *  from a launchd-submitted (non-interactive) process hung INDEFINITELY on this host - a macOS
+     *  privacy/TCC permission gate on Group Containers access apparently blocks native file I/O
+     *  waiting on a UI prompt a headless job never sees. Every --manage-docker run hung before ever
+     *  creating a journal. Bounds the whole operation so a stuck permission check can never hang a
+     *  run - it degrades to "no cap applied" instead. */
+    private static final int MEMORY_CAP_TIMEOUT_SEC = 15;
 
     /** cheap, daemon-free: is Docker Desktop's backend alive right now */
     public static boolean dockerRunning() {
@@ -69,26 +79,50 @@ public final class DockerService {
      *  control). If Desktop happens to already be running under a DIFFERENT value, kills it now so
      *  the very first real start of this run already reflects the cap, rather than leaving a stale
      *  VM running - uncapped - until dockerUp()'s own explicit call much later in the run (oracle
-     *  scoring), by which point the agent's own task work already ran under the old setting. */
+     *  scoring), by which point the agent's own task work already ran under the old setting.
+     *
+     *  Path RESOLUTION (Files.exists()) stays OUTSIDE the bound below - it did not hang on the host
+     *  where this was found live, only the actual file OPEN/read did (confirmed via a thread dump:
+     *  stuck in FileInputStream.open0, not Files.exists). Bounded to MEMORY_CAP_TIMEOUT_SEC (see its
+     *  javadoc): a stuck settings-file read must never hang the run this is meant to make MORE
+     *  reliable, not less. Deliberately NOT try-with-resources on the executor -
+     *  ExecutorService.close() awaits termination (repeatedly, up to a day at a time) before
+     *  returning, which would just move the hang here instead of removing it. A timed-out task's
+     *  virtual thread is abandoned via shutdownNow() (non-blocking - does not wait for it), not
+     *  actually freed - native blocking file I/O does not respond to Thread.interrupt() - but that is
+     *  one leaked (daemon-by-default) virtual thread per occurrence, an acceptable trade against
+     *  hanging the whole run indefinitely. */
     public static void applyMemoryCap(final int desiredMib) {
-        if (ensureMemoryCap(desiredMib) && dockerRunning()) {
-            sh(10, "pkill", "-9", "-f", "com.docker.backend");
-            sleep(5);
-        }
-    }
-
-    /** caps Docker Desktop's VM memory by editing its own settings file directly - the same file its
-     *  Settings > Resources > Memory slider writes to (there is no documented `docker desktop` CLI
-     *  subcommand for this). No-ops (returns false) when the settings file doesn't exist yet (Docker
-     *  Desktop has never been launched on this host) rather than fabricate one blind. */
-    static boolean ensureMemoryCap(final int desiredMib) {
         final Path settings = Files.exists(DOCKER_SETTINGS_STORE) ? DOCKER_SETTINGS_STORE
                 : Files.exists(DOCKER_SETTINGS_LEGACY) ? DOCKER_SETTINGS_LEGACY : null;
         if (settings == null) {
             log.warn("Docker Desktop settings file not found at {} or {} - cannot cap its VM memory (has it ever been launched?)", DOCKER_SETTINGS_STORE, DOCKER_SETTINGS_LEGACY);
-            return false;
+            return;
         }
-        return ensureMemoryCap(settings, desiredMib);
+        applyMemoryCap(settings, desiredMib, MEMORY_CAP_TIMEOUT_SEC);
+    }
+
+    /** the actual bounded read/edit/write + conditional restart, taking the settings file and
+     *  timeout explicitly so it's unit-testable against a blocking file (a FIFO) with a SHORT
+     *  timeout, instead of waiting out the real MEMORY_CAP_TIMEOUT_SEC on every test run. */
+    static void applyMemoryCap(final Path settings, final int desiredMib, final int timeoutSec) {
+        final ExecutorService exec = Executors.newVirtualThreadPerTaskExecutor();
+        try {
+            exec.submit(() -> {
+                if (ensureMemoryCap(settings, desiredMib) && dockerRunning()) {
+                    sh(10, "pkill", "-9", "-f", "com.docker.backend");
+                    sleep(5);
+                }
+            }).get(timeoutSec, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            log.warn("capping Docker Desktop's VM memory did not complete within {}s - some macOS " +
+                    "configurations gate ~/Library/Group Containers access behind a permission prompt " +
+                    "a headless process never sees; continuing WITHOUT a cap rather than hang the run", timeoutSec);
+        } catch (Exception e) {
+            log.warn("could not cap Docker Desktop's VM memory: {}", e.toString());
+        } finally {
+            exec.shutdownNow();
+        }
     }
 
     /** the actual read/edit/write, taking the settings file explicitly so it's unit-testable against
