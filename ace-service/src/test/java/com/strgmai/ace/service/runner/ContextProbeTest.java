@@ -1,10 +1,14 @@
 package com.strgmai.ace.service.runner;
 
 import com.strgmai.ace.service.config.BenchProperties;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -70,5 +74,75 @@ class ContextProbeTest {
                 Map.of("status", "200", "prompt_tokens", 40000, "decode_tps", 4.0)));
         assertEquals(20000, ContextProbe.performanceWindow(rec, 8.0));
         assertNull(ContextProbe.performanceWindow(rec, null));
+    }
+
+    /** Found live 2026-09-29: Docker Desktop's VM crashed under RAM pressure from a co-resident
+     *  model server - unloadModel()/loadModel() are the lever oracleWithDocker() now pulls to free
+     *  that memory before Docker comes up, using oMLX's own per-model admin endpoints. */
+    @Test
+    void unloadModelPostsToTheModelsUnloadEndpointWithTheApiKey() throws Exception {
+        final AtomicReference<String> sawMethod = new AtomicReference<>();
+        final AtomicReference<String> sawPath = new AtomicReference<>();
+        final AtomicReference<String> sawAuth = new AtomicReference<>();
+        final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        upstream.createContext("/", ex -> {
+            sawMethod.set(ex.getRequestMethod());
+            sawPath.set(ex.getRequestURI().getPath());
+            sawAuth.set(ex.getRequestHeaders().getFirst("Authorization"));
+            final byte[] body = "{\"status\":\"ok\"}".getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(200, body.length);
+            try (var os = ex.getResponseBody()) { os.write(body); }
+        });
+        upstream.start();
+        try {
+            final boolean ok = new ContextProbe().unloadModel("http://127.0.0.1:" + upstream.getAddress().getPort() + "/v1", "secret-key", "Qwen3.8-27B-orig-4bit");
+            assertTrue(ok);
+            assertEquals("POST", sawMethod.get());
+            assertEquals("/v1/models/Qwen3.8-27B-orig-4bit/unload", sawPath.get());
+            assertEquals("Bearer secret-key", sawAuth.get());
+        } finally {
+            upstream.stop(0);
+        }
+    }
+
+    @Test
+    void loadModelPostsToTheModelsLoadEndpoint() throws Exception {
+        final AtomicReference<String> sawPath = new AtomicReference<>();
+        final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        upstream.createContext("/", ex -> {
+            sawPath.set(ex.getRequestURI().getPath());
+            final byte[] body = "{\"status\":\"ok\"}".getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(200, body.length);
+            try (var os = ex.getResponseBody()) { os.write(body); }
+        });
+        upstream.start();
+        try {
+            final boolean ok = new ContextProbe().loadModel("http://127.0.0.1:" + upstream.getAddress().getPort() + "/v1", "secret-key", "Qwen3.8-27B-orig-4bit");
+            assertTrue(ok);
+            assertEquals("/v1/models/Qwen3.8-27B-orig-4bit/load", sawPath.get());
+        } finally {
+            upstream.stop(0);
+        }
+    }
+
+    @Test
+    void unloadModelReturnsFalseRatherThanThrowingOnAnErrorResponse() throws Exception {
+        final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        upstream.createContext("/", ex -> {
+            final byte[] body = "{\"detail\":\"Model not loaded\"}".getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(400, body.length);
+            try (var os = ex.getResponseBody()) { os.write(body); }
+        });
+        upstream.start();
+        try {
+            assertFalse(new ContextProbe().unloadModel("http://127.0.0.1:" + upstream.getAddress().getPort() + "/v1", "k", "m"));
+        } finally {
+            upstream.stop(0);
+        }
+    }
+
+    @Test
+    void unloadModelReturnsFalseRatherThanThrowingWhenUpstreamIsUnreachable() {
+        assertFalse(new ContextProbe().unloadModel("http://127.0.0.1:1", "k", "m"));
     }
 }

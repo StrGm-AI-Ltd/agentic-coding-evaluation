@@ -449,6 +449,10 @@ public class RunBench {
 
     private Map<String, Object> oracleWithDocker(final Map<String, Object> cfg, final Path ws, String task, final Path rd, final Map<String, Object> manifest) throws Exception {
         final boolean manageDocker = Boolean.TRUE.equals(cfg.get("manage_docker"));
+        // frees the run's own weights before Docker comes up, so its VM has real headroom on a
+        // memory-constrained host instead of competing with the model server for the same RAM
+        // (found live 2026-09-29: Docker Desktop's backend crashed under exactly this contention)
+        if (manageDocker) probe.unloadModel(props.endpoint(), props.apiKey(), props.model());
         // the cap was already applied early in runOnce(); dockerUp() re-applying the same value here
         // is a cheap no-op (ensureMemoryCap short-circuits when it already matches) and keeps this
         // call correct standalone, for any other caller that skips runOnce()'s early cap
@@ -456,7 +460,10 @@ public class RunBench {
         try {
             return oracle.score(ws, task, (String) cfg.get("system_base_url"), manifest);
         } finally {
-            if (manageDocker) DockerService.dockerDown(30);
+            if (manageDocker) {
+                DockerService.dockerDown(30);
+                probe.loadModel(props.endpoint(), props.apiKey(), props.model());
+            }
         }
     }
 

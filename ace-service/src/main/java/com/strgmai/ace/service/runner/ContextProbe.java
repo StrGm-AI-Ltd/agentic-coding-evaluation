@@ -150,6 +150,33 @@ public final class ContextProbe {
         } catch (Exception e) { log.warn("could not list models from {}: {}", endpoint, e.toString()); return Map.of(); }
     }
 
+    /** Found live 2026-09-29: Docker Desktop's own VM crashed under RAM pressure from a co-resident
+     *  model server (~29.6GB in a 36GB machine), taking every docker-gated check down with it. Frees
+     *  the run's own weights before oracleWithDocker() brings Docker up, so its VM has real headroom
+     *  on a memory-constrained host - the same lever dockerUp()/dockerDown() already pull for Docker
+     *  Desktop itself, just for the model server's memory instead. */
+    public boolean unloadModel(final String endpoint, final String key, final String modelId) {
+        try {
+            final HttpResponse<String> r = http.send(HttpRequest.newBuilder(URI.create(endpoint + "/models/" + modelId + "/unload"))
+                    .header("Authorization", "Bearer " + key).timeout(Duration.ofSeconds(30)).POST(HttpRequest.BodyPublishers.noBody()).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            if (r.statusCode() != 200) log.warn("could not unload model {} from {}: HTTP {} {}", modelId, endpoint, r.statusCode(), r.body());
+            return r.statusCode() == 200;
+        } catch (Exception e) { log.warn("could not unload model {} from {}: {}", modelId, endpoint, e.toString()); return false; }
+    }
+
+    /** the counterpart to unloadModel() - blocks until the model is actually back (oMLX's own
+     *  endpoint contract), so the caller never needs to poll before resuming the agent session. */
+    public boolean loadModel(final String endpoint, final String key, final String modelId) {
+        try {
+            final HttpResponse<String> r = http.send(HttpRequest.newBuilder(URI.create(endpoint + "/models/" + modelId + "/load"))
+                    .header("Authorization", "Bearer " + key).timeout(Duration.ofSeconds(300)).POST(HttpRequest.BodyPublishers.noBody()).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            if (r.statusCode() != 200) log.warn("could not load model {} on {}: HTTP {} {}", modelId, endpoint, r.statusCode(), r.body());
+            return r.statusCode() == 200;
+        } catch (Exception e) { log.warn("could not load model {} on {}: {}", modelId, endpoint, e.toString()); return false; }
+    }
+
     JsonNode health(String endpoint, String key) {
         try {
             HttpResponse<String> r = http.send(HttpRequest.newBuilder(URI.create(endpoint.replaceAll("/v1/?$", "") + "/health"))
