@@ -27,7 +27,10 @@ import java.util.concurrent.atomic.AtomicLong;
  *  latency): the run's ground truth for metrics and validity. Pins the sampler params onto every
  *  chat request (what the manifest claims is what is sent) and REFUSES with 429 once the phase's
  *  completion-token budget is spent (budget_exceeded=true in the journal — the turn the trajectory
- *  analysis needs). Streams SSE line-by-line upstream; asks the server to append a usage chunk.
+ *  analysis needs), or with 400 if max_tokens plus the request's own (estimated) prompt size would
+ *  obviously overshoot the run's context window (context_window_exceeded=true) — a config mistake
+ *  the harness can catch itself instead of leaving it to whatever oMLX happens to do on overshoot.
+ *  Streams SSE line-by-line upstream; asks the server to append a usage chunk.
  *  Not a singleton: RunBench's RecordingProxyFactory creates one per phase/task/parallel session. */
 public class RecordingProxy {
     private static final Logger log = LoggerFactory.getLogger(RecordingProxy.class);
@@ -56,10 +59,13 @@ public class RecordingProxy {
      *  ReferenceAgent's own per-phase-kind DEFAULT_REASONING already put on the request - this
      *  proxy runs last, closest to the wire, so it always wins when set. firstTokenTimeoutSec
      *  (#92) is not a sampler param, but bounds forward()'s own upstream connect wait - null or 0
-     *  means unlimited (no upstream connect timeout is applied at all). */
+     *  means unlimited (no upstream connect timeout is applied at all). contextWindow: the run's
+     *  own usable-context ceiling, used only to refuse a request whose max_tokens plus its own
+     *  (estimated) prompt size would obviously overshoot it - null skips that check entirely. */
     public record SamplerOverrides(Double temperature, Double topP, Integer topK, Double repetitionPenalty,
-                                    Integer maxOutputTokens, String reasoningEffort, Integer firstTokenTimeoutSec) {
-        public static final SamplerOverrides NONE = new SamplerOverrides(null, null, null, null, null, null, null);
+                                    Integer maxOutputTokens, String reasoningEffort, Integer firstTokenTimeoutSec,
+                                    Integer contextWindow) {
+        public static final SamplerOverrides NONE = new SamplerOverrides(null, null, null, null, null, null, null, null);
     }
 
     /** the proxy's own upstream connect wait is kept a little more generous than the run's
@@ -208,7 +214,8 @@ public class RecordingProxy {
             final Double topP = overrides.topP() != null ? overrides.topP() : props.topP();
             if (topP != null) r.put("top_p", topP);
             if (props.seed() != null) r.put("seed", props.seed());
-            r.put("max_tokens", overrides.maxOutputTokens() != null ? overrides.maxOutputTokens() : props.maxOutputTokens());
+            final Integer maxTokens = overrides.maxOutputTokens() != null ? overrides.maxOutputTokens() : props.maxOutputTokens();
+            r.put("max_tokens", maxTokens);
             // top_k/repetition_penalty/reasoning_effort: no operator-wide ace.* default for any of
             // these - omitted entirely (letting oMLX/the model use its own default) unless a run
             // explicitly set one. reasoning_effort overrides whatever ReferenceAgent's own
@@ -219,6 +226,23 @@ public class RecordingProxy {
             if (r.path("stream").asBoolean(false))   // ask the server to append a usage chunk (transparent to the client)
                 ((ObjectNode) r.with("stream_options")).put("include_usage", true);
             body = json.writeValueAsBytes(r);
+            // nothing upstream validates max_tokens against the window - left alone, oMLX is the
+            // one that fails on an overshoot, however it sees fit to. Refuse it here instead, the
+            // same way the budget check below refuses rather than forwards: a config mistake the
+            // harness can name clearly, not a confusing failure surfacing three hops away.
+            if (overrides.contextWindow() != null && maxTokens != null) {
+                final long promptEstimate = promptTokensEstimate(r);
+                if (promptEstimate + maxTokens > overrides.contextWindow()) {
+                    final byte[] out = json.writeValueAsBytes(json.createObjectNode().set("error",
+                            json.createObjectNode().put("message", "ace-service: max_tokens (" + maxTokens + ") + estimated prompt ("
+                                    + promptEstimate + ") would exceed the run's context window (" + overrides.contextWindow() + ")")
+                                    .put("type", "context_window_exceeded")));
+                    reply(x, 400, out);
+                    journalRecord(rec.put("status", 400).put("context_window_exceeded", true)
+                            .put("latency_sec", 0.0), req, null);
+                    return;
+                }
+            }
             // a budget of exactly 0 means unlimited (never enforced), not "already exhausted" -
             // spent.get() >= 0 would otherwise refuse the very first request of every "unlimited" run
             if (tokenBudget != null && tokenBudget > 0 && spent.get() >= tokenBudget) {
@@ -345,6 +369,16 @@ public class RecordingProxy {
         if (drainAborted) rec.put("drain_aborted", true);
         journalRecord(rec, req, resp);
         inflight.remove(up);
+    }
+
+    /** Best-effort prompt size in tokens, same chars-per-token estimate as estimatedUsage() below -
+     *  exact tokenization would need the model's own tokenizer, which this proxy has no access to.
+     *  Covers messages and tool definitions (both consume real prompt tokens); good enough to catch
+     *  an obvious overshoot before forwarding, not meant to be precise. */
+    private static long promptTokensEstimate(final JsonNode req) {
+        long chars = req.path("messages").toString().length();
+        if (req.hasNonNull("tools")) chars += req.path("tools").toString().length();
+        return (long) (chars / CHARS_PER_TOKEN);
     }
 
     private ObjectNode estimatedUsage(final SseAssembler.Assembled asm) {

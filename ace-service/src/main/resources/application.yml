@@ -17,7 +17,7 @@ ace:
   api-key: ${OMLX_API_KEY:}
   temperature: 1.0
   top-p: 0.95
-  max-output-tokens: 8192
+  max-output-tokens: 131072   # half of the default context window (262144, RunBench.java's no-probe fallback)
   context-window: ${ACE_CONTEXT_WINDOW:}   # EMPTY = no operator cap; the probe owns the window (Python default)
   keep-recent-turns: 8
   compaction-trigger: 28000
