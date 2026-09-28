@@ -87,20 +87,36 @@ public class RunBench {
 
     /** port of the Docker window monitor (R7): during an implementation-kind session Docker may
      *  come up (the shim on the first `docker` call); the harness records the window and stops
-     *  Docker after idle_sec without a call and at the session's end. */
+     *  Docker after idle_sec without a call and at the session's end.
+     *
+     *  dockerLog is THIS session's own ACE_DOCKER_LOG path (its scrubbed env's shim-log file) -
+     *  found live 2026-09-28: this used to read System.getenv("ACE_DOCKER_LOG"), the ace-service
+     *  JVM's OWN environment, where that variable is never actually set (it only ever exists inside
+     *  the Map built for the AGENT's child process, see RunBenchSupport.scrubbedEnv). dockerCalls()
+     *  therefore always saw "/dev/null" and returned all zeros, so idle time was silently computed
+     *  as time-since-window-opened instead of time-since-the-agent's-last-real-docker-call - Docker
+     *  got torn down at a fixed idleSec mark regardless of ongoing activity. */
     class DockerWindowMonitor {
         final List<Map<String, Object>> windows = new ArrayList<>();
+        final Path dockerLog;
         Map<String, Object> cur;
         int callsBefore;
+        DockerWindowMonitor(final String dockerLog) { this.dockerLog = Path.of(dockerLog == null ? "/dev/null" : dockerLog); }
         void poll(int idleSec) {
             final boolean up = DockerService.dockerRunning();
-            final int[] c = DockerService.dockerCalls(Path.of(System.getenv().getOrDefault("ACE_DOCKER_LOG", "/dev/null")), new int[3]);
-            if (up && cur == null)
+            final int[] c = DockerService.dockerCalls(dockerLog, new int[3]);
+            if (up && cur == null) {
                 cur = new LinkedHashMap<>(Map.of("start_iso", nowIso(), "started_by", "agent-direct", "calls_before", callsBefore, "start_epoch", System.currentTimeMillis() / 1000.0));
+                DockerService.windowOpened();
+            }
             if (cur != null) {
                 final double idle = System.currentTimeMillis() / 1000.0 - Math.max(c[1] == 0 ? ((Number) cur.get("start_epoch")).doubleValue() : c[1], ((Number) cur.get("start_epoch")).doubleValue());
                 if (DockerService.shouldCloseWindow(up, idle, idleSec, DockerService.dockerCliBusy())) {
-                    if (up) DockerService.dockerDown(30);
+                    // defers the actual teardown to whether any OTHER session's window is still
+                    // open (found live 2026-09-28: PARALLEL_PLAN's concurrent wave tasks each ran
+                    // their own independent monitor with no coordination, so one task's idle window
+                    // could kill Docker Desktop mid-operation for a sibling task)
+                    DockerService.windowClosed(up, 30);
                     final Map<String, Object> w = new LinkedHashMap<>(cur);
                     w.put("end_iso", nowIso());
                     w.put("seconds", Math.round((System.currentTimeMillis() / 1000.0 - ((Number) cur.get("start_epoch")).doubleValue()) * 10) / 10.0);
@@ -456,8 +472,8 @@ public class RunBench {
                                                   long wall, long tokens, Path rd, Path ws, Path journal,
                                                   RecordingProxyFactory.ProxySession proxy, String appendSystem, String sessionId,
                                                   Map<String, String> envOverride, boolean plainPlan) throws Exception {
-        final var dw = new DockerWindowMonitor();
         final Map<String, String> env = envOverride != null ? envOverride : (Map<String, String>) cfg.get("_agent_env");
+        final var dw = new DockerWindowMonitor(env == null ? null : env.get("ACE_DOCKER_LOG"));
         // the run's OWN requested model (--model=): a single worker JVM handles every queued job in
         // turn, so the operator-wide default (props.model()) is not per-run - passing null here would
         // silently run every task against whatever model happens to be configured process-wide instead
@@ -491,7 +507,7 @@ public class RunBench {
             rec = RunBenchSupport.runBounded(wall, name, rd.resolve("sessions"), sid, proxy.abort(), () -> agent.run(name, full, wall, tokens,
                     rd.resolve("sessions"), sid, false, appendSystem, ws.toString(), proxy.base(), proxy.abort(),
                     firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env));
-        } finally { if (monitor != null) monitor.interrupt(); }
+        } finally { if (monitor != null) stopMonitor(monitor); }
         if (!plainPlan) appendWindows(manifestOf(cfg), dw, name);
         // P-1: a session that died on a `length` finish gets one continuation with what is LEFT (R4
         // C-7). wall/tokens <= 0 means unlimited (the system-wide "0 = no budget" convention): there
@@ -587,6 +603,19 @@ public class RunBench {
         t.setDaemon(true);
         t.start();
         return t;
+    }
+
+    /** interrupt() alone only sets a flag the loop checks BETWEEN poll() calls - found live
+     *  2026-09-28: if interrupt() lands while poll() is mid dockerDown() (itself several seconds:
+     *  a graceful-quit attempt, a poll loop, then a hard kill), the caller has no guarantee the
+     *  monitor has actually stopped before it proceeds with its own Docker calls right after this
+     *  returns. A short bounded join gives it a fair chance to actually finish first - not a hard
+     *  guarantee (poll()'s own blocking calls aren't interruptible either), but windowClosed()'s
+     *  reference count (see DockerService) means even a monitor that outlives this join can no
+     *  longer tear Docker down out from under a still-active sibling session regardless. */
+    static void stopMonitor(final Thread monitor) {
+        monitor.interrupt();
+        try { monitor.join(2_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }
 
     private void appendWindows(final Map<String, Object> manifest, final DockerWindowMonitor dw, final String session) {

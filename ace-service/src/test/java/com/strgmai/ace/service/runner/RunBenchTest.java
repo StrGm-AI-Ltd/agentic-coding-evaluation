@@ -192,4 +192,58 @@ class RunBenchTest {
         assertEquals(2, interrupted.get(), "every wave thread must receive its own interrupt, not be abandoned running");
         for (Thread w : workers) assertFalse(w.isAlive(), "joinAll() must wait for the wave threads to actually stop, not just signal and move on");
     }
+
+    /** Found live 2026-09-28: DockerWindowMonitor.poll() used to read ACE_DOCKER_LOG via
+     *  System.getenv() - the ace-service JVM's OWN environment, where that variable is never
+     *  actually set (it only ever exists inside the Map built for the AGENT's child process, see
+     *  RunBenchSupport.scrubbedEnv). dockerCalls() therefore always saw "/dev/null" and returned all
+     *  zeros, silently turning "idle since the agent's last real docker call" into "idle since the
+     *  window opened" for every run. The constructor now takes THIS session's own path explicitly. */
+    @Test
+    void dockerWindowMonitorUsesTheGivenDockerLogPathNotTheJvmsOwnEnvironment() {
+        final RunBench rb = runBench();
+        final var dw = rb.new DockerWindowMonitor("/custom/per-session/docker-calls.log");
+        assertEquals(Path.of("/custom/per-session/docker-calls.log"), dw.dockerLog);
+    }
+
+    @Test
+    void dockerWindowMonitorDefaultsToDevNullWhenNoDockerLogPathIsGiven() {
+        final RunBench rb = runBench();
+        assertEquals(Path.of("/dev/null"), rb.new DockerWindowMonitor(null).dockerLog);
+    }
+
+    /** Found live 2026-09-28: interrupt() alone only sets a flag the monitor loop checks BETWEEN
+     *  poll() calls - a caller proceeding right after interrupt() has no guarantee the monitor has
+     *  actually stopped. stopMonitor() gives it a bounded chance to actually finish first. */
+    @Test
+    void stopMonitorWaitsForTheThreadToActuallyStopWhenItRespondsPromptly() throws Exception {
+        final Thread t = new Thread(() -> {
+            try { Thread.sleep(60_000); } catch (InterruptedException ignored) { /* responds immediately */ }
+        });
+        t.start();
+        Thread.sleep(50);   // let it actually reach the sleep before stopping it
+
+        RunBench.stopMonitor(t);
+
+        assertFalse(t.isAlive(), "a thread that responds promptly to interrupt() must be stopped by the time stopMonitor() returns");
+    }
+
+    @Test
+    void stopMonitorGivesUpAfterItsOwnBoundRatherThanHangOnAThreadThatIgnoresInterrupt() throws Exception {
+        final var started = new java.util.concurrent.CountDownLatch(1);
+        final Thread t = new Thread(() -> {
+            started.countDown();
+            final long deadline = System.currentTimeMillis() + 10_000;
+            while (System.currentTimeMillis() < deadline) { /* deliberately ignores its own interrupted flag */ }
+        });
+        t.start();
+        started.await();
+
+        final long t0 = System.currentTimeMillis();
+        RunBench.stopMonitor(t);
+        final long elapsedMs = System.currentTimeMillis() - t0;
+
+        assertTrue(elapsedMs < 5_000, "stopMonitor() must give up around its own bound, not wait out a thread that ignores interrupt: " + elapsedMs + "ms");
+        t.join(15_000);   // let the real background thread actually finish so it doesn't leak past this test
+    }
 }

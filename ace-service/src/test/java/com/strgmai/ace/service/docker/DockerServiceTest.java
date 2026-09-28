@@ -104,4 +104,63 @@ class DockerServiceTest {
 
         assertTrue(elapsedMs < 10_000, "applyMemoryCap must give up around its own timeout, not hang on a blocked read: " + elapsedMs + "ms");
     }
+
+    /** Found live 2026-09-28: PARALLEL_PLAN runs multiple task sessions concurrently, each with its
+     *  own independent DockerWindowMonitor - one task's idle window could kill Docker Desktop
+     *  mid-operation for a sibling task whose own window was still open. shouldTearDownOnWindowClose
+     *  is the pure decision windowClosed() makes, testable without the shared static counter. */
+    @Test
+    void shouldTearDownOnlyWhenThisWasTheLastOpenWindowAndDockerIsStillUp() {
+        assertTrue(DockerService.shouldTearDownOnWindowClose(true, 0));
+        assertTrue(DockerService.shouldTearDownOnWindowClose(true, -1));   // an unbalanced count still means "no one else"
+    }
+
+    @Test
+    void shouldNotTearDownWhileASiblingSessionsWindowIsStillOpen() {
+        assertFalse(DockerService.shouldTearDownOnWindowClose(true, 1));
+        assertFalse(DockerService.shouldTearDownOnWindowClose(true, 2));
+    }
+
+    @Test
+    void shouldNotTearDownWhenDockerIsAlreadyDownRegardlessOfTheCount() {
+        assertFalse(DockerService.shouldTearDownOnWindowClose(false, 0));
+        assertFalse(DockerService.shouldTearDownOnWindowClose(false, 5));
+    }
+
+    /** windowOpened()/windowClosed() themselves, verified via the shared counter - stillUp=false on
+     *  every close so shouldTearDownOnWindowClose() never fires and this never touches the real
+     *  Docker Desktop on the machine running the test. */
+    @Test
+    void windowOpenedAndClosedTrackTheSharedCountCorrectly() {
+        final int before = DockerService.openWindowCount();
+        DockerService.windowOpened();
+        DockerService.windowOpened();
+        assertEquals(before + 2, DockerService.openWindowCount(), "two sibling sessions' windows must both be counted");
+        DockerService.windowClosed(false, 1);
+        assertEquals(before + 1, DockerService.openWindowCount(), "one closing must not affect the other still-open window");
+        DockerService.windowClosed(false, 1);
+        assertEquals(before, DockerService.openWindowCount());
+    }
+
+    /** isDockerCommand() (found live 2026-09-28): dockerCliBusy() used to match only "docker compose"/
+     *  "docker build"/"docker-compose" as a COMMAND-LINE substring, so a plain `docker run`,
+     *  `docker exec`, `docker pull`, etc. was invisible to it - the idle monitor could still kill
+     *  Docker mid-operation for every other subcommand. Now matches the EXECUTABLE instead, so any
+     *  real `docker` invocation counts, regardless of subcommand. Tested as a pure function rather
+     *  than against a real spawned process: ProcessHandle.Info.command()/commandLine() were found
+     *  live 2026-09-28 to return empty even for the TEST JVM's own direct children on this macOS
+     *  setup, making a real-process test unreliable/environment-dependent. */
+    @Test
+    void isDockerCommandMatchesTheRealCliRegardlessOfSubcommand() {
+        assertTrue(DockerService.isDockerCommand("/Applications/Docker.app/Contents/Resources/bin/docker"));
+        assertTrue(DockerService.isDockerCommand("/usr/local/bin/docker"));
+        assertTrue(DockerService.isDockerCommand("docker"));
+    }
+
+    @Test
+    void isDockerCommandRejectsUnrelatedOrNullCommands() {
+        assertFalse(DockerService.isDockerCommand("/bin/sh"));
+        assertFalse(DockerService.isDockerCommand("/usr/local/bin/docker-credential-desktop"));   // a real, unrelated docker* helper binary
+        assertFalse(DockerService.isDockerCommand(null));   // ProcessHandle.Info.command() is frequently empty (permission-restricted)
+    }
 }

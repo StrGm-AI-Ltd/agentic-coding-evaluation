@@ -15,6 +15,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** Port of run_bench.py's Docker-on-demand machinery (R7): Docker Desktop is DOWN while the agent
  *  works (its VM competes with the model for memory and CPU), comes up through the shim on the
@@ -161,6 +162,41 @@ public final class DockerService {
         return !up || (idleSec > idleThresholdSec && !cliBusy);
     }
 
+    /** how many sessions in THIS JVM currently consider their own Docker window open right now -
+     *  found live 2026-09-28: PARALLEL_PLAN runs multiple task sessions concurrently (one Thread per
+     *  wave task), each with its OWN independent DockerWindowMonitor polling and tearing down the
+     *  SAME shared, global Docker Desktop backend with no coordination at all. One task's monitor
+     *  could kill Docker Desktop mid-operation for a SIBLING task whose own window was still open.
+     *  windowOpened()/windowClosed() let every window's close decision defer to whether anyone
+     *  ELSE still has a window open, not just this task's own local idle view. */
+    private static final AtomicInteger openWindows = new AtomicInteger(0);
+    private static final Object teardownLock = new Object();
+
+    /** call when a session's own Docker window is first detected open (DockerWindowMonitor.poll()). */
+    public static void windowOpened() { openWindows.incrementAndGet(); }
+
+    /** call when a session's own Docker window closes (idle threshold fired, or the session ended).
+     *  Only actually tears Docker down when THIS was the last open window AND it's still running -
+     *  a sibling session's still-open window must not get Docker pulled out from under it just
+     *  because this one went idle first. Serialized so two callers reaching zero at the same instant
+     *  can't race a graceful quit against a fresh dockerUp(). Always decrements, even when Docker
+     *  isn't running (a crashed backend still closes this task's own window bookkeeping). */
+    public static void windowClosed(final boolean stillUp, final int timeoutSec) {
+        synchronized (teardownLock) {
+            if (shouldTearDownOnWindowClose(stillUp, openWindows.decrementAndGet())) dockerDown(timeoutSec);
+        }
+    }
+
+    /** the actual decision windowClosed() makes, pulled out so it's unit-testable without touching
+     *  real Docker Desktop or the shared static counter. remainingWindows is the count AFTER this
+     *  window's own decrement - 0 or negative means no sibling session still has one open. */
+    static boolean shouldTearDownOnWindowClose(final boolean stillUp, final int remainingWindows) {
+        return stillUp && remainingWindows <= 0;
+    }
+
+    /** test-only introspection of the shared window count. */
+    static int openWindowCount() { return openWindows.get(); }
+
     /** quit Docker Desktop so its VM stops competing with the model; it wedges, so fall back to a hard kill quickly */
     public static boolean dockerDown(final int timeoutSec) {
         try { new ProcessBuilder("osascript", "-e", "quit app \"Docker\"").start().waitFor(20, TimeUnit.SECONDS); }
@@ -224,13 +260,25 @@ public final class DockerService {
         return out;
     }
 
-    /** is a docker CLI of this run still running (an attached `docker compose up`, a long build)? In the
-     *  Java port the agent's bash processes are children of this JVM, so we see them via ProcessHandle;
-     *  the Python original scanned `ps -E` for AB_RUN_ID. */
+    /** is a docker CLI of this run still running? In the Java port the agent's bash processes are
+     *  children of this JVM, so we see them via ProcessHandle; the Python original scanned `ps -E`
+     *  for AB_RUN_ID. Matches the EXECUTABLE, not a command-line substring: found live 2026-09-28,
+     *  the original "docker compose"/"docker build"/"docker-compose" substring match caught only
+     *  those two subcommands - a plain `docker run`, `docker exec`, `docker pull`, `docker push`, etc.
+     *  was invisible to it, so the idle monitor could still kill Docker Desktop mid-operation for
+     *  every OTHER docker subcommand. docker_shim.sh execs the real docker binary with the same argv
+     *  (not a child process), so the real CLI's own process image is what ProcessHandle sees here. */
     public static boolean dockerCliBusy() {
-        return ProcessHandle.allProcesses().anyMatch(ph -> ph.info().commandLine()
-                .map(c -> c.contains("docker compose") || c.contains("docker build") || c.contains("docker-compose"))
-                .orElse(false));
+        return ProcessHandle.allProcesses().anyMatch(ph -> isDockerCommand(ph.info().command().orElse(null)));
+    }
+
+    /** the actual matching decision, pulled out so it's unit-testable without spawning a real
+     *  process: ProcessHandle.Info.command()/commandLine() were found live 2026-09-28 to return
+     *  empty even for the TEST JVM's own direct children on this macOS setup (a permission
+     *  restriction, not a bug in this class) - a real spawned process is not a reliable way to test
+     *  this matching logic portably. */
+    static boolean isDockerCommand(final String command) {
+        return command != null && (command.equals("docker") || command.endsWith("/docker"));
     }
 
     public static boolean portInUse(final int port, final String host) {
