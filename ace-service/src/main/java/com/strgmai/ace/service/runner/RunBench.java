@@ -285,6 +285,15 @@ public class RunBench {
         // live: every one of 16 successfully-completed runs in the DB had no workspace.bundle at all,
         // despite this identical command succeeding in isolation).
         bundleWorkspace(ws, rd);
+        // rd/source/ - a PLAIN, ready-to-run directory (docker-compose.yml, Dockerfile, src/, ...),
+        // not just a .bundle a human would need to `git clone` before they could actually use it.
+        // Found live 2026-09-28: ws lives under $TMPDIR, survives only until the OS decides to sweep
+        // it - a run from days earlier had already lost its working tree AND part of its own git
+        // object store by the time anyone went looking, needing manual git-internals surgery to
+        // recover. Gates the ws/home cleanup below exactly like bundleWorkspace's own comment argues
+        // for the bundle: never delete the only copy of what a run produced without a confirmed,
+        // actually-usable replacement already sitting in rd.
+        final boolean sourceExported = exportSource(ws, rd);
 
         // ---- reviews (scored for CALIBRATION against the oracle; they never replace it) ----
         final Map<String, Object> reviewCfg = cfg.get("review") instanceof Map<?, ?> r ? (Map<String, Object>) r : Map.of();
@@ -319,9 +328,9 @@ public class RunBench {
         manifest.put("contention", Map.of("docker_up", DockerService.dockerRunning(), "docker_windows", manifest.get("docker_windows")));
         writeManifest(rd, manifest);
         captureOmlxLog(rd, manifest);
-        // never delete on an unconfirmed bundle (see bundleWorkspace above) - losing disk space on a
-        // scratch dir is recoverable, losing the run's own output is not
-        if (Files.isRegularFile(rd.resolve("workspace.bundle")) && !Boolean.TRUE.equals(cfg.get("keep_workspace"))) { deleteRecursive(ws); deleteRecursive(home); }
+        // never delete without a confirmed, actually-usable copy already in rd (see exportSource
+        // above) - losing disk space on a scratch dir is recoverable, losing the run's own output is not
+        if (sourceExported && !Boolean.TRUE.equals(cfg.get("keep_workspace"))) { deleteRecursive(ws); deleteRecursive(home); }
         return manifest;
     }
 
@@ -379,6 +388,47 @@ public class RunBench {
             log.warn("could not bundle workspace {}: {}", ws, e.toString());
         } finally {
             try { Files.deleteIfExists(tmp); } catch (Exception e) { log.debug("could not remove leftover bundle temp file {}: {}", tmp, e.toString()); }
+        }
+    }
+
+    /** exports the run's own final, git-committed source into rd/source/ - a PLAIN directory (not
+     *  a .bundle) that needs no `git clone`/`git fetch` to actually use: docker-compose.yml,
+     *  Dockerfile, src/, build.gradle, ... exactly as committed, ready to `cd` into and run.
+     *  `git archive` only emits TRACKED files - build/, .gradle/, and everything else in
+     *  .git/info/exclude (RunBenchSupport.snapshot()) is skipped, so this is the agent's actual
+     *  source, not its build output.
+     *
+     *  Found live 2026-09-28: ws lives under $TMPDIR, so it survives only until the OS decides to
+     *  reclaim it - the run's ONLY copy of its own generated code before this, unless bundleWorkspace
+     *  above had already run AND someone was willing to `git clone` the bundle back out later. A run
+     *  from days earlier had lost its working tree entirely, plus two blobs from its own object
+     *  store, by the time anyone went looking - recoverable only by hand, and only because most of
+     *  the object store happened to survive. Returns whether it actually succeeded, so the caller
+     *  (see the ws/home cleanup below) never deletes the only copy of what a run produced without a
+     *  confirmed, immediately-usable replacement already sitting in rd. */
+    static boolean exportSource(final Path ws, final Path rd) {
+        final Path dest = rd.resolve("source");
+        final Path tar = rd.resolve("source.tar.tmp");
+        try {
+            Files.deleteIfExists(tar);
+            final DockerService.Sh archiveR = DockerService.sh(120, "git", "-C", ws.toString(), "archive", "--format=tar", "--output=" + tar, "HEAD");
+            if (archiveR.rc() != 0 || !Files.isRegularFile(tar) || Files.size(tar) == 0) {
+                log.error("exporting the run's source failed at `git archive` for {} (rc={}): {}", ws, archiveR.rc(), archiveR.out());
+                return false;
+            }
+            deleteRecursive(dest);
+            Files.createDirectories(dest);
+            final DockerService.Sh untarR = DockerService.sh(120, "tar", "-xf", tar.toString(), "-C", dest.toString());
+            if (untarR.rc() != 0) {
+                log.error("exporting the run's source failed at `tar -x` for {} (rc={}): {}", ws, untarR.rc(), untarR.out());
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            log.warn("could not export the run's source from {}: {}", ws, e.toString());
+            return false;
+        } finally {
+            try { Files.deleteIfExists(tar); } catch (Exception e) { log.debug("could not remove leftover source tar {}: {}", tar, e.toString()); }
         }
     }
 
