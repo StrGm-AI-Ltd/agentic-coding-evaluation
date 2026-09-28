@@ -2,6 +2,7 @@ package com.strgmai.ace.service.metrics;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,6 +28,34 @@ public final class Trajectory {
 
     public record ToolCall(String name, String args) {}
 
+    /** Found live 2026-09-28: a `write` call's own "content" (or edit's "old_string"/"new_string")
+     *  is the ENTIRE file being written - real signal for the agent, but pure bloat for trajectory
+     *  analysis, which only ever reads path/command out of a tool call's args (argPath(),
+     *  isTestOrBuild()), never the payload text. Measured 61% of a real trajectory.json's bytes.
+     *  Worse: TRAJECTORY.md is what the trajectory reviewer re-reads via its own tools, so every
+     *  such reread dragged full file contents back into the reviewer's own context - a real
+     *  contributor to a live context-window overflow. Caps every string VALUE at
+     *  ARG_VALUE_PREVIEW_CHARS, keeping the field's own length as signal rather than dropping it. */
+    static final int ARG_VALUE_PREVIEW_CHARS = 200;
+
+    static String previewArgs(final String args) {
+        try {
+            final JsonNode n = JSON.readTree(args);
+            if (!n.isObject()) return args;
+            final ObjectNode out = (ObjectNode) n;
+            final List<String> keys = new ArrayList<>();
+            out.fieldNames().forEachRemaining(keys::add);
+            for (String k : keys) {
+                final String v = out.path(k).isTextual() ? out.path(k).asText() : null;
+                if (v != null && v.length() > ARG_VALUE_PREVIEW_CHARS)
+                    out.put(k, v.substring(0, ARG_VALUE_PREVIEW_CHARS) + "... (truncated, " + v.length() + " chars total)");
+            }
+            return JSON.writeValueAsString(out);
+        } catch (Exception e) {
+            return args;   // not a JSON object - nothing safe to truncate, leave as-is
+        }
+    }
+
     public record Turn(Object seq, String ts, Object status, Object genTps, String task, boolean budgetExceeded,
                        boolean clientAborted, boolean truncated, Object cachedTokens, Object promptTokens,
                        Object completionTokens, Object nMessages, Object latency, Object ttft, String finish,
@@ -45,7 +74,7 @@ public final class Trajectory {
                 final Map<String, Object> msg = ch.get("message") instanceof Map<?, ?> mm ? (Map<String, Object>) mm : Map.of();
                 for (Map<String, Object> t : (List<Map<String, Object>>) msg.getOrDefault("tool_calls", List.of())) {
                     final Map<String, Object> fn = t.get("function") instanceof Map<?, ?> f ? (Map<String, Object>) f : Map.of();
-                    tcs.add(new ToolCall(String.valueOf(fn.get("name")), String.valueOf(fn.getOrDefault("arguments", ""))));
+                    tcs.add(new ToolCall(String.valueOf(fn.get("name")), previewArgs(String.valueOf(fn.getOrDefault("arguments", "")))));
                 }
                 final Map<String, Object> n = new LinkedHashMap<>();
                 n.put("content", msg.getOrDefault("content", ""));
@@ -56,7 +85,7 @@ public final class Trajectory {
                 resp = n;
             } else
                 for (Map<String, Object> t : (List<Map<String, Object>>) resp.getOrDefault("tool_calls", List.of()))
-                    tcs.add(new ToolCall(String.valueOf(t.get("name")), String.valueOf(t.getOrDefault("arguments", ""))));
+                    tcs.add(new ToolCall(String.valueOf(t.get("name")), previewArgs(String.valueOf(t.getOrDefault("arguments", "")))));
             final Map<String, Object> u = resp.get("usage") instanceof Map<?, ?> uu ? (Map<String, Object>) uu : Map.of();
             Object genTps = u.get("generation_tokens_per_second");
             if (genTps == null && u.get("completion_tokens") instanceof Number ct && r.get("latency_sec") instanceof Number lat && r.get("ttft_sec") instanceof Number ttft)

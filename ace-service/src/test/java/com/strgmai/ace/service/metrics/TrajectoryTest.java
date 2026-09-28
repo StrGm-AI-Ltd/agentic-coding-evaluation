@@ -103,6 +103,47 @@ class TrajectoryTest {
         assertEquals(60, idx.getKey());   // 100 - 40
     }
 
+    /** A write call's own "content" is the entire file being written - real signal for the agent,
+     *  pure bloat for trajectory analysis (measured 61% of a real trajectory.json's bytes). */
+    @Test
+    void previewArgsTruncatesALongStringValueButKeepsShortFieldsIntact() throws Exception {
+        final String longContent = "x".repeat(500);
+        final String args = "{\"path\":\"src/A.java\",\"content\":\"" + longContent + "\"}";
+        final Map<String, Object> parsed = new com.fasterxml.jackson.databind.ObjectMapper().readValue(
+                Trajectory.previewArgs(args), Map.class);
+        assertEquals("src/A.java", parsed.get("path"), "a short field must survive untouched");
+        final String content = (String) parsed.get("content");
+        assertTrue(content.length() < longContent.length(), "the long value must be shortened");
+        assertTrue(content.contains("500 chars total"), "the original length is kept as signal: " + content);
+    }
+
+    @Test
+    void previewArgsLeavesAShortValueUntouched() {
+        final String args = "{\"path\":\"src/A.java\"}";
+        assertEquals(args, Trajectory.previewArgs(args));
+    }
+
+    @Test
+    void previewArgsIsANoOpOnNonObjectOrUnparseableArgs() {
+        assertEquals("not json at all", Trajectory.previewArgs("not json at all"));
+        assertEquals("[1,2,3]", Trajectory.previewArgs("[1,2,3]"));
+    }
+
+    /** turnsFromProxy() is where journaled tool-call args first enter a Turn - the truncation must
+     *  apply right there so every downstream consumer (trajectory.json, TRAJECTORY.md) inherits it. */
+    @Test
+    void turnsFromProxyTruncatesLongToolCallArgs() {
+        final String longContent = "y".repeat(1000);
+        final Map<String, Object> rec = Map.of("path", "/v1/chat/completions", "seq", 1, "ts", "2026-09-16T10:00:00Z",
+                "status", 200, "response", Map.of("choices", List.of(Map.of("message", Map.of(
+                        "tool_calls", List.of(Map.of("function", Map.of("name", "write",
+                                "arguments", "{\"path\":\"src/A.java\",\"content\":\"" + longContent + "\"}"))))))));
+        final List<Trajectory.Turn> turns = Trajectory.turnsFromProxy(List.of(rec));
+        assertEquals(1, turns.size());
+        final String storedArgs = turns.get(0).toolCalls().get(0).args();
+        assertTrue(storedArgs.length() < longContent.length(), "the journaled full file content must not survive into the Turn");
+    }
+
     @Test
     void toolResultsPairByTaskAcrossInterleavedParallelJournals() {
         // seq->results mapping by task tag: parallel tasks interleave in the merged journal
