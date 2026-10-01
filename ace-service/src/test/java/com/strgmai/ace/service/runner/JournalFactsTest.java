@@ -124,11 +124,15 @@ class JournalFactsTest {
         assertEquals(1, ((Number) JournalFacts.facts(j.toString(), null, null, null, null, "T1").get("requests")).intValue());
     }
 
+    /** #166: reasoning_effort is sent top-level (OpenAiChatRequestParameters.reasoningEffort, since
+     *  e7bcbda) - NOT nested under chat_template_kwargs (the oMLX-specific shape the harness never
+     *  actually sends, per README-JLS.md). A fixture using the stale nested shape would mask this
+     *  exact regression, same as it did before this test was fixed. */
     @Test
     void reasoningEffortsAreCounted() throws Exception {
         final Path j = track(Files.createTempFile("j", ".jsonl"));
-        final String hi = "{\"messages\": [], \"tools\": [], \"chat_template_kwargs\": {\"reasoning_effort\": \"high\"}}";
-        final String med = "{\"messages\": [], \"tools\": [], \"chat_template_kwargs\": {\"reasoning_effort\": \"medium\"}}";
+        final String hi = "{\"messages\": [], \"tools\": [], \"reasoning_effort\": \"high\"}";
+        final String med = "{\"messages\": [], \"tools\": [], \"reasoning_effort\": \"medium\"}";
         Files.writeString(j, chat("2026-09-14T10:00:00Z", "", "", hi) + chat("2026-09-14T10:01:00Z", "", "", med)
                 + chat("2026-09-14T10:02:00Z", "", "", med) + chat("2026-09-14T10:03:00Z", "", "", REQ));
         assertEquals(Map.of("high", 1, "medium", 2, "none", 1), JournalFacts.facts(j.toString(), null, null, null, null, null).get("reasoning_efforts"));
