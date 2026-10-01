@@ -3,6 +3,7 @@ package com.strgmai.ace.service.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.strgmai.ace.service.jooq.tables.records.CheckResultsRecord;
 import org.jooq.DSLContext;
+import org.jooq.impl.DSL;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -72,29 +73,36 @@ public class ImporterService {
         values.put(RUNS.METRICS, toJson(metrics));
         final Map<org.jooq.Field<?>, Object> updates = new LinkedHashMap<>();
         values.forEach((field, v) -> updates.put(field, excluded(field)));
-        dsl.insertInto(RUNS)
-                .set(RUNS.RUN_ID, runId)
-                .set(RUNS.JOB_ID, jobId)
-                .set(values)
-                .onConflict(RUNS.RUN_ID).doUpdate()
-                .set(updates)
-                .set(RUNS.JOB_ID, coalesce(excluded(RUNS.JOB_ID), RUNS.JOB_ID))
-                .set(RUNS.IMPORTED_AT, Instant.now().toString())
-                .execute();
-        dsl.deleteFrom(CHECK_RESULTS).where(CHECK_RESULTS.RUN_ID.eq(runId)).execute();
-        for (Map<String, Object> r : (List<Map<String, Object>>) oracle.getOrDefault("results", List.of())) {
-            final String id = (String) r.get("id");
-            final var check = com.strgmai.ace.service.oracle.CheckId.valueOf(id);
-            final CheckResultsRecord rec = dsl.newRecord(CHECK_RESULTS);
-            rec.setRunId(runId);
-            rec.setCheckId(id);
-            rec.setCategory(check.category);
-            rec.setWeight(check.weight);
-            rec.setDescription(check.description);
-            rec.setStatus(str(r.get("status")));
-            rec.setDetail(toJson(r.get("detail")));
-            rec.insert();
-        }
+        // #174: the RUNS upsert, the CHECK_RESULTS wipe, and its per-row reinsert are one unit - a
+        // row id not in THIS build's CheckId enum (expected when importing a run scored by a
+        // different oracle version) must not leave a RUNS row already reflecting the new manifest
+        // next to truncated, partially-reinserted CHECK_RESULTS rows.
+        dsl.transaction(cfg -> {
+            final DSLContext tx = DSL.using(cfg);
+            tx.insertInto(RUNS)
+                    .set(RUNS.RUN_ID, runId)
+                    .set(RUNS.JOB_ID, jobId)
+                    .set(values)
+                    .onConflict(RUNS.RUN_ID).doUpdate()
+                    .set(updates)
+                    .set(RUNS.JOB_ID, coalesce(excluded(RUNS.JOB_ID), RUNS.JOB_ID))
+                    .set(RUNS.IMPORTED_AT, Instant.now().toString())
+                    .execute();
+            tx.deleteFrom(CHECK_RESULTS).where(CHECK_RESULTS.RUN_ID.eq(runId)).execute();
+            for (Map<String, Object> r : (List<Map<String, Object>>) oracle.getOrDefault("results", List.of())) {
+                final String id = (String) r.get("id");
+                final var check = com.strgmai.ace.service.oracle.CheckId.valueOf(id);
+                final CheckResultsRecord rec = tx.newRecord(CHECK_RESULTS);
+                rec.setRunId(runId);
+                rec.setCheckId(id);
+                rec.setCategory(check.category);
+                rec.setWeight(check.weight);
+                rec.setDescription(check.description);
+                rec.setStatus(str(r.get("status")));
+                rec.setDetail(toJson(r.get("detail")));
+                rec.insert();
+            }
+        });
         return oracle;
     }
 
