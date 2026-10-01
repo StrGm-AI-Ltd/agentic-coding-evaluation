@@ -1,6 +1,5 @@
 package com.strgmai.ace.service.service;
 
-import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.models.models.Model;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.config.JsonColumns;
@@ -52,13 +51,7 @@ public class BenchController {
 
     @GetMapping("/api/models")
     public List<String> models() {
-        // todo issue 25: define a service for available models
-        // #80: was hardcoded to the default endpoint/key regardless of ace.endpoint/ace.api-key
-        final var client = OpenAIOkHttpClient.builder()
-                .baseUrl(props.upstreamBase() + "/v1")
-                .apiKey(props.apiKey() == null || props.apiKey().isBlank() ? "none" : props.apiKey())
-                .build();
-        return client.models().list().data().stream().map(Model::id).sorted().toList();
+        return Preflight.modelClient(props).models().list().data().stream().map(Model::id).sorted().toList();
     }
 
     @GetMapping("/api/runs")
@@ -226,11 +219,10 @@ public class BenchController {
      *  entry needs k >= 5 comparable, valid runs; smaller groups are indicative and never ranked. */
     @GetMapping("/api/groups")
     public Map<String, Object> groups() throws Exception {
-        List<Map<String, Object>> rows = dsl.select(RUNS.RUN_ID, RUNS.TASK, RUNS.MODEL, RUNS.MODE, RUNS.KEY_HASH, RUNS.RESULTS_DIR)
-                .from(RUNS).where(RUNS.POOLABLE.isTrue()).orderBy(RUNS.RUN_ID).fetch().intoMaps();
-        final Map<List<Object>, List<Map<String, Object>>> byKey = new LinkedHashMap<>();
-        for (Map<String, Object> row : rows)
-            byKey.computeIfAbsent(List.of(row.get("task"), row.get("model"), row.get("key_hash")), k -> new ArrayList<>()).add(row);
+        final Map<List<Object>, List<Map<String, Object>>> byKey = dsl
+                .select(RUNS.RUN_ID, RUNS.TASK, RUNS.MODEL, RUNS.MODE, RUNS.KEY_HASH, RUNS.RESULTS_DIR)
+                .from(RUNS).where(RUNS.POOLABLE.isTrue()).orderBy(RUNS.RUN_ID)
+                .fetchGroups(r -> List.of(r.get(RUNS.TASK), r.get(RUNS.MODEL), r.get(RUNS.KEY_HASH)), org.jooq.Record::intoMap);
 
         final List<Map<String, Object>> ranked = new ArrayList<>(), indicative = new ArrayList<>();
         for (var entry : byKey.entrySet()) {

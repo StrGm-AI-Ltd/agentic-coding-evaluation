@@ -1,5 +1,6 @@
 package com.strgmai.ace.service.service;
 
+import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.models.models.Model;
 import com.strgmai.ace.service.config.BenchProperties;
@@ -41,13 +42,7 @@ public class Preflight {
         add(out, "pinned JDK 21", jdkOk, jh.isBlank() ? "none found: set ace.java-home or $ACE_JAVA_HOME" : jh, true);
 
         try {
-            // todo issue 25 define a service for available models
-            // #80: was hardcoded to the default endpoint/key regardless of ace.endpoint/ace.api-key
-            final var client = OpenAIOkHttpClient.builder()
-                    .baseUrl(props.upstreamBase() + "/v1")
-                    .apiKey(props.apiKey() == null || props.apiKey().isBlank() ? "none" : props.apiKey())
-                    .build();
-            final var models = client.models().list().data().stream().map(Model::id).sorted().toList();
+            final var models = modelClient(props).models().list().data().stream().map(Model::id).sorted().toList();
             add(out, "model server", true, models.size() + " models", true);
             final String target = model == null || model.isBlank() ? props.model() : model;
             add(out, "target model served", models.contains(target), models.contains(target) ? target : target + " not in " + models.stream().limit(3).toList(), true);
@@ -56,6 +51,15 @@ public class Preflight {
         }
         final boolean blocked = out.stream().anyMatch(x -> x.fatal() && !x.ok());
         return new Report(out, blocked);
+    }
+
+    // todo issue 25: define a service for available models
+    // #80: was hardcoded to the default endpoint/key regardless of ace.endpoint/ace.api-key
+    static OpenAIClient modelClient(final BenchProperties props) {
+        return OpenAIOkHttpClient.builder()
+                .baseUrl(props.upstreamBase() + "/v1")
+                .apiKey(props.apiKey() == null || props.apiKey().isBlank() ? "none" : props.apiKey())
+                .build();
     }
 
     static String first(String s) { String t = s.strip(); return t.isEmpty() ? "no output" : t.split("\n")[0]; }
