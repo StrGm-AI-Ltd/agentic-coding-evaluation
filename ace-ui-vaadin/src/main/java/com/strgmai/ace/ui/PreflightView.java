@@ -79,7 +79,7 @@ public class PreflightView extends VerticalLayout {
         }
 
         final var statusLine = new HorizontalLayout(
-                Badges.text(state.blocked() ? "blocked" : "runnable", state.blocked() ? Badges.CONTRAST : Badges.PRIMARY));
+                Badges.text(state.blocked() ? "blocked" : "runnable", state.blocked() ? Badges.CONTRAST : Badges.SUCCESS));
         statusLine.setPadding(false);
         statusLine.setSpacing(true);
         statusLine.getStyle().set("margin", "8px 0 0 0");
@@ -99,7 +99,7 @@ public class PreflightView extends VerticalLayout {
         final var row = new Div();
         row.getStyle().set("margin", "4px 0");
         final var badge = Badges.text(check.ok() ? "ok" : check.fatal() ? "fatal" : "degraded",
-                check.ok() ? Badges.PRIMARY : check.fatal() ? Badges.ERROR : Badges.CONTRAST);
+                check.ok() ? Badges.SUCCESS : check.fatal() ? Badges.ERROR : Badges.CONTRAST);
         final var label = new Span(" " + check.check() + " — " + check.detail());
         row.add(badge, label);
         return row;
