@@ -37,8 +37,12 @@ public class RunOracle {
         final var ladderStream = getClass().getResourceAsStream("/tasks/ladder.json");
         if (ladderStream == null) throw new IllegalStateException("ladder.json resource not found on classpath");
         final JsonNode ladder = json.readTree(ladderStream);
-        final JsonNode rung = ladder.has(task) ? ladder.get(task) : ladder.get("L7_full_platform");
-        if (rung == null) throw new IllegalStateException("no ladder rung for task '" + task + "' and no L7_full_platform fallback");
+        // #172: this used to silently fall back to L7_full_platform (the full 77-point denominator)
+        // for ANY unrecognized task string - a typo'd/renamed --task argument would silently score
+        // against the wrong (much larger) denominator instead of failing loudly, against design
+        // rule 14 ("a verification that could not run is inconclusive, never silently substituted")
+        final JsonNode rung = ladder.get(task);
+        if (rung == null) throw new IllegalArgumentException("no ladder rung for task '" + task + "' in tasks/ladder.json");
         final Set<CheckId> wanted = new LinkedHashSet<>();
         if (rung.get("checks").isTextual() && rung.get("checks").asText().equals("all"))
             wanted.addAll(EnumSet.allOf(CheckId.class));
