@@ -104,6 +104,57 @@ class ImporterServiceTest {
                 db.select(CHECK_RESULTS.DESCRIPTION).from(CHECK_RESULTS).where(CHECK_RESULTS.RUN_ID.eq(runId)).fetchOne(CHECK_RESULTS.DESCRIPTION));
     }
 
+    /** #174: a check id not in THIS build's CheckId enum (expected when importing a run scored by a
+     *  different oracle version) used to throw AFTER the RUNS upsert and the CHECK_RESULTS wipe had
+     *  already run, leaving a RUNS row reflecting the new manifest next to truncated/empty
+     *  CHECK_RESULTS - the whole write is now one transaction, so a failure partway through must
+     *  leave NEITHER table changed. */
+    @Test
+    void anUnknownCheckIdRollsBackTheWholeImportLeavingNoPartialState() throws Exception {
+        final DSLContext db = dsl();
+        final var dir = Files.createTempDirectory("run");
+        write(dir, "oracle.json", """
+                {"task": "L3p_point_in_time", "schema_version": 3, "weighted_score_pct": 80.0,
+                 "functional_score_pct": 90.0, "functional_points_got": 9, "functional_denominator": 10,
+                 "points_got": 8, "denominator": 10, "partial_score_pct": 75.0,
+                 "results": [{"id": "S1", "status": "pass", "detail": null},
+                             {"id": "NOT_A_REAL_CHECK_ID", "status": "pass", "detail": null}]}""");
+        final var importer = new ImporterService(db);
+
+        assertThrows(IllegalArgumentException.class, () -> importer.importRun(dir, null));
+
+        final String runId = dir.getFileName().toString();
+        assertEquals(0, db.fetchCount(RUNS, RUNS.RUN_ID.eq(runId)), "the RUNS upsert must not survive a failure later in the same import");
+        assertEquals(0, db.fetchCount(CHECK_RESULTS, CHECK_RESULTS.RUN_ID.eq(runId)), "no truncated CHECK_RESULTS rows either");
+    }
+
+    /** Same hazard, but on a RE-import: the existing RUNS row and its CHECK_RESULTS must survive
+     *  completely untouched, not be left half-updated/half-deleted. */
+    @Test
+    void anUnknownCheckIdOnReimportLeavesThePreviousGoodStateUntouched() throws Exception {
+        final DSLContext db = dsl();
+        final var dir = Files.createTempDirectory("run");
+        write(dir, "oracle.json", """
+                {"task": "L3p_point_in_time", "schema_version": 3, "weighted_score_pct": 80.0,
+                 "functional_score_pct": 90.0, "functional_points_got": 9, "functional_denominator": 10,
+                 "points_got": 8, "denominator": 10, "partial_score_pct": 75.0,
+                 "results": [{"id": "S1", "status": "pass", "detail": null}]}""");
+        final var importer = new ImporterService(db);
+        importer.importRun(dir, null);
+        final String runId = dir.getFileName().toString();
+
+        write(dir, "oracle.json", """
+                {"task": "L3p_point_in_time", "schema_version": 3, "weighted_score_pct": 40.0,
+                 "functional_score_pct": 30.0, "functional_points_got": 3, "functional_denominator": 10,
+                 "points_got": 2, "denominator": 10, "partial_score_pct": 20.0,
+                 "results": [{"id": "NOT_A_REAL_CHECK_ID", "status": "pass", "detail": null}]}""");
+        assertThrows(IllegalArgumentException.class, () -> importer.importRun(dir, null));
+
+        final var run = db.selectFrom(RUNS).where(RUNS.RUN_ID.eq(runId)).fetchOne();
+        assertEquals(80.0, run.getWeightedScorePct(), 0.001, "the previous good RUNS row must be untouched by the failed reimport");
+        assertEquals(1, db.fetchCount(CHECK_RESULTS, CHECK_RESULTS.RUN_ID.eq(runId)), "the previous good CHECK_RESULTS row must survive too");
+    }
+
     /** The Vaadin UI's Api.ImportResult(List<String> imported, List<String> skipped) - ported from
      *  the Python service's own importer.import_all contract, run-id lists, not counts - failed to
      *  deserialize the jls response with a JSON parse error ("Cannot deserialize ArrayList<String>
