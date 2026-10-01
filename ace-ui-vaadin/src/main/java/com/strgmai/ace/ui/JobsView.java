@@ -1,6 +1,8 @@
 package com.strgmai.ace.ui;
 
 import com.vaadin.flow.component.button.Button;
+import com.vaadin.flow.component.button.ButtonVariant;
+import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.H2;
@@ -67,20 +69,40 @@ public class JobsView extends VerticalLayout {
         addAttachListener(e -> load());
     }
 
-    /** Status badge with the blocked reason inline (keyboard/touch discoverable, not tooltip-only). */
+    /** Status badge with the blocked reason inline (keyboard/touch discoverable, not tooltip-only).
+     *  #193: at realistic blocked-job volume the full reason text blew out the column and crowded
+     *  the row - now a one-line, ellipsis-truncated button (not a plain Span: a Button stays
+     *  keyboard-focusable and clickable, preserving the original "not tooltip-only" guarantee for
+     *  the full text, which a hover-only title attribute does not) that opens a dialog with the
+     *  untruncated reason on click. The truncation CSS lives on an inner Span, not the Button's own
+     *  host element: vaadin-button's internal label is flex-laid-out, and text-overflow:ellipsis
+     *  does not render its "…" glyph on a flex child - only on a plain block/inline-block box. */
     private com.vaadin.flow.component.html.Div statusCell(final Api.Job job) {
         final var cell = new com.vaadin.flow.component.html.Div();
         final var badge = Badges.status(job.status());
         if ("blocked".equals(job.status()) && job.blocked_reason() != null) {
             badge.getElement().setAttribute("title", job.blocked_reason());
-            final var reason = new Span(job.blocked_reason());
-            reason.getStyle().set("color", "var(--lumo-secondary-text-color)")
-                    .set("font-size", "0.75em").set("white-space", "normal");
+            final var text = new Span(job.blocked_reason());
+            text.getStyle().set("display", "block").set("max-width", "320px")
+                    .set("overflow", "hidden").set("text-overflow", "ellipsis").set("white-space", "nowrap");
+            final var reason = new Button(text, e -> openBlockedReasonDialog(job.blocked_reason()));
+            reason.addThemeVariants(ButtonVariant.LUMO_TERTIARY_INLINE, ButtonVariant.LUMO_SMALL);
+            reason.getStyle().set("color", "var(--lumo-secondary-text-color)").set("max-width", "320px");
             cell.add(badge, reason);
             return cell;
         }
         cell.add(badge);
         return cell;
+    }
+
+    /** Full, unclipped blocked reason - same Dialog pattern as RunDetailView.openCheckDialog. */
+    private void openBlockedReasonDialog(final String reason) {
+        final var dialog = new Dialog();
+        dialog.setHeaderTitle("blocked reason");
+        dialog.setWidth("min(600px, 90vw)");
+        dialog.add(Panels.mono(reason));
+        dialog.getFooter().add(new Button("Close", e -> dialog.close()));
+        dialog.open();
     }
 
     private HorizontalLayout actions(final Api.Job job) {
