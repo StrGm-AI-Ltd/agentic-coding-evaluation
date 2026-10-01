@@ -222,10 +222,12 @@ public final class JournalFacts {
         catch (Exception e) { log.debug("could not parse journal entry timestamp: {}", e.toString()); }
         List<String> ws = line.contains("agentbench-ws/")
                 ? WS_REF.matcher(line).results().map(m -> m.group(1)).distinct().toList() : null;
+        // top-level, matching how ReferenceAgent actually sends it (OpenAiChatRequestParameters.reasoningEffort)
+        // since e7bcbda - the oMLX-specific chat_template_kwargs.reasoning_effort shape is never populated
         String effort = null;
         if (req != null && req.isObject())
-            effort = String.valueOf(req.path("chat_template_kwargs").path("reasoning_effort").asText(null) == null ? "none"
-                    : req.path("chat_template_kwargs").path("reasoning_effort").asText());
+            effort = String.valueOf(req.path("reasoning_effort").asText(null) == null ? "none"
+                    : req.path("reasoning_effort").asText());
         return new Entry(off, r.path("task").asText(null), ts, r.path("status").asInt(0),
                 r.path("budget_exceeded").asBoolean(false), r.path("upstream_error").asBoolean(false),
                 r.path("client_aborted").asBoolean(false), r.path("drain_aborted").asBoolean(false),
