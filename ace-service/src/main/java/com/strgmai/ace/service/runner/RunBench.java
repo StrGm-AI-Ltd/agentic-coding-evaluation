@@ -22,6 +22,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -965,10 +966,14 @@ public class RunBench {
         final List<String> waveIds = waveTasks.stream().map(t -> t.id).toList();
         final long t0 = System.currentTimeMillis();
         cfg.put("_manifest", manifest);
-        final Map<String, Path> wts = new LinkedHashMap<>(), homes = new LinkedHashMap<>();
         final Map<String, Path> taskJournals = new LinkedHashMap<>();
         final Map<String, String> packs = new LinkedHashMap<>();
-        final Map<String, Map<String, Object>> recs = new LinkedHashMap<>();
+        // ConcurrentHashMap, not LinkedHashMap: put() from inside the per-task threads below races
+        // on a plain LinkedHashMap's bucket array/insertion-order list during a resize, silently
+        // losing an entry or corrupting the structure - the Semaphore below only bounds how many
+        // threads run at once, it provides no mutual exclusion on this shared map. Iteration order
+        // is never relied on for either map (the merge loop walks waveTasks/waveIds, not these).
+        final Map<String, Map<String, Object>> recs = new ConcurrentHashMap<>();
         // R18: a wave task whose phase tag already exists finished its agent session in a prior
         // attempt of THIS SAME run (the tag is only ever written after that session returns
         // normally - see the merge loop below). Its work sits on the still-extant "task/<id>"
@@ -994,7 +999,7 @@ public class RunBench {
             Files.writeString(rd.resolve("packs/" + t.id + ".md"), packs.get(t.id));
         }
         final var sem = new java.util.concurrent.Semaphore(parallel);
-        final Map<String, Throwable> errors = new LinkedHashMap<>();
+        final Map<String, Throwable> errors = new ConcurrentHashMap<>();   // same race as recs above
         final List<Thread> threads = new ArrayList<>();
         for (PlanTask t : waveTasks) {
             if (resumedTaskIds.contains(t.id)) continue;
@@ -1104,7 +1109,7 @@ public class RunBench {
             final List<String> own = ownership.getOrDefault(tid, List.of());
             if (!own.isEmpty())
                 for (String f : changed.get(tid))
-                    if (own.stream().noneMatch(g -> f.startsWith(g.replaceAll("\\*$", "")) || java.nio.file.Path.of(f).startsWith(g.replaceAll("\\*.*$", ""))))
+                    if (own.stream().noneMatch(g -> matchesOwnership(g, f)))
                         violations.add(new String[]{tid, f});
         }
         boolean broken = !conflicts.isEmpty() || (!Boolean.TRUE.equals(wv.get("green"))
@@ -1168,6 +1173,21 @@ public class RunBench {
      *  applies everywhere else (R10/R12, see ReferenceAgent/RecordingProxy). Interrupting each wave
      *  thread lets its own runBounded() call unwind the same way any other cancelled session's does;
      *  still WAITS for them to actually stop before returning, not just signals and moves on. */
+    /** Whether `f` falls under ownership glob `g`. A glob with no `*` at all is a plain directory
+     *  prefix (the plan's own convention for "the whole directory" also works without a wildcard);
+     *  anything containing a `*` is matched with java.nio.file.PathMatcher's own glob syntax -
+     *  which already distinguishes `**` (any depth) from a bare `*` (one path segment only)
+     *  correctly. The hand-rolled regex this replaced stripped only the LAST `*` for its first
+     *  branch (dead for a `**`-suffixed glob, since the stripped prefix still contains a literal
+     *  `*` that can never match via startsWith) and, for a single-star glob like
+     *  "account-service/*.java" (intended: direct children only), degraded to a bare directory
+     *  prefix via its second branch - silently under-detecting violations for files nested deeper
+     *  than one level. */
+    static boolean matchesOwnership(final String g, final String f) {
+        if (!g.contains("*")) return Path.of(f).startsWith(g);
+        return FileSystems.getDefault().getPathMatcher("glob:" + g).matches(Path.of(f));
+    }
+
     static void joinAll(final List<Thread> threads) throws InterruptedException {
         try {
             for (Thread th : threads) th.join();
