@@ -94,6 +94,28 @@ class JournalFactsTest {
         assertEquals(1, ((Number) JournalFacts.facts(j.toString(), null, null, null, null, null).get("requests")).intValue());
     }
 
+    /** #169: mtime alone used to invalidate the cache on EVERY ordinary append (appending always
+     *  changes mtime), forcing a full reparse from byte 0 every call - the append test above can't
+     *  catch this, since a correct reparse-from-scratch produces the same final counts as a
+     *  correct incremental extend. This corrupts the already-parsed first line's on-disk bytes IN
+     *  PLACE (same length, so the file never shrinks) right after it's cached, then appends a
+     *  second valid entry: a regression back to "reparse everything on any mtime change" would
+     *  re-read the now-corrupted first line and lose it, while genuinely incremental parsing never
+     *  looks at those bytes again. */
+    @Test
+    void appendDoesNotReparseAlreadyCachedBytes() throws Exception {
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
+        final String first = chat("2026-09-14T10:00:00Z", "", "", REQ);
+        Files.writeString(j, first);
+        assertEquals(1, ((Number) JournalFacts.facts(j.toString(), null, null, null, null, null).get("requests")).intValue());
+        final byte[] garbage = new byte[first.getBytes(java.nio.charset.StandardCharsets.UTF_8).length];
+        java.util.Arrays.fill(garbage, (byte) 'x');
+        try (var raf = new java.io.RandomAccessFile(j.toFile(), "rw")) { raf.seek(0); raf.write(garbage); }
+        Files.writeString(j, chat("2026-09-14T11:00:00Z", "", "", REQ), java.nio.file.StandardOpenOption.APPEND);
+        assertEquals(2, ((Number) JournalFacts.facts(j.toString(), null, null, null, null, null).get("requests")).intValue(),
+                "a reparse-from-scratch would hit the now-corrupted first line and lose it - incremental parsing never re-reads it");
+    }
+
     @Test
     void budgetRefusalsCountSeparatelyFromErrors() throws Exception {
         final Path j = track(Files.createTempFile("j", ".jsonl"));
