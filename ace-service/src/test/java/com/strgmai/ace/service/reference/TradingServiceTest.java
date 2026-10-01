@@ -153,6 +153,32 @@ class TradingServiceTest {
     }
 
     @Test
+    void theHollowBugFillsWithNoAccountOrLedgerChange() {
+        final var buggy = new TradingService(Set.of("hollow"));
+        final String a = (String) buggy.createAccount("USD").get("accountId");
+        buggy.deposit(a, "1000.00");
+        assertEquals(201, buggy.order(a, "AAPL", "BUY", "1", "10.00", null).status());
+        assertEquals("1000.00", buggy.account(a).get("availableBalance"));   // balance untouched
+        assertTrue(((java.util.Map<?, ?>) buggy.holdings(a, null).get("holdings")).isEmpty());   // no ledger entry
+    }
+
+    /** the real, unintended defect this seeded bug used to carry (#176): the hollow branch
+     *  registered the idempotency key but never stored the order itself, so a same-key repeat's
+     *  orders.get(hit.orderId()) returned null and orderView(null) threw an NPE instead of the
+     *  graceful 200-repeat response every OTHER bug mode (and the no-bug default) returns. */
+    @Test
+    void theHollowBugStillSupportsAnIdempotencyKeyRepeatWithoutThrowing() {
+        final var buggy = new TradingService(Set.of("hollow"));
+        final String a = (String) buggy.createAccount("USD").get("accountId");
+        buggy.deposit(a, "1000.00");
+        final var first = buggy.order(a, "AAPL", "BUY", "1", "10.00", "idem-1");
+        assertEquals(201, first.status());
+        final var repeat = buggy.order(a, "AAPL", "BUY", "1", "10.00", "idem-1");
+        assertEquals(200, repeat.status());
+        assertEquals(first.body().get("orderId"), repeat.body().get("orderId"));
+    }
+
+    @Test
     void theFloatBugBreaksTheDecimalRoundTripRepresentation() {
         final var buggy = new TradingService(Set.of("float"));
         final String a = (String) buggy.createAccount("USD").get("accountId");

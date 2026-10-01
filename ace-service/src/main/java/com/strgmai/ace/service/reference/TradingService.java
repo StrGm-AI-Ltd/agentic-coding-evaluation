@@ -92,8 +92,11 @@ public class TradingService {
             return new OrderOutcome(400, Map.of("error", "invalid"), null);
         final BigDecimal cost = money(qty.multiply(px));
 
-        if (bug("hollow")) {   // orders return 201 + executedAt but change NO state and write NO ledger
+        if (bug("hollow")) {   // orders return 201 + executedAt but change NO account/ledger state -
+            // the order itself IS still stored (an idempotency repeat or a direct order(id) lookup
+            // needs something to find), so only accounts/ledger stay untouched, not orders
             final Order o = filled(UUID.randomUUID().toString(), side, sym, qty, px);
+            orders.put(o.orderId(), o);
             if (idempotencyKey != null) idem.put(idempotencyKey, new Idem(o.orderId(), now().plusSeconds(60)));
             return new OrderOutcome(201, orderView(o), null);
         }
