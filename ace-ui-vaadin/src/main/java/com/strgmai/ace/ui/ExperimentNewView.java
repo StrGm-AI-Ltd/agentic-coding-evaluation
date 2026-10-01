@@ -1,5 +1,6 @@
 package com.strgmai.ace.ui;
 
+import com.vaadin.flow.component.HasValidation;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.combobox.ComboBox;
@@ -21,6 +22,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -102,7 +104,7 @@ public class ExperimentNewView extends VerticalLayout {
         firstTokenTimeout.setValue(180);
         firstTokenTimeout.setMin(1);
         compactionTrigger.setMin(0);
-        compactionTrigger.setPlaceholder("blank = default (28000), 0 = disabled");
+        compactionTrigger.setHelperText("blank = default (28000), 0 = disabled");
         reviewWallSec.setMin(1);
         reviewWallSec.setPlaceholder("blank = default (900s)");
         contextWindow.setMin(1);
@@ -146,7 +148,7 @@ public class ExperimentNewView extends VerticalLayout {
         handoffWall.setMin(1);
         handoffWall.setPlaceholder("blank = default (300s)");
         wrapupWall.setMin(1);
-        wrapupWall.setPlaceholder("blank = default (300s, before the decode-speed scale)");
+        wrapupWall.setHelperText("blank = default (300s, before the decode-speed scale)");
 
         orch.setValue(true);
         mono.setValue(true);
@@ -321,14 +323,60 @@ public class ExperimentNewView extends VerticalLayout {
         return raw;
     }
 
+    /** Every field ExperimentParams.build can name in a "key: message" validation error, keyed
+     *  exactly like rawValues() - so a thrown error can be routed back to the field it's actually
+     *  about instead of only a generic panel. Not every raw key's field can fail this way (String
+     *  fields have no numeric/boolean parse to fail), but listing them anyway costs nothing and
+     *  keeps this in sync with rawValues() by construction. */
+    private Map<String, HasValidation> fieldsByKey() {
+        return Map.ofEntries(
+                Map.entry("task_wall", taskWall), Map.entry("task_tokens", taskTokens),
+                Map.entry("first_token_timeout", firstTokenTimeout), Map.entry("compaction_trigger", compactionTrigger),
+                Map.entry("review_wall_sec", reviewWallSec), Map.entry("context_window", contextWindow),
+                Map.entry("reviewer_model", reviewerModel), Map.entry("review_weight", reviewWeight),
+                Map.entry("trajectory_reviewer_model", trajectoryReviewerModel), Map.entry("trajectory_weight", trajectoryWeight),
+                Map.entry("temperature", temperature), Map.entry("top_p", topP), Map.entry("top_k", topK),
+                Map.entry("repetition_penalty", repetitionPenalty), Map.entry("max_tokens", maxTokens),
+                Map.entry("parallel_plan_wall", parallelPlanWall), Map.entry("handoff_wall", handoffWall),
+                Map.entry("wrapup_wall", wrapupWall), Map.entry("model", model), Map.entry("model_a", modelA),
+                Map.entry("model_b", modelB), Map.entry("parallel", parallel));
+    }
+
+    /** ExperimentParams.build names the offending field as a "key: message" prefix for most of
+     *  its checks (see intOr/putIfPresent/taskTokens) - split that out so the error can be routed
+     *  to the field it's actually about, a red field + inline message, instead of only the generic
+     *  panel below. Pure and package-private so it's unit-testable without constructing the view.
+     *  The handful of cross-field messages ExperimentParams.build throws with no such prefix (e.g.
+     *  "a model is required for every template", which could mean one of several possible fields
+     *  depending on the template) return null and fall through to the generic panel, which is the
+     *  right place for a message that isn't about one single field. */
+    static String[] splitFieldError(final String message, final Set<String> knownKeys) {
+        final int colon = message.indexOf(": ");
+        if (colon < 0) return null;
+        final var key = message.substring(0, colon);
+        return knownKeys.contains(key) ? new String[]{key, message.substring(colon + 2)} : null;
+    }
+
+    private boolean showFieldError(final String message) {
+        final var fields = fieldsByKey();
+        final var split = splitFieldError(message, fields.keySet());
+        if (split == null) return false;
+        fields.get(split[0]).setInvalid(true);
+        fields.get(split[0]).setErrorMessage(split[1]);
+        return true;
+    }
+
     private void submit() {
         errors.removeAll();
+        fieldsByKey().values().forEach(f -> f.setInvalid(false));
         final var currentTemplate = template.getValue();
         final Map<String, Object> params;   // assigned exactly once below; a legal blank final
         try {
             params = ExperimentParams.build(currentTemplate, rawValues(currentTemplate));
         } catch (final IllegalArgumentException e) {
-            errors.add(Panels.error(e.getMessage()));
+            if (!showFieldError(e.getMessage())) {
+                errors.add(Panels.error(e.getMessage()));
+            }
             return;
         }
 

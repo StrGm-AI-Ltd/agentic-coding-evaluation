@@ -87,6 +87,9 @@ public class JobNewView extends VerticalLayout {
         task.setAllowCustomValue(true);
         task.setRequired(true);
         task.setPlaceholder("L1…L7 rung");
+        // JobSpecs.build's only possible failure is "task is required" - clear the inline error
+        // the moment the operator picks something, rather than making them resubmit to see it go
+        task.addValueChangeListener(e -> task.setInvalid(false));
         for (final var picker : List.of(model, reviewerModel, trajectoryReviewerModel)) {
             picker.setAllowCustomValue(true);
         }
@@ -120,7 +123,7 @@ public class JobNewView extends VerticalLayout {
         firstTokenTimeout.setMin(1);
         firstTokenTimeout.setPlaceholder("blank = default (180s)");
         compactionTrigger.setMin(0);
-        compactionTrigger.setPlaceholder("blank = default (28000), 0 = disabled");
+        compactionTrigger.setHelperText("blank = default (28000), 0 = disabled");
         reviewWallSec.setMin(1);
         reviewWallSec.setPlaceholder("blank = default (900s)");
         wallBudget.setMin(1);
@@ -146,7 +149,7 @@ public class JobNewView extends VerticalLayout {
         handoffWall.setMin(1);
         handoffWall.setPlaceholder("blank = default (300s)");
         wrapupWall.setMin(1);
-        wrapupWall.setPlaceholder("blank = default (300s, before the decode-speed scale)");
+        wrapupWall.setHelperText("blank = default (300s, before the decode-speed scale)");
 
         add(new H2("New job"));
         add(new RouterLink("← Queue", JobsView.class));
@@ -251,11 +254,15 @@ public class JobNewView extends VerticalLayout {
 
     private void submit() {
         errors.removeAll();
+        task.setInvalid(false);
         final Map<String, Object> spec;   // assigned exactly once below; a legal blank final
         try {
             spec = JobSpecs.build(task.getValue(), rawValues());
         } catch (final IllegalArgumentException e) {
-            errors.add(Panels.error(e.getMessage()));
+            // JobSpecs.build's only validation is "task is required" - a red field + inline
+            // message right on the ComboBox, not a round-trip through a generic panel
+            task.setInvalid(true);
+            task.setErrorMessage(e.getMessage());
             return;
         }
         try {
