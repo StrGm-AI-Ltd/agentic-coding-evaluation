@@ -145,4 +145,45 @@ class ContextProbeTest {
     void unloadModelReturnsFalseRatherThanThrowingWhenUpstreamIsUnreachable() {
         assertFalse(new ContextProbe().unloadModel("http://127.0.0.1:1", "k", "m"));
     }
+
+    /** #170: a validation error (400/413) arrives as a plain JSON body, not SSE - its own message
+     *  text must survive into Post.error() since that's what the binding classification (cap vs
+     *  memory guard) matches against; it used to be hardcoded null. */
+    @Test
+    void postExtractsTheErrorMessageFromANonStreamingErrorResponse() throws Exception {
+        final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        upstream.createContext("/chat/completions", ex -> {
+            final byte[] body = "{\"error\":{\"message\":\"This model's maximum context length is 65536 tokens\",\"type\":\"invalid_request_error\"}}".getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().set("Content-Type", "application/json");
+            ex.sendResponseHeaders(400, body.length);
+            try (var os = ex.getResponseBody()) { os.write(body); }
+        });
+        upstream.start();
+        try {
+            final var r = new ContextProbe().post("http://127.0.0.1:" + upstream.getAddress().getPort(), "k", Map.of("model", "m", "messages", List.of()), 15);
+            assertEquals(400, r.status());
+            assertEquals("This model's maximum context length is 65536 tokens", r.error());
+        } finally {
+            upstream.stop(0);
+        }
+    }
+
+    @Test
+    void postLeavesErrorNullWhenTheNonStreamingResponseHasNoErrorField() throws Exception {
+        final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        upstream.createContext("/chat/completions", ex -> {
+            final byte[] body = "{\"choices\":[{\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5}}".getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().set("Content-Type", "application/json");
+            ex.sendResponseHeaders(200, body.length);
+            try (var os = ex.getResponseBody()) { os.write(body); }
+        });
+        upstream.start();
+        try {
+            final var r = new ContextProbe().post("http://127.0.0.1:" + upstream.getAddress().getPort(), "k", Map.of("model", "m", "messages", List.of()), 15);
+            assertEquals(200, r.status());
+            assertNull(r.error());
+        } finally {
+            upstream.stop(0);
+        }
+    }
 }

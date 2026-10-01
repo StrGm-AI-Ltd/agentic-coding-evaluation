@@ -101,7 +101,11 @@ public final class ContextProbe {
             if (!r.headers().firstValue("Content-Type").orElse("").contains("text/event-stream")) {
                 final JsonNode obj = JSON.readTree(r.body().readAllBytes());
                 final JsonNode ch = obj.path("choices").path(0);
-                return new Post(r.statusCode(), obj.path("usage"), ch.path("finish_reason").asText(null), null, 0, null, elapsed(t0));
+                // a validation error (400/413) arrives as a plain JSON body, not SSE - its own
+                // message text is what the binding classification below matches on (cap vs memory
+                // guard); discarding it here left that classification matching an empty string
+                return new Post(r.statusCode(), obj.path("usage"), ch.path("finish_reason").asText(null), null, 0,
+                        obj.path("error").path("message").asText(null), elapsed(t0));
             }
             final var br = new java.io.BufferedReader(new java.io.InputStreamReader(r.body()));
             final StringBuilder u = null;
