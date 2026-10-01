@@ -105,6 +105,35 @@ class RunBenchTest {
         }
     }
 
+    /** #173: --impl-wall (cfg's "impl_wall_sec") matches a monolithic arm's single implementation
+     *  session budget to an orchestrated arm's N-tasks x per-task budget (design rule 10) - it must
+     *  win over the rung's own impl_sec default whenever the run explicitly set one. */
+    @Test
+    void implWallPrefersTheExplicitCfgOverrideOverTheRungDefault() {
+        final var rung = Map.of("impl_sec", 900);
+        assertEquals(3600, RunBench.implWall(Map.of("impl_wall_sec", 3600), rung));
+    }
+
+    @Test
+    void implWallFallsBackToTheRungDefaultWhenNotSetOnTheRun() {
+        final var rung = Map.of("impl_sec", 900);
+        assertEquals(900, RunBench.implWall(Map.of(), rung));
+    }
+
+    @Test
+    void implTokensPrefersTheExplicitCfgOverrideOverTheOperatorDefault() {
+        final BenchProperties props = mock(BenchProperties.class);
+        when(props.phaseTokens("p2_implementation")).thenReturn(5000);
+        assertEquals(50000L, RunBench.implTokens(Map.of("impl_tokens", 50000L), "p2_implementation", props));
+    }
+
+    @Test
+    void implTokensFallsBackToTheOperatorWideDefaultWhenNotSetOnTheRun() {
+        final BenchProperties props = mock(BenchProperties.class);
+        when(props.phaseTokens("p2_implementation")).thenReturn(5000);
+        assertEquals(5000L, RunBench.implTokens(Map.of(), "p2_implementation", props));
+    }
+
     /** Found live 2026-09-25: oMLX's own memory-pressure throttling was slow enough to trip the
      *  agent's 180s stall detector, and oMLX's log - the only place that explained why - spans
      *  every run on the machine and keeps growing. Each run now copies its own slice out. */

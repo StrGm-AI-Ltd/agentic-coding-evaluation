@@ -16,9 +16,9 @@ class ReviewsTest {
 
     private final Reviews reviews = new Reviews(
             new BenchProperties(null, "http://127.0.0.1:9191/v1", null, null, null, null, null, null, null, null,
-                    null, null, null, null, null, null, null),
+                    null, null, null, null, null, null, null, null, null),
             new ReferenceAgent(new BenchProperties(null, null, null, null, null, null, null, null, null, null,
-                    null, null, null, null, null, null, null)));
+                    null, null, null, null, null, null, null, null, null)));
 
     @Test
     void externalBaseResolvesEveryKnownProviderPrefix() {

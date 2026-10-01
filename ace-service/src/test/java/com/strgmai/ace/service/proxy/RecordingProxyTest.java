@@ -33,7 +33,7 @@ class RecordingProxyTest {
 
     private static BenchProperties props(final String upstreamBase) {
         return new BenchProperties(null, upstreamBase, null, null, null, null, 100,
-                null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, null);
     }
 
     /** forward() replies to the client BEFORE its own journalRecord() write, so a test reading the
