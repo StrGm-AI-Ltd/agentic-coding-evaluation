@@ -37,7 +37,7 @@ public final class JournalFacts {
     private static final Map<String, Cache> CACHE = Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
         @Override protected boolean removeEldestEntry(final Map.Entry<String, Cache> eldest) { return size() > MAX_CACHED_JOURNALS; }
     });
-    record Cache(long consumed, long mtimeNs, List<Entry> entries) {}
+    record Cache(long consumed, List<Entry> entries) {}
 
     /** test-only observability into the bound (#100) - never used by production code. */
     static int cacheSize() { return CACHE.size(); }
@@ -168,9 +168,14 @@ public final class JournalFacts {
 
     static List<Entry> entries(final Path p) {
         try {
-            final long size = Files.size(p), mtime = Files.getLastModifiedTime(p).toMillis();
+            final long size = Files.size(p);
             Cache c = CACHE.get(p.toString());
-            if (c != null && (size < c.consumed() || mtime != c.mtimeNs())) c = null;      // truncated or rewritten: reparse
+            // #169: mtime also changes on every ordinary append, which used to force a full
+            // reparse from byte 0 on every call against a live-growing journal - size shrinking
+            // is already the correct, sufficient signal for a truncate+rewrite (an append-only
+            // file, per RecordingProxy.journalRecord's own StandardOpenOption.APPEND, can only
+            // ever get smaller via a truncate first)
+            if (c != null && size < c.consumed()) c = null;      // truncated: reparse
             long start = c == null ? 0 : c.consumed();
             final List<Entry> entries = c == null ? new ArrayList<>() : new ArrayList<>(c.entries());
             if (size > start) {
@@ -198,7 +203,7 @@ public final class JournalFacts {
                         }
                     }
                 }
-                CACHE.put(p.toString(), new Cache(start, Files.getLastModifiedTime(p).toMillis(), List.copyOf(entries)));
+                CACHE.put(p.toString(), new Cache(start, List.copyOf(entries)));
             }
             return entries;
         } catch (IOException e) {
