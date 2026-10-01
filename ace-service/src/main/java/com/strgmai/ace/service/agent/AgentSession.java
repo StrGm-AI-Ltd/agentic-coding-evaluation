@@ -185,12 +185,19 @@ public final class AgentSession {
     }
 
     /** port of compact(): stub the oldest tool outputs, keep the newest `keepRecentTurns` assistant
-     *  turns intact, never touch the system prompt or the first user message (the harness's pack). */
+     *  turns intact, never touch the system prompt or the first user message (the harness's pack).
+     *  A negative keepRecentTurns is an operator misconfiguration, not a reachable intent - clamped
+     *  to 0 ("keep nothing verbatim") rather than indexing past the end of idxAssist and crashing
+     *  the whole session (a harness-side crash from a bad config value must never read as the
+     *  agent's own failure). 0 itself cuts at msgs.size() - idxAssist's own last entry is still
+     *  "the newest 0 turns", i.e. none of them, so everything from index 2 onward is eligible. */
     public static int compact(final List<ChatMessage> msgs, final int keepRecentTurns) {
+        if (keepRecentTurns < 0) log.warn("keepRecentTurns={} is negative - clamping to 0 (\"keep nothing verbatim\")", keepRecentTurns);
+        final int keep = Math.max(0, keepRecentTurns);
         final List<Integer> idxAssist = new ArrayList<>();
         for (int i = 0; i < msgs.size(); i++) if (msgs.get(i) instanceof AiMessage) idxAssist.add(i);
-        if (idxAssist.size() <= keepRecentTurns) return 0;
-        final int cut = idxAssist.get(idxAssist.size() - keepRecentTurns);
+        if (idxAssist.size() <= keep) return 0;
+        final int cut = keep == 0 ? msgs.size() : idxAssist.get(idxAssist.size() - keep);
         int n = 0;
         for (int i = 2; i < cut; i++) {
             if (msgs.get(i) instanceof ToolExecutionResultMessage m && !m.text().startsWith("[output dropped")) {
