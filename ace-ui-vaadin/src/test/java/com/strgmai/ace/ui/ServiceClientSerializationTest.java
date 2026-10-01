@@ -39,7 +39,7 @@ class ServiceClientSerializationTest {
         final var baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
 
         final var original = new ServiceClient(
-                new ServiceProperties(baseUrl, Duration.ofSeconds(1), Duration.ofSeconds(2)),
+                new ServiceProperties(baseUrl, Duration.ofSeconds(1), Duration.ofSeconds(2), Duration.ofMinutes(5)),
                 RestClient.builder());
 
         final var bytes = new ByteArrayOutputStream();
@@ -54,6 +54,7 @@ class ServiceClientSerializationTest {
 
         assertEquals(baseUrl, restored.baseUrl());
         assertNotNull(wire(restored, "http"), "the RestClient handle is rebuilt");
+        assertNotNull(wire(restored, "preflightHttp"), "the preflight RestClient handle is rebuilt (#178)");
         assertNotNull(wire(restored, "sseClient"), "the SSE HttpClient is rebuilt");
 
         // and the rebuilt RestClient actually works — one call through the wire stub

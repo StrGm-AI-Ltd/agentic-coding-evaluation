@@ -14,7 +14,12 @@ import java.time.Duration;
 public record ServiceProperties(
         @DefaultValue("http://127.0.0.1:8765") String baseUrl,
         @DefaultValue("2s") Duration connectTimeout,
-        @DefaultValue("15s") Duration readTimeout) implements Serializable {
+        @DefaultValue("15s") Duration readTimeout,
+        // #178: GET /api/preflight drives a real gradle build+test on the positive control
+        // (docker daemon, git, the pinned JDK, the model server, then a full test run) in one
+        // synchronous call - the ordinary 15s readTimeout above is sized for fast REST
+        // round-trips and routinely fires before the backend's own check finishes.
+        @DefaultValue("5m") Duration preflightReadTimeout) implements Serializable {
 
     /**
      * Pinned like the sibling session-serializable classes (ServiceClient, JobLiveState):

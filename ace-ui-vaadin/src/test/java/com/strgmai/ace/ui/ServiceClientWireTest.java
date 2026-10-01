@@ -146,7 +146,7 @@ class ServiceClientWireTest {
         server.start();
         client = new ServiceClient(
                 new ServiceProperties("http://127.0.0.1:" + server.getAddress().getPort(),
-                        Duration.ofSeconds(1), Duration.ofSeconds(1)),
+                        Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofSeconds(1)),
                 RestClient.builder());
     }
 
@@ -384,6 +384,61 @@ class ServiceClientWireTest {
         assertTrue(state.checks().get(0).ok());
         assertFalse(state.checks().get(1).ok());
         assertTrue(state.checks().get(1).fatal());
+    }
+
+    /** #178: preflight() drives a real gradle build+test and must survive well past the ORDINARY
+     *  read timeout every other call is bound by - a dedicated client/server pair, not the shared
+     *  one above, so this doesn't have to slow down every other test in this class. */
+    @Test
+    void preflight_survivesPastTheOrdinaryReadTimeoutUnderItsOwnLongerBudget() throws IOException {
+        final var slowServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        slowServer.setExecutor(Executors.newFixedThreadPool(2));
+        slowServer.createContext("/api/preflight", exchange -> {
+            try {
+                Thread.sleep(1500);   // longer than the 500ms ordinary readTimeout below
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            respond(exchange, 200, PREFLIGHT_JSON);
+        });
+        slowServer.start();
+        try {
+            final var slowClient = new ServiceClient(
+                    new ServiceProperties("http://127.0.0.1:" + slowServer.getAddress().getPort(),
+                            Duration.ofSeconds(1), Duration.ofMillis(500), Duration.ofSeconds(3)),
+                    RestClient.builder());
+            final var state = slowClient.preflight();   // must not throw a read-timeout
+            assertTrue(state.blocked());
+        } finally {
+            slowServer.stop(0);
+        }
+    }
+
+    /** The converse of the test above: confirms the 1.5s delay really would have failed under the
+     *  ordinary 500ms budget, so the success above is evidence of the longer timeout actually
+     *  applying - not of the delay being too short to matter either way. */
+    @Test
+    void preflight_wouldHaveTimedOutUnderTheOrdinaryReadTimeoutBudget() throws IOException {
+        final var slowServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        slowServer.setExecutor(Executors.newFixedThreadPool(2));
+        slowServer.createContext("/api/preflight", exchange -> {
+            try {
+                Thread.sleep(1500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            respond(exchange, 200, PREFLIGHT_JSON);
+        });
+        slowServer.start();
+        try {
+            final var shortClient = new ServiceClient(
+                    new ServiceProperties("http://127.0.0.1:" + slowServer.getAddress().getPort(),
+                            Duration.ofSeconds(1), Duration.ofMillis(500), Duration.ofMillis(500)),
+                    RestClient.builder());
+            assertThrows(ResourceAccessException.class, shortClient::preflight);
+        } finally {
+            slowServer.stop(0);
+        }
     }
 
     @Test

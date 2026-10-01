@@ -18,6 +18,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -40,24 +41,29 @@ public class ServiceClient implements Serializable {
     private final ServiceProperties properties;
     private final String baseUrl;
     private transient RestClient http;
+    // #178: preflight() alone needs a much longer read timeout (a real gradle build+test, not a
+    // fast REST round-trip) - a separate client, built the same way but with its own timeout,
+    // rather than letting one slow endpoint's budget apply to every other call too.
+    private transient RestClient preflightHttp;
     private transient HttpClient sseClient;
 
     /** Production constructor: Boot's auto-configured RestClient.Builder is injected. */
     public ServiceClient(final ServiceProperties properties, final RestClient.Builder builder) {
         this.properties = properties;
         this.baseUrl = properties.baseUrl();
-        this.http = build(properties, builder);
+        this.http = build(properties, properties.readTimeout(), builder);
+        this.preflightHttp = build(properties, properties.preflightReadTimeout(), builder);
         this.sseClient = HttpClient.newBuilder() // no read timeout: SSE is long-lived
                 .connectTimeout(properties.connectTimeout())
                 .build();
     }
 
-    private static RestClient build(final ServiceProperties properties, final RestClient.Builder builder) {
+    private static RestClient build(final ServiceProperties properties, final Duration readTimeout, final RestClient.Builder builder) {
         final var jdk = HttpClient.newBuilder()
                 .connectTimeout(properties.connectTimeout())
                 .build();
         final var factory = new JdkClientHttpRequestFactory(jdk);
-        factory.setReadTimeout(properties.readTimeout());
+        factory.setReadTimeout(readTimeout);
         return builder.clone() // never mutate the injected prototype (mock/test seam stays intact)
                 .baseUrl(properties.baseUrl())
                 .requestFactory(factory)
@@ -72,7 +78,8 @@ public class ServiceClient implements Serializable {
 
     private void readObject(final ObjectInputStream in) throws IOException, ClassNotFoundException {
         in.defaultReadObject();
-        http = build(properties, RestClient.builder());
+        http = build(properties, properties.readTimeout(), RestClient.builder());
+        preflightHttp = build(properties, properties.preflightReadTimeout(), RestClient.builder());
         sseClient = HttpClient.newBuilder()
                 .connectTimeout(properties.connectTimeout())
                 .build();
@@ -181,9 +188,10 @@ public class ServiceClient implements Serializable {
                 .body(Api.Experiment.class);
     }
 
-    /** GET /api/preflight — synchronous: runs every check and returns the final result in one call. */
+    /** GET /api/preflight — synchronous: runs every check and returns the final result in one
+     *  call. Uses preflightHttp's own longer read timeout (#178), not the ordinary one. */
     public Api.PreflightState preflight() {
-        return http.get().uri("/api/preflight").retrieve().body(Api.PreflightState.class);
+        return preflightHttp.get().uri("/api/preflight").retrieve().body(Api.PreflightState.class);
     }
 
     /**

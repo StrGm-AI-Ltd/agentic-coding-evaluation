@@ -26,7 +26,7 @@ class ServiceClientMappingTest {
     private final ServiceClient client = new ServiceClient(
             new ServiceProperties(
                     System.getProperty("ace.service.base-url", "http://127.0.0.1:8765"),
-                    Duration.ofSeconds(2), Duration.ofSeconds(15)),
+                    Duration.ofSeconds(2), Duration.ofSeconds(15), Duration.ofMinutes(5)),
             RestClient.builder());
 
     private List<Api.Run> runsOrSkip() {
