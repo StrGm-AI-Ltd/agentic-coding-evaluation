@@ -1,5 +1,6 @@
 package com.strgmai.ace.ui;
 
+import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.H2;
@@ -17,7 +18,14 @@ import org.slf4j.LoggerFactory;
  *  git, the pinned JDK, the model server) and returns the final result in the same call. There is
  *  no separate "start" call and nothing to poll for; the old async {running, started_at, ...}
  *  shape this view used to render was the pre-port Python/FastAPI service's contract, which this
- *  backend never implemented (its POST /api/preflight route does not exist here). */
+ *  backend never implemented (its POST /api/preflight route does not exist here).
+ *
+ *  <p>#178: client.preflight() drives a real gradle build+test and can run for a while - it must
+ *  not run on the click listener's own thread (the whole session would be unresponsive for the
+ *  entire duration, and the "Running…" state set just before it would never even reach the
+ *  browser, since nothing forces a flush before the still-executing listener returns). Runs it on
+ *  a background thread instead and pushes the result back via UI.access(), the same pattern
+ *  JobDetailView.ensureSse() already uses for its SSE loop. */
 @Route(value = "preflight", layout = MainLayout.class)
 public class PreflightView extends VerticalLayout {
     private static final Logger log = LoggerFactory.getLogger(PreflightView.class);
@@ -35,17 +43,22 @@ public class PreflightView extends VerticalLayout {
 
     private void runPreflight() {
         running = true;
-        render();
-        try {
-            state = client.preflight();
-            error = null;
-        } catch (final Exception e) {
-            log.warn("preflight failed: {}", e.toString());
-            error = client.errorText(e);
-        } finally {
-            running = false;
-        }
-        render();
+        render();   // the listener returns right after starting the thread below, so this reaches the browser normally
+        final var ui = UI.getCurrent();
+        final var thread = new Thread(() -> {
+            try {
+                final var result = client.preflight();
+                ui.access(() -> { state = result; error = null; running = false; render(); });
+            } catch (final Exception e) {
+                log.warn("preflight failed: {}", e.toString());
+                final var message = client.errorText(e);
+                // a failed re-run leaves the PREVIOUS successful state on screen (unchanged) -
+                // only the error banner and the button's enabled state are new
+                ui.access(() -> { error = message; running = false; render(); });
+            }
+        }, "preflight-check");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     private void render() {

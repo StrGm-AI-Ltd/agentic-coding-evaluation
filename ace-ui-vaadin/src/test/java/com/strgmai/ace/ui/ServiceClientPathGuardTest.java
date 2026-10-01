@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class ServiceClientPathGuardTest {
 
     private static final ServiceClient CLIENT = new ServiceClient(
-            new ServiceProperties("http://127.0.0.1:8765", Duration.ofSeconds(1), Duration.ofSeconds(1)),
+            new ServiceProperties("http://127.0.0.1:8765", Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofMinutes(5)),
             RestClient.builder());
 
     @Test
