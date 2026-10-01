@@ -125,7 +125,10 @@ public final class StatsService {
             double db = 0; for (int j = a.length; j < pool.length; j++) db += pool[j];
             if (da / a.length - db / b.length >= obs - 1e-12) ge++;
         }
-        return (double) ge / n;
+        // add-one smoothing (Phipson & Smyth 2010): a finite Monte Carlo permutation test can only
+        // resolve p down to 1/(n+1) - ge/n lets a strong effect with ge=0 report an exact 0.0,
+        // overstating precision the test cannot actually support.
+        return (ge + 1.0) / (n + 1.0);
     }
 
     /** port of the harness-effect budget matching: the total WORK budget must be matched (P-1) */

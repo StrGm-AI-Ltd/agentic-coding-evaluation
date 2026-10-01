@@ -23,6 +23,17 @@ class StatsServiceTest {
         assertTrue(pNull > 0.3, "A vs itself must give a large p, got " + pNull);
     }
 
+    /** Monte Carlo add-one smoothing (Phipson &amp; Smyth 2010): a finite permutation test can only
+     *  resolve p down to 1/(n+1) - zero resampled statistics reaching the observed one must report
+     *  that floor, never a bare 0.0 that overstates the test's actual precision. */
+    @Test
+    void permutationTestNeverReportsAnExactZeroEvenWhenNoPermutationReachesTheObserved() {
+        double[] a = {100.0, 100.0, 100.0, 100.0, 100.0}, b = {0.0, 0.0, 0.0, 0.0, 0.0};
+        final double p = StatsService.permutationTest(a, b, 100, 1);   // n=100, seed=1: ge=0 confirmed
+        assertEquals(1.0 / 101.0, p, 1e-12, "the resolution floor 1/(n+1), not an overstated exact 0.0");
+        assertTrue(p > 0.0);
+    }
+
     @Test
     void bootCiBracketsTheMeanAndStaysInsideTheDataRange() {
         final var xs = List.of(10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0);
