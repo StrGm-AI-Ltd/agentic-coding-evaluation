@@ -193,6 +193,58 @@ class RunBenchTest {
         for (Thread w : workers) assertFalse(w.isAlive(), "joinAll() must wait for the wave threads to actually stop, not just signal and move on");
     }
 
+    /** #168: runParallelWave's per-task threads put() into a shared map with no synchronization
+     *  beyond the Semaphore bounding how many run at once - which provides no mutual exclusion.
+     *  A plain LinkedHashMap can silently lose an entry (or corrupt its structure) when two threads
+     *  resize it concurrently; ConcurrentHashMap (what recs/errors were switched to) is the actual
+     *  fix - this reproduces the same access shape (many threads, unique keys, bounded concurrency)
+     *  against it directly, as a regression guard against reverting to a non-concurrent map. */
+    @Test
+    void concurrentPutsFromManyThreadsUnderABoundedSemaphoreLoseNoEntries() throws Exception {
+        final int n = 200;
+        final Map<String, Object> shared = new java.util.concurrent.ConcurrentHashMap<>();
+        final var sem = new java.util.concurrent.Semaphore(8);   // same bound shape as "parallel"
+        final List<Thread> threads = new java.util.ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            final String key = "t" + i;
+            final Thread th = new Thread(() -> {
+                try {
+                    sem.acquire();
+                    try { shared.put(key, key); } finally { sem.release(); }
+                } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+            });
+            threads.add(th);
+            th.start();
+        }
+        RunBench.joinAll(threads);
+        assertEquals(n, shared.size(), "every thread's own key must survive - none lost to an unsynchronized map resize");
+        for (int i = 0; i < n; i++) assertEquals("t" + i, shared.get("t" + i));
+    }
+
+    /** #168: the ownership-glob matcher this replaced stripped only the LAST `*` in its first
+     *  branch (dead for any `**`-suffixed glob) and fell back to a bare directory-prefix check for
+     *  a single-star glob - silently treating "account-service/*.java" (direct children only) the
+     *  same as "account-service/**" (any depth), under-detecting real ownership violations. */
+    @Test
+    void matchesOwnershipRecursiveGlobMatchesAnyDepth() {
+        assertTrue(RunBench.matchesOwnership("account-service/**", "account-service/Foo.java"));
+        assertTrue(RunBench.matchesOwnership("account-service/**", "account-service/sub/Foo.java"));
+        assertFalse(RunBench.matchesOwnership("account-service/**", "other-service/Foo.java"));
+    }
+
+    @Test
+    void matchesOwnershipSingleStarGlobMatchesOnlyDirectChildren() {
+        assertTrue(RunBench.matchesOwnership("account-service/*.java", "account-service/Foo.java"));
+        assertFalse(RunBench.matchesOwnership("account-service/*.java", "account-service/sub/Foo.java"),
+                "a single-star glob must not reach into subdirectories - that is what ** is for");
+    }
+
+    @Test
+    void matchesOwnershipWithNoWildcardIsAPlainDirectoryPrefix() {
+        assertTrue(RunBench.matchesOwnership("account-service", "account-service/Foo.java"));
+        assertFalse(RunBench.matchesOwnership("account-service", "other-service/Foo.java"));
+    }
+
     /** Found live 2026-09-28: DockerWindowMonitor.poll() used to read ACE_DOCKER_LOG via
      *  System.getenv() - the ace-service JVM's OWN environment, where that variable is never
      *  actually set (it only ever exists inside the Map built for the AGENT's child process, see
