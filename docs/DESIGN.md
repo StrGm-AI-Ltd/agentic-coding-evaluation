@@ -122,25 +122,31 @@ nearest a `SELL` token, require the agent's own suite to catch it) and the Gradl
 
 ## 6. Gaming resistance — what exists in this port
 
-This is the section where this port's coverage is **narrower** than the original design, and it is
-worth being direct about that rather than papering over it. The original Python harness's gaming
-resistance rested on three legs: (1) a fixed-denominator scoring design (ported, §3), (2) a
-**positive control** fixture (a known-good three-service solution that must score ~100%, used to find
-the oracle's own bugs), and (3) a set of **five adversarial "cheat" fixtures** with a two-sided
-selftest asserting they score below a ceiling. Searching this repository turned up **no
-`fixtures/positive/` or `fixtures/adversarial/` directory, and no ported `--selftest` command** —
-only `BlackboxCalibrationTest.java`, which calibrates the black-box suite against the seeded-bug
-reference server (§4), not a full positive-control-plus-cheats gate. If gaming resistance at that
-level matters for this port, building an equivalent positive control and cheat suite is open work,
-not something already carried over.
+The original Python harness's gaming resistance rested on three legs: (1) a fixed-denominator
+scoring design (ported, §3), (2) a **positive control** fixture (a known-good solution that must
+score ~100%, used to find the oracle's own bugs), and (3) a set of adversarial "cheat" fixtures with
+a two-sided selftest asserting they score below a ceiling. All three are now ported:
+`ace-service/fixtures/positive/` is a real, substantive known-good solution (account-service,
+gateway, build config, docs); `ace-service/fixtures/adversarial/cheat{A-F}_*` is six adversarial
+fixtures, each named for the specific gaming pattern it exercises (comment-only changes, bugs hidden
+in the test package, renamed fields, a directory merely named `java`, stub implementations with no
+real Java, a prebuilt jar substituted for source); `SelftestIT.java`
+(`ace-service/src/test/java/com/strgmai/ace/service/oracle/SelftestIT.java`) is the two-sided gate:
+`positiveControlPassesEveryRequiredCheck` asserts the known-good fixture scores ≥95% on every
+required id, and six cheat tests assert each adversarial fixture stays below 70% and/or trips the
+specific check it targets. Its own javadoc documents the one deliberate adaptation from the original
+design: a JUnit `@Tag("docker")` test class instead of a CLI `--selftest` flag, and a full-oracle
+single pass instead of the original's offline-then-docker two-pass. There is no CI configured in
+this repository (no `.github/workflows`), so `SelftestIT` and every other Docker-gated test run only
+when a developer runs them locally (`./gradlew test` includes them whenever Docker is up) — there is
+no automated gate re-running them on every change.
 
-What this port *does* have, and has exercised heavily, is its own **adversarial code review**:
-`review.txt` and `review_fixes.txt` in `ace-service/` record 66 numbered findings (bugs, resource
-leaks, race conditions, NPEs, dead code) against this Java implementation, each with a fix logged and
-`./gradlew test` re-verified green — visible in the git history as a long run of `fix:`/`chore:`
-commits each citing a review number. That is real, substantial hardening of the harness's own
-correctness; it is a different thing from the original's gaming-resistance fixtures, and both are
-worth having.
+This port also has its own **adversarial code review**: `review.txt` and `review_fixes.txt` in
+`ace-service/` record 66 numbered findings (bugs, resource leaks, race conditions, NPEs, dead code)
+against this Java implementation, each with a fix logged and `./gradlew test` re-verified green —
+visible in the git history as a long run of `fix:`/`chore:` commits each citing a review number. That
+is real, substantial hardening of the harness's own correctness, on top of (not instead of) the
+ported positive-control/cheat suite above.
 
 ## 7. The runner: isolation, provenance, budgets, validity
 
@@ -191,16 +197,13 @@ LangChain4j against an OpenAI-compatible endpoint:
 - **Structural compaction, not an LLM summary**: `AgentSession.compact()` is invoked once the last
   prompt exceeds `props.compactionTrigger()`, matching the original design's "stub the oldest tool
   outputs, keep the newest turns, never touch the system prompt" approach.
-- **One thing to flag as unverified/likely incomplete**: the original design records `reasoning_effort`
-  as a *treatment* sent on every request (`chat_template_kwargs.reasoning_effort`) and read back from
-  the journal. In this port, `JournalFacts.java` **does** read `chat_template_kwargs.reasoning_effort`
-  back out of recorded requests, and `AgentSession.header()` accepts a `reasoningEffort` parameter —
-  but `ReferenceAgent.run()` calls `session.header(..., null)`, and no code path in `ReferenceAgent`
-  was found that actually sets `chat_template_kwargs.reasoning_effort` on the outgoing
-  `ChatRequest`. `DEFAULT_REASONING` exists as a `Map<String,String>` with a comment saying it is
-  "kept for the record" — reading that literally, the per-session-kind reasoning-effort *treatment*
-  from the original design may not be wired through to the model in this port. This needs a closer
-  look (or a fix) rather than being asserted either way in a leaderboard context.
+- **`reasoning_effort` transmission and read-back are both verified working.** The original design
+  records `reasoning_effort` as a *treatment* sent on every request and read back from the journal
+  for provenance. This port sends it via the standard OpenAI field
+  (`OpenAiChatRequestParameters.builder().reasoningEffort(...)`, not the original's oMLX-specific
+  `chat_template_kwargs.reasoning_effort`) — `DEFAULT_REASONING` picks the per-session-kind value and
+  `ReferenceAgent`'s chat-model builder sets it on every request. `JournalFacts.java` reads it back
+  from that same top-level field for the provenance histogram, matching what is actually sent.
 
 ## 8. Recording and metrics
 
@@ -262,10 +265,9 @@ Carried over from the original design, and still true of this port as far as cou
 - The agent is not sandboxed: it runs as the operator's OS user with network access on the host.
 - Compose runs on the host Docker daemon (no rootless/DinD).
 - The gaming-resistance fixture suite (positive control + adversarial cheats + selftest) described in
-  the original design is **not present** in this port (§6) — this is the most consequential gap to
-  close before trusting a leaderboard number from it in an adversarial setting.
-- The `reasoning_effort` treatment may not be actually transmitted to the model despite being
-  journaled and configured (§7c) — worth resolving before comparing models/configs on that axis.
+  the original design **is present** in this port (§6) — but with no CI configured in this
+  repository, nothing re-runs it automatically; it only runs when a developer runs the test suite
+  locally with Docker up.
 - Per-step scoring, isolated-step measurement, and the review-calibration tooling described in the
   original design's later sections were not exhaustively re-verified against this port's code beyond
   confirming that `Packs.java` carries `reviewPack`/`trajectoryReviewPack`/`fixPack` methods; treat

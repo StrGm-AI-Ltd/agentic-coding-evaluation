@@ -21,7 +21,7 @@ import java.util.*;
  *  (C1/C2 + the black-box F suite) against the agent's live stack from a source-only copy. When
  *  Docker is unavailable their ids are SKIPPED (excluded from the denominator, headline blocked) —
  *  infrastructure is never charged to the agent. A crashing checker fails every id it owns (never
- *  shrinks the denominator). F6 (OpenAPI conformance) is the one check not ported. */
+ *  shrinks the denominator). */
 @Component
 public class RunOracle {
     private final ObjectMapper json = new ObjectMapper();
