@@ -89,7 +89,7 @@ class ReferenceAgentTest {
     @Test
     void apiKeyForRecognisesProviderUrlVariantsConsistently() {
         final var agent = new ReferenceAgent(new BenchProperties(
-                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null));
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null));
         assertEquals("sk-openai", agent.apiKeyFor("https://api.openai.com/v1/", "m",
                 Map.of("OPENAI_API_KEY", "sk-openai")));
         assertEquals("sk-anthropic", agent.apiKeyFor("https://api.anthropic.com/v1/2023-06-01", "m",

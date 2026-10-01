@@ -28,3 +28,10 @@ ace:
   reference-server-port: 0     # 0 = the reference trading server stays off (the oracle starts it on demand)
   java-home: ${ACE_JAVA_HOME:}
   omlx-server-log: ${ACE_OMLX_SERVER_LOG:}   # EMPTY = no capture; the model server's own log (path is operator/machine-specific)
+  # per-phase operator-wide defaults, keyed by phase id (p0_definition/p1_plan/p2_implementation/
+  # implement); unset means unlimited, same "0 = no budget" convention as every other budget here.
+  # A run's own --impl-wall/--impl-tokens overrides these for the implementation phase specifically.
+  # phase-wall-sec:
+  #   p1_plan: 900
+  # phase-token-budgets:
+  #   p1_plan: 20000

@@ -476,9 +476,9 @@ public class RunBench {
         final Map<String, Integer> rung = rungBudgets(task);
         for (String pid : phases) {
             int wall = "p1_plan".equals(pid) ? rung.getOrDefault("plan_sec", 900) : rung.getOrDefault("sec", 14400);
-            if ("implement".equals(pid) || "p2_implementation".equals(pid)) wall = rung.get("impl_sec");
-            long tokens = "p2_implementation".equals(pid) ? props.phaseTokens("p2_implementation")
-                    : "implement".equals(pid) ? props.phaseTokens("implement") : props.phaseTokens("p1_plan");
+            if ("implement".equals(pid) || "p2_implementation".equals(pid)) wall = implWall(cfg, rung);
+            long tokens = "implement".equals(pid) || "p2_implementation".equals(pid)
+                    ? implTokens(cfg, pid, props) : props.phaseTokens("p1_plan");
             final boolean isImpl = pid.equals(impl);
             final var proxy = proxies.start(journal, tokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
             Map<String, Object> rec;
@@ -514,6 +514,21 @@ public class RunBench {
             log.warn("could not read ladder.json budgets for task {}; falling back to unlimited: {}", task, e.toString());
             return Map.of("sec", 0, "plan_sec", 0, "impl_sec", 0);
         }
+    }
+
+    /** #173: an experiment's --impl-wall (JobCfgFactory -> cfg's "impl_wall_sec") matches a
+     *  monolithic arm's single implementation-session budget to an orchestrated arm's N-tasks x
+     *  per-task budget (design rule 10) - it must win over the rung's own default when the run
+     *  explicitly set one for that comparison. Package-private: directly unit-tested. */
+    static int implWall(final Map<String, Object> cfg, final Map<String, Integer> rung) {
+        return cfg.get("impl_wall_sec") instanceof Number iw ? iw.intValue() : rung.get("impl_sec");
+    }
+
+    /** the token-budget counterpart to implWall() above, falling back to the operator-wide
+     *  BenchProperties.phaseTokens(pid) default (itself 0/unlimited unless configured) rather than
+     *  the rung. */
+    static long implTokens(final Map<String, Object> cfg, final String pid, final BenchProperties props) {
+        return cfg.get("impl_tokens") instanceof Number it ? it.longValue() : props.phaseTokens(pid);
     }
 
     private Map<String, Object> sessionWithPolicy(Map<String, Object> cfg, String runId, String name, String instruction,

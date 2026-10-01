@@ -20,6 +20,12 @@ final class JobCfgFactory {
         cfg.put("system_base_url", null);
         if (WorkerService.flag(argv, "--task-wall") != null) cfg.put("task_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--task-wall")));
         if (WorkerService.flag(argv, "--task-tokens") != null) cfg.put("task_tokens", Long.parseLong(WorkerService.flag(argv, "--task-tokens")));
+        // #173: an experiment matches a monolithic arm's single implementation-phase budget to an
+        // orchestrated arm's N-tasks x per-task budget (design rule 10) by computing --impl-wall/
+        // --impl-tokens (ExperimentsService) and passing them on the job's own argv (RunSpec) - but
+        // nothing downstream ever read them back out of argv into cfg, so they were silently dropped
+        if (WorkerService.flag(argv, "--impl-wall") != null) cfg.put("impl_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--impl-wall")));
+        if (WorkerService.flag(argv, "--impl-tokens") != null) cfg.put("impl_tokens", Long.parseLong(WorkerService.flag(argv, "--impl-tokens")));
         if (WorkerService.flag(argv, "--first-token-timeout") != null) cfg.put("first_token_timeout_sec", Integer.parseInt(WorkerService.flag(argv, "--first-token-timeout")));
         if (WorkerService.flag(argv, "--compaction-trigger") != null) cfg.put("compaction_trigger", Integer.parseInt(WorkerService.flag(argv, "--compaction-trigger")));
         // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded

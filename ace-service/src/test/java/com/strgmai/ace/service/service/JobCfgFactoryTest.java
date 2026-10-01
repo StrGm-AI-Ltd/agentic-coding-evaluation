@@ -14,7 +14,7 @@ class JobCfgFactoryTest {
 
     private static BenchProperties props() {
         return new BenchProperties("default-model", "http://127.0.0.1:9191/v1", "", null, null, null, null, null,
-                null, null, "/results", "/workspace", null, null, null, null, null);
+                null, null, "/results", "/workspace", null, null, null, null, null, null, null);
     }
 
     @Test
@@ -30,6 +30,20 @@ class JobCfgFactoryTest {
     void modelFlagOverridesThePropsDefault() {
         final var cfg = JobCfgFactory.build(List.of("--model=qwen"), props());
         assertEquals("qwen", cfg.get("model"));
+    }
+
+    /** #173: --impl-wall/--impl-tokens were computed by ExperimentsService and placed on the job's
+     *  own argv by RunSpec, but nothing downstream ever read them back out of argv into cfg - this
+     *  pins that JobCfgFactory.build() now does. */
+    @Test
+    void implWallAndImplTokensAreParsedWhenPresentAndAbsentOtherwise() {
+        final var withImpl = JobCfgFactory.build(List.of("--impl-wall=3600", "--impl-tokens=50000"), props());
+        assertEquals(3600, withImpl.get("impl_wall_sec"));
+        assertEquals(50000L, withImpl.get("impl_tokens"));
+
+        final var withoutImpl = JobCfgFactory.build(List.of("--run-id=r1"), props());
+        assertFalse(withoutImpl.containsKey("impl_wall_sec"), "must be absent, not merely null, when unset");
+        assertFalse(withoutImpl.containsKey("impl_tokens"));
     }
 
     @Test
