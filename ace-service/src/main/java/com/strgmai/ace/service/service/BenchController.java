@@ -61,20 +61,41 @@ public class BenchController {
         if (task != null && !task.isBlank()) where.add(RUNS.TASK.eq(task));
         if (model != null && !model.isBlank()) where.add(RUNS.MODEL.eq(model));
         if (!valid.isBlank()) where.add(RUNS.VALID.eq("true".equals(valid)));
+        // #201: this explicit column list had fallen behind Api.Run's own DTO - POOLABLE and
+        // PARTIAL_SCORE_PCT are real columns real consumers need (CompareView.poolableRunIds(),
+        // RunsView's partial-score fallback) but were silently never selected here, so every
+        // Api.Run.poolable()/partial_score_pct() off this endpoint deserialized to false/null
+        // regardless of the row's actual value.
         return JsonColumns.parseAll(dsl.select(RUNS.RUN_ID, RUNS.TASK, RUNS.MODE, RUNS.MODEL, RUNS.HARNESS,
-                        RUNS.FUNCTIONAL_SCORE_PCT, RUNS.WEIGHTED_SCORE_PCT, RUNS.VALID, RUNS.CONTENDED, RUNS.WALL_SEC, RUNS.COMPLETION_TOKENS)
-                .from(RUNS).where(where).orderBy(RUNS.IMPORTED_AT.desc()).limit(500).fetch().intoMaps());
+                        RUNS.FUNCTIONAL_SCORE_PCT, RUNS.WEIGHTED_SCORE_PCT, RUNS.VALID, RUNS.CONTENDED, RUNS.WALL_SEC, RUNS.COMPLETION_TOKENS,
+                        RUNS.POOLABLE, RUNS.PARTIAL_SCORE_PCT, RUNS.ORACLE)
+                .from(RUNS).where(where).orderBy(RUNS.IMPORTED_AT.desc()).limit(500).fetch().intoMaps())
+                .stream().map(BenchController::hoistFunctionalIds).toList();
     }
 
     @GetMapping("/api/runs/{id}")
     public ResponseEntity<?> run(final @PathVariable String id) {
         final var rec = dsl.selectFrom(RUNS).where(RUNS.RUN_ID.eq(id)).fetchOne();
         if (rec == null) return ResponseEntity.status(404).body(Map.of("detail", "run " + id + " is not imported"));
-        final Map<String, Object> run = JsonColumns.parse(rec.intoMap());
+        final Map<String, Object> run = hoistFunctionalIds(JsonColumns.parse(rec.intoMap()));
         run.put("checks", dsl.select(CHECK_RESULTS.CHECK_ID, CHECK_RESULTS.CATEGORY, CHECK_RESULTS.WEIGHT, CHECK_RESULTS.STATUS, CHECK_RESULTS.DETAIL, CHECK_RESULTS.DESCRIPTION)
                 .from(CHECK_RESULTS).where(CHECK_RESULTS.RUN_ID.eq(id)).orderBy(CHECK_RESULTS.CHECK_ID)
                 .fetch().intoMaps().stream().map(JsonColumns::parse).toList());
         return ResponseEntity.ok(run);
+    }
+
+    /** #201: Api.Run.functional_ids() has no backing COLUMN at all - "functional_ids" only ever
+     *  existed nested inside the oracle JSON blob (oracle.functional_ids), so the UI's flat
+     *  accessor was always null on both this endpoint and the list endpoint above. Hoists it to
+     *  the top level the same way a real column would appear, rather than a SQL change (there is
+     *  no column to add). */
+    private static Map<String, Object> hoistFunctionalIds(final Map<String, Object> row) {
+        if (row.get("oracle") instanceof com.fasterxml.jackson.databind.JsonNode oracle && oracle.has("functional_ids")) {
+            final var ids = new ArrayList<String>();
+            oracle.get("functional_ids").forEach(n -> ids.add(n.asText()));
+            row.put("functional_ids", ids);
+        }
+        return row;
     }
 
     /** files of a run, confined to its results dir; workspace/ is never listed nor served.
