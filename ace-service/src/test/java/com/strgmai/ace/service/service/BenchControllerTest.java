@@ -260,6 +260,45 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.ranked[1].key_hash").value("keyA"));
     }
 
+    /** #201: this endpoint's explicit column list had fallen behind Api.Run's own DTO - poolable
+     *  and partial_score_pct are real columns real consumers need (CompareView.poolableRunIds(),
+     *  RunsView's partial-score fallback) but were silently never selected, so every run came back
+     *  as poolable=false/partial_score_pct=null regardless of its real value. functional_ids has
+     *  no backing column at all - it only ever existed nested inside the oracle JSON blob - so it
+     *  must be hoisted to the top level in Java rather than added to the SELECT. */
+    @Test
+    void runsListIncludesPoolablePartialScoreAndFunctionalIds() throws Exception {
+        dsl.insertInto(RUNS)
+                .set(RUNS.RUN_ID, "run1").set(RUNS.RESULTS_DIR, "/results/run1")
+                .set(RUNS.TASK, "L3p_point_in_time").set(RUNS.MODEL, "m").set(RUNS.MODE, "monolithic")
+                .set(RUNS.KEY_HASH, "k1").set(RUNS.POOLABLE, true).set(RUNS.PARTIAL_SCORE_PCT, 42.5f)
+                .set(RUNS.ORACLE, "{\"functional_ids\":[\"F1\",\"F2\"]}")
+                .execute();
+
+        mvc.perform(get("/api/runs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].poolable").value(true))
+                .andExpect(jsonPath("$[0].partial_score_pct").value(42.5))
+                .andExpect(jsonPath("$[0].functional_ids.length()").value(2))
+                .andExpect(jsonPath("$[0].functional_ids[0]").value("F1"))
+                .andExpect(jsonPath("$[0].functional_ids[1]").value("F2"));
+    }
+
+    @Test
+    void runByIdAlsoIncludesFunctionalIdsHoistedFromOracle() throws Exception {
+        dsl.insertInto(RUNS)
+                .set(RUNS.RUN_ID, "run2").set(RUNS.RESULTS_DIR, "/results/run2")
+                .set(RUNS.TASK, "L3p_point_in_time").set(RUNS.MODEL, "m").set(RUNS.MODE, "monolithic")
+                .set(RUNS.KEY_HASH, "k2").set(RUNS.POOLABLE, true)
+                .set(RUNS.ORACLE, "{\"functional_ids\":[\"F3\"]}")
+                .execute();
+
+        mvc.perform(get("/api/runs/run2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.functional_ids.length()").value(1))
+                .andExpect(jsonPath("$.functional_ids[0]").value("F3"));
+    }
+
     /** #85: a symlink planted inside the served results subtree, pointing outside it, must not be
      *  followed - normalize() alone (lexical "../." collapsing) cannot catch this, only resolving
      *  the real path can. */
