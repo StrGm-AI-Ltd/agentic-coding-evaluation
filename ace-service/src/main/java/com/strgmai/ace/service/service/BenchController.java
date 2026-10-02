@@ -68,7 +68,7 @@ public class BenchController {
         // regardless of the row's actual value.
         return JsonColumns.parseAll(dsl.select(RUNS.RUN_ID, RUNS.TASK, RUNS.MODE, RUNS.MODEL, RUNS.HARNESS,
                         RUNS.FUNCTIONAL_SCORE_PCT, RUNS.WEIGHTED_SCORE_PCT, RUNS.VALID, RUNS.CONTENDED, RUNS.WALL_SEC, RUNS.COMPLETION_TOKENS,
-                        RUNS.POOLABLE, RUNS.PARTIAL_SCORE_PCT, RUNS.ORACLE, RUNS.STARTED)
+                        RUNS.POOLABLE, RUNS.PARTIAL_SCORE_PCT, RUNS.ORACLE, RUNS.STARTED, RUNS.EARLIER_ATTEMPTS)
                 .from(RUNS).where(where).orderBy(RUNS.IMPORTED_AT.desc()).limit(500).fetch().intoMaps())
                 .stream().map(BenchController::hoistFunctionalIds).toList();
     }

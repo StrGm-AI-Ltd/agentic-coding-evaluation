@@ -120,7 +120,7 @@ class RunDetailViewTest {
         var metrics = Json.MAPPER.readTree("{\"leaderboard\": {\"avg_latency_sec\": 12.34, \"avg_first_byte_ms\": 250}}");
         var run = new Api.Run("r1", null, null, "L3p_point_in_time", "orchestrated", "m", null, 3, true,
                 null, null, null, null, null, null, null, null, null, null,
-                null, null, 3600.0, 1000L, null, null, null, metrics, null);
+                null, null, 3600.0, 1000L, null, 0, null, null, metrics, null);
 
         var line = new RunDetailView(mock(ServiceClient.class)).metaLine(run);
 
@@ -178,7 +178,7 @@ class RunDetailViewTest {
     void metaLine_omitsLatencyAndTtftWhenAbsent() {
         var run = new Api.Run("r1", null, null, "L3p_point_in_time", "orchestrated", "m", null, 3, true,
                 null, null, null, null, null, null, null, null, null, null,
-                null, null, 3600.0, 1000L, null, null, null, null, null);
+                null, null, 3600.0, 1000L, null, 0, null, null, null, null);
 
         var line = new RunDetailView(mock(ServiceClient.class)).metaLine(run);
 

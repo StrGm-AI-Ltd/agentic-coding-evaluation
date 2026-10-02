@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.nio.file.*;
 import java.security.MessageDigest;
 import java.time.Instant;
@@ -69,6 +70,7 @@ public class ImporterService {
         values.put(RUNS.WALL_SEC, flt(leaderboard.get("total_wall_sec")));
         values.put(RUNS.COMPLETION_TOKENS, num(leaderboard.get("completion_tokens")));
         values.put(RUNS.STARTED, str(manifest.get("started")));
+        values.put(RUNS.EARLIER_ATTEMPTS, earlierAttempts(runDir));
         values.put(RUNS.MANIFEST, toJson(manifest));
         values.put(RUNS.ORACLE, toJson(oracle));
         values.put(RUNS.METRICS, toJson(metrics));
@@ -124,6 +126,33 @@ public class ImporterService {
             }
         }
         return Map.of("imported", imported, "skipped", skipped);
+    }
+
+    /** #217: a run_id's workspace is git-tracked and persists across restarts - when a run is
+     *  interrupted and retried, a phase/task's session_id is reused (Tailer/RunBench derive it
+     *  deterministically), so the SAME canonical id ends up with multiple session files, one per
+     *  attempt, filenamed "<timestamp>_<session-id>.jsonl". The file with the latest timestamp per
+     *  id is the one the final successful attempt actually produced (same "most recently started
+     *  wins" rule JobLiveState.currentRowIndex() already uses live) - every OTHER file for that id
+     *  is an earlier, abandoned attempt whose own time/tokens never reach this run's wall_sec.
+     *  Detection only: this never recomputes wall_sec/total_wall_sec itself (#217's own scope). */
+    static int earlierAttempts(final Path runDir) {
+        final Path sessionsDir = runDir.resolve("sessions");
+        if (!Files.isDirectory(sessionsDir)) return 0;
+        final Map<String, Integer> countBySessionId = new HashMap<>();
+        try (DirectoryStream<Path> s = Files.newDirectoryStream(sessionsDir, "*.jsonl")) {
+            for (Path p : s) {
+                final String name = p.getFileName().toString();
+                final int sep = name.indexOf('_');
+                if (sep < 0) continue;
+                final String sessionId = name.substring(sep + 1, name.length() - ".jsonl".length());
+                countBySessionId.merge(sessionId, 1, Integer::sum);
+            }
+        } catch (IOException e) {
+            log.warn("could not list {} to count earlier attempts: {}", sessionsDir, e.toString());
+            return 0;
+        }
+        return countBySessionId.values().stream().mapToInt(c -> c - 1).sum();
     }
 
     static String keyHash(final Map<String, Object> oracle, final Map<String, Object> manifest) {

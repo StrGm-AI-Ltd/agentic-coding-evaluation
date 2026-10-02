@@ -16,7 +16,7 @@ final class ApiFixtures {
     static Api.Run run(final String runId, final boolean poolable) {
         return new Api.Run(runId, null, null, null, null, null, null, null, poolable,
                 null, null, null, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null, null, null);
+                null, null, null, null, 0, null, null, null, null);
     }
 
     static Api.Run run(final String runId) {
@@ -27,7 +27,7 @@ final class ApiFixtures {
     static Api.Run withScores(final Api.Run base, final Double weighted, final Double partial) {
         return new Api.Run(base.run_id(), null, null, null, null, null, null, null, true,
                 null, null, null, null, weighted, null, null, partial, null, null, null,
-                null, null, null, null, null, null, null, null);
+                null, null, null, null, 0, null, null, null, null);
     }
 
     static RestClientResponseException http(final int code) {
