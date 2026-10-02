@@ -91,9 +91,13 @@ public class RunsView extends VerticalLayout {
         grid.addColumn(this::compositeCell).setHeader("composite %").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true)
                 .setComparator(Fmt.nullsLast(RunsView::effectiveScore));
+        // #202: the single most important column on this list (now that it's color-coded, #12)
+        // was one of the first lost to horizontal overflow below ~1440px - frozen to the end so
+        // it stays visible regardless of scroll position, same treatment as Jobs' actions column.
         grid.addColumn(new ComponentRenderer<>(this::validBadge)).setHeader("valid").setAutoWidth(true)
                 .setSortable(true)
-                .setComparator(Fmt.nullsLast(Api.Run::valid));
+                .setComparator(Fmt.nullsLast(Api.Run::valid))
+                .setFrozenToEnd(true);
         grid.addColumn(r -> Fmt.duration(r.wall_sec())).setHeader("wall").setTextAlign(ColumnTextAlign.END)
                 .setAutoWidth(true)
                 .setComparator(Fmt.nullsLast(Api.Run::wall_sec));
