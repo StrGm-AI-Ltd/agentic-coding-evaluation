@@ -1,6 +1,7 @@
 package com.strgmai.ace.ui;
 
 import com.vaadin.flow.component.button.Button;
+import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.Span;
@@ -129,9 +130,23 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         grid.addColumn(Api.ExperimentJob::result_line).setHeader("result").setFlexGrow(1);
         grid.setItems(jobs);
         grid.setAllRowsVisible(true);
+        // #203: result_line truncates in a fixed-width cell - a row click opens it unclipped,
+        // same Dialog pattern as RunDetailView.openCheckDialog/JobsView.openBlockedReasonDialog.
+        grid.addItemClickListener(e -> openResultDialog(e.getItem()));
         add(grid);
 
         addComparison(experiment);
+    }
+
+    /** Full, unclipped result_line for one job row. */
+    private static void openResultDialog(final Api.ExperimentJob job) {
+        if (job.result_line() == null) return;
+        final var dialog = new Dialog();
+        dialog.setHeaderTitle("job #" + job.id() + " result");
+        dialog.setWidth("min(600px, 90vw)");
+        dialog.add(Panels.mono(job.result_line()));
+        dialog.getFooter().add(new Button("Close", e -> dialog.close()));
+        dialog.open();
     }
 
     private static com.vaadin.flow.component.badge.Badge statusBadge(final Api.ExperimentJob job,
