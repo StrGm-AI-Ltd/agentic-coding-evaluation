@@ -3,6 +3,7 @@ package com.strgmai.ace.ui;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.combobox.ComboBox;
+import com.vaadin.flow.component.dependency.CssImport;
 import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
@@ -26,6 +27,7 @@ import java.util.Map;
  * normalized by JobSpecs (unit-tested) and submitted to POST /api/jobs.
  */
 @Route(value = "jobs/new", layout = MainLayout.class)
+@CssImport("./styles/budget-field-helper.css")
 public class JobNewView extends VerticalLayout {
     private static final Logger log = LoggerFactory.getLogger(JobNewView.class);
 
@@ -122,6 +124,12 @@ public class JobNewView extends VerticalLayout {
         contextWindow.setMin(1);
         firstTokenTimeout.setMin(1);
         firstTokenTimeout.setPlaceholder("blank = default (180s)");
+        // #208: compactionTrigger's 2-line helper text makes it taller than firstTokenTimeout
+        // (placeholder only, no helper) - Forms.row()'s bottom alignment then pushes
+        // firstTokenTimeout's label down to match, instead of the two staying level. Reserving
+        // the same helper-text height on both (see budget-field-helper.css) fixes that.
+        firstTokenTimeout.addClassName("reserve-helper-height");
+        compactionTrigger.addClassName("reserve-helper-height");
         compactionTrigger.setMin(0);
         compactionTrigger.setHelperText("blank = default (28000), 0 = disabled");
         reviewWallSec.setMin(1);
@@ -146,10 +154,13 @@ public class JobNewView extends VerticalLayout {
         maxTokens.setPlaceholder("blank = context-probe-derived cap");
         parallelPlanWall.setMin(1);
         parallelPlanWall.setPlaceholder("blank = default (600s)");
+        parallelPlanWall.addClassName("reserve-helper-height");
         handoffWall.setMin(1);
         handoffWall.setPlaceholder("blank = default (300s)");
+        handoffWall.addClassName("reserve-helper-height");
         wrapupWall.setMin(1);
         wrapupWall.setHelperText("blank = default (300s, before the decode-speed scale)");
+        wrapupWall.addClassName("reserve-helper-height");
 
         add(new H2("New job"));
         add(new RouterLink("← Queue", JobsView.class));
