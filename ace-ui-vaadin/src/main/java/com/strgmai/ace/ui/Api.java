@@ -41,6 +41,7 @@ public final class Api {
             Double wall_sec,
             Long completion_tokens,
             String started,
+            int earlier_attempts,
             JsonNode manifest,
             JsonNode oracle,
             JsonNode metrics,

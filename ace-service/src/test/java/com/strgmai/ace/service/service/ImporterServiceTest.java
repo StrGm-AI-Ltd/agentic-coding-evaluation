@@ -211,4 +211,58 @@ class ImporterServiceTest {
         assertEquals(List.of("run-scored"), result.get("imported"));
         assertEquals(List.of("run-unscored"), result.get("skipped"));
     }
+
+    /** #217: a run_id's workspace persists across restarts, so an interrupted-and-retried
+     *  phase/task's session_id gets reused - the SAME canonical id ends up with multiple session
+     *  files, one per attempt. Every file but the latest for a given id is an earlier, abandoned
+     *  attempt whose own time/tokens never reach this run's wall_sec. */
+    @Test
+    void earlierAttemptsCountsSupersededSessionFilesPerCanonicalId() throws Exception {
+        final var dir = Files.createTempDirectory("run");
+        final var sessions = Files.createDirectories(dir.resolve("sessions"));
+        // "aaaa...": retried 3 times (2 earlier, abandoned attempts + the final one)
+        write(sessions, "2026-09-23T01-37-56.012Z_aaaaaaaa-0000-0000-0000-000000000000.jsonl", "{}");
+        write(sessions, "2026-09-23T13-28-38.096Z_aaaaaaaa-0000-0000-0000-000000000000.jsonl", "{}");
+        write(sessions, "2026-09-23T15-13-25.120Z_aaaaaaaa-0000-0000-0000-000000000000.jsonl", "{}");
+        // "bbbb...": retried once (1 earlier attempt + the final one)
+        write(sessions, "2026-09-23T02-00-21.667Z_bbbbbbbb-0000-0000-0000-000000000000.jsonl", "{}");
+        write(sessions, "2026-09-23T15-23-40.946Z_bbbbbbbb-0000-0000-0000-000000000000.jsonl", "{}");
+        // "cccc...": a single, clean attempt - not a retry
+        write(sessions, "2026-09-23T17-05-43.779Z_cccccccc-0000-0000-0000-000000000000.jsonl", "{}");
+
+        assertEquals(3, ImporterService.earlierAttempts(dir), "2 superseded 'aaaa' files + 1 superseded 'bbbb' file");
+    }
+
+    @Test
+    void earlierAttemptsIsZeroForACleanRunWithOneFilePerSessionId() throws Exception {
+        final var dir = Files.createTempDirectory("run");
+        final var sessions = Files.createDirectories(dir.resolve("sessions"));
+        write(sessions, "2026-09-29T00-15-44.832Z_dddddddd-0000-0000-0000-000000000000.jsonl", "{}");
+        write(sessions, "2026-09-29T00-31-26.973Z_eeeeeeee-0000-0000-0000-000000000000.jsonl", "{}");
+
+        assertEquals(0, ImporterService.earlierAttempts(dir));
+    }
+
+    @Test
+    void earlierAttemptsIsZeroWhenTheSessionsDirectoryDoesNotExist() throws Exception {
+        assertEquals(0, ImporterService.earlierAttempts(Files.createTempDirectory("run")));
+    }
+
+    @Test
+    void importRunStoresTheEarlierAttemptsCount() throws Exception {
+        final DSLContext db = dsl();
+        final var dir = Files.createTempDirectory("run");
+        final var sessions = Files.createDirectories(dir.resolve("sessions"));
+        write(sessions, "2026-09-23T01-37-56.012Z_aaaaaaaa-0000-0000-0000-000000000000.jsonl", "{}");
+        write(sessions, "2026-09-23T15-13-25.120Z_aaaaaaaa-0000-0000-0000-000000000000.jsonl", "{}");
+        write(dir, "oracle.json", """
+                {"task": "L3p_point_in_time", "schema_version": 3, "weighted_score_pct": 80.0,
+                 "results": [{"id": "S1", "status": "pass", "detail": null}]}""");
+        final var importer = new ImporterService(db);
+
+        importer.importRun(dir, null);
+
+        final var run = db.selectFrom(RUNS).where(RUNS.RUN_ID.eq(dir.getFileName().toString())).fetchOne();
+        assertEquals(1, run.getEarlierAttempts());
+    }
 }

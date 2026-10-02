@@ -141,6 +141,14 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
                     ? run.manifest().get("contention").toString() : "";
             add(Panels.warn("CONTENDED: excluded from leaderboards. " + contention));
         }
+        if (run.earlier_attempts() > 0) {
+            // #217: this run_id was started, interrupted, and restarted earlier the same day -
+            // the workspace is git-tracked and persists across restarts, so a later attempt can
+            // inherit most of an earlier one's completed work (verified, not rebuilt). wall_sec/
+            // completion_tokens below reflect only this LAST attempt, not the real total cost.
+            add(Panels.warn(run.earlier_attempts() + " earlier abandoned attempt(s) detected for this run_id - "
+                    + "wall time and tokens above reflect only the final attempt, not the true total cost."));
+        }
 
         if (!run.poolable()) {
             // #108: this used to offer a "Queue re-score" button wired to POST /api/runs/{id}/rescore,

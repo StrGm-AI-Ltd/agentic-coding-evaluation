@@ -301,6 +301,23 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$[0].started").value("2026-09-21T18:32:32.415417Z"));
     }
 
+    /** #217: earlier_attempts has a real backing column (V4 migration, computed at import time
+     *  from superseded session files) but was still missing from this endpoint's explicit SELECT -
+     *  same class of gap #201/#207 already found for poolable/partial_score_pct/started. */
+    @Test
+    void runsListIncludesEarlierAttempts() throws Exception {
+        dsl.insertInto(RUNS)
+                .set(RUNS.RUN_ID, "run4").set(RUNS.RESULTS_DIR, "/results/run4")
+                .set(RUNS.TASK, "L3p_point_in_time").set(RUNS.MODEL, "m").set(RUNS.MODE, "monolithic")
+                .set(RUNS.KEY_HASH, "k4").set(RUNS.POOLABLE, true).set(RUNS.ORACLE, "{}")
+                .set(RUNS.EARLIER_ATTEMPTS, 3)
+                .execute();
+
+        mvc.perform(get("/api/runs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].earlier_attempts").value(3));
+    }
+
     @Test
     void runByIdAlsoIncludesFunctionalIdsHoistedFromOracle() throws Exception {
         dsl.insertInto(RUNS)
