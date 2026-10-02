@@ -1,0 +1,10 @@
+/* Issue #208: Forms.row() bottom-aligns a row's fields (Alignment.END); a field with no helper
+   text (77px tall, measured live) sits in the same row as one with a 2-line helper text
+   (114.7px tall) - the shorter field's bottom gets pulled down to match, pushing its label below
+   its row-mate's. Reserving the same helper-text height on every field in the row, whether its
+   own helper text is empty or not, makes every field in the row the same total height, which
+   makes the bottom-alignment a no-op and keeps labels level. 38px matches the measured 2-line
+   helper-text height (114.7 - 77 = 37.7px) of this app's default font size. */
+vaadin-integer-field.reserve-helper-height::part(helper-text) {
+  min-height: 38px;
+}
