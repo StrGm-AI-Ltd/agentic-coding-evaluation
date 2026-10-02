@@ -60,7 +60,15 @@ public class JobsView extends VerticalLayout {
                 .setHeader("arm").setAutoWidth(true);
         grid.addColumn(job -> Fmt.when(job.started_at())).setHeader("started").setAutoWidth(true)
                 .setComparator(Fmt.comparingTime(Api.Job::started_at));
-        grid.addColumn(new ComponentRenderer<>(this::actions)).setHeader("actions").setFlexGrow(1);
+        // #202: Requeue/raise-priority were unreachable below ~1700px - the grid scrolled
+        // horizontally, but nothing ever brought this column, the only way to recover a blocked
+        // job, back into view. Frozen to the end: always visible regardless of scroll position.
+        // flexGrow(0) + autoWidth(true) instead of the old flexGrow(1): a frozen column must size
+        // to its own content (confirmed live: 3 buttons need ~260px) rather than stretch/shrink -
+        // flexGrow(1) left it squeezed to ~100px, clipping Requeue/raise-priority all over again,
+        // just inside the now-frozen column instead of outside the viewport.
+        grid.addColumn(new ComponentRenderer<>(this::actions)).setHeader("actions").setFlexGrow(0)
+                .setAutoWidth(true).setFrozenToEnd(true);
 
         add(new H2("Queue"), new HorizontalLayout(refresh, newJob, running, error), emptyState, grid);
         setSizeFull();
