@@ -57,6 +57,10 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         render();
     }
 
+    /** #195: a one-shot rebuild on navigation, unlike JobDetailView's "build chrome once, mutate
+     *  fields in place" pattern for its live-updating view - fine as-is, since this page has no
+     *  polling/push and never calls render() more than once per navigation. If this page ever
+     *  grows a live-refresh need, adopt JobDetailView's pattern instead of extending this one. */
     private void render() {
         removeAll();
         if (runId == null) {
