@@ -284,6 +284,23 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$[0].functional_ids[1]").value("F2"));
     }
 
+    /** #207: "started" has a real backing column now (V3 migration) but was still missing from
+     *  this endpoint's explicit SELECT - same class of gap #201 already found for poolable/
+     *  partial_score_pct. */
+    @Test
+    void runsListIncludesStarted() throws Exception {
+        dsl.insertInto(RUNS)
+                .set(RUNS.RUN_ID, "run3").set(RUNS.RESULTS_DIR, "/results/run3")
+                .set(RUNS.TASK, "L3p_point_in_time").set(RUNS.MODEL, "m").set(RUNS.MODE, "monolithic")
+                .set(RUNS.KEY_HASH, "k3").set(RUNS.POOLABLE, true).set(RUNS.ORACLE, "{}")
+                .set(RUNS.STARTED, "2026-09-21T18:32:32.415417Z")
+                .execute();
+
+        mvc.perform(get("/api/runs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].started").value("2026-09-21T18:32:32.415417Z"));
+    }
+
     @Test
     void runByIdAlsoIncludesFunctionalIdsHoistedFromOracle() throws Exception {
         dsl.insertInto(RUNS)

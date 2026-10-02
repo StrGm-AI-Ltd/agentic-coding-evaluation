@@ -49,6 +49,41 @@ class ImporterServiceTest {
         assertEquals(1, db.fetchCount(CHECK_RESULTS, CHECK_RESULTS.RUN_ID.eq(dir.getFileName().toString())));
     }
 
+    /** #207: manifest.json already records a "started" timestamp (RunBench.java's
+     *  manifest.put("started", nowIso())) - it was never carried into the runs table, leaving
+     *  RunsView's "started" column permanently empty regardless of real data. */
+    @Test
+    void importRunCarriesTheStartedTimestampFromTheManifest() throws Exception {
+        final DSLContext db = dsl();
+        final var dir = Files.createTempDirectory("run");
+        write(dir, "oracle.json", """
+                {"task": "L3p_point_in_time", "schema_version": 3, "weighted_score_pct": 80.0,
+                 "results": [{"id": "S1", "status": "pass", "detail": null}]}""");
+        write(dir, "manifest.json", """
+                {"started": "2026-09-21T18:32:32.415417Z"}""");
+        final var importer = new ImporterService(db);
+
+        importer.importRun(dir, null);
+
+        final var run = db.selectFrom(RUNS).where(RUNS.RUN_ID.eq(dir.getFileName().toString())).fetchOne();
+        assertEquals("2026-09-21T18:32:32.415417Z", run.getStarted());
+    }
+
+    @Test
+    void importRunWithNoManifestLeavesStartedNull() throws Exception {
+        final DSLContext db = dsl();
+        final var dir = Files.createTempDirectory("run");
+        write(dir, "oracle.json", """
+                {"task": "L3p_point_in_time", "schema_version": 3, "weighted_score_pct": 80.0,
+                 "results": [{"id": "S1", "status": "pass", "detail": null}]}""");
+        final var importer = new ImporterService(db);
+
+        importer.importRun(dir, null);
+
+        final var run = db.selectFrom(RUNS).where(RUNS.RUN_ID.eq(dir.getFileName().toString())).fetchOne();
+        assertNull(run.getStarted());
+    }
+
     @Test
     void reimportRefreshesEveryColumnTheInsertSets() throws Exception {
         final DSLContext db = dsl();

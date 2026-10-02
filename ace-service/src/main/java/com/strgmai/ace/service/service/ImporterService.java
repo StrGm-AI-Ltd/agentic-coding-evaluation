@@ -68,6 +68,7 @@ public class ImporterService {
         values.put(RUNS.KEY_HASH, keyHash(oracle, manifest));
         values.put(RUNS.WALL_SEC, flt(leaderboard.get("total_wall_sec")));
         values.put(RUNS.COMPLETION_TOKENS, num(leaderboard.get("completion_tokens")));
+        values.put(RUNS.STARTED, str(manifest.get("started")));
         values.put(RUNS.MANIFEST, toJson(manifest));
         values.put(RUNS.ORACLE, toJson(oracle));
         values.put(RUNS.METRICS, toJson(metrics));
