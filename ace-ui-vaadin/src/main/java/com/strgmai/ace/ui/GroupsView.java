@@ -48,7 +48,7 @@ public class GroupsView extends VerticalLayout {
             add(new Span("none yet"));
         } else {
             for (int i = 0; i < ranked.size(); i++) {
-                add(new GroupCard(ranked.get(i), i + 1));
+                add(new GroupCard(client, ranked.get(i), i + 1));
             }
         }
 
@@ -57,7 +57,7 @@ public class GroupsView extends VerticalLayout {
             add(new Span("none"));
         } else {
             for (final var group : indicative) {
-                add(new GroupCard(group, 0));
+                add(new GroupCard(client, group, 0));
             }
         }
     }
