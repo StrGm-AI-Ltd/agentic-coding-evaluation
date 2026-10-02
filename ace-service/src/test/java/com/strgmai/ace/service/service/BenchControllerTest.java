@@ -352,4 +352,81 @@ class BenchControllerTest {
         assertFalse(BenchController.isContainedEvenViaSymlinks(base, escapingLink),
                 "a symlink inside base pointing outside it must be rejected, not silently followed");
     }
+
+    private static StatsService.RunSummary runSummary(final String dir, final String model) {
+        return new StatsService.RunSummary(dir, "L3p_point_in_time", model, "orchestrated", 90.0, 80.0, null, null,
+                true, List.of(), false, true, 600, 10000, Map.of(), List.of(), Map.of());
+    }
+
+    /** A quant variant of the same model (e.g. "-5bit") is not the kind of "different model" this
+     *  check exists to guard against - refusing outright was too restrictive. Without model_ab, a
+     *  model mismatch now warns and still returns a real comparison, rather than refusing. */
+    @Test
+    void compareWithDifferentModelsWithoutModelAbWarnsAndProceeds() throws Exception {
+        when(props.resultsDir()).thenReturn("/tmp/results");
+        when(stats.load(Path.of("/tmp/results", "runA"))).thenReturn(runSummary("/tmp/results/runA", "Qwen3.8-27B-graft"));
+        when(stats.load(Path.of("/tmp/results", "runB"))).thenReturn(runSummary("/tmp/results/runB", "Qwen3.8-27B-graft-5bit"));
+        when(stats.filterRuns(any(), anyBoolean(), anyBoolean(), any())).thenAnswer(inv -> inv.getArgument(0));
+        when(stats.compare(any(), any(), any())).thenReturn(new java.util.LinkedHashMap<>(Map.of("diff", 5.0)));
+
+        mvc.perform(post("/api/compare").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"a\": [\"runA\"], \"b\": [\"runB\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.refused").doesNotExist())
+                .andExpect(jsonPath("$.result.diff").value(5.0))
+                .andExpect(jsonPath("$.result.model_warning").value(
+                        "A (Qwen3.8-27B-graft) and B (Qwen3.8-27B-graft-5bit) are different models - interpret this comparison accordingly; pass model_ab for the full harness-identity check instead"));
+    }
+
+    @Test
+    void compareWithSameModelHasNoModelWarning() throws Exception {
+        when(props.resultsDir()).thenReturn("/tmp/results");
+        when(stats.load(Path.of("/tmp/results", "runA"))).thenReturn(runSummary("/tmp/results/runA", "Qwen3.8-27B-graft"));
+        when(stats.load(Path.of("/tmp/results", "runB"))).thenReturn(runSummary("/tmp/results/runB", "Qwen3.8-27B-graft"));
+        when(stats.filterRuns(any(), anyBoolean(), anyBoolean(), any())).thenAnswer(inv -> inv.getArgument(0));
+        when(stats.compare(any(), any(), any())).thenReturn(new java.util.LinkedHashMap<>(Map.of("diff", 0.0)));
+
+        mvc.perform(post("/api/compare").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"a\": [\"runA\"], \"b\": [\"runB\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result.model_warning").doesNotExist());
+    }
+
+    /** model_ab is a separate, unaffected path: it already has its own harness-identity check and
+     *  must keep behaving exactly as before - this change only touches the non-model_ab branch. */
+    @Test
+    void compareWithModelAbAndDifferentModelsHasNoModelWarning() throws Exception {
+        when(props.resultsDir()).thenReturn("/tmp/results");
+        when(stats.load(Path.of("/tmp/results", "runA"))).thenReturn(runSummary("/tmp/results/runA", "Qwen3.8-27B-graft"));
+        when(stats.load(Path.of("/tmp/results", "runB"))).thenReturn(runSummary("/tmp/results/runB", "Qwen3.8-27B-graft-5bit"));
+        when(stats.filterRuns(any(), anyBoolean(), anyBoolean(), any())).thenAnswer(inv -> inv.getArgument(0));
+        when(stats.compare(any(), any(), any())).thenReturn(new java.util.LinkedHashMap<>(Map.of("diff", 5.0)));
+
+        mvc.perform(post("/api/compare").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"a\": [\"runA\"], \"b\": [\"runB\"], \"model_ab\": true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.refused").doesNotExist())
+                .andExpect(jsonPath("$.result.model_warning").doesNotExist());
+    }
+
+    /** The success path never wrapped its response in {"result": ..., "printed": ...} - the shape
+     *  Api.CompareResponse (the UI side) actually deserializes, mirroring
+     *  ExperimentsService.java:448,458's own compare-result wrapping. It returned the bare
+     *  stats.compare() map instead, so response.result()/printed() were always null on a real
+     *  success - dormant because every prior test only exercised the "refused" paths. */
+    @Test
+    void compareOnSuccessWrapsTheStatsResultUnderTheResultKey() throws Exception {
+        when(props.resultsDir()).thenReturn("/tmp/results");
+        when(stats.load(Path.of("/tmp/results", "runA"))).thenReturn(runSummary("/tmp/results/runA", "Qwen3.8-27B-graft"));
+        when(stats.load(Path.of("/tmp/results", "runB"))).thenReturn(runSummary("/tmp/results/runB", "Qwen3.8-27B-graft"));
+        when(stats.filterRuns(any(), anyBoolean(), anyBoolean(), any())).thenAnswer(inv -> inv.getArgument(0));
+        when(stats.compare(any(), any(), any())).thenReturn(new java.util.LinkedHashMap<>(Map.of("diff", 3.5, "p", 0.04)));
+
+        mvc.perform(post("/api/compare").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"a\": [\"runA\"], \"b\": [\"runB\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result.diff").value(3.5))
+                .andExpect(jsonPath("$.result.p").value(0.04))
+                .andExpect(jsonPath("$.printed").value(""));
+    }
 }

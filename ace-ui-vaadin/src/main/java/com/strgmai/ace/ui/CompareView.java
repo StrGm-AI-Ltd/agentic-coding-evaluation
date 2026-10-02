@@ -99,6 +99,8 @@ public class CompareView extends VerticalLayout {
                 result.add(new Details("StatsService output", Panels.mono(response.printed())));
                 return;
             }
+            final var modelWarning = response.result().path("model_warning").asText(null);
+            if (modelWarning != null) result.add(Panels.warn(modelWarning));
             result.add(new Details("StatsService output", Panels.mono(response.printed())));
             result.add(new Details("result JSON", Panels.mono(Fmt.json(response.result()))));
         } catch (final Exception e) {

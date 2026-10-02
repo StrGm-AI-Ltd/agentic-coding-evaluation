@@ -213,14 +213,27 @@ public class BenchController {
                 for (String k : StatsService.MODEL_AB_EXEMPT)
                     setupDiff.put(k, List.of(String.valueOf(ra.get(0).key().get(k)), String.valueOf(rb.get(0).key().get(k))));
                 log.info("model-ab compare: setup differences (properties of the setups under test, not of the harness): {}", setupDiff);
-            } else {
+            }
+            String modelWarning = null;
+            if (!modelAb) {
                 stats.requireMatchedBudgets(ra.get(0), rb.get(0), allowMismatch);
-                if (!Objects.equals(ra.get(0).model(), rb.get(0).model()))
-                    throw new IllegalArgumentException("A and B are different models; pass model_ab for a model comparison (same harness/budgets required)");
+                final String modelA = ra.get(0).model(), modelB = rb.get(0).model();
+                if (!Objects.equals(modelA, modelB)) {
+                    log.warn("compare: A ({}) and B ({}) are different models - proceeding without model_ab's harness-identity checks", modelA, modelB);
+                    modelWarning = "A (" + modelA + ") and B (" + modelB + ") are different models - interpret this comparison accordingly; pass model_ab for the full harness-identity check instead";
+                }
             }
             final List<Double> fa = metricValues(ra, metric), fb = metricValues(rb, metric);
             if (fa.isEmpty() || fb.isEmpty()) return ResponseEntity.ok(Map.of("refused", "no " + metric + " scores to compare on a side"));
-            return ResponseEntity.ok(stats.compare(fa, fb, metric));
+            final var result = stats.compare(fa, fb, metric);
+            if (modelWarning != null) result.put("model_warning", modelWarning);
+            // the success path never wrapped its response in {"result": ..., "printed": ...}
+            // (Api.CompareResponse's actual shape, mirroring ExperimentsService.java:448,458's own
+            // compare-result wrapping) - it returned the bare stats.compare() map, leaving
+            // response.result()/printed() always null on the UI side. Dormant until now because
+            // every prior test only exercised the "refused" paths, which happen to deserialize
+            // correctly on their own (they set only the "refused" key).
+            return ResponseEntity.ok(Map.of("result", result, "printed", ""));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.ok(Map.of("refused", e.getMessage()));
         }
