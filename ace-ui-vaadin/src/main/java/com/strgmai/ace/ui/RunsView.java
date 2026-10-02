@@ -180,7 +180,7 @@ public class RunsView extends VerticalLayout {
         if (run.valid() == null) {
             return Badges.text("unknown", Badges.CONTRAST);
         }
-        return run.valid() ? Badges.text("valid", Badges.SUCCESS) : Badges.text("INVALID", Badges.ERROR);
+        return run.valid() ? Badges.text("valid", Badges.SUCCESS) : Badges.text("invalid", Badges.ERROR);
     }
 
     private static ComponentRenderer<Span, Api.Run> functionalCell() {

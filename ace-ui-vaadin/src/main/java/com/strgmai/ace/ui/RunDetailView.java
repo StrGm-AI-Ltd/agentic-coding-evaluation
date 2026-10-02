@@ -97,7 +97,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         badges.setPadding(false);
         badges.setSpacing(true);
         if (Boolean.FALSE.equals(run.valid())) {
-            badges.add(Badges.text("INVALID", Badges.ERROR));
+            badges.add(Badges.text("invalid", Badges.ERROR));
         }
         if (Boolean.TRUE.equals(run.contended())) {
             badges.add(Badges.text("CONTENDED", Badges.WARNING));
