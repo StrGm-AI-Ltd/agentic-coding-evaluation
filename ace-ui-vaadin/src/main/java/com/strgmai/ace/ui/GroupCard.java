@@ -6,16 +6,23 @@ import com.vaadin.flow.component.html.H4;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * One leaderboard card — the Vaadin twin of the group_card macro in the Jinja2 UI:
  * k, mean ± 90 % CI, pass-k matrix chips, run links, collapsible stats.py output.
  */
 public class GroupCard extends VerticalLayout {
+    private static final Logger log = LoggerFactory.getLogger(GroupCard.class);
 
-    public GroupCard(final Api.Group group, final int rank) {
+    public GroupCard(final ServiceClient client, final Api.Group group, final int rank) {
         setPadding(false);
         setSpacing(true);
         getStyle()
@@ -50,6 +57,9 @@ public class GroupCard extends VerticalLayout {
             add(kLine);
             if (k < 5) {
                 add(Badges.text("indicative", Badges.CONTRAST));
+            }
+            if (k < group.run_ids().size()) {
+                addExclusionBreakdown(client, group, k);
             }
 
             if (summary != null) {
@@ -91,6 +101,36 @@ public class GroupCard extends VerticalLayout {
         final var printed = Panels.mono(group.printed());
         final var details = new Details("StatsService output", printed);
         add(details);
+    }
+
+    /** #194: k (comparable, valid runs) is always <= run_ids().size() (every poolable run in the
+     *  group) - the gap between them was previously invisible, forcing a click into every run to
+     *  find out why. Reconstructs the same two reasons StatsService.filterRuns() excludes on
+     *  (invalid; partial - no weighted_score_pct, e.g. Docker-gated checks skipped) from fields
+     *  Api.Run already exposes, via the one extra /api/runs call this needs - never a hard failure
+     *  if that call fails, since this is purely informational. */
+    private void addExclusionBreakdown(final ServiceClient client, final Api.Group group, final int k) {
+        final List<Api.Run> runs;
+        try {
+            runs = client.runs(group.task(), group.model(), group.mode(), null, null);
+        } catch (final Exception e) {
+            log.debug("could not load runs for the exclusion breakdown of {}/{}: {}", group.task(), group.model(), e.toString());
+            return;
+        }
+        final Set<String> runIds = new HashSet<>(group.run_ids());
+        int invalid = 0, partial = 0;
+        for (final var run : runs) {
+            if (!runIds.contains(run.run_id())) continue;
+            if (!Boolean.TRUE.equals(run.valid())) invalid++;
+            else if (run.weighted_score_pct() == null) partial++;
+        }
+        if (invalid == 0 && partial == 0) return;   // the gap is real but not explained by either known reason
+        final var parts = new ArrayList<String>();
+        if (invalid > 0) parts.add(invalid + " invalid");
+        if (partial > 0) parts.add(partial + " partial (docker skipped/infra)");
+        final var excluded = new Span("excluded: " + String.join(", ", parts));
+        excluded.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "13px");
+        add(excluded);
     }
 
     private void addStat(final String name, final Api.Stats stats) {
