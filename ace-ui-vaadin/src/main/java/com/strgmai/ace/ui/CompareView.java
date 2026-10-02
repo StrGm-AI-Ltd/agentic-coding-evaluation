@@ -4,6 +4,7 @@ import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.combobox.MultiSelectComboBox;
 import com.vaadin.flow.component.details.Details;
+import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.notification.Notification;
@@ -32,6 +33,7 @@ public class CompareView extends VerticalLayout {
     private final Checkbox includeInvalid = new Checkbox("include invalid runs");
     private final Checkbox allowBudgetMismatch = new Checkbox("allow budget mismatch");
     private final VerticalLayout result = new VerticalLayout();
+    private final Div noPoolableRuns = Panels.warn("no poolable runs yet - run something first");
 
     public CompareView(final ServiceClient client) {
         this.client = client;
@@ -55,7 +57,8 @@ public class CompareView extends VerticalLayout {
 
         final var run = new Button("Compare", e -> compare());
 
-        add(row1, options, run, result);
+        noPoolableRuns.setVisible(false);
+        add(row1, noPoolableRuns, options, run, result);
 
         addAttachListener(e -> loadRunIds());
     }
@@ -66,6 +69,7 @@ public class CompareView extends VerticalLayout {
             final var ids = poolableRunIds(runs);
             groupA.setItems(ids);
             groupB.setItems(ids);
+            noPoolableRuns.setVisible(ids.isEmpty());
         } catch (final Exception e) {
             log.warn("could not load run ids for compare: {}", e.toString());
             result.removeAll();
