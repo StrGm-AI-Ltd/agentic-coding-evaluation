@@ -88,6 +88,19 @@ public final class Api {
     public record CheckStat(Boolean pass_k, Double pass_rate) {
     }
 
+    /** GET /api/tasks/details element - a ladder.json rung with every check resolved to its own
+     *  category/weight/description from CheckId, not just a bare id. */
+    public record RungDetail(
+            String name,
+            String description,
+            Integer budget_sec,
+            Integer denominator,
+            List<RungCheck> checks) {
+    }
+
+    public record RungCheck(String check_id, String category, Integer weight, String description) {
+    }
+
     /** POST /api/compare. */
     public record CompareRequest(
             List<String> a,

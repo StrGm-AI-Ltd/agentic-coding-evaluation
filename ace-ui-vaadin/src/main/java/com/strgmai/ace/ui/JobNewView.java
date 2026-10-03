@@ -81,6 +81,10 @@ public class JobNewView extends VerticalLayout {
     private final Checkbox manageDocker = new Checkbox("manage_docker");
     private final Checkbox skipDocker = new Checkbox("skip_docker");
     private final VerticalLayout errors = new VerticalLayout();
+    // populated once in loadSuggestions(); looked up by name as the operator picks a rung, so
+    // picking a task shows what it actually tests before the job is ever enqueued
+    private List<Api.RungDetail> rungDetails = List.of();
+    private final com.vaadin.flow.component.html.Div taskInfo = Panels.mono("");
 
     public JobNewView(final ServiceClient client) {
         this.client = client;
@@ -92,6 +96,8 @@ public class JobNewView extends VerticalLayout {
         // JobSpecs.build's only possible failure is "task is required" - clear the inline error
         // the moment the operator picks something, rather than making them resubmit to see it go
         task.addValueChangeListener(e -> task.setInvalid(false));
+        task.addValueChangeListener(e -> renderTaskInfo(e.getValue()));
+        taskInfo.setVisible(false);
         for (final var picker : List.of(model, reviewerModel, trajectoryReviewerModel)) {
             picker.setAllowCustomValue(true);
         }
@@ -169,6 +175,7 @@ public class JobNewView extends VerticalLayout {
 
         add(Forms.section("Run",
                 Forms.row(task, runIdField, harness, mode, planSource),
+                Forms.row(taskInfo),
                 Forms.row(phases, parallel, parallelPlan, parallelWeight)));
         add(Forms.section("Budgets",
                 Forms.row(taskWall, taskTokens, implWall, implTokens, planTokens, wallBudget, contextWindow),
@@ -211,9 +218,34 @@ public class JobNewView extends VerticalLayout {
             model.setItems(Links.distinctRuns(runs, Api.Run::model));
             reviewerModel.setItems(ExperimentNewView.reviewerSuggestions());
             trajectoryReviewerModel.setItems(ExperimentNewView.reviewerSuggestions());
+            rungDetails = client.taskDetails();
+            renderTaskInfo(task.getValue());
         } catch (final Exception e) {
             log.warn("could not load task/model suggestions: {}", e.toString());
         }
+    }
+
+    /** Shows the selected rung's own description/budget/denominator/checks (each with its own
+     *  category/weight/description from CheckId) - what picking a task actually commits the job
+     *  to, before it's ever enqueued. Hidden when nothing is selected or the rung is unrecognized
+     *  (a free-typed custom value - task.setAllowCustomValue(true) - has no ladder entry to show). */
+    private void renderTaskInfo(final String selected) {
+        final var detail = rungDetails.stream().filter(r -> r.name().equals(selected)).findFirst();
+        if (selected == null || selected.isBlank() || detail.isEmpty()) {
+            taskInfo.setVisible(false);
+            return;
+        }
+        final var r = detail.get();
+        final var lines = new StringBuilder();
+        lines.append(r.name()).append(" — ").append(r.description()).append('\n');
+        lines.append("budget ").append(Fmt.duration(r.budget_sec() == null ? null : r.budget_sec().doubleValue()))
+                .append(" · denominator ").append(r.denominator()).append('\n');
+        lines.append("checks:\n");
+        for (final var c : r.checks())
+            lines.append("  ").append(c.check_id()).append(" (").append(c.category()).append(", weight ").append(c.weight())
+                    .append("): ").append(c.description()).append('\n');
+        taskInfo.setText(lines.toString().stripTrailing());
+        taskInfo.setVisible(true);
     }
 
     /** Collects the raw field values by RunSpec key, exactly as the server's own form does. */

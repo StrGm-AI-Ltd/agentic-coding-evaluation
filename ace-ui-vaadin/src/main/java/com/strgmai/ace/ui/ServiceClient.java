@@ -121,6 +121,13 @@ public class ServiceClient implements Serializable {
         });
     }
 
+    /** Every rung's own description/budget/denominator/checks, per GET /api/tasks/details - lets
+     *  the New Job form show what a rung actually tests once picked. */
+    public List<Api.RungDetail> taskDetails() {
+        return http.get().uri("/api/tasks/details").retrieve().body(new ParameterizedTypeReference<List<Api.RungDetail>>() {
+        });
+    }
+
     public Api.GroupResponse groups() {
         return http.get().uri("/api/groups").retrieve().body(Api.GroupResponse.class);
     }
