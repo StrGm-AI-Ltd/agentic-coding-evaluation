@@ -215,6 +215,46 @@ public final class StatsService {
         return out;
     }
 
+    /** human-readable rendering of compare()'s result map - the "StatsService output" panel was
+     *  always an empty placeholder (the Python original's console-print text was never ported);
+     *  this is the first real implementation, not a reproduction of a lost exact format. */
+    @SuppressWarnings("unchecked")
+    public static String printCompare(final Map<String, Object> result) {
+        final var lines = new ArrayList<String>();
+        final var ci = (List<Double>) result.get("ci90");
+        lines.add(result.get("metric") + ": diff(A-B) = " + result.get("diff")
+                + ", 90% CI [" + ci.get(0) + ", " + ci.get(1) + "] (width " + result.get("ci90_width") + ")");
+        lines.add("p = " + result.get("p") + (Boolean.TRUE.equals(result.get("one_sided")) ? " (one-sided)" : ""));
+        lines.add(String.valueOf(result.get("verdict")));
+        if (result.get("note") != null) lines.add(String.valueOf(result.get("note")));
+        if (result.get("model_warning") != null) lines.add("NOTE: " + result.get("model_warning"));
+        return String.join("\n", lines);
+    }
+
+    /** human-readable rendering of summarize()'s result map - same rationale as printCompare(). */
+    @SuppressWarnings("unchecked")
+    public static String printSummary(final Map<String, Object> summary) {
+        final int k = summary.get("k") instanceof Number n ? n.intValue() : 0;
+        if (k == 0) return "k=0 comparable runs";
+        final var lines = new ArrayList<String>();
+        lines.add("k=" + k + " comparable run" + (k == 1 ? "" : "s"));
+        for (String metric : List.of("functional", "composite", "partial", "agent_result")) {
+            if (!(summary.get(metric) instanceof Map<?, ?> m)) continue;
+            final var ci = (List<Double>) m.get("ci90");
+            lines.add(metric + ": mean " + m.get("mean") + ", 90% CI [" + ci.get(0) + ", " + ci.get(1) + "] (n=" + m.get("n") + ")");
+        }
+        if (summary.get("matrix") instanceof Map<?, ?> matrix && !matrix.isEmpty()) {
+            final var cells = new ArrayList<String>();
+            for (var e : matrix.entrySet()) {
+                final var cell = (Map<String, Object>) e.getValue();
+                cells.add(e.getKey() + ": " + Math.round(100 * (double) (Double) cell.get("pass_rate")) + "%"
+                        + (Boolean.TRUE.equals(cell.get("pass_k")) ? " pass_k" : ""));
+            }
+            lines.add(String.join(", ", cells));
+        }
+        return String.join("\n", lines);
+    }
+
     static double mean(double[] xs) { double s = 0; for (double x : xs) s += x; return s / xs.length; }
     static double round1(double x) { return Math.round(x * 10) / 10.0; }
 }
