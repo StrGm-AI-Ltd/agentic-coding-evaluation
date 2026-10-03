@@ -4,7 +4,6 @@ import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.combobox.MultiSelectComboBox;
-import com.vaadin.flow.component.dependency.CssImport;
 import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
@@ -28,60 +27,59 @@ import java.util.Map;
  * normalized by JobSpecs (unit-tested) and submitted to POST /api/jobs.
  */
 @Route(value = "jobs/new", layout = MainLayout.class)
-@CssImport("./styles/budget-field-helper.css")
 public class JobNewView extends VerticalLayout {
     private static final Logger log = LoggerFactory.getLogger(JobNewView.class);
 
     private final ServiceClient client;
 
-    private final ComboBox<String> task = new ComboBox<>("task");
-    private final ComboBox<String> model = new ComboBox<>("model");
-    private final ComboBox<String> reviewerModel = new ComboBox<>("reviewer_model");
-    private final ComboBox<String> trajectoryReviewerModel = new ComboBox<>("trajectory_reviewer_model");
+    private final ComboBox<String> task = new ComboBox<>("Task");
+    private final ComboBox<String> model = new ComboBox<>("Model");
+    private final ComboBox<String> reviewerModel = new ComboBox<>("Reviewer model");
+    private final ComboBox<String> trajectoryReviewerModel = new ComboBox<>("Trajectory reviewer model");
     private final Select<String> harness = new Select<>();
     private final Select<String> mode = new Select<>();
     private final Select<String> planSource = new Select<>();
     private final Select<String> parallelPlan = new Select<>();
     private final Select<String> trajectoryUse = new Select<>();
     private final Select<String> reasoningEffort = new Select<>();
-    private final MultiSelectComboBox<String> phases = new MultiSelectComboBox<>("phases");
-    private final TextField parallel = new TextField("parallel");
-    private final TextField javaHome = new TextField("java_home");
-    private final TextField runIdField = new TextField("run_id");
-    private final IntegerField taskWall = new IntegerField("task_wall");
-    private final IntegerField taskTokens = new IntegerField("task_tokens");
-    private final IntegerField implWall = new IntegerField("impl_wall");
-    private final IntegerField implTokens = new IntegerField("impl_tokens");
-    private final IntegerField planWall = new IntegerField("plan_wall");
-    private final IntegerField planTokens = new IntegerField("plan_tokens");
-    private final IntegerField contextWindow = new IntegerField("context_window");
-    private final IntegerField firstTokenTimeout = new IntegerField("first_token_timeout");
-    private final IntegerField compactionTrigger = new IntegerField("compaction_trigger");
-    private final IntegerField reviewWallSec = new IntegerField("review_wall_sec");
-    private final IntegerField wallBudget = new IntegerField("wall_budget");
-    private final IntegerField priority = new IntegerField("priority");
-    private final NumberField parallelWeight = new NumberField("parallel_weight");
-    private final NumberField efficiencyWeight = new NumberField("efficiency_weight");
-    private final NumberField reviewWeight = new NumberField("review_weight");
-    private final NumberField trajectoryWeight = new NumberField("trajectory_weight");
-    private final NumberField temperature = new NumberField("temperature");
-    private final NumberField topP = new NumberField("top_p");
-    private final IntegerField topK = new IntegerField("top_k");
-    private final NumberField repetitionPenalty = new NumberField("repetition_penalty");
-    private final IntegerField maxTokens = new IntegerField("max_tokens");
-    private final IntegerField parallelPlanWall = new IntegerField("parallel_plan_wall");
-    private final IntegerField handoffWall = new IntegerField("handoff_wall");
-    private final IntegerField wrapupWall = new IntegerField("wrapup_wall");
-    private final Checkbox handoffNotes = new Checkbox("handoff_notes");
-    private final Checkbox systemRules = new Checkbox("system_rules");
-    private final Checkbox selfReview = new Checkbox("self_review");
-    private final Checkbox reviewBlind = new Checkbox("review_blind");
-    private final Checkbox trajectoryReview = new Checkbox("trajectory_review");
-    private final Checkbox noContextProbe = new Checkbox("no_context_probe");
-    private final Checkbox contextProbeFresh = new Checkbox("context_probe_fresh");
-    private final Checkbox keepWorkspace = new Checkbox("keep_workspace");
-    private final Checkbox manageDocker = new Checkbox("manage_docker");
-    private final Checkbox skipDocker = new Checkbox("skip_docker");
+    private final MultiSelectComboBox<String> phases = new MultiSelectComboBox<>("Phases");
+    private final TextField parallel = new TextField("Parallel tasks");
+    private final TextField javaHome = new TextField("Java home");
+    private final TextField runIdField = new TextField("Run ID");
+    private final IntegerField taskWall = new IntegerField("Task wall-clock budget");
+    private final IntegerField taskTokens = new IntegerField("Task token budget");
+    private final IntegerField implWall = new IntegerField("Implementation wall-clock budget");
+    private final IntegerField implTokens = new IntegerField("Implementation token budget");
+    private final IntegerField planWall = new IntegerField("Plan wall-clock budget");
+    private final IntegerField planTokens = new IntegerField("Plan token budget");
+    private final IntegerField contextWindow = new IntegerField("Context window");
+    private final IntegerField firstTokenTimeout = new IntegerField("First-token timeout");
+    private final IntegerField compactionTrigger = new IntegerField("Compaction trigger");
+    private final IntegerField reviewWallSec = new IntegerField("Review wall-clock budget");
+    private final IntegerField wallBudget = new IntegerField("Wall budget override (smoke test)");
+    private final IntegerField priority = new IntegerField("Priority");
+    private final NumberField parallelWeight = new NumberField("Parallelization weight");
+    private final NumberField efficiencyWeight = new NumberField("Efficiency weight");
+    private final NumberField reviewWeight = new NumberField("Review weight");
+    private final NumberField trajectoryWeight = new NumberField("Trajectory weight");
+    private final NumberField temperature = new NumberField("Temperature");
+    private final NumberField topP = new NumberField("Top-p");
+    private final IntegerField topK = new IntegerField("Top-k");
+    private final NumberField repetitionPenalty = new NumberField("Repetition penalty");
+    private final IntegerField maxTokens = new IntegerField("Max tokens");
+    private final IntegerField parallelPlanWall = new IntegerField("Parallel-plan wall-clock budget");
+    private final IntegerField handoffWall = new IntegerField("Handoff wall-clock budget");
+    private final IntegerField wrapupWall = new IntegerField("Wrap-up wall-clock budget");
+    private final Checkbox handoffNotes = new Checkbox("Handoff notes");
+    private final Checkbox systemRules = new Checkbox("System rules");
+    private final Checkbox selfReview = new Checkbox("Self-review");
+    private final Checkbox reviewBlind = new Checkbox("Blind review");
+    private final Checkbox trajectoryReview = new Checkbox("Trajectory review");
+    private final Checkbox noContextProbe = new Checkbox("Skip context probe");
+    private final Checkbox contextProbeFresh = new Checkbox("Fresh context probe");
+    private final Checkbox keepWorkspace = new Checkbox("Keep workspace");
+    private final Checkbox manageDocker = new Checkbox("Manage Docker");
+    private final Checkbox skipDocker = new Checkbox("Skip Docker");
     private final VerticalLayout errors = new VerticalLayout();
     // populated once in loadSuggestions(); looked up by name as the operator picks a rung, so
     // picking a task shows what it actually tests before the job is ever enqueued
@@ -109,6 +107,7 @@ public class JobNewView extends VerticalLayout {
         model.setTooltipText(Tooltips.MODEL);
         reviewerModel.setTooltipText(Tooltips.REVIEWER_MODEL);
         trajectoryReviewerModel.setTooltipText(Tooltips.TRAJECTORY_REVIEWER_MODEL);
+        runIdField.setPlaceholder("blank = auto-generated");
         runIdField.setTooltipText(Tooltips.RUN_ID);
 
         configureSelect(harness, "", "ref", "pi");
@@ -117,12 +116,12 @@ public class JobNewView extends VerticalLayout {
         configureSelect(parallelPlan, "", "on", "off");
         configureSelect(trajectoryUse, "", "calibration", "direct");
         configureSelect(reasoningEffort, "", "none", "low", "medium", "high");
-        harness.setLabel("harness");
-        mode.setLabel("mode");
-        planSource.setLabel("plan_source");
-        parallelPlan.setLabel("parallel_plan");
-        trajectoryUse.setLabel("trajectory_use");
-        reasoningEffort.setLabel("reasoning_effort");
+        harness.setLabel("Harness");
+        mode.setLabel("Mode");
+        planSource.setLabel("Plan source");
+        parallelPlan.setLabel("Parallel planning");
+        trajectoryUse.setLabel("Trajectory use");
+        reasoningEffort.setLabel("Reasoning effort");
         reasoningEffort.setItemLabelGenerator(v -> v.isEmpty() ? "blank = default per phase" : v.equals("none") ? "none (disable thinking)" : v);
         harness.setTooltipText(Tooltips.HARNESS);
         mode.setTooltipText(Tooltips.MODE);
@@ -142,39 +141,40 @@ public class JobNewView extends VerticalLayout {
         priority.setValue(0);
         priority.setTooltipText(Tooltips.PRIORITY);
         taskWall.setMin(1);
+        taskWall.setPlaceholder("blank = derived from the rung's budget");
         taskWall.setTooltipText(Tooltips.TASK_WALL);
         taskTokens.setMin(1);
+        taskTokens.setPlaceholder("blank = derived from the rung's budget");
         taskTokens.setTooltipText(Tooltips.TASK_TOKENS);
         implWall.setMin(1);
+        implWall.setPlaceholder("blank = rung's derived budget");
         implWall.setTooltipText(Tooltips.IMPL_WALL);
         implTokens.setMin(1);
+        implTokens.setPlaceholder("blank = operator default");
         implTokens.setTooltipText(Tooltips.IMPL_TOKENS);
         planWall.setMin(0);
         planWall.setPlaceholder("blank = default (900s), 0 = unlimited");
         planWall.setTooltipText(Tooltips.PLAN_WALL);
         planTokens.setMin(1);
+        planTokens.setPlaceholder("blank = operator default");
         planTokens.setTooltipText(Tooltips.PLAN_TOKENS);
         contextWindow.setMin(1);
         contextWindow.setTooltipText(Tooltips.CONTEXT_WINDOW);
         firstTokenTimeout.setMin(1);
         firstTokenTimeout.setPlaceholder("blank = default (180s)");
         firstTokenTimeout.setTooltipText(Tooltips.FIRST_TOKEN_TIMEOUT);
-        // #208: compactionTrigger's 2-line helper text makes it taller than firstTokenTimeout
-        // (placeholder only, no helper) - Forms.row()'s bottom alignment then pushes
-        // firstTokenTimeout's label down to match, instead of the two staying level. Reserving
-        // the same helper-text height on both (see budget-field-helper.css) fixes that.
-        firstTokenTimeout.addClassName("reserve-helper-height");
-        compactionTrigger.addClassName("reserve-helper-height");
         compactionTrigger.setMin(0);
-        compactionTrigger.setHelperText("blank = default (28000), 0 = disabled");
+        compactionTrigger.setPlaceholder("blank = default (28000), 0 = disabled");
         compactionTrigger.setTooltipText(Tooltips.COMPACTION_TRIGGER);
         reviewWallSec.setMin(1);
         reviewWallSec.setPlaceholder("blank = default (900s)");
         reviewWallSec.setTooltipText(Tooltips.REVIEW_WALL_SEC);
         wallBudget.setMin(1);
+        wallBudget.setPlaceholder("blank = not used (normal budget applies)");
         wallBudget.setTooltipText(Tooltips.WALL_BUDGET);
         parallelWeight.setMin(0);
         parallelWeight.setMax(1);
+        parallelWeight.setPlaceholder("blank = default (0.1)");
         parallelWeight.setTooltipText(Tooltips.PARALLEL_WEIGHT);
         efficiencyWeight.setMin(0);
         efficiencyWeight.setMax(1);
@@ -182,9 +182,11 @@ public class JobNewView extends VerticalLayout {
         efficiencyWeight.setTooltipText(Tooltips.EFFICIENCY_WEIGHT);
         reviewWeight.setMin(0);
         reviewWeight.setMax(1);
+        reviewWeight.setPlaceholder("blank = default (0.1)");
         reviewWeight.setTooltipText(Tooltips.REVIEW_WEIGHT);
         trajectoryWeight.setMin(0);
         trajectoryWeight.setMax(1);
+        trajectoryWeight.setPlaceholder("blank = default (0.1)");
         trajectoryWeight.setTooltipText(Tooltips.TRAJECTORY_WEIGHT);
         temperature.setMin(0);
         temperature.setPlaceholder("blank = operator default");
@@ -204,16 +206,14 @@ public class JobNewView extends VerticalLayout {
         maxTokens.setTooltipText(Tooltips.MAX_TOKENS);
         parallelPlanWall.setMin(1);
         parallelPlanWall.setPlaceholder("blank = default (600s)");
-        parallelPlanWall.addClassName("reserve-helper-height");
         parallelPlanWall.setTooltipText(Tooltips.PARALLEL_PLAN_WALL);
         handoffWall.setMin(1);
         handoffWall.setPlaceholder("blank = default (300s)");
-        handoffWall.addClassName("reserve-helper-height");
         handoffWall.setTooltipText(Tooltips.HANDOFF_WALL);
         wrapupWall.setMin(1);
-        wrapupWall.setHelperText("blank = default (300s, before the decode-speed scale)");
-        wrapupWall.addClassName("reserve-helper-height");
+        wrapupWall.setPlaceholder("blank = default (300s, scaled)");
         wrapupWall.setTooltipText(Tooltips.WRAPUP_WALL);
+        javaHome.setPlaceholder("blank = operator/machine default");
         javaHome.setTooltipText(Tooltips.JAVA_HOME);
         handoffNotes.setTooltipText(Tooltips.HANDOFF_NOTES);
         systemRules.setTooltipText(Tooltips.SYSTEM_RULES);
@@ -281,6 +281,18 @@ public class JobNewView extends VerticalLayout {
             renderTaskInfo(task.getValue());
         } catch (final Exception e) {
             log.warn("could not load task/model suggestions: {}", e.toString());
+        }
+        try {
+            // the model server's own list, merged in on top of past-run models (GET /api/models) -
+            // a DB-only list used to hide every model this dataset had never happened to run yet,
+            // same fix as #225 applied to task - a cold backend with zero run history still gets a
+            // useful picker, not an empty one
+            final var live = client.models();
+            final var merged = java.util.stream.Stream.concat(model.getGenericDataView().getItems(), live.stream())
+                    .distinct().sorted().toList();
+            model.setItems(merged);
+        } catch (final Exception e) {
+            log.warn("could not reach the model server for live model suggestions: {}", e.toString());
         }
     }
 

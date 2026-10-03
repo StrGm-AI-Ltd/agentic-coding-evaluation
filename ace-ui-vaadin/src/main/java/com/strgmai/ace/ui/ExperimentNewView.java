@@ -37,40 +37,40 @@ public class ExperimentNewView extends VerticalLayout {
 
     private final ServiceClient client;
 
-    private final TextField name = new TextField("name");
+    private final TextField name = new TextField("Experiment name");
     private final Select<String> template = new Select<>();
-    private final IntegerField k = new IntegerField("k (repeats per arm)");
-    private final ComboBox<String> task = new ComboBox<>("task");
-    private final IntegerField taskWall = new IntegerField("task_wall");
-    private final TextField taskTokens = new TextField("task_tokens");
-    private final IntegerField firstTokenTimeout = new IntegerField("first_token_timeout");
-    private final IntegerField compactionTrigger = new IntegerField("compaction_trigger");
-    private final IntegerField reviewWallSec = new IntegerField("review_wall_sec");
-    private final IntegerField contextWindow = new IntegerField("context_window");
-    private final Checkbox noContextProbe = new Checkbox("no_context_probe (derive the step-0 window from harness config)");
-    private final ComboBox<String> model = modelPicker("model");
-    private final ComboBox<String> modelA = modelPicker("model_a");
-    private final ComboBox<String> modelB = modelPicker("model_b");
-    private final ComboBox<String> reviewerModel = modelPicker("reviewer_model");
-    private final NumberField reviewWeight = weightField("review_weight");
-    private final Checkbox reviewBlind = new Checkbox("review_blind (hide PROGRESS claims from the code reviewer)");
-    private final ComboBox<String> trajectoryReviewerModel = modelPicker("trajectory_reviewer_model");
-    private final NumberField trajectoryWeight = weightField("trajectory_weight");
+    private final IntegerField k = new IntegerField("Repeats per arm");
+    private final ComboBox<String> task = new ComboBox<>("Task");
+    private final IntegerField taskWall = new IntegerField("Task wall-clock budget");
+    private final TextField taskTokens = new TextField("Task token budget");
+    private final IntegerField firstTokenTimeout = new IntegerField("First-token timeout");
+    private final IntegerField compactionTrigger = new IntegerField("Compaction trigger");
+    private final IntegerField reviewWallSec = new IntegerField("Review wall-clock budget");
+    private final IntegerField contextWindow = new IntegerField("Context window");
+    private final Checkbox noContextProbe = new Checkbox("Skip context probe");
+    private final ComboBox<String> model = modelPicker("Model");
+    private final ComboBox<String> modelA = modelPicker("Model A");
+    private final ComboBox<String> modelB = modelPicker("Model B");
+    private final ComboBox<String> reviewerModel = modelPicker("Reviewer model");
+    private final NumberField reviewWeight = weightField("Review weight");
+    private final Checkbox reviewBlind = new Checkbox("Blind review");
+    private final ComboBox<String> trajectoryReviewerModel = modelPicker("Trajectory reviewer model");
+    private final NumberField trajectoryWeight = weightField("Trajectory weight");
     private final Select<String> trajectoryUse = new Select<>();
-    private final NumberField temperature = new NumberField("temperature");
-    private final NumberField topP = new NumberField("top_p");
-    private final IntegerField topK = new IntegerField("top_k");
-    private final NumberField repetitionPenalty = new NumberField("repetition_penalty");
-    private final IntegerField maxTokens = new IntegerField("max_tokens");
+    private final NumberField temperature = new NumberField("Temperature");
+    private final NumberField topP = new NumberField("Top-p");
+    private final IntegerField topK = new IntegerField("Top-k");
+    private final NumberField repetitionPenalty = new NumberField("Repetition penalty");
+    private final IntegerField maxTokens = new IntegerField("Max tokens");
     private final Select<String> reasoningEffort = new Select<>();
-    private final IntegerField parallelPlanWall = new IntegerField("parallel_plan_wall");
-    private final IntegerField handoffWall = new IntegerField("handoff_wall");
-    private final IntegerField wrapupWall = new IntegerField("wrapup_wall");
-    private final Checkbox orch = new Checkbox("orch — orchestrated");
-    private final Checkbox mono = new Checkbox("mono — monolithic");
-    private final Checkbox monoRules = new Checkbox("mono+rules — monolithic with prompt-only rules");
-    private final Checkbox par = new Checkbox("par — parallel impl");
-    private final IntegerField parallel = new IntegerField("parallel (par arm)");
+    private final IntegerField parallelPlanWall = new IntegerField("Parallel-plan wall-clock budget");
+    private final IntegerField handoffWall = new IntegerField("Handoff wall-clock budget");
+    private final IntegerField wrapupWall = new IntegerField("Wrap-up wall-clock budget");
+    private final Checkbox orch = new Checkbox("Orchestrated arm");
+    private final Checkbox mono = new Checkbox("Monolithic arm");
+    private final Checkbox monoRules = new Checkbox("Monolithic + rules arm");
+    private final Checkbox par = new Checkbox("Parallel arm");
+    private final IntegerField parallel = new IntegerField("Parallel wave size");
     private final Select<String> agentMode = new Select<>();
     private final Select<String> agentA = new Select<>();
     private final Select<String> agentB = new Select<>();
@@ -91,7 +91,7 @@ public class ExperimentNewView extends VerticalLayout {
         this.client = client;
         setPadding(true);
 
-        template.setLabel("template");
+        template.setLabel("Template");
         template.setItems("harness_effect", "model_ab", "agent_ab");
         template.setItemLabelGenerator(ExperimentNewView::templateLabel);
         template.setValue("harness_effect");
@@ -99,6 +99,7 @@ public class ExperimentNewView extends VerticalLayout {
         k.setValue(3);
         k.setMin(1);
         k.setMax(20);
+        k.setPlaceholder("blank = default (3)");
         k.setTooltipText(Tooltips.K);
         // every experiment used to hardcode ExperimentsService.RUNG with no way to override it;
         // items load async in loadSuggestions(), so - same as JobNewView's task field - no eager
@@ -142,12 +143,12 @@ public class ExperimentNewView extends VerticalLayout {
         par.setTooltipText(Tooltips.ARM_PAR);
         modelA.setTooltipText(Tooltips.MODEL_A);
         modelB.setTooltipText(Tooltips.MODEL_B);
-        agentMode.setLabel("mode");
+        agentMode.setLabel("Mode");
         agentMode.setItems("orchestrated", "monolithic");
         agentMode.setValue("orchestrated");
         agentMode.setTooltipText(Tooltips.AGENT_MODE);
-        agentA.setLabel("agent A");
-        agentB.setLabel("agent B");
+        agentA.setLabel("Agent A");
+        agentB.setLabel("Agent B");
         for (final var agent : List.of(agentA, agentB)) {
             agent.setItems("ref", "pi");
         }
@@ -156,11 +157,13 @@ public class ExperimentNewView extends VerticalLayout {
         agentA.setTooltipText(Tooltips.AGENT_A);
         agentB.setTooltipText(Tooltips.AGENT_B);
         reviewerModel.setTooltipText(Tooltips.REVIEWER_MODEL);
+        reviewWeight.setPlaceholder("blank = default (0.1)");
         reviewWeight.setTooltipText(Tooltips.REVIEW_WEIGHT);
         reviewBlind.setTooltipText(Tooltips.REVIEW_BLIND);
         trajectoryReviewerModel.setTooltipText(Tooltips.TRAJECTORY_REVIEWER_MODEL);
+        trajectoryWeight.setPlaceholder("blank = default (0.1)");
         trajectoryWeight.setTooltipText(Tooltips.TRAJECTORY_WEIGHT);
-        trajectoryUse.setLabel("trajectory_use");
+        trajectoryUse.setLabel("Trajectory use");
         trajectoryUse.setItems("", "calibration", "direct");
         trajectoryUse.setValue("");
         trajectoryUse.setItemLabelGenerator(value -> value.isEmpty() ? "—" : value);
@@ -181,7 +184,7 @@ public class ExperimentNewView extends VerticalLayout {
         maxTokens.setMin(1);
         maxTokens.setPlaceholder("blank = context-probe-derived cap");
         maxTokens.setTooltipText(Tooltips.MAX_TOKENS);
-        reasoningEffort.setLabel("reasoning_effort");
+        reasoningEffort.setLabel("Reasoning effort");
         reasoningEffort.setItems("", "none", "low", "medium", "high");
         reasoningEffort.setValue("");
         reasoningEffort.setItemLabelGenerator(v -> v.isEmpty() ? "blank = default per phase" : v.equals("none") ? "none (disable thinking)" : v);
@@ -272,7 +275,7 @@ public class ExperimentNewView extends VerticalLayout {
         // parameter, so empty-diamond under var would infer ComboBox<Object> and fail on return
         final ComboBox<String> picker = new ComboBox<>(label);
         picker.setAllowCustomValue(true);
-        if (label.startsWith("reviewer") || label.startsWith("trajectory")) {
+        if (label.startsWith("Reviewer") || label.startsWith("Trajectory")) {
             picker.setPlaceholder("provider/model — " + reviewerSuggestions().get(0) + "…");
         } else {
             picker.setPlaceholder("local model id, or pick a seen model");

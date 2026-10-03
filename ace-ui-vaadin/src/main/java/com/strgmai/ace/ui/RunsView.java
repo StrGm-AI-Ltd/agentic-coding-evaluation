@@ -27,9 +27,9 @@ public class RunsView extends VerticalLayout {
     private final ServiceClient client;
 
     private final Grid<Api.Run> grid = new Grid<>(Api.Run.class, false);
-    private final ComboBox<String> task = new ComboBox<>("task");
-    private final ComboBox<String> model = new ComboBox<>("model");
-    private final ComboBox<String> mode = new ComboBox<>("mode");
+    private final ComboBox<String> task = new ComboBox<>("Task");
+    private final ComboBox<String> model = new ComboBox<>("Model");
+    private final ComboBox<String> mode = new ComboBox<>("Mode");
     private final Select<String> valid = new Select<>();
     private final Select<String> poolable = new Select<>();
     private final Span error = new Span();
@@ -51,8 +51,8 @@ public class RunsView extends VerticalLayout {
             select.setValue("");
             select.addValueChangeListener(e -> load());
         }
-        valid.setLabel("valid");
-        poolable.setLabel("poolable");
+        valid.setLabel("Valid");
+        poolable.setLabel("Poolable");
         task.setTooltipText(Tooltips.FILTER_TASK);
         model.setTooltipText(Tooltips.FILTER_MODEL);
         mode.setTooltipText(Tooltips.FILTER_MODE);
