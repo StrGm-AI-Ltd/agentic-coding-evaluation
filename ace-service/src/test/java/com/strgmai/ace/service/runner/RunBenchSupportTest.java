@@ -124,4 +124,53 @@ class RunBenchSupportTest {
                 () -> RunBenchSupport.runBounded(5, "T1", sessionDir, "sid", reason -> {}, call));
         assertEquals("a real failure, not a timeout", e.getMessage());
     }
+
+    /** #222 (found live: a cancelled job stuck "running" for 6+ hours): an EXTERNAL interrupt - the
+     *  real cancel-watch thread's currentJobFuture.cancel(true), unrelated to this session's own
+     *  wallSec - lands on the THREAD CALLING runBounded, not the inner call's thread, while it's
+     *  blocked in future.get(). Simulated here by running runBounded on its own thread and
+     *  interrupting THAT thread from the test, exactly as the real cancel-watch interrupts the
+     *  worker thread. Before the fix this hung for the full inner sleep (close()'s own
+     *  awaitTermination(1 DAY) swallows the single interrupt and starts a fresh, un-interrupted
+     *  wait - the exact mechanism behind the live 6-hour stuck job). */
+    @org.junit.jupiter.api.Timeout(10)
+    @Test
+    void runBoundedCancelsTheInnerTaskWhenTheCallingThreadIsExternallyInterrupted() throws Exception {
+        final Path sessionDir = track(Files.createTempDirectory("sessions"));
+        final CountDownLatch innerStarted = new CountDownLatch(1);
+        final AtomicBoolean innerInterrupted = new AtomicBoolean(false);
+        final String[] abortReason = new String[1];
+        final Callable<ReferenceAgent.SessionResult> call = () -> {
+            innerStarted.countDown();
+            try {
+                Thread.sleep(60_000);   // far longer than this test's own timeout
+            } catch (InterruptedException ie) {
+                innerInterrupted.set(true);
+                throw ie;
+            }
+            return new ReferenceAgent.SessionResult("T1", 0, 60.0, "stop", 1, 0, 0, null, Instant.now(), Instant.now());
+        };
+
+        final Throwable[] thrown = new Throwable[1];
+        final Thread caller = new Thread(() -> {
+            try {
+                // wallSec=60: far longer than this test allows, so only the EXTERNAL interrupt below (not a timeout) can end this
+                RunBenchSupport.runBounded(60, "T1", sessionDir, "sid", reason -> abortReason[0] = reason, call);
+            } catch (Throwable t) {
+                thrown[0] = t;
+            }
+        }, "caller-under-test");
+        caller.start();
+
+        assertTrue(innerStarted.await(5, TimeUnit.SECONDS), "the inner call must have actually started");
+        caller.interrupt();   // exactly what WorkerService's cancel-watch does to the real worker thread
+        caller.join(5_000);
+
+        assertFalse(caller.isAlive(), "runBounded must return promptly on an external interrupt, not wait out the inner call");
+        assertNotNull(thrown[0], "the interrupt must propagate, not be silently swallowed");
+        assertInstanceOf(InterruptedException.class, thrown[0]);
+        assertEquals("cancelled", abortReason[0], "abortProxy must run so the proxy's own relay thread isn't left blocked (R12)");
+        for (int i = 0; i < 20 && !innerInterrupted.get(); i++) Thread.sleep(50);
+        assertTrue(innerInterrupted.get(), "the inner task's own thread must be genuinely cancelled, not abandoned");
+    }
 }
