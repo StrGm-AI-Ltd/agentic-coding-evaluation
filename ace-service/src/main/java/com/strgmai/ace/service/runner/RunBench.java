@@ -448,7 +448,9 @@ public class RunBench {
         Files.writeString(rd.resolve("manifest.json"), json.writerWithDefaultPrettyPrinter().writeValueAsString(manifest));
     }
 
-    private Map<String, Object> oracleWithDocker(final Map<String, Object> cfg, final Path ws, String task, final Path rd, final Map<String, Object> manifest) throws Exception {
+    // package-private (not private): the unload-before/reload-after sequencing around Docker-gated
+    // scoring is tested directly here, rather than only indirectly via runOnce()'s much larger surface
+    Map<String, Object> oracleWithDocker(final Map<String, Object> cfg, final Path ws, String task, final Path rd, final Map<String, Object> manifest) throws Exception {
         final boolean manageDocker = Boolean.TRUE.equals(cfg.get("manage_docker"));
         // frees the run's own weights before Docker comes up, so its VM has real headroom on a
         // memory-constrained host instead of competing with the model server for the same RAM
