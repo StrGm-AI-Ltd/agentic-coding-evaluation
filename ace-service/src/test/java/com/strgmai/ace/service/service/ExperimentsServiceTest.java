@@ -66,6 +66,27 @@ class ExperimentsServiceTest {
         assertNull(mono.spec().contextWindow());
     }
 
+    /** every template used to hardcode RUNG with no way for an operator to run an experiment
+     *  against any other rung - an explicit params.task now wins. */
+    @Test
+    void explicitTaskOverridesTheHardcodedRungDefault() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("harness_effect",
+                Map.of("model", "modelX", "task", "L1_migration_entity"), 1);
+
+        assertTrue(specs.stream().allMatch(s -> "L1_migration_entity".equals(s.spec().task())));
+    }
+
+    /** every existing caller that never set params.task must keep getting the same RUNG default
+     *  as before - backward compatible with every experiment already created this way. */
+    @Test
+    void absentTaskFallsBackToTheRungDefault() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("harness_effect", Map.of("model", "modelX"), 1);
+
+        assertTrue(specs.stream().allMatch(s -> ExperimentsService.RUNG.equals(s.spec().task())));
+    }
+
     /** with an explicit, positive task_wall/task_tokens the monolithic multiplier still applies -
      *  only the new 0-default (unlimited) skips it (implWall/implTokens reject a literal 0). */
     @Test

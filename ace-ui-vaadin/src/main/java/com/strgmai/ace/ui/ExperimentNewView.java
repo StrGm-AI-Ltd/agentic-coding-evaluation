@@ -40,6 +40,7 @@ public class ExperimentNewView extends VerticalLayout {
     private final TextField name = new TextField("name");
     private final Select<String> template = new Select<>();
     private final IntegerField k = new IntegerField("k (repeats per arm)");
+    private final ComboBox<String> task = new ComboBox<>("task");
     private final IntegerField taskWall = new IntegerField("task_wall");
     private final TextField taskTokens = new TextField("task_tokens");
     private final IntegerField firstTokenTimeout = new IntegerField("first_token_timeout");
@@ -97,6 +98,12 @@ public class ExperimentNewView extends VerticalLayout {
         k.setValue(3);
         k.setMin(1);
         k.setMax(20);
+        // every experiment used to hardcode ExperimentsService.RUNG with no way to override it;
+        // items load async in loadSuggestions(), so - same as JobNewView's task field - no eager
+        // setValue here (ComboBox forbids setting a value before it has items); blank falls
+        // through to that same RUNG default server-side
+        task.setAllowCustomValue(true);
+        task.setPlaceholder("L1…L7 rung (blank = L3p_point_in_time)");
         taskWall.setValue(3600);
         taskWall.setMin(1);
         taskWall.setHelperText("seconds, per task");
@@ -162,6 +169,7 @@ public class ExperimentNewView extends VerticalLayout {
 
         add(Forms.section("Experiment",
                 Forms.row(name, template, k, model),
+                Forms.row(task),
                 Forms.row(taskWall, taskTokens, contextWindow, noContextProbe),
                 Forms.row(firstTokenTimeout, compactionTrigger, reviewWallSec),
                 Forms.row(parallelPlanWall, handoffWall, wrapupWall)));
@@ -250,6 +258,11 @@ public class ExperimentNewView extends VerticalLayout {
 
     private void loadSuggestions() {
         try {
+            task.setItems(client.tasks());
+        } catch (final Exception e) {
+            log.warn("could not load the rung list: {}", e.toString());
+        }
+        try {
             final var runs = client.runs(null, null, null, null, null);
             final var models = Links.distinctRuns(runs, Api.Run::model);
             model.setItems(models);
@@ -279,6 +292,7 @@ public class ExperimentNewView extends VerticalLayout {
     private Map<String, Object> rawValues(final String currentTemplate) {
         // returned as Map<String, Object>; empty-diamond under var would infer <Object, Object>
         final Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("task", task.getValue());
         raw.put("task_wall", taskWall.getValue());
         raw.put("task_tokens", taskTokens.getValue());
         raw.put("first_token_timeout", firstTokenTimeout.getValue());
