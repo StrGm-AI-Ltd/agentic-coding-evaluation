@@ -23,6 +23,7 @@ import java.util.UUID;
 
 import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
 import static com.strgmai.ace.service.jooq.Tables.RUNS;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.emptyString;
@@ -121,6 +122,18 @@ class BenchControllerTest {
         when(experiments.localModelSpecs()).thenReturn(Map.of());
 
         mvc.perform(get("/api/models")).andExpect(status().isOk()).andExpect(jsonPath("$").isEmpty());
+    }
+
+    /** every rung tasks/ladder.json declares, so the UI's "task" combobox can offer all of them,
+     *  not just ones a run has already used (the DB-only list used to hide every rung this
+     *  dataset had never happened to run yet). */
+    @Test
+    void tasksListsEveryLadderRungSortedAndExcludesTheDocKey() throws Exception {
+        mvc.perform(get("/api/tasks"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", containsInAnyOrder("L1_migration_entity", "L2_one_endpoint", "L3_point_in_time",
+                        "L3p_point_in_time", "L4_state_machine", "L5_second_service", "L6_compose_health", "L7_full_platform")))
+                .andExpect(jsonPath("$[0]").value("L1_migration_entity"));   // sorted
     }
 
     @Test

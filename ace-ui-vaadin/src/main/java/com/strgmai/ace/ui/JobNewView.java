@@ -202,7 +202,12 @@ public class JobNewView extends VerticalLayout {
     private void loadSuggestions() {
         try {
             final var runs = client.runs(null, null, null, null, null);
-            task.setItems(Links.distinctRuns(runs, Api.Run::task));
+            // every rung tasks/ladder.json declares, union'd with any task name a real run already
+            // used (a legacy/custom value not currently in the ladder must never silently vanish) -
+            // a DB-only list used to hide every rung this dataset had never happened to run yet
+            final var tasks = new java.util.TreeSet<String>(client.tasks());
+            tasks.addAll(Links.distinctRuns(runs, Api.Run::task));
+            task.setItems(tasks);
             model.setItems(Links.distinctRuns(runs, Api.Run::model));
             reviewerModel.setItems(ExperimentNewView.reviewerSuggestions());
             trajectoryReviewerModel.setItems(ExperimentNewView.reviewerSuggestions());

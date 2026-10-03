@@ -54,6 +54,18 @@ public class BenchController {
         return Preflight.modelClient(props).models().list().data().stream().map(Model::id).sorted().toList();
     }
 
+    /** every rung tasks/ladder.json declares - "_doc" is a documentation string, not a rung.
+     *  Lets the UI offer every valid --task value, not just ones a run has already used. */
+    @GetMapping("/api/tasks")
+    public List<String> tasks() throws Exception {
+        final var ladderStream = getClass().getResourceAsStream("/tasks/ladder.json");
+        if (ladderStream == null) throw new IllegalStateException("ladder.json resource not found on classpath");
+        final com.fasterxml.jackson.databind.JsonNode ladder = new com.fasterxml.jackson.databind.ObjectMapper().readTree(ladderStream);
+        final List<String> out = new ArrayList<>();
+        ladder.fieldNames().forEachRemaining(name -> { if (!"_doc".equals(name)) out.add(name); });
+        return out.stream().sorted().toList();
+    }
+
     @GetMapping("/api/runs")
     public List<Map<String, Object>> runs(@RequestParam(required = false) String task, @RequestParam(required = false) String model,
                                           @RequestParam(required = false, defaultValue = "") String valid) {
