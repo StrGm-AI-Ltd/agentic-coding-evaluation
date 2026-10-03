@@ -28,10 +28,10 @@ public class CompareView extends VerticalLayout {
     private final MultiSelectComboBox<String> groupA = new MultiSelectComboBox<>("Group A run ids");
     private final MultiSelectComboBox<String> groupB = new MultiSelectComboBox<>("Group B run ids");
     private final Select<String> metric = new Select<>();
-    private final Checkbox modelAb = new Checkbox("model_ab — the groups are two models, not two configs");
-    private final Checkbox allowPartial = new Checkbox("allow partial runs");
-    private final Checkbox includeInvalid = new Checkbox("include invalid runs");
-    private final Checkbox allowBudgetMismatch = new Checkbox("allow budget mismatch");
+    private final Checkbox modelAb = new Checkbox("Compare two models");
+    private final Checkbox allowPartial = new Checkbox("Allow partial runs");
+    private final Checkbox includeInvalid = new Checkbox("Include invalid runs");
+    private final Checkbox allowBudgetMismatch = new Checkbox("Allow budget mismatch");
     private final VerticalLayout result = new VerticalLayout();
     private final Div noPoolableRuns = Panels.warn("no poolable runs yet - run something first");
 
@@ -46,7 +46,7 @@ public class CompareView extends VerticalLayout {
         groupA.setTooltipText(Tooltips.COMPARE_GROUP_A);
         groupB.setTooltipText(Tooltips.COMPARE_GROUP_B);
 
-        metric.setLabel("metric");
+        metric.setLabel("Metric");
         metric.setItems("functional", "score", "agent_result");
         metric.setValue("functional");
         metric.setTooltipText(Tooltips.COMPARE_METRIC);
