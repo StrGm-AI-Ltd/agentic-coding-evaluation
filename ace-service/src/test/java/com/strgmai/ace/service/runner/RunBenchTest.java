@@ -135,6 +135,79 @@ class RunBenchTest {
         assertEquals(5000L, RunBench.implTokens(Map.of(), "p2_implementation", props));
     }
 
+    /** #228: --plan-tokens (cfg's "plan_tokens") is the p0_definition/p1_plan counterpart to
+     *  implTokens() above. */
+    @Test
+    void planTokensPrefersTheExplicitCfgOverrideOverTheOperatorDefault() {
+        final BenchProperties props = mock(BenchProperties.class);
+        when(props.phaseTokens("p1_plan")).thenReturn(3000);
+        assertEquals(9000L, RunBench.planTokens(Map.of("plan_tokens", 9000L), "p1_plan", props));
+    }
+
+    @Test
+    void planTokensFallsBackToTheOperatorWideDefaultWhenNotSetOnTheRun() {
+        final BenchProperties props = mock(BenchProperties.class);
+        when(props.phaseTokens("p1_plan")).thenReturn(3000);
+        assertEquals(3000L, RunBench.planTokens(Map.of(), "p1_plan", props));
+    }
+
+    /** #228: --wall-budget (cfg's "wall_budget_override") - a smoke-test knob that overrides every
+     *  phase's wall uniformly. */
+    @Test
+    void wallBudgetOverrideReadsTheCfgValueWhenPresent() {
+        assertEquals(300, RunBench.wallBudgetOverride(Map.of("wall_budget_override", 300)));
+    }
+
+    @Test
+    void wallBudgetOverrideIsNullWhenUnset() {
+        assertNull(RunBench.wallBudgetOverride(Map.of()));
+    }
+
+    /** Found live 2026-10-03: --phases (cfg's "phases") restricts a rung's own multi-phase sequence
+     *  to an explicit subset, matching queue.py's phases_wanted filter in run_once(). */
+    @Test
+    void phasesWantedReturnsEveryRungPhaseWhenUnset() {
+        final var rungPhases = List.of("p0_definition", "p1_plan", "p2_implementation");
+        assertEquals(rungPhases, RunBench.phasesWanted(Map.of(), rungPhases));
+        assertEquals(rungPhases, RunBench.phasesWanted(Map.of("phases", ""), rungPhases));
+    }
+
+    @Test
+    void phasesWantedFiltersDownToTheChosenSubsetInRungOrder() {
+        final var rungPhases = List.of("p0_definition", "p1_plan", "p2_implementation");
+        assertEquals(List.of("p1_plan", "p2_implementation"),
+                RunBench.phasesWanted(Map.of("phases", "p2_implementation,p1_plan"), rungPhases));
+    }
+
+    @Test
+    void phasesWantedYieldsAnEmptyIntersectionWhenTheChosenPhaseIsNotOneOfTheRungSOwn() {
+        // matches queue.py's own filter exactly: an intersection, not an error, for a phase outside this rung
+        assertEquals(List.of(), RunBench.phasesWanted(Map.of("phases", "p0_definition"), List.of("implement")));
+    }
+
+    /** orchestrated mode always runs p1_plan/p2_implementation on a rung that defines them - --phases
+     *  excluding either fails loudly instead of silently being ignored. */
+    @Test
+    void requirePlanAndImplementationPhasesRejectsExcludingEitherOnAnEligibleRung() {
+        final var rungPhases = List.of("p0_definition", "p1_plan", "p2_implementation");
+        assertThrows(IllegalStateException.class,
+                () -> RunBench.requirePlanAndImplementationPhases(rungPhases, List.of("p0_definition", "p2_implementation"), "L7_full_platform"));
+        assertThrows(IllegalStateException.class,
+                () -> RunBench.requirePlanAndImplementationPhases(rungPhases, List.of("p0_definition", "p1_plan"), "L7_full_platform"));
+    }
+
+    @Test
+    void requirePlanAndImplementationPhasesAllowsExcludingOnlyP0Definition() {
+        final var rungPhases = List.of("p0_definition", "p1_plan", "p2_implementation");
+        assertDoesNotThrow(() -> RunBench.requirePlanAndImplementationPhases(rungPhases, List.of("p1_plan", "p2_implementation"), "L7_full_platform"));
+    }
+
+    @Test
+    void requirePlanAndImplementationPhasesIsANoOpForARungThatNeverHadThemAtAll() {
+        // phasesFor() falls back to ["implement"] for every non-L7/L3p rung - unaffected either way
+        assertDoesNotThrow(() -> RunBench.requirePlanAndImplementationPhases(List.of("implement"), List.of(), "L1_migration_entity"));
+    }
+
     /** Found live 2026-09-25: oMLX's own memory-pressure throttling was slow enough to trip the
      *  agent's 180s stall detector, and oMLX's log - the only place that explained why - spans
      *  every run on the machine and keeps growing. Each run now copies its own slice out. */

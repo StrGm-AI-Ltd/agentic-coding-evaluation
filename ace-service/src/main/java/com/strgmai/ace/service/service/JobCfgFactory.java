@@ -18,6 +18,24 @@ final class JobCfgFactory {
         cfg.put("workspace_root", props.workspaceRoot());
         cfg.put("model", argv.stream().filter(a -> a.startsWith("--model=")).map(a -> a.substring(8)).findFirst().orElse(props.model()));
         cfg.put("system_base_url", null);
+        // #phases: RunSpec's own --phases flag (restricts a rung's multi-phase sequence to a subset)
+        // had nothing downstream reading it back out of argv into cfg either, same class of bug as
+        // --impl-wall/--impl-tokens below
+        if (WorkerService.flag(argv, "--phases") != null) cfg.put("phases", WorkerService.flag(argv, "--phases"));
+        // #228: 8 more RunSpec flags collected by the UI and emitted by RunSpec.argv() with nothing
+        // downstream ever reading them back out of argv into cfg either, same class of bug as --phases
+        if (WorkerService.flag(argv, "--plan-tokens") != null) cfg.put("plan_tokens", Long.parseLong(WorkerService.flag(argv, "--plan-tokens")));
+        if (WorkerService.flag(argv, "--wall-budget") != null) cfg.put("wall_budget_override", Integer.parseInt(WorkerService.flag(argv, "--wall-budget")));
+        if (WorkerService.flag(argv, "--java-home") != null) cfg.put("java_home", WorkerService.flag(argv, "--java-home"));
+        cfg.put("keep_workspace", argv.contains("--keep-workspace"));
+        cfg.put("skip_docker", argv.contains("--skip-docker"));
+        if (WorkerService.flag(argv, "--parallel-plan") != null)
+            cfg.put("parallel_plan_enabled", "on".equals(WorkerService.flag(argv, "--parallel-plan")));
+        if (WorkerService.flag(argv, "--parallel-weight") != null) {
+            final Map<String, Object> parallelPlan = new LinkedHashMap<>();
+            parallelPlan.put("weight", Double.parseDouble(WorkerService.flag(argv, "--parallel-weight")));
+            cfg.put("parallel_plan", parallelPlan);
+        }
         if (WorkerService.flag(argv, "--task-wall") != null) cfg.put("task_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--task-wall")));
         if (WorkerService.flag(argv, "--task-tokens") != null) cfg.put("task_tokens", Long.parseLong(WorkerService.flag(argv, "--task-tokens")));
         // #173: an experiment matches a monolithic arm's single implementation-phase budget to an

@@ -32,6 +32,55 @@ class JobCfgFactoryTest {
         assertEquals("qwen", cfg.get("model"));
     }
 
+    /** Found live 2026-10-03: --phases was collected by the UI and emitted by RunSpec.argv(), but
+     *  nothing downstream ever read it back out of argv into cfg - same class of bug as #173 below. */
+    @Test
+    void phasesIsParsedWhenPresentAndAbsentOtherwise() {
+        assertEquals("p1_plan,p2_implementation", JobCfgFactory.build(List.of("--phases=p1_plan,p2_implementation"), props()).get("phases"));
+        assertFalse(JobCfgFactory.build(List.of(), props()).containsKey("phases"));
+    }
+
+    /** #228: 8 more RunSpec flags had nothing downstream reading them back out of argv into cfg either. */
+    @Test
+    void planTokensAndWallBudgetAreParsedWhenPresentAndAbsentOtherwise() {
+        final var with = JobCfgFactory.build(List.of("--plan-tokens=5000", "--wall-budget=300"), props());
+        assertEquals(5000L, with.get("plan_tokens"));
+        assertEquals(300, with.get("wall_budget_override"));
+        final var without = JobCfgFactory.build(List.of(), props());
+        assertFalse(without.containsKey("plan_tokens"));
+        assertFalse(without.containsKey("wall_budget_override"));
+    }
+
+    @Test
+    void javaHomeIsParsedWhenPresentAndAbsentOtherwise() {
+        assertEquals("/opt/homebrew/opt/openjdk@21", JobCfgFactory.build(List.of("--java-home=/opt/homebrew/opt/openjdk@21"), props()).get("java_home"));
+        assertFalse(JobCfgFactory.build(List.of(), props()).containsKey("java_home"));
+    }
+
+    @Test
+    void keepWorkspaceAndSkipDockerReflectTheFlagsPresence() {
+        assertEquals(true, JobCfgFactory.build(List.of("--keep-workspace", "--skip-docker"), props()).get("keep_workspace"));
+        assertEquals(true, JobCfgFactory.build(List.of("--keep-workspace", "--skip-docker"), props()).get("skip_docker"));
+        assertEquals(false, JobCfgFactory.build(List.of(), props()).get("keep_workspace"));
+        assertEquals(false, JobCfgFactory.build(List.of(), props()).get("skip_docker"));
+    }
+
+    @Test
+    void parallelPlanFlagMapsOnToEnabledAndOffToDisabled() {
+        assertEquals(true, JobCfgFactory.build(List.of("--parallel-plan=on"), props()).get("parallel_plan_enabled"));
+        assertEquals(false, JobCfgFactory.build(List.of("--parallel-plan=off"), props()).get("parallel_plan_enabled"));
+        assertFalse(JobCfgFactory.build(List.of(), props()).containsKey("parallel_plan_enabled"), "unset must stay absent so RunBench's own default (true) applies");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void parallelWeightIsCarriedInAParallelPlanMap() {
+        final var cfg = JobCfgFactory.build(List.of("--parallel-weight=0.2"), props());
+        final var parallelPlan = (Map<String, Object>) cfg.get("parallel_plan");
+        assertEquals(0.2, parallelPlan.get("weight"));
+        assertFalse(JobCfgFactory.build(List.of(), props()).containsKey("parallel_plan"));
+    }
+
     /** #173: --impl-wall/--impl-tokens were computed by ExperimentsService and placed on the job's
      *  own argv by RunSpec, but nothing downstream ever read them back out of argv into cfg - this
      *  pins that JobCfgFactory.build() now does. */

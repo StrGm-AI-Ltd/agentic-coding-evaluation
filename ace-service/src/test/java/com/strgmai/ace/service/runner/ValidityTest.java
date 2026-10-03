@@ -62,6 +62,23 @@ class ValidityTest {
         assertTrue(Validity.validity(manifest, facts(10, 1), 0.2).get("valid") instanceof Boolean);   // 10% <= maxErrorRate: fine
     }
 
+    /** #228: --wall-budget is a smoke-test knob - run_bench.py's own validity() marks any run that
+     *  used it INVALID so it can never pollute the leaderboard, regardless of how the run otherwise went. */
+    @Test
+    void aWallBudgetOverrideInvalidatesTheRunAsASmokeTest() {
+        final var manifest = Map.of("mode", "monolithic", "phases", List.of(phase("p1_plan", 0, "stop", true)));
+        final Map<String, Object> v = Validity.validity(manifest, facts(10, 0), 0.2, 300);
+        assertFalse((Boolean) v.get("valid"));
+        assertTrue(((List<String>) v.get("reasons")).get(0).contains("wall budget overridden to 300s (smoke test)"));
+    }
+
+    @Test
+    void noWallBudgetOverrideLeavesAnOtherwiseCleanRunValid() {
+        final var manifest = Map.of("mode", "monolithic", "phases", List.of(phase("p1_plan", 0, "stop", true)));
+        assertTrue((Boolean) Validity.validity(manifest, facts(10, 0), 0.2, null).get("valid"));
+        assertTrue((Boolean) Validity.validity(manifest, facts(10, 0), 0.2).get("valid"), "the 3-arg overload must still work unchanged");
+    }
+
     private static Map<String, Object> facts(final int requests, final int errors) {
         final Map<String, Object> f = new java.util.LinkedHashMap<>();
         f.put("requests", requests); f.put("errors", errors); f.put("upstream_errors", 0);
