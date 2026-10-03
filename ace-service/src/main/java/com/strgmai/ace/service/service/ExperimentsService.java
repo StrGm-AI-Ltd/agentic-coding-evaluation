@@ -445,7 +445,8 @@ public class ExperimentsService {
             try {
                 final List<Double> fa = functional(a), fb = functional(b);
                 final Map<String, Object> entry = new LinkedHashMap<>();
-                entry.put("result", stats.compare(fa, fb, "functional"));
+                final var result = stats.compare(fa, fb, "functional");
+                entry.put("result", result);
                 final Map<String, Object> speed = new LinkedHashMap<>();
                 for (String metric : SPEED_METRICS) {
                     try {
@@ -454,8 +455,14 @@ public class ExperimentsService {
                         log.debug("skipping speed metric {} for {}: {}", metric, label, e.toString());
                     }
                 }
-                if (!speed.isEmpty()) entry.put("speed", speed);
-                entry.put("printed", "");
+                final var printed = new StringBuilder(com.strgmai.ace.service.metrics.StatsService.printCompare(result));
+                if (!speed.isEmpty()) {
+                    entry.put("speed", speed);
+                    for (var e : speed.entrySet())
+                        printed.append("\n\nspeed (").append(e.getKey()).append("):\n")
+                                .append(com.strgmai.ace.service.metrics.StatsService.printCompare((Map<String, Object>) e.getValue()));
+                }
+                entry.put("printed", printed.toString());
                 comparisons.put(label, entry);
             } catch (Exception e) {   // stats refused (not comparable / nothing to pool): a result, not a crash
                 comparisons.put(label, Map.of("refused", String.valueOf(e)));

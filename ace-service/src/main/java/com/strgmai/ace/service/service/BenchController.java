@@ -233,7 +233,7 @@ public class BenchController {
             // response.result()/printed() always null on the UI side. Dormant until now because
             // every prior test only exercised the "refused" paths, which happen to deserialize
             // correctly on their own (they set only the "refused" key).
-            return ResponseEntity.ok(Map.of("result", result, "printed", ""));
+            return ResponseEntity.ok(Map.of("result", result, "printed", StatsService.printCompare(result)));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.ok(Map.of("refused", e.getMessage()));
         }
@@ -274,7 +274,9 @@ public class BenchController {
                 List<StatsService.RunSummary> summaries = new ArrayList<>();
                 for (Map<String, Object> r : groupRows) summaries.add(stats.load(Path.of((String) r.get("results_dir"))));
                 summaries = stats.filterRuns(summaries, false, false, group.get("task") + "/" + group.get("model"));
-                group.put("summary", stats.summarize(summaries));
+                final var summary = stats.summarize(summaries);
+                group.put("summary", summary);
+                group.put("printed", StatsService.printSummary(summary));
             } catch (Exception e) {
                 group.put("refused", e.getMessage());
             }

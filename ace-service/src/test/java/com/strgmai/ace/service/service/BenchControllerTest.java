@@ -23,6 +23,9 @@ import java.util.UUID;
 
 import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
 import static com.strgmai.ace.service.jooq.Tables.RUNS;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.emptyString;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
@@ -247,7 +250,7 @@ class BenchControllerTest {
             final Map<String, Object> out = new java.util.LinkedHashMap<>();
             out.put("k", runs.size());
             final double mean = switch (runs.get(0).model()) { case "low-scorer" -> 40.0; case "high-scorer" -> 90.0; default -> 10.0; };
-            out.put("functional", Map.of("mean", mean));
+            out.put("functional", Map.of("mean", mean, "ci90", List.of(mean - 5, mean + 5), "n", runs.size()));
             return out;
         });
 
@@ -257,7 +260,8 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.indicative.length()").value(1))                // keyB: k=2, never ranked
                 .andExpect(jsonPath("$.indicative[0].key_hash").value("keyB"))
                 .andExpect(jsonPath("$.ranked[0].key_hash").value("keyC"))            // 90.0 mean sorts before 40.0
-                .andExpect(jsonPath("$.ranked[1].key_hash").value("keyA"));
+                .andExpect(jsonPath("$.ranked[1].key_hash").value("keyA"))
+                .andExpect(jsonPath("$.ranked[0].printed").value(containsString("functional: mean 90.0")));
     }
 
     /** #201: this endpoint's explicit column list had fallen behind Api.Run's own DTO - poolable
@@ -367,7 +371,7 @@ class BenchControllerTest {
         when(stats.load(Path.of("/tmp/results", "runA"))).thenReturn(runSummary("/tmp/results/runA", "Qwen3.8-27B-graft"));
         when(stats.load(Path.of("/tmp/results", "runB"))).thenReturn(runSummary("/tmp/results/runB", "Qwen3.8-27B-graft-5bit"));
         when(stats.filterRuns(any(), anyBoolean(), anyBoolean(), any())).thenAnswer(inv -> inv.getArgument(0));
-        when(stats.compare(any(), any(), any())).thenReturn(new java.util.LinkedHashMap<>(Map.of("diff", 5.0)));
+        when(stats.compare(any(), any(), any())).thenReturn(fullCompareResult(5.0));
 
         mvc.perform(post("/api/compare").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"a\": [\"runA\"], \"b\": [\"runB\"]}"))
@@ -375,7 +379,8 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.refused").doesNotExist())
                 .andExpect(jsonPath("$.result.diff").value(5.0))
                 .andExpect(jsonPath("$.result.model_warning").value(
-                        "A (Qwen3.8-27B-graft) and B (Qwen3.8-27B-graft-5bit) are different models - interpret this comparison accordingly; pass model_ab for the full harness-identity check instead"));
+                        "A (Qwen3.8-27B-graft) and B (Qwen3.8-27B-graft-5bit) are different models - interpret this comparison accordingly; pass model_ab for the full harness-identity check instead"))
+                .andExpect(jsonPath("$.printed").value(containsString("NOTE:")));
     }
 
     @Test
@@ -384,7 +389,7 @@ class BenchControllerTest {
         when(stats.load(Path.of("/tmp/results", "runA"))).thenReturn(runSummary("/tmp/results/runA", "Qwen3.8-27B-graft"));
         when(stats.load(Path.of("/tmp/results", "runB"))).thenReturn(runSummary("/tmp/results/runB", "Qwen3.8-27B-graft"));
         when(stats.filterRuns(any(), anyBoolean(), anyBoolean(), any())).thenAnswer(inv -> inv.getArgument(0));
-        when(stats.compare(any(), any(), any())).thenReturn(new java.util.LinkedHashMap<>(Map.of("diff", 0.0)));
+        when(stats.compare(any(), any(), any())).thenReturn(fullCompareResult(0.0));
 
         mvc.perform(post("/api/compare").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"a\": [\"runA\"], \"b\": [\"runB\"]}"))
@@ -400,7 +405,7 @@ class BenchControllerTest {
         when(stats.load(Path.of("/tmp/results", "runA"))).thenReturn(runSummary("/tmp/results/runA", "Qwen3.8-27B-graft"));
         when(stats.load(Path.of("/tmp/results", "runB"))).thenReturn(runSummary("/tmp/results/runB", "Qwen3.8-27B-graft-5bit"));
         when(stats.filterRuns(any(), anyBoolean(), anyBoolean(), any())).thenAnswer(inv -> inv.getArgument(0));
-        when(stats.compare(any(), any(), any())).thenReturn(new java.util.LinkedHashMap<>(Map.of("diff", 5.0)));
+        when(stats.compare(any(), any(), any())).thenReturn(fullCompareResult(5.0));
 
         mvc.perform(post("/api/compare").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"a\": [\"runA\"], \"b\": [\"runB\"], \"model_ab\": true}"))
@@ -420,13 +425,28 @@ class BenchControllerTest {
         when(stats.load(Path.of("/tmp/results", "runA"))).thenReturn(runSummary("/tmp/results/runA", "Qwen3.8-27B-graft"));
         when(stats.load(Path.of("/tmp/results", "runB"))).thenReturn(runSummary("/tmp/results/runB", "Qwen3.8-27B-graft"));
         when(stats.filterRuns(any(), anyBoolean(), anyBoolean(), any())).thenAnswer(inv -> inv.getArgument(0));
-        when(stats.compare(any(), any(), any())).thenReturn(new java.util.LinkedHashMap<>(Map.of("diff", 3.5, "p", 0.04)));
+        when(stats.compare(any(), any(), any())).thenReturn(fullCompareResult(3.5));
 
         mvc.perform(post("/api/compare").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"a\": [\"runA\"], \"b\": [\"runB\"]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.result.diff").value(3.5))
-                .andExpect(jsonPath("$.result.p").value(0.04))
-                .andExpect(jsonPath("$.printed").value(""));
+                .andExpect(jsonPath("$.printed").value(not(emptyString())))
+                .andExpect(jsonPath("$.printed").value(containsString("functional")));
+    }
+
+    /** a realistic stats.compare() result - every key printCompare() reads, so mocking it doesn't
+     *  trip over a shape no real caller would ever produce. */
+    private static Map<String, Object> fullCompareResult(final double diff) {
+        final var m = new java.util.LinkedHashMap<String, Object>();
+        m.put("metric", "functional");
+        m.put("diff", diff);
+        m.put("ci90", List.of(0.0, 10.0));
+        m.put("ci90_width", 10.0);
+        m.put("p", 0.5);
+        m.put("one_sided", true);
+        m.put("verdict", "NOT supported at alpha=0.10");
+        m.put("note", "this comparison's own 90% CI is 10.0 points wide");
+        return m;
     }
 }

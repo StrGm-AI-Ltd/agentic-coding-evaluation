@@ -148,4 +148,45 @@ class StatsServiceTest {
         assertTrue(((String) lowVariance.get("note")).contains(String.valueOf(lowWidth)));
         assertTrue(((String) highVariance.get("note")).contains(String.valueOf(highWidth)));
     }
+
+    /** the "StatsService output" panel was always an empty placeholder - printCompare() is the
+     *  first real rendering of compare()'s result map. */
+    @Test
+    void printCompareRendersTheKeyNumbersAndVerdict() {
+        final var result = stats.compare(List.of(80.0, 82.0, 79.0, 81.0, 83.0), List.of(60.0, 62.0, 58.0, 61.0, 59.0), "functional");
+        final var printed = StatsService.printCompare(result);
+        assertTrue(printed.contains("functional"));
+        assertTrue(printed.contains(String.valueOf(result.get("diff"))));
+        assertTrue(printed.contains(String.valueOf(result.get("p"))));
+        assertTrue(printed.contains("A > B is supported (p<0.10)"));
+        assertTrue(printed.contains((String) result.get("note")));
+        assertFalse(printed.contains("NOTE:"), "no model_warning on this result - must not fabricate one");
+    }
+
+    @Test
+    void printCompareAppendsTheModelWarningWhenPresent() {
+        final var result = stats.compare(List.of(80.0), List.of(60.0), "functional");
+        result.put("model_warning", "A (x) and B (y) are different models");
+        final var printed = StatsService.printCompare(result);
+        assertTrue(printed.contains("NOTE: A (x) and B (y) are different models"));
+    }
+
+    @Test
+    void printSummaryOfZeroRunsIsAShortMessageNotAnEmptyString() {
+        assertEquals("k=0 comparable runs", StatsService.printSummary(stats.summarize(List.of())));
+    }
+
+    @Test
+    void printSummaryRendersMeansCiAndCheckPassRates() {
+        final List<StatsService.RunSummary> runs = List.of(
+                run("m", "orchestrated", "r1", 100, 1000, 90.0, true, Map.of("B1", "PASS", "F2", "FAIL")),
+                run("m", "orchestrated", "r1", 100, 1000, 70.0, true, Map.of("B1", "PASS", "F2", "PASS")));
+        final var printed = StatsService.printSummary(stats.summarize(runs));
+        assertTrue(printed.contains("k=2 comparable runs"));
+        assertTrue(printed.contains("functional: mean 80.0"));
+        assertTrue(printed.contains("composite: mean 80.0"));   // run()'s score == functional in this fixture
+        assertTrue(printed.contains("B1: 100% pass_k"));
+        assertTrue(printed.contains("F2: 50%"));
+        assertFalse(printed.contains("F2: 50% pass_k"), "F2 is flaky, not pass_k");
+    }
 }
