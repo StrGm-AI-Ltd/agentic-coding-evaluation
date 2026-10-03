@@ -56,6 +56,14 @@ public class JobNewView extends VerticalLayout {
     private final IntegerField firstTokenTimeout = new IntegerField("First-token timeout");
     private final IntegerField compactionTrigger = new IntegerField("Compaction trigger");
     private final IntegerField reviewWallSec = new IntegerField("Review wall-clock budget");
+    private final IntegerField reviewTokens = new IntegerField("Review token budget");
+    private final IntegerField maxTurns = new IntegerField("Max turns");
+    private final IntegerField fixWall = new IntegerField("Fix-up wall-clock budget");
+    private final IntegerField fixTokens = new IntegerField("Fix-up token budget");
+    private final IntegerField parallelPlanTokens = new IntegerField("Parallel-plan token budget");
+    private final IntegerField handoffTokens = new IntegerField("Handoff token budget");
+    private final IntegerField wrapupTokens = new IntegerField("Wrap-up token budget");
+    private final IntegerField dockerMemoryMib = new IntegerField("Docker memory cap (MiB)");
     private final IntegerField wallBudget = new IntegerField("Wall budget override (smoke test)");
     private final IntegerField priority = new IntegerField("Priority");
     private final NumberField parallelWeight = new NumberField("Parallelization weight");
@@ -80,6 +88,7 @@ public class JobNewView extends VerticalLayout {
     private final Checkbox keepWorkspace = new Checkbox("Keep workspace");
     private final Checkbox manageDocker = new Checkbox("Manage Docker");
     private final Checkbox skipDocker = new Checkbox("Skip Docker");
+    private final Checkbox dockerKeepWarm = new Checkbox("Keep Docker warm");
     private final VerticalLayout errors = new VerticalLayout();
     // populated once in loadSuggestions(); looked up by name as the operator picks a rung, so
     // picking a task shows what it actually tests before the job is ever enqueued
@@ -169,6 +178,31 @@ public class JobNewView extends VerticalLayout {
         reviewWallSec.setMin(1);
         reviewWallSec.setPlaceholder("blank = default (900s)");
         reviewWallSec.setTooltipText(Tooltips.REVIEW_WALL_SEC);
+        reviewTokens.setMin(0);
+        reviewTokens.setPlaceholder("blank = unlimited");
+        reviewTokens.setTooltipText(Tooltips.REVIEW_TOKENS);
+        maxTurns.setMin(1);
+        maxTurns.setPlaceholder("blank = default (400)");
+        maxTurns.setTooltipText(Tooltips.MAX_TURNS);
+        fixWall.setMin(0);
+        fixWall.setPlaceholder("blank = unlimited");
+        fixWall.setTooltipText(Tooltips.FIX_WALL);
+        fixTokens.setMin(0);
+        fixTokens.setPlaceholder("blank = unlimited");
+        fixTokens.setTooltipText(Tooltips.FIX_TOKENS);
+        parallelPlanTokens.setMin(0);
+        parallelPlanTokens.setPlaceholder("blank = unlimited");
+        parallelPlanTokens.setTooltipText(Tooltips.PARALLEL_PLAN_TOKENS);
+        handoffTokens.setMin(0);
+        handoffTokens.setPlaceholder("blank = unlimited");
+        handoffTokens.setTooltipText(Tooltips.HANDOFF_TOKENS);
+        wrapupTokens.setMin(0);
+        wrapupTokens.setPlaceholder("blank = unlimited");
+        wrapupTokens.setTooltipText(Tooltips.WRAPUP_TOKENS);
+        dockerMemoryMib.setMin(1);
+        dockerMemoryMib.setPlaceholder("blank = default (4096 MiB)");
+        dockerMemoryMib.setTooltipText(Tooltips.DOCKER_MEMORY_MIB);
+        dockerKeepWarm.setTooltipText(Tooltips.DOCKER_KEEP_WARM);
         wallBudget.setMin(1);
         wallBudget.setPlaceholder("blank = not used (normal budget applies)");
         wallBudget.setTooltipText(Tooltips.WALL_BUDGET);
@@ -237,8 +271,10 @@ public class JobNewView extends VerticalLayout {
                 Forms.row(phases, parallel, parallelPlan, parallelWeight)));
         add(Forms.section("Budgets",
                 Forms.row(taskWall, taskTokens, implWall, implTokens, planWall, planTokens, wallBudget, contextWindow),
-                Forms.row(firstTokenTimeout, compactionTrigger),
+                Forms.row(firstTokenTimeout, compactionTrigger, maxTurns),
                 Forms.row(parallelPlanWall, handoffWall, wrapupWall),
+                Forms.row(parallelPlanTokens, handoffTokens, wrapupTokens),
+                Forms.row(fixWall, fixTokens),
                 Forms.row(efficiencyWeight)));
         add(Forms.section("Sampler",
                 Forms.row(temperature, topP, topK, repetitionPenalty),
@@ -246,11 +282,11 @@ public class JobNewView extends VerticalLayout {
         add(Forms.section("Reviewers",
                 Forms.row(reviewerModel, reviewWeight, reviewBlind),
                 Forms.row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse, trajectoryReview),
-                Forms.row(reviewWallSec)));
+                Forms.row(reviewWallSec, reviewTokens)));
         add(Forms.section("Model & flags",
                 Forms.row(model, handoffNotes, systemRules, selfReview),
                 Forms.row(javaHome, noContextProbe, contextProbeFresh, keepWorkspace),
-                Forms.row(manageDocker, skipDocker, priority)));
+                Forms.row(manageDocker, skipDocker, dockerMemoryMib, dockerKeepWarm, priority)));
 
         final var submit = new Button("Enqueue job", e -> submit());
         submit.getStyle().set("margin-top", "12px");
@@ -337,6 +373,14 @@ public class JobNewView extends VerticalLayout {
         raw.put("parallel_plan_wall", parallelPlanWall.getValue());
         raw.put("handoff_wall", handoffWall.getValue());
         raw.put("wrapup_wall", wrapupWall.getValue());
+        raw.put("parallel_plan_tokens", parallelPlanTokens.getValue());
+        raw.put("handoff_tokens", handoffTokens.getValue());
+        raw.put("wrapup_tokens", wrapupTokens.getValue());
+        raw.put("max_turns", maxTurns.getValue());
+        raw.put("fix_wall", fixWall.getValue());
+        raw.put("fix_tokens", fixTokens.getValue());
+        raw.put("docker_memory_mib", dockerMemoryMib.getValue());
+        raw.put("docker_keep_warm", dockerKeepWarm.getValue());
         raw.put("task_wall", taskWall.getValue());
         raw.put("task_tokens", taskTokens.getValue());
         raw.put("impl_wall", implWall.getValue());
@@ -356,6 +400,7 @@ public class JobNewView extends VerticalLayout {
         raw.put("trajectory_weight", trajectoryWeight.getValue());
         raw.put("trajectory_use", trajectoryUse.getValue());
         raw.put("review_wall_sec", reviewWallSec.getValue());
+        raw.put("review_tokens", reviewTokens.getValue());
         raw.put("java_home", javaHome.getValue());
         raw.put("wall_budget", wallBudget.getValue());
         raw.put("run_id", runIdField.getValue());

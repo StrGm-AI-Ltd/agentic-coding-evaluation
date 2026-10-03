@@ -58,6 +58,18 @@ public final class ExperimentParams {
         putIfPresent(params, raw, "parallel_plan_wall", Integer.class);
         putIfPresent(params, raw, "handoff_wall", Integer.class);
         putIfPresent(params, raw, "wrapup_wall", Integer.class);
+        // same class of bug as the walls above, found in the same later audit: these 9 fields were
+        // fully wired and tested on the backend but had no form field on either view at all - and
+        // even once the field exists, this allowlist would silently drop it if not listed here too
+        putIfPresent(params, raw, "review_tokens", Integer.class);
+        putIfPresent(params, raw, "max_turns", Integer.class);
+        putIfPresent(params, raw, "fix_wall", Integer.class);
+        putIfPresent(params, raw, "fix_tokens", Integer.class);
+        putIfPresent(params, raw, "parallel_plan_tokens", Integer.class);
+        putIfPresent(params, raw, "handoff_tokens", Integer.class);
+        putIfPresent(params, raw, "wrapup_tokens", Integer.class);
+        putIfPresent(params, raw, "docker_memory_mib", Integer.class);
+        putIfPresent(params, raw, "docker_keep_warm", Boolean.class);
 
         switch (template) {
             case "harness_effect" -> {

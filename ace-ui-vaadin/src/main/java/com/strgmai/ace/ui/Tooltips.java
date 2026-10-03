@@ -103,6 +103,35 @@ final class Tooltips {
     static final String REVIEW_WALL_SEC = "Wall-clock seconds given to the self-review session (only "
             + "relevant when self_review is checked). Blank = 900 seconds.";
 
+    static final String REVIEW_TOKENS = "Completion-token budget for the self-review session (only "
+            + "relevant when self_review is checked). Blank = unlimited.";
+
+    static final String MAX_TURNS = "Hard cap on the number of agent-tool-call turns within a single "
+            + "session before the harness force-stops it. Must be >= 1. Blank = 400.";
+
+    static final String FIX_WALL = "Wall-clock seconds for the FIX step - a repair session the harness "
+            + "runs when a parallel wave's own merge leaves conflicts the agent needs to resolve. "
+            + "Blank = unlimited.";
+
+    static final String FIX_TOKENS = "Completion-token budget for the FIX step. Blank = unlimited.";
+
+    static final String PARALLEL_PLAN_TOKENS = "Completion-token budget for the parallelisation-planning "
+            + "session (see parallel_plan_wall for its wall-clock budget). Blank = unlimited.";
+
+    static final String HANDOFF_TOKENS = "Completion-token budget for each hand-off-notes session (see "
+            + "handoff_wall for its wall-clock budget). Blank = unlimited.";
+
+    static final String WRAPUP_TOKENS = "Completion-token budget for a session's wrap-up pass (see "
+            + "wrapup_wall for its wall-clock budget). Blank = unlimited.";
+
+    static final String DOCKER_MEMORY_MIB = "Caps Docker Desktop's VM memory (MiB) so it competes less "
+            + "with a co-resident model server for RAM - only applies when manage_docker is checked. "
+            + "Blank = 4096 MiB.";
+
+    static final String DOCKER_KEEP_WARM = "When checked, Docker Desktop stays running for the whole run "
+            + "instead of being stopped/restarted by the idle monitor mid-run - only relevant when "
+            + "manage_docker is checked.";
+
     static final String PRIORITY = "Queue priority for this job - higher values claim a worker before "
             + "lower ones; ties break by enqueue order. 0 is the default for an ordinary run.";
 
