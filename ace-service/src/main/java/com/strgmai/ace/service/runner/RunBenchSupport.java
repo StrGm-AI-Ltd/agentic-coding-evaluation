@@ -132,7 +132,18 @@ public final class RunBenchSupport {
      *  call's own chatWithRetry catch block may also write its own, vaguer reason to the same
      *  RecordingProxy field concurrently; a benign, diagnostic-only race, not correctness-affecting),
      *  cancels the agent's thread (interrupting it - awaitStream's InterruptedException path fires),
-     *  and reports rc=124 exactly as ReferenceAgent's own wall-budget exit used to. */
+     *  and reports rc=124 exactly as ReferenceAgent's own wall-budget exit used to.
+     *
+     *  #222 (found live: a cancelled job stuck "running" for 6+ hours): an EXTERNAL interrupt - the
+     *  cancel-watch thread's currentJobFuture.cancel(true), unrelated to this session's own wallSec -
+     *  landing on the outer thread while it is blocked in future.get() throws InterruptedException,
+     *  not TimeoutException. Left uncaught, the inner future is never itself cancelled, so the
+     *  try-with-resources's own implicit close()/awaitTermination() then waits forever for a task
+     *  nothing ever told to stop. Unlike a timeout (this session's own budget, expected to let the
+     *  run continue to its next phase), an external interrupt means the WHOLE job is being torn
+     *  down - cancel the inner future the same way, then propagate (not swallow) so the caller chain
+     *  unwinds all the way to WorkerService's own cancellation handling instead of silently moving
+     *  on to the next task. */
     public static ReferenceAgent.SessionResult runBounded(final long wallSec, final String name, final Path sessionDir,
                                                             final String sessionId, final Consumer<String> abortProxy,
                                                             final Callable<ReferenceAgent.SessionResult> call) throws Exception {
@@ -148,6 +159,10 @@ public final class RunBenchSupport {
                 future.cancel(true);
                 return new ReferenceAgent.SessionResult(name, 124, wallSec, null, 0, 0, 0,
                         findSessionFile(sessionDir, sessionId), start, Instant.now());
+            } catch (InterruptedException ie) {
+                abortProxy.accept("cancelled");
+                future.cancel(true);
+                throw ie;
             } catch (ExecutionException ee) {
                 if (ee.getCause() instanceof Exception e) throw e;
                 throw new RuntimeException(ee.getCause());
