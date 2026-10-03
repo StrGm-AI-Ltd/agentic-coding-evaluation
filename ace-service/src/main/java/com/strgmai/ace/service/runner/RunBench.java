@@ -513,7 +513,7 @@ public class RunBench {
             if ("implement".equals(pid) || "p2_implementation".equals(pid)) wall = implWall(cfg, rung);
             if (wallOverride != null) wall = wallOverride;   // --wall-budget: every phase's wall, uniformly (smoke tests)
             long tokens = "implement".equals(pid) || "p2_implementation".equals(pid)
-                    ? implTokens(cfg, pid, props) : planTokens(cfg, "p1_plan", props);
+                    ? implTokens(cfg, pid, props) : planTokens(cfg, pid, props);
             final boolean isImpl = pid.equals(impl);
             final var proxy = proxies.start(journal, tokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
             Map<String, Object> rec;
