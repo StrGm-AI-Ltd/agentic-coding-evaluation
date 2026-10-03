@@ -55,6 +55,7 @@ public class RunBench {
         this.props = props; this.agent = agent; this.proxies = proxies; this.oracle = oracle; this.reviews = reviews; this.probe = probe;
     }
 
+    //todo phases should not be hardcoded
     public static final List<String> PHASES = List.of("p0_definition", "p1_plan", "p2_implementation");
     static final Map<String, List<String>> RUNG_PHASES = Map.of("L7_full_platform", List.of("p0_definition", "p1_plan", "p2_implementation"),
             "L3p_point_in_time", List.of("p1_plan", "p2_implementation"));
@@ -111,6 +112,7 @@ public class RunBench {
         } catch (Exception e) { return null; }
     }
 
+    //todo should be in a separate file
     /** port of the Docker window monitor (R7): during an implementation-kind session Docker may
      *  come up (the shim on the first `docker` call); the harness records the window and stops
      *  Docker after idle_sec without a call and at the session's end.
@@ -158,6 +160,7 @@ public class RunBench {
     /** the task's own prompt (tasks/&lt;task&gt;/PROMPT.md, vendored as a resource) when it exists,
      *  else the generic default (tasks/PROMPT.md, the port of the Python original's top-level
      *  task/PROMPT.md) - port of run_bench.py's own tp-then-fallback lookup. */
+    //todo task shouldn't be simple strings
     InputStream promptResource(String task) {
         final InputStream perTask = getClass().getResourceAsStream("/tasks/" + task + "/PROMPT.md");
         return perTask != null ? perTask : getClass().getResourceAsStream("/tasks/PROMPT.md");
@@ -173,6 +176,8 @@ public class RunBench {
         return Files.readString(taskPrompt);
     }
 
+    //todo the run scenario should not be hardcoded
+    //todo refactor
     @SuppressWarnings("unchecked")
     public Map<String, Object> runOnce(final Map<String, Object> cfg, final String runId, String task, final String mode, final String planSource) throws Exception {
         final var resultsDir = Path.of((String) cfg.getOrDefault("results_root", props.resultsDir()));
@@ -357,6 +362,7 @@ public class RunBench {
         manifest.put("decode_tps_median_short", summary.get("decode_tps_median_short"));
         manifest.put("contention", Map.of("docker_up", DockerService.dockerRunning(), "docker_windows", manifest.get("docker_windows")));
         writeManifest(rd, manifest);
+        //todo ACE should be model provider agnostic
         captureOmlxLog(rd, manifest);
         // never delete without a confirmed, actually-usable copy already in rd (see exportSource
         // above) - losing disk space on a scratch dir is recoverable, losing the run's own output is not
