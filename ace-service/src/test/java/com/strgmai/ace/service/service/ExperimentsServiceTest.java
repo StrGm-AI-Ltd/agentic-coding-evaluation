@@ -309,6 +309,19 @@ class ExperimentsServiceTest {
         assertTrue(specs.stream().allMatch(s -> s.spec().dockerKeepWarm()));
     }
 
+    /** Found in the #236 audit: parallel_weight/efficiency_weight exist on JobNewView (a single ad-
+     *  hoc job can set them) but were never read back out of an experiment's own params - every
+     *  multi-arm experiment silently ran with RunSpec's own defaults regardless of what was configured. */
+    @Test
+    void parallelAndEfficiencyWeightFlowThroughToEveryArmsRunSpec() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab",
+                Map.<String, Object>of("model_a", "a", "model_b", "b", "parallel_weight", 0.2, "efficiency_weight", 0.3), 1);
+        assertFalse(specs.isEmpty());
+        assertTrue(specs.stream().allMatch(s -> Double.valueOf(0.2).equals(s.spec().parallelWeight())));
+        assertTrue(specs.stream().allMatch(s -> Double.valueOf(0.3).equals(s.spec().efficiencyWeight())));
+    }
+
     /** #95: MAX_TURNS was a ReferenceAgent-local hardcoded constant with no run-level override;
      *  experiments must be able to pin it per-run the same way they pin every other budget. */
     @Test

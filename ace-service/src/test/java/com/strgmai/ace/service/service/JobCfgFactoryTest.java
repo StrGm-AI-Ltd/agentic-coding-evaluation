@@ -245,4 +245,22 @@ class JobCfgFactoryTest {
         assertEquals(0.2, JobCfgFactory.build(List.of("--efficiency-weight=0.2"), props()).get("efficiency_weight"));
         assertFalse(JobCfgFactory.build(List.of(), props()).containsKey("efficiency_weight"));
     }
+
+    /** #236: --harness was never read back out of argv into cfg at all - RunBench always ran
+     *  ReferenceAgent regardless of what a run actually asked for. */
+    @Test
+    void harnessIsParsedWhenPresentAndAbsentOtherwise() {
+        assertEquals("pi", JobCfgFactory.build(List.of("--harness=pi"), props()).get("harness"));
+        assertFalse(JobCfgFactory.build(List.of(), props()).containsKey("harness"));
+    }
+
+    /** same class of bug as --harness above, found in the same audit: both checkboxes were pure
+     *  UI theater - RunBench.java reads these cfg keys directly, but nothing used to put them. */
+    @Test
+    void systemRulesAndHandoffNotesReflectTheFlagsPresence() {
+        assertEquals(true, JobCfgFactory.build(List.of("--system-rules", "--handoff-notes"), props()).get("system_rules"));
+        assertEquals(true, JobCfgFactory.build(List.of("--system-rules", "--handoff-notes"), props()).get("handoff_notes"));
+        assertEquals(false, JobCfgFactory.build(List.of(), props()).get("system_rules"));
+        assertEquals(false, JobCfgFactory.build(List.of(), props()).get("handoff_notes"));
+    }
 }

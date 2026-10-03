@@ -71,7 +71,8 @@ public class ExperimentsService {
                                 Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns,
                                 Integer reviewTokens, Integer fixWall, Integer fixTokens,
                                 Integer parallelPlanTokens, Integer handoffTokens, Integer wrapupTokens,
-                                Integer dockerMemoryMib, boolean dockerKeepWarm) {}
+                                Integer dockerMemoryMib, boolean dockerKeepWarm,
+                                Double parallelWeight, Double efficiencyWeight) {}
 
     private CommonParams resolveCommon(final Map<String, Object> params) {
         final String reviewerModel = str(params.get("reviewer_model"));
@@ -84,7 +85,8 @@ public class ExperimentsService {
                 parallelPlanWall(params), handoffWall(params), wrapupWall(params), maxTurns(params),
                 reviewTokens(params), fixWall(params), fixTokens(params),
                 parallelPlanTokens(params), handoffTokens(params), wrapupTokens(params),
-                dockerMemoryMib(params), dockerKeepWarm(params));
+                dockerMemoryMib(params), dockerKeepWarm(params),
+                parallelWeight(params), efficiencyWeight(params));
     }
 
     public List<ArmSpec> plan(String template, Map<String, Object> params, final int k) {
@@ -124,7 +126,7 @@ public class ExperimentsService {
                                 .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                                 .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                                 .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
-                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight())
                                 .build()));
             }
             case "model_ab" -> {
@@ -146,7 +148,7 @@ public class ExperimentsService {
                             .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                             .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                             .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
-                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight())
                             .build()));
                     specs.add(new ArmSpec("B", i, RunSpec.builder()
                             .task(task).model(b).mode("orchestrated").planSource("reference").taskWall(wall)
@@ -159,7 +161,7 @@ public class ExperimentsService {
                             .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                             .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                             .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
-                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight())
                             .build()));
                 }
             }
@@ -177,9 +179,10 @@ public class ExperimentsService {
                                 .task(task).model(model).harness(agent).mode(mode).planSource("reference")
                                 .taskWall("orchestrated".equals(mode) ? wall : null)
                                 // implWall/implTokens are validated as genuine capacities (RunSpec.positive()),
-                                // not 0-means-unlimited budgets, and neither is ever actually read downstream
-                                // (RunBench has no impl_wall/impl_tokens cfg lookup at all) - wall==0 (the new
-                                // "unlimited" default) must not multiply through into a rejected literal 0
+                                // not 0-means-unlimited budgets - wall==0 (the new "unlimited" default) must not
+                                // multiply through into a rejected literal 0 (RunBench reads impl_wall_sec back
+                                // out of cfg since #173 - implTokens stays null here because agent_ab, unlike
+                                // harness_effect, has no per-task token budget to multiply through)
                                 .implWall("monolithic".equals(mode) && wall > 0 ? wall * taskCount(params) : null)
                                 .implTokens(null)
                                 .selfReview(review).trajectoryReview(review).reviewerModel(cp.reviewerModel())
@@ -191,7 +194,7 @@ public class ExperimentsService {
                                 .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                                 .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                                 .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
-                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight())
                                 .build()));
             }
             default -> throw new IllegalArgumentException("unknown template " + template + "; known: harness_effect, model_ab, agent_ab");
@@ -340,6 +343,18 @@ public class ExperimentsService {
 
     static boolean dockerKeepWarm(Map<String, Object> params) {
         return Boolean.TRUE.equals(params.get("docker_keep_warm"));
+    }
+
+    // found in the #236 audit: JobNewView already has both fields (a single ad-hoc job can set
+    // them), but ExperimentsService never read either back out of an experiment's own params -
+    // every multi-arm experiment silently ran with RunSpec's defaults regardless of what the
+    // operator configured; explicit params.* wins, unset leaves those defaults in place
+    Double parallelWeight(Map<String, Object> params) {
+        return params.get("parallel_weight") == null ? null : numD(params.get("parallel_weight"));
+    }
+
+    Double efficiencyWeight(Map<String, Object> params) {
+        return params.get("efficiency_weight") == null ? null : numD(params.get("efficiency_weight"));
     }
 
     // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded

@@ -18,6 +18,14 @@ final class JobCfgFactory {
         cfg.put("workspace_root", props.workspaceRoot());
         cfg.put("model", argv.stream().filter(a -> a.startsWith("--model=")).map(a -> a.substring(8)).findFirst().orElse(props.model()));
         cfg.put("system_base_url", null);
+        // #236: --harness was never read back out of argv into cfg at all - RunBench always ran
+        // ReferenceAgent regardless of what a run actually asked for
+        if (WorkerService.flag(argv, "--harness") != null) cfg.put("harness", WorkerService.flag(argv, "--harness"));
+        // same class of bug as --harness above, found in the same audit: both checkboxes were pure
+        // UI theater - RunBench.java reads cfg.get("system_rules")/cfg.get("handoff_notes") directly,
+        // but nothing here ever put either key into cfg regardless of the flag's presence
+        cfg.put("system_rules", argv.contains("--system-rules"));
+        cfg.put("handoff_notes", argv.contains("--handoff-notes"));
         // #phases: RunSpec's own --phases flag (restricts a rung's multi-phase sequence to a subset)
         // had nothing downstream reading it back out of argv into cfg either, same class of bug as
         // --impl-wall/--impl-tokens below

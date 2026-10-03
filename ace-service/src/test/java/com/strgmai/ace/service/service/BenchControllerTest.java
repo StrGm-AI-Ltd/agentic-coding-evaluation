@@ -370,6 +370,33 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$[0].earlier_attempts").value(3));
     }
 
+    /** Found in the #236 audit: RunsView's Mode/Poolable filters (ServiceClient.runs()) have sent
+     *  these query params since they were added, but this endpoint never declared or read either
+     *  one back out of the request - filtering by mode or poolable silently did nothing server-side. */
+    @Test
+    void runsListFiltersByModeAndPoolable() throws Exception {
+        dsl.insertInto(RUNS)
+                .set(RUNS.RUN_ID, "run-mono").set(RUNS.RESULTS_DIR, "/results/run-mono")
+                .set(RUNS.TASK, "L3p_point_in_time").set(RUNS.MODEL, "m").set(RUNS.MODE, "monolithic")
+                .set(RUNS.KEY_HASH, "k1").set(RUNS.POOLABLE, true).set(RUNS.ORACLE, "{}")
+                .execute();
+        dsl.insertInto(RUNS)
+                .set(RUNS.RUN_ID, "run-orch").set(RUNS.RESULTS_DIR, "/results/run-orch")
+                .set(RUNS.TASK, "L3p_point_in_time").set(RUNS.MODEL, "m").set(RUNS.MODE, "orchestrated")
+                .set(RUNS.KEY_HASH, "k2").set(RUNS.POOLABLE, false).set(RUNS.ORACLE, "{}")
+                .execute();
+
+        mvc.perform(get("/api/runs").param("mode", "orchestrated"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].run_id").value("run-orch"));
+
+        mvc.perform(get("/api/runs").param("poolable", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].run_id").value("run-mono"));
+    }
+
     @Test
     void runByIdAlsoIncludesFunctionalIdsHoistedFromOracle() throws Exception {
         dsl.insertInto(RUNS)

@@ -402,6 +402,28 @@ class RunSpecTest {
         assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").javaHome("/opt/homebrew/opt/openjdk@21").build());
     }
 
+    /** #236: --harness (ref vs pi) had no validation at all - the UI could already send "pi", but
+     *  nothing downstream rejected an unrecognised value, same bounded-enum pattern as mode above. */
+    @Test
+    void harnessMustBeRefOrPi() {
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").harness("ref").build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").harness("pi").build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").harness("bogus").build());
+    }
+
+    @Test
+    void argvIncludesHarnessWhenSet() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").harness("pi").build().argv("r1");
+        assertTrue(argv.contains("--harness=pi"));
+    }
+
+    @Test
+    void argvOmitsHarnessWhenUnset() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
+        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--harness")));
+    }
+
     /** #77: every field set to a DISTINCT, recognizable value via the map, so a from()/Builder bug
      *  that transposes two same-typed fields (the exact class of bug from() exists to make impossible)
      *  fails this test on the specific field it mixed up, not just on "something changed". */
