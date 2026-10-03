@@ -27,6 +27,7 @@ import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.emptyString;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
@@ -134,6 +135,40 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$", containsInAnyOrder("L1_migration_entity", "L2_one_endpoint", "L3_point_in_time",
                         "L3p_point_in_time", "L4_state_machine", "L5_second_service", "L6_compose_health", "L7_full_platform")))
                 .andExpect(jsonPath("$[0]").value("L1_migration_entity"));   // sorted
+    }
+
+    /** every rung's own description/budget/denominator, with each check resolved to its real
+     *  category/weight/description from CheckId rather than a bare id - and L7's "all" resolved
+     *  to the full CheckId set, never leaking the literal string through to the UI. */
+    @Test
+    void taskDetailsResolvesEveryRungsChecksFromCheckIdAndExpandsAllForL7() throws Exception {
+        mvc.perform(get("/api/tasks/details"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(8))
+                .andExpect(jsonPath("$[0].name").value("L1_migration_entity"))   // sorted
+                .andExpect(jsonPath("$[0].description").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.emptyOrNullString())))
+                .andExpect(jsonPath("$[0].budget_sec").value(2700))
+                .andExpect(jsonPath("$[0].denominator").value(11));
+
+        final var l7 = mvc.perform(get("/api/tasks/details")).andReturn().getResponse().getContentAsString();
+        final var tree = new com.fasterxml.jackson.databind.ObjectMapper().readTree(l7);
+        com.fasterxml.jackson.databind.JsonNode l7Node = null, l3pNode = null;
+        for (final var rung : tree) {
+            if ("L7_full_platform".equals(rung.get("name").asText())) l7Node = rung;
+            if ("L3p_point_in_time".equals(rung.get("name").asText())) l3pNode = rung;
+        }
+        assertEquals(com.strgmai.ace.service.oracle.CheckId.values().length, l7Node.get("checks").size(),
+                "L7's \"all\" must resolve to the full CheckId set, not the literal string");
+
+        boolean foundB3 = false;
+        for (final var check : l3pNode.get("checks"))
+            if ("B3".equals(check.get("check_id").asText())) {
+                foundB3 = true;
+                assertEquals("build", check.get("category").asText());
+                assertEquals(3, check.get("weight").asInt());
+                assertEquals("agent suite FAILS on a seeded mutation", check.get("description").asText());
+            }
+        assertTrue(foundB3, "L3p_point_in_time must include B3");
     }
 
     @Test

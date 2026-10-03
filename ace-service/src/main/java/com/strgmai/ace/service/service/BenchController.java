@@ -66,6 +66,34 @@ public class BenchController {
         return out.stream().sorted().toList();
     }
 
+    /** Every rung's own description/budget/denominator/checks, each check resolved to its own
+     *  category/weight/description from CheckId (the single source of truth RunOracle.score()
+     *  itself reads) - lets the New Job form show what a rung actually tests before enqueuing one,
+     *  not just its bare name. Cheap to return all 8 in one call; "all" (L7) resolves to the full
+     *  CheckId set the same way RunOracle.score() already does, never leaking the literal string. */
+    @GetMapping("/api/tasks/details")
+    public List<Map<String, Object>> taskDetails() throws Exception {
+        final var ladderStream = getClass().getResourceAsStream("/tasks/ladder.json");
+        if (ladderStream == null) throw new IllegalStateException("ladder.json resource not found on classpath");
+        final com.fasterxml.jackson.databind.JsonNode ladder = new com.fasterxml.jackson.databind.ObjectMapper().readTree(ladderStream);
+        final List<Map<String, Object>> out = new ArrayList<>();
+        final var names = new ArrayList<String>();
+        ladder.fieldNames().forEachRemaining(name -> { if (!"_doc".equals(name)) names.add(name); });
+        for (final String name : names.stream().sorted().toList()) {
+            final var rung = ladder.get(name);
+            final Set<CheckId> ids = rung.get("checks").isTextual() && rung.get("checks").asText().equals("all")
+                    ? EnumSet.allOf(CheckId.class)
+                    : java.util.stream.StreamSupport.stream(rung.get("checks").spliterator(), false)
+                            .map(c -> CheckId.valueOf(c.asText())).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+            final List<Map<String, Object>> checks = ids.stream()
+                    .map(id -> Map.<String, Object>of("check_id", id.name(), "category", id.category, "weight", id.weight, "description", id.description))
+                    .toList();
+            out.add(Map.of("name", name, "description", rung.path("description").asText(""),
+                    "budget_sec", rung.get("budget_sec").asInt(), "denominator", rung.get("denominator").asInt(), "checks", checks));
+        }
+        return out;
+    }
+
     @GetMapping("/api/runs")
     public List<Map<String, Object>> runs(@RequestParam(required = false) String task, @RequestParam(required = false) String model,
                                           @RequestParam(required = false, defaultValue = "") String valid) {

@@ -1,11 +1,11 @@
 {
   "_doc": "Java port of tasks/ladder.json: per-rung check subsets. Score denominator = weights of the listed ids only, FIXED per rung.",
-  "L1_migration_entity": {"budget_sec": 2700, "denominator": 11, "checks": ["S6", "S9", "M1", "M2", "M3", "B1", "B2"]},
-  "L2_one_endpoint": {"budget_sec": 3600, "denominator": 27, "checks": ["S4", "S6", "S7", "M1", "M2", "B1", "B2", "C2", "F5", "F6", "F7"]},
-  "L3_point_in_time": {"budget_sec": 4500, "denominator": 34, "checks": ["M1", "M2", "M4", "B1", "B2", "B3", "C2", "F1", "F2", "F3", "F8"]},
-  "L4_state_machine": {"budget_sec": 4500, "denominator": 24, "checks": ["M1", "B1", "B2", "C2", "F3", "F4", "F9"]},
-  "L5_second_service": {"budget_sec": 5400, "denominator": 15, "checks": ["S4", "S5", "S6", "S9", "B1", "B2", "C1", "C2"]},
-  "L6_compose_health": {"budget_sec": 3600, "denominator": 10, "checks": ["S4", "S5", "B1", "C1", "C2"]},
-  "L7_full_platform": {"budget_sec": 14400, "denominator": 77, "checks": "all"},
-  "L3p_point_in_time": {"budget_sec": 5400, "denominator": 36, "checks": ["M1", "M2", "M4", "P2", "B1", "B2", "B3", "C2", "F1", "F2", "F3", "F8"], "phases": ["p1_plan", "p2_implementation"]}
+  "L1_migration_entity": {"budget_sec": 2700, "denominator": 11, "checks": ["S6", "S9", "M1", "M2", "M3", "B1", "B2"], "description": "Scaffold account-service from an empty workspace: a Flyway migration and a money-correct Account entity with non-negative balance constraints, proven by a repository test."},
+  "L2_one_endpoint": {"budget_sec": 3600, "denominator": 27, "checks": ["S4", "S6", "S7", "M1", "M2", "B1", "B2", "C2", "F5", "F6", "F7"], "description": "Expose a full account/deposit HTTP contract behind docker compose, backed by an OpenAPI spec and HALF_EVEN-rounded deposits."},
+  "L3_point_in_time": {"budget_sec": 4500, "denominator": 34, "checks": ["M1", "M2", "M4", "B1", "B2", "B3", "C2", "F1", "F2", "F3", "F8"], "description": "Add orders with immediate fills and point-in-time holdings queries with an exclusive asOf boundary, replaying sells correctly."},
+  "L4_state_machine": {"budget_sec": 4500, "denominator": 24, "checks": ["M1", "B1", "B2", "C2", "F3", "F4", "F9"], "description": "Implement the order state machine (NEW -> FILLED/CANCELLED) with idempotent order creation via an Idempotency-Key header."},
+  "L5_second_service": {"budget_sec": 5400, "denominator": 15, "checks": ["S4", "S5", "S6", "S9", "B1", "B2", "C1", "C2"], "description": "Split the platform into three independently-built services (account, order, market) that talk to each other only over HTTP, each with its own schema."},
+  "L6_compose_health": {"budget_sec": 3600, "denominator": 10, "checks": ["S4", "S5", "B1", "C1", "C2"], "description": "Bring up three services under docker compose with real Docker healthchecks and dependency ordering, surviving a slow-starting Postgres."},
+  "L7_full_platform": {"budget_sec": 14400, "denominator": 77, "checks": "all", "description": "The full production trading platform end to end: microservices, a React frontend, an OpenAPI contract, and every correctness/money/state-machine rule, graded entirely from a clean checkout."},
+  "L3p_point_in_time": {"budget_sec": 5400, "denominator": 36, "checks": ["M1", "M2", "M4", "P2", "B1", "B2", "B3", "C2", "F1", "F2", "F3", "F8"], "phases": ["p1_plan", "p2_implementation"], "description": "Same feature as L3 (orders + point-in-time holdings), but run plan-first: write docs/IMPLEMENTATION_PLAN.md as 3-6 verifiable subtasks before the implementation phase begins."}
 }
