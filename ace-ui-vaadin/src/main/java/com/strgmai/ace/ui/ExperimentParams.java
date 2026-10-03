@@ -27,6 +27,8 @@ public final class ExperimentParams {
         }
         // returned as Map<String, Object>; empty-diamond under var would infer <Object, Object>
         final Map<String, Object> params = new LinkedHashMap<>();
+        // unset -> ExperimentsService's own RUNG default (every experiment used to be hardcoded to it)
+        putIfPresent(params, raw, "task", String.class);
         params.put("task_wall", intOr(raw.get("task_wall"), 3600, "task_wall"));
         params.put("task_tokens", taskTokens(raw.get("task_tokens")));
         params.put("first_token_timeout", intOr(raw.get("first_token_timeout"), 180, "first_token_timeout"));

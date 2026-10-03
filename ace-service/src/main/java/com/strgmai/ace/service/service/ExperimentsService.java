@@ -89,6 +89,7 @@ public class ExperimentsService {
 
     public List<ArmSpec> plan(String template, Map<String, Object> params, final int k) {
         final String tag = defaultTag();
+        final String task = task(params);
         final List<ArmSpec> specs = new ArrayList<>();
         switch (template) {
             case "harness_effect" -> {
@@ -106,7 +107,7 @@ public class ExperimentsService {
                 for (int i = 1; i <= k; i++)
                     for (String arm : arms)
                         specs.add(new ArmSpec(arm, i, RunSpec.builder()
-                                .task(RUNG).model(model).mode("orchestrated".equals(armMode(arm)) ? "orchestrated" : "monolithic")
+                                .task(task).model(model).mode("orchestrated".equals(armMode(arm)) ? "orchestrated" : "monolithic")
                                 .planSource("reference").taskWall(wall).taskTokens(tokens)
                                 // implWall/implTokens are validated as genuine capacities (RunSpec.positive()),
                                 // not 0-means-unlimited budgets - wall/tokens==0 (the new "unlimited" default)
@@ -135,7 +136,7 @@ public class ExperimentsService {
                 for (int i = 1; i <= k; i++) {
                     // the arm suffix keeps A and B distinct; model-ab.sh always reviews both sides (self + trajectory)
                     specs.add(new ArmSpec("A", i, RunSpec.builder()
-                            .task(RUNG).model(a).mode("orchestrated").planSource("reference").taskWall(wall)
+                            .task(task).model(a).mode("orchestrated").planSource("reference").taskWall(wall)
                             .selfReview(true).trajectoryReview(true).reviewerModel(cp.reviewerModel())
                             .manageDocker(true).noContextProbe(cp.noProbe())
                             .contextWindow(windowA).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec()).reviewTokens(cp.reviewTokens())
@@ -148,7 +149,7 @@ public class ExperimentsService {
                             .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm())
                             .build()));
                     specs.add(new ArmSpec("B", i, RunSpec.builder()
-                            .task(RUNG).model(b).mode("orchestrated").planSource("reference").taskWall(wall)
+                            .task(task).model(b).mode("orchestrated").planSource("reference").taskWall(wall)
                             .selfReview(true).trajectoryReview(true).reviewerModel(cp.reviewerModel())
                             .manageDocker(true).noContextProbe(cp.noProbe())
                             .contextWindow(windowB).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec()).reviewTokens(cp.reviewTokens())
@@ -173,7 +174,7 @@ public class ExperimentsService {
                 for (int i = 1; i <= k; i++)
                     for (String agent : List.of("ref", "pi"))   // --harness=ref|pi: the flag the comparison is ABOUT
                         specs.add(new ArmSpec(agent, i, RunSpec.builder()
-                                .task(RUNG).model(model).harness(agent).mode(mode).planSource("reference")
+                                .task(task).model(model).harness(agent).mode(mode).planSource("reference")
                                 .taskWall("orchestrated".equals(mode) ? wall : null)
                                 // implWall/implTokens are validated as genuine capacities (RunSpec.positive()),
                                 // not 0-means-unlimited budgets, and neither is ever actually read downstream
@@ -346,6 +347,14 @@ public class ExperimentsService {
     // keeps ReferenceAgent.DEFAULT_MAX_TURNS
     Integer maxTurns(Map<String, Object> params) {
         return params.get("max_turns") == null ? null : num(params.get("max_turns"));
+    }
+
+    /** every template hardcoded RUNG with no way for an operator to run an experiment against any
+     *  other rung; explicit params.task wins, unset keeps the RUNG default (every existing caller
+     *  that never set this). */
+    static String task(Map<String, Object> params) {
+        final String v = str(params.get("task"));
+        return v == null || v.isBlank() ? RUNG : v;
     }
 
     /** id -> max_model_len for whatever the model server currently serves — the same /v1/models query
