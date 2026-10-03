@@ -3,15 +3,16 @@ package com.strgmai.ace.service.metrics;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.io.InputStream;
 import java.nio.file.*;
 import java.util.*;
 
 /** Port of metrics/collect.py: cost/efficiency metrics for ONE run, from the run's OWN journal.
  *  Leaderboard block: functional (primary), composite, wall, completion tokens, tokens/wall per
  *  FUNCTIONAL point - the last two only for full-denominator runs. agent_result_pct = composite x
- *  (1-wc-wt-wp) + wc x (100 - |review score - functional|) + wt x trajectory term + wp x
- *  parallelisation term. Steps block: definition/plan/each task (its attributed oracle checks at
- *  the final state)/integration/review/trajectory terms. */
+ *  (1-wc-wt-wp-we) + wc x (100 - |review score - functional|) + wt x trajectory term + wp x
+ *  parallelisation term + we x efficiency term. Steps block: definition/plan/each task (its
+ *  attributed oracle checks at the final state)/integration/review/trajectory terms. */
 public final class Collect {
     private Collect() {}
     static final ObjectMapper JSON = new ObjectMapper();
@@ -65,12 +66,23 @@ public final class Collect {
             leaderboard.put("wall_sec_per_functional_point", round1(totalSec / (double) fGot));
             leaderboard.put("completion_tokens_per_functional_point", round1(((Number) jf.getOrDefault("completion_tokens", 0)).longValue() / (double) fGot));
         }
+        final Double efficiencyPct = efficiencyPct(manifest, totalSec);
+        if (efficiencyPct != null) leaderboard.put("efficiency_pct", efficiencyPct);
 
         // ---- agent_result_pct: the composite blended with the calibration terms ----
         final Map<String, Object> review = (Map<String, Object>) manifest.getOrDefault("review_config", Map.of());
         final Map<String, Object> traj = (Map<String, Object>) manifest.getOrDefault("trajectory_review_config", Map.of());
         final Map<String, Object> par = (Map<String, Object>) manifest.getOrDefault("parallel_plan_config", Map.of());
-        final double wc = num(review.getOrDefault("weight", 0.1)), wt = num(traj.getOrDefault("weight", 0.1)), wp = num(par.getOrDefault("weight", 0.1));
+        // efficiency is NOT like the three terms above: those are optional FEATURES an operator opts
+        // into per run (self-review, trajectory-review, the parallelisation step), each already
+        // defaulting to a 0.1 weight even when unused (missing -> term scores 0, still docking the
+        // blend by that weight). Efficiency is measurable on EVERY run, with no opt-in mechanism to
+        // gate it - defaulting it to 0.1 the same way would silently change agent_result_pct for
+        // every run ever computed, existing tests included. It defaults to 0: purely opt-in via
+        // --efficiency-weight, so nothing changes unless an operator explicitly asks for it.
+        final Map<String, Object> eff = (Map<String, Object>) manifest.getOrDefault("efficiency_config", Map.of());
+        final double wc = num(review.getOrDefault("weight", 0.1)), wt = num(traj.getOrDefault("weight", 0.1)), wp = num(par.getOrDefault("weight", 0.1)),
+                we = num(eff.getOrDefault("weight", 0.0));
         final Map<String, Object> sr = (Map<String, Object>) manifest.getOrDefault("self_review", Map.of());
         final Map<String, Object> tr = (Map<String, Object>) manifest.getOrDefault("trajectory_review", Map.of());
         final Map<String, Object> pp = (Map<String, Object>) manifest.getOrDefault("parallel_plan", Map.of());
@@ -92,7 +104,7 @@ public final class Collect {
         }
         if (pp.get("evaluation") instanceof Map<?, ?> ev) leaderboard.put("parallel_plan", Map.of("term", parallelTerm(manifest)));
         if (composite != null) {
-            final double base = composite * (1 - wc - wt - wp);
+            final double base = composite * (1 - wc - wt - wp - we);
             double codeTerm = sr.get("score") instanceof Number s && functional != null
                     ? wc * (100 - Math.abs(s.doubleValue() - functional)) : 0;   // a missing/unparseable review scores 0 at full weight
             // "direct": the reviewer's own score IS the term (judged as a quality signal on its own
@@ -106,14 +118,34 @@ public final class Collect {
                 else if (tr.get("objective_index_pct") instanceof Number oi) trajTerm = wt * (100 - Math.abs(s.doubleValue() - oi.doubleValue()));
             }
             final double parTerm = wp * parallelTerm(manifest);
-            leaderboard.put("agent_result_pct", round1(base + codeTerm + trajTerm + parTerm));
-            leaderboard.put("agent_result_terms", Map.of("base", round1(base), "code", round1(codeTerm), "trajectory", round1(trajTerm), "parallel", round1(parTerm)));
+            final double effTerm = we * (efficiencyPct == null ? 0 : efficiencyPct);   // no budget_sec to compare against -> 0, same convention as the other terms above
+            leaderboard.put("agent_result_pct", round1(base + codeTerm + trajTerm + parTerm + effTerm));
+            leaderboard.put("agent_result_terms", Map.of("base", round1(base), "code", round1(codeTerm), "trajectory", round1(trajTerm), "parallel", round1(parTerm), "efficiency", round1(effTerm)));
         }
         out.put("steps", steps(manifest, o));
         // how prefill/decode speed depends on context size, bucketed by JournalFacts over the whole
         // run - a chart data blob, not a leaderboard scalar, so it lives alongside "steps"
         out.put("speed_by_context", jf.getOrDefault("speed_by_context", List.of()));
         return out;
+    }
+
+    /** How much of the rung's own declared wall-clock budget (ladder.json's budget_sec - the SAME
+     *  figure already shown to operators as a rung's "budget" on the New Job form) was left unused:
+     *  100 when the run finished instantly, 0 at or over budget. null when the rung declares no
+     *  budget_sec at all (nothing to compare against) - the efficiency term then contributes 0, the
+     *  same convention as every other optional term above when its mechanism never ran. */
+    static Double efficiencyPct(final Map<String, Object> manifest, final long totalSec) {
+        final int budgetSec = budgetSecFor(String.valueOf(manifest.get("task")));
+        if (budgetSec <= 0) return null;
+        return round1(100 * Math.max(0, Math.min(1, 1 - totalSec / (double) budgetSec)));
+    }
+
+    private static int budgetSecFor(final String task) {
+        try (InputStream in = Collect.class.getResourceAsStream("/tasks/ladder.json")) {
+            return in == null ? 0 : JSON.readTree(in).path(task).path("budget_sec").asInt(0);
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     /** the parallelisation term: 0.3 x validity + 0.3 x parallelism captured + 0.4 x (1 - friction) */

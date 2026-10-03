@@ -24,6 +24,7 @@ final class JobCfgFactory {
         if (WorkerService.flag(argv, "--phases") != null) cfg.put("phases", WorkerService.flag(argv, "--phases"));
         // #228: 8 more RunSpec flags collected by the UI and emitted by RunSpec.argv() with nothing
         // downstream ever reading them back out of argv into cfg either, same class of bug as --phases
+        if (WorkerService.flag(argv, "--plan-wall") != null) cfg.put("plan_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--plan-wall")));
         if (WorkerService.flag(argv, "--plan-tokens") != null) cfg.put("plan_tokens", Long.parseLong(WorkerService.flag(argv, "--plan-tokens")));
         if (WorkerService.flag(argv, "--wall-budget") != null) cfg.put("wall_budget_override", Integer.parseInt(WorkerService.flag(argv, "--wall-budget")));
         if (WorkerService.flag(argv, "--java-home") != null) cfg.put("java_home", WorkerService.flag(argv, "--java-home"));
@@ -88,6 +89,8 @@ final class JobCfgFactory {
         // server; --docker-keep-warm skips the idle monitor's mid-run stop/restart cycling
         if (WorkerService.flag(argv, "--docker-memory-mib") != null) cfg.put("docker_memory_mib", Integer.parseInt(WorkerService.flag(argv, "--docker-memory-mib")));
         cfg.put("docker_keep_warm", argv.contains("--docker-keep-warm"));
+        // opt-in control over how much budget efficiency counts toward agent_result_pct (Collect.java)
+        if (WorkerService.flag(argv, "--efficiency-weight") != null) cfg.put("efficiency_weight", Double.parseDouble(WorkerService.flag(argv, "--efficiency-weight")));
         // Map.of() rejects a null value outright - "model" IS null whenever review is enabled
         // without an explicit --reviewer-model (self-review alone still needs a reviewer picked
         // downstream, but that is RunBench's decision to make, not a reason to crash the worker)

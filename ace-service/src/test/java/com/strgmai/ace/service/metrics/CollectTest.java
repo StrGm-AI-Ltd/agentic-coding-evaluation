@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /** total_wall_sec: an orchestrated run's real execution time lives in manifest.tasks/waves, not
  *  manifest.phases (that only ever holds p0_definition/p1_plan) - every orchestrated run reported
@@ -115,5 +116,66 @@ class CollectTest {
         final Map<String, Object> leaderboard = (Map<String, Object>) out.get("leaderboard");
         // trajTerm = 0.5 x (100 - |80-65|) = 42.5; base unchanged at 27.0
         assertEquals(69.5, ((Number) leaderboard.get("agent_result_pct")).doubleValue(), 0.001);
+    }
+
+    /** efficiency_pct: how much of the rung's own declared wall-clock budget (ladder.json's
+     *  budget_sec) was left unused - L1_migration_entity's is 2700s. */
+    @Test
+    void efficiencyPctReflectsHowMuchOfTheRungSOwnBudgetWasLeftUnused(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);
+        final Map<String, Object> manifest = Map.of("task", "L1_migration_entity",
+                "phases", List.of(Map.of("id", "implement", "seconds", 1350.0)), "tasks", List.of(), "waves", List.of());
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        final Map<String, Object> leaderboard = (Map<String, Object>) out.get("leaderboard");
+        // 1350/2700 = 50% used -> 50% left unused
+        assertEquals(50.0, ((Number) leaderboard.get("efficiency_pct")).doubleValue(), 0.001);
+    }
+
+    @Test
+    void efficiencyPctClampsAtZeroWhenOverBudgetRatherThanGoingNegative(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);
+        final Map<String, Object> manifest = Map.of("task", "L1_migration_entity",
+                "phases", List.of(Map.of("id", "implement", "seconds", 5400.0)), "tasks", List.of(), "waves", List.of());   // 2x the 2700s budget
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        final Map<String, Object> leaderboard = (Map<String, Object>) out.get("leaderboard");
+        assertEquals(0.0, ((Number) leaderboard.get("efficiency_pct")).doubleValue(), 0.001);
+    }
+
+    @Test
+    void efficiencyPctIsAbsentWhenTheRungDeclaresNoBudgetSec(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);
+        final Map<String, Object> manifest = Map.of("task", "no-such-rung",
+                "phases", List.of(Map.of("id", "implement", "seconds", 100.0)), "tasks", List.of(), "waves", List.of());
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        final Map<String, Object> leaderboard = (Map<String, Object>) out.get("leaderboard");
+        assertFalse(leaderboard.containsKey("efficiency_pct"));
+    }
+
+    /** --efficiency-weight is opt-in only (default 0, unlike review/trajectory/parallel's 0.1
+     *  default) - every test above already pins agent_result_pct assuming it contributes nothing
+     *  unless explicitly set. This confirms it DOES apply once an operator asks for it. */
+    @Test
+    void efficiencyWeightBlendsIntoAgentResultPctOnlyWhenExplicitlySet(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);   // weighted_score_pct: 90.0
+        final Map<String, Object> manifest = Map.of("task", "L1_migration_entity",
+                "phases", List.of(Map.of("id", "implement", "seconds", 1350.0)), "tasks", List.of(), "waves", List.of(),
+                "efficiency_config", Map.of("weight", 0.2));
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        final Map<String, Object> leaderboard = (Map<String, Object>) out.get("leaderboard");
+        // base = 90 x (1 - 0.1(review default) - 0.1(traj default) - 0.1(parallel default) - 0.2(efficiency)) = 45.0
+        // effTerm = 0.2 x 50.0(efficiency_pct) = 10.0
+        assertEquals(55.0, ((Number) leaderboard.get("agent_result_pct")).doubleValue(), 0.001);
+    }
+
+    @Test
+    void efficiencyWeightContributesNothingWhenUnsetEvenWithAComputableEfficiencyPct(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);   // weighted_score_pct: 90.0
+        final Map<String, Object> manifest = Map.of("task", "L1_migration_entity",
+                "phases", List.of(Map.of("id", "implement", "seconds", 1350.0)), "tasks", List.of(), "waves", List.of());
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        final Map<String, Object> leaderboard = (Map<String, Object>) out.get("leaderboard");
+        assertEquals(50.0, ((Number) leaderboard.get("efficiency_pct")).doubleValue(), 0.001, "the figure is still reported");
+        // base = 90 x (1 - 0.1 - 0.1 - 0.1 - 0) = 63.0, no efficiency term added
+        assertEquals(63.0, ((Number) leaderboard.get("agent_result_pct")).doubleValue(), 0.001);
     }
 }

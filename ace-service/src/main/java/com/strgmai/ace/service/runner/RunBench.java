@@ -353,6 +353,12 @@ public class RunBench {
         writeManifest(rd, manifest);
         final Map<String, Object> oracleReport = oracleWithDocker(cfg, ws, task, rd, manifest);
         Files.writeString(rd.resolve("oracle.json"), json.writerWithDefaultPrettyPrinter().writeValueAsString(oracleReport));
+        // --efficiency-weight: unlike review/trajectory/parallel-plan's weight, this isn't tied to a
+        // feature that conditionally ran - it's measurable on every run, so it's recorded here rather
+        // than inside a feature-specific session method (same shape Reviews.java uses for its own
+        // *_config weights, just with no corresponding session to hang it off of)
+        if (cfg.get("efficiency_weight") instanceof Number ew)
+            Reviews.manifestMap(manifest, "efficiency_config").put("weight", ew.doubleValue());
         // ---- metrics.json: the leaderboard block + per-step scores (collect.py) ----
         Files.writeString(rd.resolve("metrics.json"), json.writerWithDefaultPrettyPrinter()
                 .writeValueAsString(com.strgmai.ace.service.metrics.Collect.collect(rd, manifest)));
@@ -512,7 +518,7 @@ public class RunBench {
         final String rules = Boolean.TRUE.equals(cfg.get("system_rules")) ? Packs.hygiene() : null;
         List<String> phases = phasesFor(task);   // non-L7 rungs run the single `implement` phase with the rung's budget
         final String impl = phases.contains("p2_implementation") ? "p2_implementation" : "implement";
-        final Map<String, Integer> rung = rungBudgets(task);
+        final Map<String, Integer> rung = rungBudgets(cfg, task);
         final Integer wallOverride = wallBudgetOverride(cfg);
         for (String pid : phasesWanted(cfg, phases)) {
             int wall = "p1_plan".equals(pid) ? rung.getOrDefault("plan_sec", 900) : rung.getOrDefault("sec", 14400);
@@ -540,12 +546,14 @@ public class RunBench {
     /** ladder.json budgets: L7-style from config; rung budget split plan/implementation for the rest.
      *  0 means unlimited (the system-wide "0 = no budget" convention) - both when ladder.json omits
      *  budget_sec for this task and when the whole rung is genuinely unlimited, plan/impl split to 0
-     *  too rather than a stale 900s/negative remainder. */
-    private Map<String, Integer> rungBudgets(String task) {
+     *  too rather than a stale 900s/negative remainder. The plan portion is whatever planWall() below
+     *  resolves to (a per-run override, else the operator's own config, else 900s), so impl_sec's
+     *  remainder stays consistent with whichever plan wall is actually in effect. */
+    private Map<String, Integer> rungBudgets(final Map<String, Object> cfg, String task) {
         try {
             final var rung = json.readTree(getClass().getResourceAsStream("/tasks/ladder.json")).path(task);
             final int sec = rung.path("budget_sec").asInt(0);
-            final int plan = sec > 0 ? 900 : 0;   // orchestration.plan_phase_sec
+            final int plan = sec > 0 ? (int) planWall(cfg, "p1_plan", props) : 0;
             final Map<String, Integer> out = new LinkedHashMap<>();
             out.put("sec", sec);
             out.put("plan_sec", plan);
@@ -577,6 +585,17 @@ public class RunBench {
      *  budget, falling back to the same operator-wide BenchProperties.phaseTokens(pid) default. */
     static long planTokens(final Map<String, Object> cfg, final String pid, final BenchProperties props) {
         return cfg.get("plan_tokens") instanceof Number pt ? pt.longValue() : props.phaseTokens(pid);
+    }
+
+    /** the wall-clock counterpart to planTokens() above: --plan-wall (cfg's "plan_wall_sec") is a
+     *  per-run override for the p0_definition/p1_plan phases' wall budget. Falls back to the
+     *  operator-wide BenchProperties.phaseWall(pid) config when set (itself already read by
+     *  orchestratedPhase() before this existed), and only then to the literal 900s this always
+     *  defaulted to - so an operator who has configured nothing sees no behavior change. */
+    static long planWall(final Map<String, Object> cfg, final String pid, final BenchProperties props) {
+        if (cfg.get("plan_wall_sec") instanceof Number pw) return pw.longValue();
+        final int configured = props.phaseWall(pid);
+        return configured > 0 ? configured : 900;
     }
 
     /** #228: --wall-budget (cfg's "wall_budget_override") overrides every phase's wall budget
@@ -764,8 +783,8 @@ public class RunBench {
         requirePlanAndImplementationPhases(rungPhases, wanted, task);
         // --wall-budget: every phase's wall, uniformly (smoke tests) - the same override monolithicPhases() applies
         final Integer wallOverride = wallBudgetOverride(cfg);
-        final long p0Wall = wallOverride != null ? wallOverride : props.phaseWall("p0_definition");
-        final long p1Wall = wallOverride != null ? wallOverride : props.phaseWall("p1_plan");
+        final long p0Wall = wallOverride != null ? wallOverride : planWall(cfg, "p0_definition", props);
+        final long p1Wall = wallOverride != null ? wallOverride : planWall(cfg, "p1_plan", props);
         if (wanted.contains("p0_definition")) {   // L7-style rungs define before they plan (Python run_once loops the rung's phases)
             Map<String, Object> rec;
             // R18: resume past this phase if a prior attempt of THIS SAME run already finished it

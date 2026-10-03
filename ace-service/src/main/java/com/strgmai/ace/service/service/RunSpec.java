@@ -6,7 +6,7 @@ import java.util.*;
  *  same validation (known rung, positive budgets, bounded patterns). argv() rebuilds the CLI
  *  record stored on the job. */
 public record RunSpec(String task, String model, String harness, String mode, String planSource, String phases, Integer taskWall, Integer taskTokens,
-                      Integer implWall, Integer implTokens, Integer planTokens, Integer wallBudget, String parallel, String parallelPlan, Double parallelWeight,
+                      Integer implWall, Integer implTokens, Integer planWall, Integer planTokens, Integer wallBudget, String parallel, String parallelPlan, Double parallelWeight,
                       boolean systemRules, boolean selfReview,
                       boolean trajectoryReview, String reviewerModel, boolean handoffNotes, boolean manageDocker,
                       boolean noContextProbe, boolean contextProbeFresh, boolean keepWorkspace, boolean skipDocker,
@@ -16,7 +16,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                       Double temperature, Double topP, Integer topK, Double repetitionPenalty, Integer maxTokens, String reasoningEffort,
                       Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns, Integer reviewTokens,
                       Integer fixWall, Integer fixTokens, Integer parallelPlanTokens, Integer handoffTokens, Integer wrapupTokens,
-                      Integer dockerMemoryMib, boolean dockerKeepWarm) {
+                      Integer dockerMemoryMib, boolean dockerKeepWarm, Double efficiencyWeight) {
 
     public static final String RUN_ID = "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$";
     public static final List<String> REASONING_EFFORTS = List.of("none", "low", "medium", "high");
@@ -42,6 +42,10 @@ public record RunSpec(String task, String model, String harness, String mode, St
         // bug as #90's ExperimentsService.taskCount() silent-fallback, just enforced as a hard 400
         // instead of a silent wrong value.
         taskWall = nonNegative(taskWall); taskTokens = nonNegative(taskTokens);
+        // --plan-wall (queue.py never had this at all - the plan phase's wall was only ever an
+        // operator-wide config value, never per-run) - 0 means unlimited, the same convention as
+        // every other wall budget below.
+        planWall = nonNegative(planWall);
         firstTokenTimeout = nonNegative(firstTokenTimeout); reviewWallSec = nonNegative(reviewWallSec);
         reviewTokens = nonNegative(reviewTokens);
         // PARALLEL_PLAN/handoff/wrap-up walls (found live 2026-09-25): were fixed literals in
@@ -67,6 +71,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
             throw new IllegalArgumentException("parallelPlan must be on or off: " + parallelPlan);
         if (parallelWeight != null && (parallelWeight < 0 || parallelWeight > 1))
             throw new IllegalArgumentException("parallelWeight must be within 0..1: " + parallelWeight);
+        if (efficiencyWeight != null && (efficiencyWeight < 0 || efficiencyWeight > 1))
+            throw new IllegalArgumentException("efficiencyWeight must be within 0..1: " + efficiencyWeight);
         // queue.py's PATH pattern: no embedded NUL/CR/LF, 1-500 chars - this ends up in an env var and
         // on a shell command line (RunBenchSupport.scrubbedEnv), so the same injection-shaped values
         // Python already rejected stay rejected here too.
@@ -107,6 +113,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (taskTokens != null) args.add("--task-tokens=" + taskTokens);
         if (implWall != null) args.add("--impl-wall=" + implWall);
         if (implTokens != null) args.add("--impl-tokens=" + implTokens);
+        if (planWall != null) args.add("--plan-wall=" + planWall);
         if (planTokens != null) args.add("--plan-tokens=" + planTokens);
         if (wallBudget != null) args.add("--wall-budget=" + wallBudget);
         if (parallel != null && !parallel.isBlank()) args.add("--parallel=" + parallel);
@@ -151,6 +158,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (wrapupTokens != null) args.add("--wrapup-tokens=" + wrapupTokens);
         if (dockerMemoryMib != null) args.add("--docker-memory-mib=" + dockerMemoryMib);
         if (dockerKeepWarm) args.add("--docker-keep-warm");
+        if (efficiencyWeight != null) args.add("--efficiency-weight=" + efficiencyWeight);
         return args;
     }
 
@@ -169,12 +177,12 @@ public record RunSpec(String task, String model, String harness, String mode, St
     public static final class Builder {
         private String task, model, harness, mode, planSource, phases, parallel, parallelPlan, reviewerModel,
                 trajectoryReviewerModel, trajectoryUse, javaHome, runId, reasoningEffort;
-        private Integer taskWall, taskTokens, implWall, implTokens, planTokens, wallBudget, contextWindow, firstTokenTimeout,
+        private Integer taskWall, taskTokens, implWall, implTokens, planWall, planTokens, wallBudget, contextWindow, firstTokenTimeout,
                 compactionTrigger, reviewWallSec, topK, maxTokens, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
                 fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, dockerMemoryMib;
         private boolean systemRules, selfReview, trajectoryReview, handoffNotes, manageDocker,
                 noContextProbe, contextProbeFresh, keepWorkspace, skipDocker, reviewBlind, dockerKeepWarm;
-        private Double reviewWeight, trajectoryWeight, parallelWeight, temperature, topP, repetitionPenalty;
+        private Double reviewWeight, trajectoryWeight, parallelWeight, efficiencyWeight, temperature, topP, repetitionPenalty;
 
         public Builder task(final String v) { task = v; return this; }
         public Builder model(final String v) { model = v; return this; }
@@ -186,6 +194,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public Builder taskTokens(final Integer v) { taskTokens = v; return this; }
         public Builder implWall(final Integer v) { implWall = v; return this; }
         public Builder implTokens(final Integer v) { implTokens = v; return this; }
+        public Builder planWall(final Integer v) { planWall = v; return this; }
         public Builder planTokens(final Integer v) { planTokens = v; return this; }
         public Builder wallBudget(final Integer v) { wallBudget = v; return this; }
         public Builder parallel(final String v) { parallel = v; return this; }
@@ -230,14 +239,15 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public Builder wrapupTokens(final Integer v) { wrapupTokens = v; return this; }
         public Builder dockerMemoryMib(final Integer v) { dockerMemoryMib = v; return this; }
         public Builder dockerKeepWarm(final boolean v) { dockerKeepWarm = v; return this; }
+        public Builder efficiencyWeight(final Double v) { efficiencyWeight = v; return this; }
 
         public RunSpec build() {
             return new RunSpec(task, model, harness, mode, planSource, phases, taskWall, taskTokens, implWall, implTokens,
-                    planTokens, wallBudget, parallel, parallelPlan, parallelWeight, systemRules, selfReview, trajectoryReview, reviewerModel, handoffNotes, manageDocker,
+                    planWall, planTokens, wallBudget, parallel, parallelPlan, parallelWeight, systemRules, selfReview, trajectoryReview, reviewerModel, handoffNotes, manageDocker,
                     noContextProbe, contextProbeFresh, keepWorkspace, skipDocker, contextWindow, firstTokenTimeout, compactionTrigger, reviewWallSec,
                     reviewBlind, trajectoryReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse, javaHome, runId,
                     temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
-                    fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, dockerMemoryMib, dockerKeepWarm);
+                    fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, dockerMemoryMib, dockerKeepWarm, efficiencyWeight);
         }
     }
 
@@ -251,7 +261,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 .mode(str(spec, "mode")).planSource(str(spec, "plan_source")).phases(str(spec, "phases"))
                 .taskWall(intOf(spec, "task_wall")).taskTokens(intOf(spec, "task_tokens"))
                 .implWall(intOf(spec, "impl_wall")).implTokens(intOf(spec, "impl_tokens"))
-                .planTokens(intOf(spec, "plan_tokens")).wallBudget(intOf(spec, "wall_budget"))
+                .planWall(intOf(spec, "plan_wall")).planTokens(intOf(spec, "plan_tokens")).wallBudget(intOf(spec, "wall_budget"))
                 .parallel(str(spec, "parallel")).parallelPlan(str(spec, "parallel_plan")).parallelWeight(doubleOf(spec, "parallel_weight"))
                 .systemRules(bool(spec, "system_rules", false)).selfReview(bool(spec, "self_review", false))
                 .trajectoryReview(bool(spec, "trajectory_review", false)).reviewerModel(str(spec, "reviewer_model"))
@@ -273,6 +283,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 .parallelPlanTokens(intOf(spec, "parallel_plan_tokens")).handoffTokens(intOf(spec, "handoff_tokens"))
                 .wrapupTokens(intOf(spec, "wrapup_tokens"))
                 .dockerMemoryMib(intOf(spec, "docker_memory_mib")).dockerKeepWarm(bool(spec, "docker_keep_warm", false))
+                .efficiencyWeight(doubleOf(spec, "efficiency_weight"))
                 .build();
     }
 
