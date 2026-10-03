@@ -1,11 +1,13 @@
 package com.strgmai.ace.service.runner;
 
+import com.strgmai.ace.service.agent.PiAgent;
 import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.docker.DockerService;
 import com.strgmai.ace.service.metrics.Trajectory;
 import com.strgmai.ace.service.oracle.RunOracle;
 import com.strgmai.ace.service.pack.Packs;
+import com.strgmai.ace.service.plan.PlanError;
 import com.strgmai.ace.service.plan.PlanParser;
 import com.strgmai.ace.service.plan.PlanTask;
 import com.strgmai.ace.service.proxy.RecordingProxy;
@@ -29,6 +31,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 /** Port of runner/run_bench.py's run_once — now at full scope. Isolation: each run gets a fresh
@@ -45,14 +48,15 @@ public class RunBench {
     private static final Logger log = LoggerFactory.getLogger(RunBench.class);
     private final BenchProperties props;
     private final ReferenceAgent agent;
+    private final PiAgent piAgent;
     private final RecordingProxyFactory proxies;
     private final RunOracle oracle;
     private final Reviews reviews;
     private final ContextProbe probe;
     private final ObjectMapper json = new ObjectMapper();
 
-    public RunBench(BenchProperties props, ReferenceAgent agent, RecordingProxyFactory proxies, RunOracle oracle, Reviews reviews, ContextProbe probe) {
-        this.props = props; this.agent = agent; this.proxies = proxies; this.oracle = oracle; this.reviews = reviews; this.probe = probe;
+    public RunBench(BenchProperties props, ReferenceAgent agent, PiAgent piAgent, RecordingProxyFactory proxies, RunOracle oracle, Reviews reviews, ContextProbe probe) {
+        this.props = props; this.agent = agent; this.piAgent = piAgent; this.proxies = proxies; this.oracle = oracle; this.reviews = reviews; this.probe = probe;
     }
 
     //todo phases should not be hardcoded
@@ -85,6 +89,17 @@ public class RunBench {
                 || rungPhases.contains("p2_implementation") && !wanted.contains("p2_implementation"))
             throw new IllegalStateException("orchestrated mode always runs p1_plan and p2_implementation; "
                     + "--phases cannot exclude either (only p0_definition is optional): task=" + task + " phases=" + wanted);
+    }
+
+    /** #235: an agent that never writes (or writes an unparseable) docs/IMPLEMENTATION_PLAN.md is a
+     *  real, if unproductive, model outcome - not a reason to crash the whole run. Matches Python's
+     *  orchestrate(): record the failure in manifest.plan.error (truncated to 200 chars, same as
+     *  Python's str(e)[:200]) rather than letting PlanError propagate. Validity.java's orchestrated
+     *  branch already reads this key and marks the run INVALID ("plan unparseable"). Package-private:
+     *  directly unit-tested. */
+    static Map<String, Object> planErrorEntry(final String planSource, final PlanError e) {
+        final String msg = e.getMessage() == null ? e.toString() : e.getMessage();
+        return Map.of("source", planSource, "error", msg.substring(0, Math.min(200, msg.length())), "tasks", List.of());
     }
 
     static final String IMPLEMENT_TEXT = "Read task/PROMPT.md and do exactly what it asks. Implement it, write tests proving the acceptance "
@@ -271,6 +286,12 @@ public class RunBench {
         long taskTokens = cfg.get("task_tokens") instanceof Number n2 ? n2.longValue()
                 : ((Number) derived.getOrDefault("task_tokens", 0)).longValue();
         if (!(cfg.get("compaction_trigger") instanceof Number)) cfg.put("compaction_trigger", props.compactionTrigger());
+        // #236: harness=pi needs its own HOME seeded with a models.json before any session runs -
+        // this is the one-time per-run setup (mirrors Python's run_once() setup + fresh_home());
+        // the per-call baseUrl patch happens separately, right before each individual pi invocation
+        if ("pi".equals(cfg.get("harness")))
+            PiAgent.seedHome(home, (String) cfg.getOrDefault("model", props.model()),
+                    (Integer) cfg.get("usable_context"), (Integer) cfg.get("max_output_tokens"));
 
         final Map<String, Object> manifest = new LinkedHashMap<>();
         manifest.put("schema_version", BenchProperties.RESULT_SCHEMA);
@@ -287,7 +308,7 @@ public class RunBench {
         manifest.put("waves", new ArrayList<Map<String, Object>>());
         manifest.put("docker_windows", new ArrayList<Map<String, Object>>());
         manifest.put("contention_events", new ArrayList<Map<String, Object>>());
-        manifest.put("provenance", Map.of("model", cfg.getOrDefault("model", props.model()), "harness", "ref",
+        manifest.put("provenance", Map.of("model", cfg.getOrDefault("model", props.model()), "harness", cfg.getOrDefault("harness", "ref"),
                 "harness_version", BenchProperties.HARNESS_VERSION, "java_home", cfg.get("java_home"),
                 "runner", System.getProperty("ace.build", "ace-service")));
         // was always read for comparability (StatsService.KEY_FIELDS) but never actually written -
@@ -605,6 +626,22 @@ public class RunBench {
         return cfg.get("wall_budget_override") instanceof Number wb ? wb.intValue() : null;
     }
 
+    /** #236: selects which agent actually performs a session, instead of every call site hardcoding
+     *  ReferenceAgent - the ONLY thing sessionWithPolicy/runBounded's generic Future/timeout
+     *  machinery needs is this exact return type, so neither of them had to change at all. Every
+     *  call site swap below is a one-line change: agent.run(...) -> runAgentSession(cfg, ...). */
+    private ReferenceAgent.SessionResult runAgentSession(final Map<String, Object> cfg, final String name, final String instruction,
+            final long wallSec, final Long tokenBudget, final Path sessionDir, final String sessionId, final boolean continueSession,
+            final String appendSystem, final String cwd, final String proxyBase, final Consumer<String> abortProxy,
+            final long firstTokenTimeoutMs, final int compactionTrigger, final int maxTurns, final String model,
+            final Map<String, String> extraEnv) throws Exception {
+        return "pi".equals(cfg.get("harness"))
+                ? piAgent.run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase,
+                        abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv)
+                : agent.run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase,
+                        abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv);
+    }
+
     private Map<String, Object> sessionWithPolicy(Map<String, Object> cfg, String runId, String name, String instruction,
                                                   long wall, long tokens, Path rd, Path ws, Path journal,
                                                   RecordingProxyFactory.ProxySession proxy, String appendSystem, String sessionId,
@@ -652,7 +689,7 @@ public class RunBench {
         final Thread monitor = plainPlan ? null : monitorThread(dw, dockerKeepWarm ? Integer.MAX_VALUE : 600);
         ReferenceAgent.SessionResult rec;
         try {
-            rec = RunBenchSupport.runBounded(wall, name, rd.resolve("sessions"), sid, proxy.abort(), () -> agent.run(name, full, wall, tokens,
+            rec = RunBenchSupport.runBounded(wall, name, rd.resolve("sessions"), sid, proxy.abort(), () -> runAgentSession(cfg, name, full, wall, tokens,
                     rd.resolve("sessions"), sid, false, appendSystem, ws.toString(), proxy.base(), proxy.abort(),
                     firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env));
         } finally { if (monitor != null) stopMonitor(monitor); }
@@ -668,7 +705,7 @@ public class RunBench {
             final var contProxy = proxies.start(journal, remaining, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
             try {
                 final long contWall = wall <= 0 ? 0 : wall - (System.currentTimeMillis() - t0) / 1000;
-                rec = RunBenchSupport.runBounded(contWall, name + "-continue", rd.resolve("sessions"), sid, contProxy.abort(), () -> agent.run(name + "-continue",
+                rec = RunBenchSupport.runBounded(contWall, name + "-continue", rd.resolve("sessions"), sid, contProxy.abort(), () -> runAgentSession(cfg, name + "-continue",
                         "Your previous turn was cut off at the output limit. Continue the task from where you stopped; be concise and act with tools.",
                         contWall, remaining, rd.resolve("sessions"), sid, true, appendSystem, ws.toString(), contProxy.base(), contProxy.abort(),
                         firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env));
@@ -701,7 +738,7 @@ public class RunBench {
             final ReferenceAgent.SessionResult w;   // assigned exactly once below; a legal blank final
             try {
                 w = RunBenchSupport.runBounded(wrapWall, name + "-wrapup", rd.resolve("sessions"), canonicalSessionId, wrapProxy.abort(),
-                        () -> agent.run(name + "-wrapup", wrapInstr, wrapWall, wrapupTokens, rd.resolve("sessions"), canonicalSessionId,
+                        () -> runAgentSession(cfg, name + "-wrapup", wrapInstr, wrapWall, wrapupTokens, rd.resolve("sessions"), canonicalSessionId,
                                 true, appendSystem, ws.toString(), wrapProxy.base(), wrapProxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env));
             } finally { wrapProxy.stop(); }
             out.put("wrapup_rc", w.rc());
@@ -846,7 +883,20 @@ public class RunBench {
             p1rec.put("reference_plan", planSource);
             ((List<Map<String, Object>>) manifest.get("phases")).add(p1rec);
         }
-        final List<PlanTask> tasks = PlanParser.parseFile(ws.resolve("docs/IMPLEMENTATION_PLAN.md"));
+        final List<PlanTask> tasks;
+        try {
+            tasks = PlanParser.parseFile(ws.resolve("docs/IMPLEMENTATION_PLAN.md"));
+        } catch (final PlanError e) {
+            // Python's orchestrate() catches (PlanError, OSError) here and records manifest.plan.error
+            // instead of crashing the run - an agent that never wrote (or wrote an unparseable)
+            // docs/IMPLEMENTATION_PLAN.md is a real, if unproductive, model outcome, not a harness
+            // failure. Validity.java's orchestrated branch already reads manifest.plan.error and marks
+            // the run INVALID ("plan unparseable") for exactly this shape - returning early here, same
+            // as Python, lets the rest of runOnce() (oracle scoring, writeManifest) still record the run.
+            log.warn("run {}: plan unparseable or missing: {}", runId, e.toString());
+            manifest.put("plan", planErrorEntry(planSource, e));
+            return;
+        }
         manifest.put("plan", Map.of("source", planSource, "sha", planSha,
                 "tasks", tasks.stream().map(t -> Map.of("id", t.id, "title", t.title == null ? "" : t.title, "deps", t.deps == null ? List.of() : t.deps, "checks", t.checks == null ? List.of() : t.checks)).toList()));
         final String stable = Packs.stablePack(promptText, tasks);
@@ -877,6 +927,11 @@ public class RunBench {
         int parallel = cfg.get("parallel") instanceof Number n ? n.intValue() : 1;
         final Object mp = ((Map<String, Object>) manifest.get("derived")).get("max_parallel");
         if (Boolean.TRUE.equals(cfg.get("parallel_auto")) && mp instanceof Number n2) parallel = Math.max(1, n2.intValue());
+        // #236: concurrent pi sessions would race on the one shared per-run models.json's baseUrl
+        // field (see PiAgent) - rejected outright rather than silently corrupting one session's model
+        // routing, matching this codebase's "never silently substitute" convention
+        if (parallel > 1 && "pi".equals(cfg.get("harness")))
+            throw new IllegalStateException("harness=pi does not support parallel>1 (parallel=" + parallel + "): concurrent pi sessions would race on the shared per-run models.json");
         manifest.put("parallel", parallel > 1 ? parallel : null);
         manifest.put("waves", new ArrayList<Map<String, Object>>());
         // the DECLARED task order, written before any task session starts: manifest.waves only ever
@@ -985,9 +1040,10 @@ public class RunBench {
             // 0 means unlimited (the system-wide "0 = no budget" convention)
             final int handoffWall = cfg.get("handoff_wall_sec") instanceof Number hw ? hw.intValue() : 0;
             ReferenceAgent.SessionResult h = RunBenchSupport.runBounded(handoffWall, t.id + "-handoff", rd.resolve("sessions"), handoffSid, proxy.abort(),
-                    () -> agent.run(t.id + "-handoff", Packs.handoffInstruction(t.id), handoffWall, handoffTokens,
+                    () -> runAgentSession(cfg, t.id + "-handoff", Packs.handoffInstruction(t.id), handoffWall, handoffTokens,
                             rd.resolve("sessions"), handoffSid, true, rd.resolve("packs/stable.md").toString(), ws.toString(),
-                            proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("model"), null));
+                            proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("model"),
+                            (Map<String, String>) cfg.get("_agent_env")));
             final Path hp = ws.resolve("handoff").resolve(t.id + ".md");
             if (Files.isRegularFile(hp)) {
                 final String txt = Files.readString(hp);
@@ -1030,9 +1086,10 @@ public class RunBench {
             ReferenceAgent.SessionResult prec;
             try {
                 prec = RunBenchSupport.runBounded(parallelPlanWall, "PARALLEL_PLAN", rd.resolve("sessions"), planSid, proxy.abort(),
-                        () -> agent.run("PARALLEL_PLAN", Packs.parallelPlanPack(tasks) + "\n\n" + Packs.PARALLEL_PLAN_INSTRUCTION, parallelPlanWall, parallelPlanTokens,
+                        () -> runAgentSession(cfg, "PARALLEL_PLAN", Packs.parallelPlanPack(tasks) + "\n\n" + Packs.PARALLEL_PLAN_INSTRUCTION, parallelPlanWall, parallelPlanTokens,
                                 rd.resolve("sessions"), planSid, false, rd.resolve("packs/stable.md").toString(), ws.toString(),
-                                proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("model"), null));
+                                proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("model"),
+                                (Map<String, String>) cfg.get("_agent_env")));
             } finally { proxy.stop(); }
             rc = prec.rc(); seconds = prec.seconds();
             ((Map<String, String>) manifest.get("snapshots")).put("parallel_plan", RunBenchSupport.snapshot(ws, "phase/parallel_plan"));

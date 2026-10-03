@@ -1,5 +1,6 @@
 package com.strgmai.ace.service.runner;
 
+import com.strgmai.ace.service.agent.PiAgent;
 import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.docker.DockerService;
@@ -54,7 +55,7 @@ class RunBenchTest {
     }
 
     private static RunBench runBench(BenchProperties props) {
-        return new RunBench(props, mock(ReferenceAgent.class), mock(RecordingProxyFactory.class),
+        return new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class),
                 mock(RunOracle.class), mock(Reviews.class), mock(ContextProbe.class));
     }
 
@@ -240,6 +241,32 @@ class RunBenchTest {
     void requirePlanAndImplementationPhasesIsANoOpForARungThatNeverHadThemAtAll() {
         // phasesFor() falls back to ["implement"] for every non-L7/L3p rung - unaffected either way
         assertDoesNotThrow(() -> RunBench.requirePlanAndImplementationPhases(List.of("implement"), List.of(), "L1_migration_entity"));
+    }
+
+    /** #235: job 6dc01359-0d37-48b3-afda-86226d391c39 failed outright (no manifest.json at all)
+     *  because the agent's p1_plan session finished without ever writing docs/IMPLEMENTATION_PLAN.md
+     *  and nothing caught the resulting PlanError. planErrorEntry() is the Python-matching recovery:
+     *  record the failure in manifest.plan instead of crashing. */
+    @Test
+    void planErrorEntryRecordsTheFailureInsteadOfPropagating() {
+        final var entry = RunBench.planErrorEntry("agent", new com.strgmai.ace.service.plan.PlanError("cannot read plan: boom"));
+        assertEquals("agent", entry.get("source"));
+        assertEquals("cannot read plan: boom", entry.get("error"));
+        assertEquals(List.of(), entry.get("tasks"));
+    }
+
+    @Test
+    void planErrorEntryTruncatesAnOverlongMessageToTwoHundredCharsLikePython() {
+        final var longMessage = "x".repeat(500);
+        final var entry = RunBench.planErrorEntry("agent", new com.strgmai.ace.service.plan.PlanError(longMessage));
+        assertEquals(200, ((String) entry.get("error")).length());
+    }
+
+    @Test
+    void planErrorEntryFallsBackToToStringWhenTheExceptionHasNoMessage() {
+        final var entry = RunBench.planErrorEntry("agent", new com.strgmai.ace.service.plan.PlanError(null));
+        assertNotNull(entry.get("error"));
+        assertFalse(((String) entry.get("error")).isBlank());
     }
 
     /** Found live 2026-09-25: oMLX's own memory-pressure throttling was slow enough to trip the
@@ -493,7 +520,7 @@ class RunBenchTest {
         final var props = mock(BenchProperties.class);
         final var probe = mockProbeAndProps(props);
         final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
         when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
 
         try (var dockerMock = mockStatic(DockerService.class)) {
@@ -518,7 +545,7 @@ class RunBenchTest {
         final var props = mock(BenchProperties.class);
         final var probe = mockProbeAndProps(props);
         final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
         when(oracle.score(any(), any(), any(), any())).thenThrow(new RuntimeException("docker-gated check crashed"));
 
         try (var dockerMock = mockStatic(DockerService.class)) {
@@ -539,7 +566,7 @@ class RunBenchTest {
         final var props = mock(BenchProperties.class);
         final var probe = mockProbeAndProps(props);
         final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
         when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
 
         try (var dockerMock = mockStatic(DockerService.class)) {
@@ -558,7 +585,7 @@ class RunBenchTest {
         final var props = mock(BenchProperties.class);
         final var probe = mock(ContextProbe.class);
         final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
         when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
 
         try (var dockerMock = mockStatic(DockerService.class)) {
@@ -575,7 +602,7 @@ class RunBenchTest {
         final var props = mock(BenchProperties.class);
         final var probe = mockProbeAndProps(props);
         final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
         when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
 
         try (var dockerMock = mockStatic(DockerService.class)) {

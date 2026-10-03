@@ -20,6 +20,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
 
     public static final String RUN_ID = "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$";
     public static final List<String> REASONING_EFFORTS = List.of("none", "low", "medium", "high");
+    /** "ref" = ReferenceAgent (in-process), "pi" = PiAgent (an external subprocess) - see #236. */
+    public static final Set<String> HARNESSES = Set.of("ref", "pi");
     /** the rung's own multi-phase sequence (RunBench.PHASES) - --phases picks a subset of these to
      *  actually run (queue.py's phases field), everything else is never a valid value here. */
     public static final Set<String> PHASES = Set.of("p0_definition", "p1_plan", "p2_implementation");
@@ -81,6 +83,11 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (runId != null && !runId.matches(RUN_ID)) throw new IllegalArgumentException("invalid run id: " + runId);
         if (mode != null && !List.of("monolithic", "orchestrated").contains(mode))
             throw new IllegalArgumentException("mode must be monolithic or orchestrated");
+        // #236: harness was never validated at all (nor consumed downstream - see PiAgent.java and
+        // JobCfgFactory/RunBench for the rest of that fix); this just rejects anything outside the
+        // two real implementations, the same bounded-enum pattern as mode/planSource above
+        if (harness != null && !HARNESSES.contains(harness))
+            throw new IllegalArgumentException("harness must be one of " + HARNESSES + ": " + harness);
         if (planSource != null && !List.of("agent", "reference").contains(planSource))
             throw new IllegalArgumentException("plan_source must be agent or reference");
         // sampler knobs (#72): temperature/top_p/repetition_penalty are unbounded on the wire (oMLX's

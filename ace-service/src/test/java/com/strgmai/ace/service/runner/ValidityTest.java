@@ -79,6 +79,29 @@ class ValidityTest {
         assertTrue((Boolean) Validity.validity(manifest, facts(10, 0), 0.2).get("valid"), "the 3-arg overload must still work unchanged");
     }
 
+    /** #235: RunBench.orchestratedPhase() now catches PlanError and records manifest.plan.error
+     *  (RunBench.planErrorEntry()) instead of crashing the run - this is the other half of that fix:
+     *  confirming the orchestrated branch here actually turns that into an INVALID reason. This path
+     *  was never exercised before #235, since nothing ever populated manifest.plan.error. */
+    @Test
+    void anUnparseablePlanInvalidatesAnOrchestratedRun() {
+        final var manifest = Map.of("mode", "orchestrated", "phases", List.of(),
+                "plan", Map.of("source", "agent", "error", "cannot read plan: boom", "tasks", List.of()));
+        final Map<String, Object> v = Validity.validity(manifest, facts(10, 0), 0.2);
+        assertFalse((Boolean) v.get("valid"));
+        assertTrue(((List<String>) v.get("reasons")).get(0).contains("plan unparseable: cannot read plan: boom"));
+    }
+
+    @Test
+    void aParseablePlanWithNoIntegrationTaskStillInvalidatesForADifferentReason() {
+        // the "else" branch: a plan WITHOUT an error, but where the integration task never ran
+        final var manifest = Map.of("mode", "orchestrated", "phases", List.of(), "tasks", List.of(),
+                "plan", Map.of("source", "agent", "sha", "abc", "tasks", List.of(Map.of("id", "T1"))));
+        final Map<String, Object> v = Validity.validity(manifest, facts(10, 0), 0.2);
+        assertFalse((Boolean) v.get("valid"));
+        assertTrue(((List<String>) v.get("reasons")).contains("integration task never ran"));
+    }
+
     private static Map<String, Object> facts(final int requests, final int errors) {
         final Map<String, Object> f = new java.util.LinkedHashMap<>();
         f.put("requests", requests); f.put("errors", errors); f.put("upstream_errors", 0);

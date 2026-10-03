@@ -96,11 +96,17 @@ public class BenchController {
 
     @GetMapping("/api/runs")
     public List<Map<String, Object>> runs(@RequestParam(required = false) String task, @RequestParam(required = false) String model,
-                                          @RequestParam(required = false, defaultValue = "") String valid) {
+                                          @RequestParam(required = false) String mode,
+                                          @RequestParam(required = false, defaultValue = "") String valid,
+                                          @RequestParam(required = false, defaultValue = "") String poolable) {
         final List<org.jooq.Condition> where = new ArrayList<>();
         if (task != null && !task.isBlank()) where.add(RUNS.TASK.eq(task));
         if (model != null && !model.isBlank()) where.add(RUNS.MODEL.eq(model));
+        if (mode != null && !mode.isBlank()) where.add(RUNS.MODE.eq(mode));
         if (!valid.isBlank()) where.add(RUNS.VALID.eq("true".equals(valid)));
+        // #236-adjacent: found in the same audit - the UI's "Poolable" filter (RunsView) has sent
+        // this param since it was added, but nothing here ever read it back out of the request
+        if (!poolable.isBlank()) where.add(RUNS.POOLABLE.eq("true".equals(poolable)));
         // #201: this explicit column list had fallen behind Api.Run's own DTO - POOLABLE and
         // PARTIAL_SCORE_PCT are real columns real consumers need (CompareView.poolableRunIds(),
         // RunsView's partial-score fallback) but were silently never selected here, so every
