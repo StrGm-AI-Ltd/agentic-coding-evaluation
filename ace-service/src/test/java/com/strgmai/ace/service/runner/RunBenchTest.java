@@ -2,6 +2,7 @@ package com.strgmai.ace.service.runner;
 
 import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.docker.DockerService;
 import com.strgmai.ace.service.oracle.RunOracle;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -367,5 +368,113 @@ class RunBenchTest {
         final Path rd = track(Files.createDirectory(tmp.resolve("rd2")));
 
         assertFalse(RunBench.exportSource(ws, rd));
+    }
+
+    // ---- oracleWithDocker(): found live 2026-09-29, Docker Desktop's own backend crashed under RAM
+    // pressure from a co-resident model server (#165 fixed this by unloading the model before Docker
+    // comes up and reloading it after) - these pin the sequencing/exception-safety that fix depends on.
+
+    private ContextProbe mockProbeAndProps(final BenchProperties props) {
+        when(props.endpoint()).thenReturn("http://127.0.0.1:9191/v1");
+        when(props.apiKey()).thenReturn("key");
+        when(props.model()).thenReturn("m");
+        return mock(ContextProbe.class);
+    }
+
+    @Test
+    void oracleWithDockerUnloadsBeforeDockerUpBeforeScoringBeforeDockerDownBeforeReload(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
+        final var props = mock(BenchProperties.class);
+        final var probe = mockProbeAndProps(props);
+        final var oracle = mock(RunOracle.class);
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
+        when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
+
+        try (var dockerMock = mockStatic(DockerService.class)) {
+            dockerMock.when(() -> DockerService.dockerUp(anyInt(), anyInt())).thenReturn(true);
+
+            rb.oracleWithDocker(Map.of("manage_docker", true), tmp, "task", tmp, Map.of());
+
+            final var inOrder = inOrder(probe, oracle);
+            inOrder.verify(probe).unloadModel("http://127.0.0.1:9191/v1", "key", "m");
+            dockerMock.verify(() -> DockerService.dockerUp(360, DockerService.DEFAULT_MEMORY_MIB));
+            inOrder.verify(oracle).score(any(), any(), any(), any());
+            dockerMock.verify(() -> DockerService.dockerDown(30));
+            inOrder.verify(probe).loadModel("http://127.0.0.1:9191/v1", "key", "m");
+        }
+    }
+
+    /** the #165 guarantee: a Docker-gated check crashing (or any other failure mid-scoring) must
+     *  never leave the model permanently unloaded / Docker Desktop's VM permanently up - the finally
+     *  block is what this test pins down. */
+    @Test
+    void oracleWithDockerStillReloadsTheModelWhenScoringThrows(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
+        final var props = mock(BenchProperties.class);
+        final var probe = mockProbeAndProps(props);
+        final var oracle = mock(RunOracle.class);
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
+        when(oracle.score(any(), any(), any(), any())).thenThrow(new RuntimeException("docker-gated check crashed"));
+
+        try (var dockerMock = mockStatic(DockerService.class)) {
+            dockerMock.when(() -> DockerService.dockerUp(anyInt(), anyInt())).thenReturn(true);
+
+            assertThrows(RuntimeException.class, () -> rb.oracleWithDocker(Map.of("manage_docker", true), tmp, "task", tmp, Map.of()));
+
+            dockerMock.verify(() -> DockerService.dockerDown(30));
+            verify(probe).loadModel("http://127.0.0.1:9191/v1", "key", "m");
+        }
+    }
+
+    /** emulates the real incident: Docker Desktop's backend crashed/never came back up. dockerUp()
+     *  giving up (returning false) must not skip scoring (RunOracle's own "docker info" check is
+     *  what actually gates individual checks) or skip the reload. */
+    @Test
+    void oracleWithDockerStillScoresAndReloadsWhenDockerNeverComesUp(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
+        final var props = mock(BenchProperties.class);
+        final var probe = mockProbeAndProps(props);
+        final var oracle = mock(RunOracle.class);
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
+        when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
+
+        try (var dockerMock = mockStatic(DockerService.class)) {
+            dockerMock.when(() -> DockerService.dockerUp(anyInt(), anyInt())).thenReturn(false);   // gave up
+
+            rb.oracleWithDocker(Map.of("manage_docker", true), tmp, "task", tmp, Map.of());
+
+            verify(oracle).score(any(), any(), any(), any());
+            dockerMock.verify(() -> DockerService.dockerDown(30));
+            verify(probe).loadModel("http://127.0.0.1:9191/v1", "key", "m");
+        }
+    }
+
+    @Test
+    void oracleWithDockerDoesNothingDockerRelatedWhenManageDockerIsOff(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
+        final var props = mock(BenchProperties.class);
+        final var probe = mock(ContextProbe.class);
+        final var oracle = mock(RunOracle.class);
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
+        when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
+
+        try (var dockerMock = mockStatic(DockerService.class)) {
+            rb.oracleWithDocker(Map.of("manage_docker", false), tmp, "task", tmp, Map.of());
+
+            verifyNoInteractions(probe);
+            dockerMock.verifyNoInteractions();
+            verify(oracle).score(any(), any(), any(), any());
+        }
+    }
+
+    @Test
+    void oracleWithDockerThreadsTheConfiguredMemoryMibThroughToDockerUp(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
+        final var props = mock(BenchProperties.class);
+        final var probe = mockProbeAndProps(props);
+        final var oracle = mock(RunOracle.class);
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
+        when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
+
+        try (var dockerMock = mockStatic(DockerService.class)) {
+            dockerMock.when(() -> DockerService.dockerUp(anyInt(), anyInt())).thenReturn(true);
+            rb.oracleWithDocker(Map.of("manage_docker", true, "docker_memory_mib", 8192), tmp, "task", tmp, Map.of());
+            dockerMock.verify(() -> DockerService.dockerUp(360, 8192));
+        }
     }
 }
