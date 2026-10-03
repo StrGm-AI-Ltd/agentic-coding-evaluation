@@ -46,6 +46,7 @@ public class ExperimentNewView extends VerticalLayout {
     private final IntegerField firstTokenTimeout = new IntegerField("First-token timeout");
     private final IntegerField compactionTrigger = new IntegerField("Compaction trigger");
     private final IntegerField reviewWallSec = new IntegerField("Review wall-clock budget");
+    private final IntegerField reviewTokens = new IntegerField("Review token budget");
     private final IntegerField contextWindow = new IntegerField("Context window");
     private final Checkbox noContextProbe = new Checkbox("Skip context probe");
     private final ComboBox<String> model = modelPicker("Model");
@@ -66,6 +67,14 @@ public class ExperimentNewView extends VerticalLayout {
     private final IntegerField parallelPlanWall = new IntegerField("Parallel-plan wall-clock budget");
     private final IntegerField handoffWall = new IntegerField("Handoff wall-clock budget");
     private final IntegerField wrapupWall = new IntegerField("Wrap-up wall-clock budget");
+    private final IntegerField parallelPlanTokens = new IntegerField("Parallel-plan token budget");
+    private final IntegerField handoffTokens = new IntegerField("Handoff token budget");
+    private final IntegerField wrapupTokens = new IntegerField("Wrap-up token budget");
+    private final IntegerField maxTurns = new IntegerField("Max turns");
+    private final IntegerField fixWall = new IntegerField("Fix-up wall-clock budget");
+    private final IntegerField fixTokens = new IntegerField("Fix-up token budget");
+    private final IntegerField dockerMemoryMib = new IntegerField("Docker memory cap (MiB)");
+    private final Checkbox dockerKeepWarm = new Checkbox("Keep Docker warm");
     private final Checkbox orch = new Checkbox("Orchestrated arm");
     private final Checkbox mono = new Checkbox("Monolithic arm");
     private final Checkbox monoRules = new Checkbox("Monolithic + rules arm");
@@ -125,6 +134,9 @@ public class ExperimentNewView extends VerticalLayout {
         reviewWallSec.setMin(1);
         reviewWallSec.setHelperText("seconds, per reviewer session; blank = default (900s)");
         reviewWallSec.setTooltipText(Tooltips.REVIEW_WALL_SEC);
+        reviewTokens.setMin(0);
+        reviewTokens.setHelperText("blank = unlimited");
+        reviewTokens.setTooltipText(Tooltips.REVIEW_TOKENS);
         contextWindow.setMin(1);
         contextWindow.setPlaceholder("blank = probe");
         contextWindow.setTooltipText(Tooltips.CONTEXT_WINDOW);
@@ -198,6 +210,28 @@ public class ExperimentNewView extends VerticalLayout {
         wrapupWall.setMin(1);
         wrapupWall.setHelperText("blank = default (300s, before the decode-speed scale)");
         wrapupWall.setTooltipText(Tooltips.WRAPUP_WALL);
+        parallelPlanTokens.setMin(0);
+        parallelPlanTokens.setHelperText("blank = unlimited");
+        parallelPlanTokens.setTooltipText(Tooltips.PARALLEL_PLAN_TOKENS);
+        handoffTokens.setMin(0);
+        handoffTokens.setHelperText("blank = unlimited");
+        handoffTokens.setTooltipText(Tooltips.HANDOFF_TOKENS);
+        wrapupTokens.setMin(0);
+        wrapupTokens.setHelperText("blank = unlimited");
+        wrapupTokens.setTooltipText(Tooltips.WRAPUP_TOKENS);
+        maxTurns.setMin(1);
+        maxTurns.setPlaceholder("blank = default (400)");
+        maxTurns.setTooltipText(Tooltips.MAX_TURNS);
+        fixWall.setMin(0);
+        fixWall.setHelperText("blank = unlimited");
+        fixWall.setTooltipText(Tooltips.FIX_WALL);
+        fixTokens.setMin(0);
+        fixTokens.setHelperText("blank = unlimited");
+        fixTokens.setTooltipText(Tooltips.FIX_TOKENS);
+        dockerMemoryMib.setMin(1);
+        dockerMemoryMib.setPlaceholder("blank = default (4096 MiB)");
+        dockerMemoryMib.setTooltipText(Tooltips.DOCKER_MEMORY_MIB);
+        dockerKeepWarm.setTooltipText(Tooltips.DOCKER_KEEP_WARM);
 
         orch.setValue(true);
         mono.setValue(true);
@@ -211,8 +245,11 @@ public class ExperimentNewView extends VerticalLayout {
                 Forms.row(name, template, k, model),
                 Forms.row(task),
                 Forms.row(taskWall, taskTokens, contextWindow, noContextProbe),
-                Forms.row(firstTokenTimeout, compactionTrigger, reviewWallSec),
-                Forms.row(parallelPlanWall, handoffWall, wrapupWall)));
+                Forms.row(firstTokenTimeout, compactionTrigger, maxTurns),
+                Forms.row(parallelPlanWall, handoffWall, wrapupWall),
+                Forms.row(parallelPlanTokens, handoffTokens, wrapupTokens),
+                Forms.row(fixWall, fixTokens),
+                Forms.row(dockerMemoryMib, dockerKeepWarm)));
 
         // NB: Vaadin components have exactly ONE parent — a shared field must live in
         // one section only (this bug shipped the model picker away from harness_effect
@@ -233,7 +270,7 @@ public class ExperimentNewView extends VerticalLayout {
         add(harnessEffectSection, modelAbSection, agentAbSection);
 
         add(Forms.section("Reviewers (all templates)",
-                Forms.row(reviewerModel, reviewWeight, reviewBlind),
+                Forms.row(reviewerModel, reviewWeight, reviewBlind, reviewTokens),
                 Forms.row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse)));
 
         add(Forms.section("Sampler (all templates, all arms)",
@@ -338,6 +375,7 @@ public class ExperimentNewView extends VerticalLayout {
         raw.put("first_token_timeout", firstTokenTimeout.getValue());
         raw.put("compaction_trigger", compactionTrigger.getValue());
         raw.put("review_wall_sec", reviewWallSec.getValue());
+        raw.put("review_tokens", reviewTokens.getValue());
         raw.put("context_window", contextWindow.getValue());
         raw.put("no_context_probe", noContextProbe.getValue());
         raw.put("reviewer_model", reviewerModel.getValue());
@@ -355,6 +393,14 @@ public class ExperimentNewView extends VerticalLayout {
         raw.put("parallel_plan_wall", parallelPlanWall.getValue());
         raw.put("handoff_wall", handoffWall.getValue());
         raw.put("wrapup_wall", wrapupWall.getValue());
+        raw.put("parallel_plan_tokens", parallelPlanTokens.getValue());
+        raw.put("handoff_tokens", handoffTokens.getValue());
+        raw.put("wrapup_tokens", wrapupTokens.getValue());
+        raw.put("max_turns", maxTurns.getValue());
+        raw.put("fix_wall", fixWall.getValue());
+        raw.put("fix_tokens", fixTokens.getValue());
+        raw.put("docker_memory_mib", dockerMemoryMib.getValue());
+        raw.put("docker_keep_warm", dockerKeepWarm.getValue());
         switch (currentTemplate) {
             case "harness_effect" -> {
                 raw.put("model", model.getValue());
@@ -388,13 +434,19 @@ public class ExperimentNewView extends VerticalLayout {
         return Map.ofEntries(
                 Map.entry("task_wall", taskWall), Map.entry("task_tokens", taskTokens),
                 Map.entry("first_token_timeout", firstTokenTimeout), Map.entry("compaction_trigger", compactionTrigger),
-                Map.entry("review_wall_sec", reviewWallSec), Map.entry("context_window", contextWindow),
+                Map.entry("review_wall_sec", reviewWallSec), Map.entry("review_tokens", reviewTokens),
+                Map.entry("context_window", contextWindow),
                 Map.entry("reviewer_model", reviewerModel), Map.entry("review_weight", reviewWeight),
                 Map.entry("trajectory_reviewer_model", trajectoryReviewerModel), Map.entry("trajectory_weight", trajectoryWeight),
                 Map.entry("temperature", temperature), Map.entry("top_p", topP), Map.entry("top_k", topK),
                 Map.entry("repetition_penalty", repetitionPenalty), Map.entry("max_tokens", maxTokens),
                 Map.entry("parallel_plan_wall", parallelPlanWall), Map.entry("handoff_wall", handoffWall),
-                Map.entry("wrapup_wall", wrapupWall), Map.entry("model", model), Map.entry("model_a", modelA),
+                Map.entry("wrapup_wall", wrapupWall),
+                Map.entry("parallel_plan_tokens", parallelPlanTokens), Map.entry("handoff_tokens", handoffTokens),
+                Map.entry("wrapup_tokens", wrapupTokens), Map.entry("max_turns", maxTurns),
+                Map.entry("fix_wall", fixWall), Map.entry("fix_tokens", fixTokens),
+                Map.entry("docker_memory_mib", dockerMemoryMib),
+                Map.entry("model", model), Map.entry("model_a", modelA),
                 Map.entry("model_b", modelB), Map.entry("parallel", parallel));
     }
 

@@ -113,6 +113,49 @@ class ExperimentParamsTest {
         }
     }
 
+    /** Found in the #236 audit: these 9 fields were fully wired and tested on the backend
+     *  (RunBench/RunSpec/ExperimentsService) but had no form field on either view at all - same
+     *  class of gap as the walls above, one step further back in the chain. */
+    @Test
+    void newBudgetParamsPassThroughWhenSet() {
+        final var raw = common();
+        raw.put("model", "qwen");
+        raw.put("arms", List.of());
+        raw.put("parallel", null);
+        raw.put("review_tokens", 5000);
+        raw.put("max_turns", 50);
+        raw.put("fix_wall", 1200);
+        raw.put("fix_tokens", 30000);
+        raw.put("parallel_plan_tokens", 9000);
+        raw.put("handoff_tokens", 4000);
+        raw.put("wrapup_tokens", 2500);
+        raw.put("docker_memory_mib", 6144);
+        raw.put("docker_keep_warm", true);
+        final var params = ExperimentParams.build("harness_effect", raw);
+        assertEquals(5000, params.get("review_tokens"));
+        assertEquals(50, params.get("max_turns"));
+        assertEquals(1200, params.get("fix_wall"));
+        assertEquals(30000, params.get("fix_tokens"));
+        assertEquals(9000, params.get("parallel_plan_tokens"));
+        assertEquals(4000, params.get("handoff_tokens"));
+        assertEquals(2500, params.get("wrapup_tokens"));
+        assertEquals(6144, params.get("docker_memory_mib"));
+        assertEquals(true, params.get("docker_keep_warm"));
+    }
+
+    @Test
+    void newBudgetParamsOmittedWhenUnset() {
+        final var raw = common();
+        raw.put("model", "qwen");
+        raw.put("arms", List.of());
+        raw.put("parallel", null);
+        final var params = ExperimentParams.build("harness_effect", raw);
+        for (final var key : List.of("review_tokens", "max_turns", "fix_wall", "fix_tokens",
+                "parallel_plan_tokens", "handoff_tokens", "wrapup_tokens", "docker_memory_mib", "docker_keep_warm")) {
+            assertFalse(params.containsKey(key), key + " must be omitted, not sent as null");
+        }
+    }
+
     @Test
     void harnessEffect_keepsCheckedArms() {
         final var raw = common();

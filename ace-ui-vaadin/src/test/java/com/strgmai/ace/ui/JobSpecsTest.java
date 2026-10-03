@@ -47,10 +47,12 @@ class JobSpecsTest {
         raw.put("manage_docker", true);
         raw.put("skip_docker", false);
         raw.put("self_review", null); // a null boolean still yields an explicit false, like the service form
+        raw.put("docker_keep_warm", true);
         final var spec = JobSpecs.build("L1", raw);
         assertEquals(Boolean.TRUE, spec.get("manage_docker"));
         assertEquals(Boolean.FALSE, spec.get("skip_docker"));
         assertEquals(Boolean.FALSE, spec.get("self_review"));
+        assertEquals(Boolean.TRUE, spec.get("docker_keep_warm"));
     }
 
     @Test
