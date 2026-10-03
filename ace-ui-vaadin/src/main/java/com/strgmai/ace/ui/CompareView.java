@@ -43,10 +43,17 @@ public class CompareView extends VerticalLayout {
 
         groupA.setPlaceholder("pick one or more run ids");
         groupB.setPlaceholder("pick one or more run ids");
+        groupA.setTooltipText(Tooltips.COMPARE_GROUP_A);
+        groupB.setTooltipText(Tooltips.COMPARE_GROUP_B);
 
         metric.setLabel("metric");
         metric.setItems("functional", "score", "agent_result");
         metric.setValue("functional");
+        metric.setTooltipText(Tooltips.COMPARE_METRIC);
+        modelAb.setTooltipText(Tooltips.COMPARE_MODEL_AB);
+        allowPartial.setTooltipText(Tooltips.COMPARE_ALLOW_PARTIAL);
+        includeInvalid.setTooltipText(Tooltips.COMPARE_INCLUDE_INVALID);
+        allowBudgetMismatch.setTooltipText(Tooltips.COMPARE_ALLOW_BUDGET_MISMATCH);
 
         final var row1 = new HorizontalLayout(groupA, groupB, metric);
         row1.getStyle().set("flex-wrap", "wrap");

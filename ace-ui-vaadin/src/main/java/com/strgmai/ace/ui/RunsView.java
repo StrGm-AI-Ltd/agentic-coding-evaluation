@@ -53,6 +53,11 @@ public class RunsView extends VerticalLayout {
         }
         valid.setLabel("valid");
         poolable.setLabel("poolable");
+        task.setTooltipText(Tooltips.FILTER_TASK);
+        model.setTooltipText(Tooltips.FILTER_MODEL);
+        mode.setTooltipText(Tooltips.FILTER_MODE);
+        valid.setTooltipText(Tooltips.FILTER_VALID);
+        poolable.setTooltipText(Tooltips.FILTER_POOLABLE);
 
         final var rescan = new Button("Rescan results/", VaadinIcon.UPLOAD.create(), e -> {
             try {

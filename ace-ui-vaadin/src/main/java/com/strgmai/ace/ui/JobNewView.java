@@ -95,6 +95,7 @@ public class JobNewView extends VerticalLayout {
         task.setAllowCustomValue(true);
         task.setRequired(true);
         task.setPlaceholder("L1…L7 rung");
+        task.setTooltipText(Tooltips.TASK);
         // JobSpecs.build's only possible failure is "task is required" - clear the inline error
         // the moment the operator picks something, rather than making them resubmit to see it go
         task.addValueChangeListener(e -> task.setInvalid(false));
@@ -105,6 +106,10 @@ public class JobNewView extends VerticalLayout {
         }
         reviewerModel.setPlaceholder("provider/model — openrouter/…, gpt-5, claude-opus-5…");
         trajectoryReviewerModel.setPlaceholder(reviewerModel.getPlaceholder());
+        model.setTooltipText(Tooltips.MODEL);
+        reviewerModel.setTooltipText(Tooltips.REVIEWER_MODEL);
+        trajectoryReviewerModel.setTooltipText(Tooltips.TRAJECTORY_REVIEWER_MODEL);
+        runIdField.setTooltipText(Tooltips.RUN_ID);
 
         configureSelect(harness, "", "ref", "pi");
         configureSelect(mode, "", "monolithic", "orchestrated");
@@ -119,24 +124,41 @@ public class JobNewView extends VerticalLayout {
         trajectoryUse.setLabel("trajectory_use");
         reasoningEffort.setLabel("reasoning_effort");
         reasoningEffort.setItemLabelGenerator(v -> v.isEmpty() ? "blank = default per phase" : v.equals("none") ? "none (disable thinking)" : v);
+        harness.setTooltipText(Tooltips.HARNESS);
+        mode.setTooltipText(Tooltips.MODE);
+        planSource.setTooltipText(Tooltips.PLAN_SOURCE);
+        parallelPlan.setTooltipText(Tooltips.PARALLEL_PLAN);
+        trajectoryUse.setTooltipText(Tooltips.TRAJECTORY_USE);
+        reasoningEffort.setTooltipText(Tooltips.REASONING_EFFORT);
 
         // the ids RunSpec.PHASES/RunBench.PHASES accept - L7_full_platform's and L3p_point_in_time's
         // own multi-phase sequence; blank/none selected = every phase the rung defines (the default)
         phases.setItems("p0_definition", "p1_plan", "p2_implementation");
         phases.setPlaceholder("blank = every phase the rung defines");
+        phases.setTooltipText(Tooltips.PHASES);
         parallel.setPlaceholder("auto, or 1–99");
+        parallel.setTooltipText(Tooltips.PARALLEL);
         manageDocker.setValue(true);
         priority.setValue(0);
+        priority.setTooltipText(Tooltips.PRIORITY);
         taskWall.setMin(1);
+        taskWall.setTooltipText(Tooltips.TASK_WALL);
         taskTokens.setMin(1);
+        taskTokens.setTooltipText(Tooltips.TASK_TOKENS);
         implWall.setMin(1);
+        implWall.setTooltipText(Tooltips.IMPL_WALL);
         implTokens.setMin(1);
+        implTokens.setTooltipText(Tooltips.IMPL_TOKENS);
         planWall.setMin(0);
         planWall.setPlaceholder("blank = default (900s), 0 = unlimited");
+        planWall.setTooltipText(Tooltips.PLAN_WALL);
         planTokens.setMin(1);
+        planTokens.setTooltipText(Tooltips.PLAN_TOKENS);
         contextWindow.setMin(1);
+        contextWindow.setTooltipText(Tooltips.CONTEXT_WINDOW);
         firstTokenTimeout.setMin(1);
         firstTokenTimeout.setPlaceholder("blank = default (180s)");
+        firstTokenTimeout.setTooltipText(Tooltips.FIRST_TOKEN_TIMEOUT);
         // #208: compactionTrigger's 2-line helper text makes it taller than firstTokenTimeout
         // (placeholder only, no helper) - Forms.row()'s bottom alignment then pushes
         // firstTokenTimeout's label down to match, instead of the two staying level. Reserving
@@ -145,38 +167,64 @@ public class JobNewView extends VerticalLayout {
         compactionTrigger.addClassName("reserve-helper-height");
         compactionTrigger.setMin(0);
         compactionTrigger.setHelperText("blank = default (28000), 0 = disabled");
+        compactionTrigger.setTooltipText(Tooltips.COMPACTION_TRIGGER);
         reviewWallSec.setMin(1);
         reviewWallSec.setPlaceholder("blank = default (900s)");
+        reviewWallSec.setTooltipText(Tooltips.REVIEW_WALL_SEC);
         wallBudget.setMin(1);
+        wallBudget.setTooltipText(Tooltips.WALL_BUDGET);
         parallelWeight.setMin(0);
         parallelWeight.setMax(1);
+        parallelWeight.setTooltipText(Tooltips.PARALLEL_WEIGHT);
         efficiencyWeight.setMin(0);
         efficiencyWeight.setMax(1);
         efficiencyWeight.setPlaceholder("blank = 0 (opt-in; not blended by default)");
+        efficiencyWeight.setTooltipText(Tooltips.EFFICIENCY_WEIGHT);
         reviewWeight.setMin(0);
         reviewWeight.setMax(1);
+        reviewWeight.setTooltipText(Tooltips.REVIEW_WEIGHT);
         trajectoryWeight.setMin(0);
         trajectoryWeight.setMax(1);
+        trajectoryWeight.setTooltipText(Tooltips.TRAJECTORY_WEIGHT);
         temperature.setMin(0);
         temperature.setPlaceholder("blank = operator default");
+        temperature.setTooltipText(Tooltips.TEMPERATURE);
         topP.setMin(0);
         topP.setMax(1);
         topP.setPlaceholder("blank = operator default");
+        topP.setTooltipText(Tooltips.TOP_P);
         topK.setMin(1);
         topK.setPlaceholder("blank = model default");
+        topK.setTooltipText(Tooltips.TOP_K);
         repetitionPenalty.setMin(0);
         repetitionPenalty.setPlaceholder("blank = model default");
+        repetitionPenalty.setTooltipText(Tooltips.REPETITION_PENALTY);
         maxTokens.setMin(1);
         maxTokens.setPlaceholder("blank = context-probe-derived cap");
+        maxTokens.setTooltipText(Tooltips.MAX_TOKENS);
         parallelPlanWall.setMin(1);
         parallelPlanWall.setPlaceholder("blank = default (600s)");
         parallelPlanWall.addClassName("reserve-helper-height");
+        parallelPlanWall.setTooltipText(Tooltips.PARALLEL_PLAN_WALL);
         handoffWall.setMin(1);
         handoffWall.setPlaceholder("blank = default (300s)");
         handoffWall.addClassName("reserve-helper-height");
+        handoffWall.setTooltipText(Tooltips.HANDOFF_WALL);
         wrapupWall.setMin(1);
         wrapupWall.setHelperText("blank = default (300s, before the decode-speed scale)");
         wrapupWall.addClassName("reserve-helper-height");
+        wrapupWall.setTooltipText(Tooltips.WRAPUP_WALL);
+        javaHome.setTooltipText(Tooltips.JAVA_HOME);
+        handoffNotes.setTooltipText(Tooltips.HANDOFF_NOTES);
+        systemRules.setTooltipText(Tooltips.SYSTEM_RULES);
+        selfReview.setTooltipText(Tooltips.SELF_REVIEW);
+        reviewBlind.setTooltipText(Tooltips.REVIEW_BLIND);
+        trajectoryReview.setTooltipText(Tooltips.TRAJECTORY_REVIEW);
+        noContextProbe.setTooltipText(Tooltips.NO_CONTEXT_PROBE);
+        contextProbeFresh.setTooltipText(Tooltips.CONTEXT_PROBE_FRESH);
+        keepWorkspace.setTooltipText(Tooltips.KEEP_WORKSPACE);
+        manageDocker.setTooltipText(Tooltips.MANAGE_DOCKER);
+        skipDocker.setTooltipText(Tooltips.SKIP_DOCKER);
 
         add(new H2("New job"));
         add(new RouterLink("← Queue", JobsView.class));
