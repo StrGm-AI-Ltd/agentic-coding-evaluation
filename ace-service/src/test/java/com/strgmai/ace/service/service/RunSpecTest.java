@@ -16,7 +16,7 @@ class RunSpecTest {
     private static RunSpec walls(final Double temperature, final Double topP, final Integer topK,
                                   final Double repetitionPenalty, final Integer maxTokens, final String reasoningEffort,
                                   final Integer parallelPlanWall, final Integer handoffWall, final Integer wrapupWall) {
-        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", 3600, null, null, null, null, false, false, false, null, false, true, false, false, null, null, null, null, false, null, null, null, null, "r1", temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, null, null, null, null, null, null, null, null, false);
+        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", null, 3600, null, null, null, null, null, null, null, null, false, false, false, null, false, true, false, false, false, false, null, null, null, null, false, null, null, null, null, null, "r1", temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, null, null, null, null, null, null, null, null, false);
     }
 
     @Test
@@ -76,6 +76,33 @@ class RunSpecTest {
     @Test
     void unrecognisedReasoningEffortIsRejected() {
         assertThrows(IllegalArgumentException.class, () -> base(null, null, null, null, null, "extreme"));
+    }
+
+    /** Found live 2026-10-03: --phases (queue.py's own field, restricting a rung's own p0/p1/p2
+     *  sequence to a chosen subset) had no Java RunSpec field at all - the UI field collected it but
+     *  it was silently dropped before ever reaching argv(). */
+    @Test
+    void argvIncludesPhasesWhenSet() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").phases("p1_plan,p2_implementation").build().argv("r1");
+        assertTrue(argv.contains("--phases=p1_plan,p2_implementation"));
+    }
+
+    @Test
+    void argvOmitsPhasesWhenUnset() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
+        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--phases")));
+    }
+
+    @Test
+    void everyKnownPhaseIsAccepted() {
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").phases("p0_definition,p1_plan,p2_implementation").build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").phases("p2_implementation").build());
+    }
+
+    @Test
+    void unknownPhaseIsRejected() {
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").phases("not_a_phase").build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").phases("p1_plan,bogus").build());
     }
 
     /** Found live 2026-09-25: PARALLEL_PLAN/handoff/wrap-up walls were fixed literals in
@@ -250,6 +277,89 @@ class RunSpecTest {
         assertTrue(argv.stream().noneMatch(a -> a.startsWith("--docker-memory-mib") || a.equals("--docker-keep-warm")));
     }
 
+    /** Found live 2026-10-03 (#228): 8 more queue.py RunSpec fields had no Java field at all, the
+     *  same class of bug as --phases above - collected by the UI, silently dropped before argv(). */
+    @Test
+    void argvIncludesPlanTokensAndWallBudgetWhenSet() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").planTokens(5000).wallBudget(300).build().argv("r1");
+        assertTrue(argv.contains("--plan-tokens=5000"));
+        assertTrue(argv.contains("--wall-budget=300"));
+    }
+
+    @Test
+    void argvOmitsPlanTokensAndWallBudgetWhenUnset() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
+        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--plan-tokens") || a.startsWith("--wall-budget")));
+    }
+
+    @Test
+    void planTokensAndWallBudgetRejectZeroAndNegative() {
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").planTokens(0).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").planTokens(-1).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").wallBudget(0).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").wallBudget(-1).build());
+    }
+
+    @Test
+    void argvIncludesParallelPlanAndWeightWhenSet() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").parallelPlan("off").parallelWeight(0.2).build().argv("r1");
+        assertTrue(argv.contains("--parallel-plan=off"));
+        assertTrue(argv.contains("--parallel-weight=0.2"));
+    }
+
+    @Test
+    void argvOmitsParallelPlanAndWeightWhenUnset() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
+        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--parallel-plan") || a.startsWith("--parallel-weight")));
+    }
+
+    @Test
+    void parallelPlanMustBeOnOrOff() {
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").parallelPlan("on").build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").parallelPlan("off").build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").parallelPlan("maybe").build());
+    }
+
+    @Test
+    void parallelWeightMustBeWithinZeroToOne() {
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").parallelWeight(-0.1).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").parallelWeight(1.1).build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").parallelWeight(0.0).build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").parallelWeight(1.0).build());
+    }
+
+    @Test
+    void argvIncludesKeepWorkspaceAndSkipDockerWhenSet() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").keepWorkspace(true).skipDocker(true).build().argv("r1");
+        assertTrue(argv.contains("--keep-workspace"));
+        assertTrue(argv.contains("--skip-docker"));
+    }
+
+    @Test
+    void argvOmitsKeepWorkspaceAndSkipDockerWhenUnset() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
+        assertTrue(argv.stream().noneMatch(a -> a.equals("--keep-workspace") || a.equals("--skip-docker")));
+    }
+
+    @Test
+    void argvIncludesJavaHomeWhenSet() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").javaHome("/opt/homebrew/opt/openjdk@21").build().argv("r1");
+        assertTrue(argv.contains("--java-home=/opt/homebrew/opt/openjdk@21"));
+    }
+
+    @Test
+    void argvOmitsJavaHomeWhenUnset() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
+        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--java-home")));
+    }
+
+    @Test
+    void javaHomeRejectsEmbeddedControlCharactersOrAnOverlongValue() {
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").javaHome("/opt/jdk\nEVIL").build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").javaHome("x".repeat(501)).build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").javaHome("/opt/homebrew/opt/openjdk@21").build());
+    }
+
     /** #77: every field set to a DISTINCT, recognizable value via the map, so a from()/Builder bug
      *  that transposes two same-typed fields (the exact class of bug from() exists to make impossible)
      *  fails this test on the specific field it mixed up, not just on "something changed". */
@@ -257,17 +367,20 @@ class RunSpecTest {
     void fromMapPutsEveryFieldInItsOwnNamedSlot() {
         final var spec = new java.util.LinkedHashMap<String, Object>();
         spec.put("task", "L3p_point_in_time"); spec.put("model", "m1"); spec.put("harness", "ref");
-        spec.put("mode", "orchestrated"); spec.put("plan_source", "agent");
+        spec.put("mode", "orchestrated"); spec.put("plan_source", "agent"); spec.put("phases", "p1_plan,p2_implementation");
         spec.put("task_wall", 111); spec.put("task_tokens", 222); spec.put("impl_wall", 333); spec.put("impl_tokens", 444);
-        spec.put("parallel", "3"); spec.put("system_rules", true); spec.put("self_review", true);
+        spec.put("plan_tokens", 445); spec.put("wall_budget", 446);
+        spec.put("parallel", "3"); spec.put("parallel_plan", "off"); spec.put("parallel_weight", 0.15);
+        spec.put("system_rules", true); spec.put("self_review", true);
         spec.put("trajectory_review", true); spec.put("reviewer_model", "reviewer-m");
         spec.put("handoff_notes", true); spec.put("manage_docker", false);
         spec.put("no_context_probe", true); spec.put("context_probe_fresh", true);
+        spec.put("keep_workspace", true); spec.put("skip_docker", true);
         spec.put("context_window", 555); spec.put("first_token_timeout", 666);
         spec.put("compaction_trigger", 777); spec.put("review_wall_sec", 888); spec.put("review_tokens", 8880);
         spec.put("review_blind", true); spec.put("trajectory_reviewer_model", "traj-reviewer-m");
         spec.put("review_weight", 0.11); spec.put("trajectory_weight", 0.22);
-        spec.put("trajectory_use", "direct"); spec.put("run_id", "run-xyz");
+        spec.put("trajectory_use", "direct"); spec.put("java_home", "/opt/jdk-21"); spec.put("run_id", "run-xyz");
         spec.put("temperature", 0.33); spec.put("top_p", 0.44); spec.put("top_k", 12);
         spec.put("repetition_penalty", 1.23); spec.put("max_tokens", 999);
         spec.put("reasoning_effort", "high");
@@ -283,11 +396,16 @@ class RunSpecTest {
         assertEquals("ref", rs.harness());
         assertEquals("orchestrated", rs.mode());
         assertEquals("agent", rs.planSource());
+        assertEquals("p1_plan,p2_implementation", rs.phases());
         assertEquals(111, rs.taskWall());
         assertEquals(222, rs.taskTokens());
         assertEquals(333, rs.implWall());
         assertEquals(444, rs.implTokens());
+        assertEquals(445, rs.planTokens());
+        assertEquals(446, rs.wallBudget());
         assertEquals("3", rs.parallel());
+        assertEquals("off", rs.parallelPlan());
+        assertEquals(0.15, rs.parallelWeight());
         assertTrue(rs.systemRules());
         assertTrue(rs.selfReview());
         assertTrue(rs.trajectoryReview());
@@ -296,6 +414,8 @@ class RunSpecTest {
         assertFalse(rs.manageDocker());
         assertTrue(rs.noContextProbe());
         assertTrue(rs.contextProbeFresh());
+        assertTrue(rs.keepWorkspace());
+        assertTrue(rs.skipDocker());
         assertEquals(555, rs.contextWindow());
         assertEquals(666, rs.firstTokenTimeout());
         assertEquals(777, rs.compactionTrigger());
@@ -306,6 +426,7 @@ class RunSpecTest {
         assertEquals(0.11, rs.reviewWeight());
         assertEquals(0.22, rs.trajectoryWeight());
         assertEquals("direct", rs.trajectoryUse());
+        assertEquals("/opt/jdk-21", rs.javaHome());
         assertEquals("run-xyz", rs.runId());
         assertEquals(0.33, rs.temperature());
         assertEquals(0.44, rs.topP());
@@ -339,7 +460,7 @@ class RunSpecTest {
     @Test
     void builderProducesTheSameRunSpecAsThePositionalConstructor() {
         final var viaBuilder = RunSpec.builder().task("t").model("m").runId("r1").temperature(0.5).build();
-        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, false, null, null, null, null, false, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false);
+        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, false, false, false, null, null, null, null, false, null, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false);
         assertEquals(viaConstructor, viaBuilder);
     }
 }

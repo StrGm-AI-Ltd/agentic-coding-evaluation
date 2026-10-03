@@ -3,6 +3,7 @@ package com.strgmai.ace.ui;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.combobox.ComboBox;
+import com.vaadin.flow.component.combobox.MultiSelectComboBox;
 import com.vaadin.flow.component.dependency.CssImport;
 import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.notification.Notification;
@@ -43,10 +44,9 @@ public class JobNewView extends VerticalLayout {
     private final Select<String> parallelPlan = new Select<>();
     private final Select<String> trajectoryUse = new Select<>();
     private final Select<String> reasoningEffort = new Select<>();
-    private final TextField phases = new TextField("phases");
+    private final MultiSelectComboBox<String> phases = new MultiSelectComboBox<>("phases");
     private final TextField parallel = new TextField("parallel");
     private final TextField javaHome = new TextField("java_home");
-    private final TextField config = new TextField("config");
     private final TextField runIdField = new TextField("run_id");
     private final IntegerField taskWall = new IntegerField("task_wall");
     private final IntegerField taskTokens = new IntegerField("task_tokens");
@@ -118,7 +118,10 @@ public class JobNewView extends VerticalLayout {
         reasoningEffort.setLabel("reasoning_effort");
         reasoningEffort.setItemLabelGenerator(v -> v.isEmpty() ? "blank = default per phase" : v.equals("none") ? "none (disable thinking)" : v);
 
-        phases.setPlaceholder("definition,plan,t1,t2 (comma list)");
+        // the ids RunSpec.PHASES/RunBench.PHASES accept - L7_full_platform's and L3p_point_in_time's
+        // own multi-phase sequence; blank/none selected = every phase the rung defines (the default)
+        phases.setItems("p0_definition", "p1_plan", "p2_implementation");
+        phases.setPlaceholder("blank = every phase the rung defines");
         parallel.setPlaceholder("auto, or 1–99");
         manageDocker.setValue(true);
         priority.setValue(0);
@@ -190,7 +193,7 @@ public class JobNewView extends VerticalLayout {
                 Forms.row(reviewWallSec)));
         add(Forms.section("Model & flags",
                 Forms.row(model, handoffNotes, systemRules, selfReview),
-                Forms.row(javaHome, config, noContextProbe, contextProbeFresh, keepWorkspace),
+                Forms.row(javaHome, noContextProbe, contextProbeFresh, keepWorkspace),
                 Forms.row(manageDocker, skipDocker, priority)));
 
         final var submit = new Button("Enqueue job", e -> submit());
@@ -257,7 +260,7 @@ public class JobNewView extends VerticalLayout {
         raw.put("mode", mode.getValue());
         raw.put("plan_source", planSource.getValue());
         raw.put("reasoning_effort", reasoningEffort.getValue());
-        raw.put("phases", phases.getValue());
+        raw.put("phases", String.join(",", phases.getValue()));
         raw.put("temperature", temperature.getValue());
         raw.put("top_p", topP.getValue());
         raw.put("top_k", topK.getValue());
@@ -284,7 +287,6 @@ public class JobNewView extends VerticalLayout {
         raw.put("trajectory_use", trajectoryUse.getValue());
         raw.put("review_wall_sec", reviewWallSec.getValue());
         raw.put("java_home", javaHome.getValue());
-        raw.put("config", config.getValue());
         raw.put("wall_budget", wallBudget.getValue());
         raw.put("run_id", runIdField.getValue());
         raw.put("handoff_notes", handoffNotes.getValue());

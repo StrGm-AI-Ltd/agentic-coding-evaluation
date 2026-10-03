@@ -5,13 +5,14 @@ import java.util.*;
 /** Port of service/queue.py's RunSpec: the flags a queued run may carry, in argv order, with the
  *  same validation (known rung, positive budgets, bounded patterns). argv() rebuilds the CLI
  *  record stored on the job. */
-public record RunSpec(String task, String model, String harness, String mode, String planSource, Integer taskWall, Integer taskTokens,
-                      Integer implWall, Integer implTokens, String parallel, boolean systemRules, boolean selfReview,
+public record RunSpec(String task, String model, String harness, String mode, String planSource, String phases, Integer taskWall, Integer taskTokens,
+                      Integer implWall, Integer implTokens, Integer planTokens, Integer wallBudget, String parallel, String parallelPlan, Double parallelWeight,
+                      boolean systemRules, boolean selfReview,
                       boolean trajectoryReview, String reviewerModel, boolean handoffNotes, boolean manageDocker,
-                      boolean noContextProbe, boolean contextProbeFresh,
+                      boolean noContextProbe, boolean contextProbeFresh, boolean keepWorkspace, boolean skipDocker,
                       Integer contextWindow, Integer firstTokenTimeout, Integer compactionTrigger, Integer reviewWallSec,
                       boolean reviewBlind, String trajectoryReviewerModel, Double reviewWeight, Double trajectoryWeight,
-                      String trajectoryUse, String runId,
+                      String trajectoryUse, String javaHome, String runId,
                       Double temperature, Double topP, Integer topK, Double repetitionPenalty, Integer maxTokens, String reasoningEffort,
                       Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns, Integer reviewTokens,
                       Integer fixWall, Integer fixTokens, Integer parallelPlanTokens, Integer handoffTokens, Integer wrapupTokens,
@@ -19,13 +20,21 @@ public record RunSpec(String task, String model, String harness, String mode, St
 
     public static final String RUN_ID = "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$";
     public static final List<String> REASONING_EFFORTS = List.of("none", "low", "medium", "high");
+    /** the rung's own multi-phase sequence (RunBench.PHASES) - --phases picks a subset of these to
+     *  actually run (queue.py's phases field), everything else is never a valid value here. */
+    public static final Set<String> PHASES = Set.of("p0_definition", "p1_plan", "p2_implementation");
 
     public RunSpec {
+        if (phases != null && !phases.isBlank())
+            for (final String p : phases.split(","))
+                if (!PHASES.contains(p)) throw new IllegalArgumentException("unknown phase: " + p + " (must be one of " + PHASES + ")");
         // implWall/implTokens/contextWindow/maxTokens are capacities, not spending budgets a run can
         // choose to leave uncapped (a 0-token generation or a 0-wide context window is meaningless) -
-        // these still require a genuinely positive value.
+        // these still require a genuinely positive value. planTokens/wallBudget (queue.py: gt=0) are
+        // the same class - a 0-token plan budget or a 0-second smoke-test wall is meaningless too.
         implWall = positive(implWall); implTokens = positive(implTokens);
         contextWindow = positive(contextWindow); maxTokens = positive(maxTokens);
+        planTokens = positive(planTokens); wallBudget = positive(wallBudget);
         // a 0 or negative memory cap is just as meaningless as a 0-wide context window
         dockerMemoryMib = positive(dockerMemoryMib);
         // every other wall/token budget: 0 means unlimited (the system-wide "0 = no budget"
@@ -54,6 +63,15 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (trajectoryWeight != null && (trajectoryWeight < 0 || trajectoryWeight > 1)) throw new IllegalArgumentException("trajectoryWeight must be within 0..1: " + trajectoryWeight);
         if (trajectoryUse != null && !trajectoryUse.isBlank() && !List.of("calibration", "direct").contains(trajectoryUse))
             throw new IllegalArgumentException("trajectoryUse must be calibration or direct: " + trajectoryUse);
+        if (parallelPlan != null && !parallelPlan.isBlank() && !List.of("on", "off").contains(parallelPlan))
+            throw new IllegalArgumentException("parallelPlan must be on or off: " + parallelPlan);
+        if (parallelWeight != null && (parallelWeight < 0 || parallelWeight > 1))
+            throw new IllegalArgumentException("parallelWeight must be within 0..1: " + parallelWeight);
+        // queue.py's PATH pattern: no embedded NUL/CR/LF, 1-500 chars - this ends up in an env var and
+        // on a shell command line (RunBenchSupport.scrubbedEnv), so the same injection-shaped values
+        // Python already rejected stay rejected here too.
+        if (javaHome != null && !javaHome.matches("[^\\x00\\r\\n]{1,500}"))
+            throw new IllegalArgumentException("invalid java_home path: " + javaHome);
         if (runId != null && !runId.matches(RUN_ID)) throw new IllegalArgumentException("invalid run id: " + runId);
         if (mode != null && !List.of("monolithic", "orchestrated").contains(mode))
             throw new IllegalArgumentException("mode must be monolithic or orchestrated");
@@ -84,11 +102,16 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (harness != null) args.add("--harness=" + harness);
         if (mode != null) args.add("--mode=" + mode);
         if (planSource != null) args.add("--plan-source=" + planSource);
+        if (phases != null && !phases.isBlank()) args.add("--phases=" + phases);
         if (taskWall != null) args.add("--task-wall=" + taskWall);
         if (taskTokens != null) args.add("--task-tokens=" + taskTokens);
         if (implWall != null) args.add("--impl-wall=" + implWall);
         if (implTokens != null) args.add("--impl-tokens=" + implTokens);
+        if (planTokens != null) args.add("--plan-tokens=" + planTokens);
+        if (wallBudget != null) args.add("--wall-budget=" + wallBudget);
         if (parallel != null && !parallel.isBlank()) args.add("--parallel=" + parallel);
+        if (parallelPlan != null && !parallelPlan.isBlank()) args.add("--parallel-plan=" + parallelPlan);
+        if (parallelWeight != null) args.add("--parallel-weight=" + parallelWeight);
         if (systemRules) args.add("--system-rules");
         if (selfReview) args.add("--self-review");
         if (trajectoryReview) args.add("--trajectory-review");
@@ -97,6 +120,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (manageDocker) args.add("--manage-docker");
         if (noContextProbe) args.add("--no-context-probe");
         if (contextProbeFresh) args.add("--context-probe-fresh");
+        if (keepWorkspace) args.add("--keep-workspace");
+        if (skipDocker) args.add("--skip-docker");
         // a pinned window: the run uses it as-is and skips step 0 (the probe exists to MEASURE one)
         if (contextWindow != null) args.add("--context-window=" + contextWindow);
         if (firstTokenTimeout != null) args.add("--first-token-timeout=" + firstTokenTimeout);
@@ -108,6 +133,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (reviewWeight != null) args.add("--review-weight=" + reviewWeight);
         if (trajectoryWeight != null) args.add("--trajectory-weight=" + trajectoryWeight);
         if (trajectoryUse != null && !trajectoryUse.isBlank()) args.add("--trajectory-use=" + trajectoryUse);
+        if (javaHome != null && !javaHome.isBlank()) args.add("--java-home=" + javaHome);
         if (temperature != null) args.add("--temperature=" + temperature);
         if (topP != null) args.add("--top-p=" + topP);
         if (topK != null) args.add("--top-k=" + topK);
@@ -141,25 +167,30 @@ public record RunSpec(String task, String model, String harness, String mode, St
      *  matters, immediately next to RunSpec's own field list, where the two are easiest to keep in
      *  sync. */
     public static final class Builder {
-        private String task, model, harness, mode, planSource, parallel, reviewerModel,
-                trajectoryReviewerModel, trajectoryUse, runId, reasoningEffort;
-        private Integer taskWall, taskTokens, implWall, implTokens, contextWindow, firstTokenTimeout,
+        private String task, model, harness, mode, planSource, phases, parallel, parallelPlan, reviewerModel,
+                trajectoryReviewerModel, trajectoryUse, javaHome, runId, reasoningEffort;
+        private Integer taskWall, taskTokens, implWall, implTokens, planTokens, wallBudget, contextWindow, firstTokenTimeout,
                 compactionTrigger, reviewWallSec, topK, maxTokens, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
                 fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, dockerMemoryMib;
         private boolean systemRules, selfReview, trajectoryReview, handoffNotes, manageDocker,
-                noContextProbe, contextProbeFresh, reviewBlind, dockerKeepWarm;
-        private Double reviewWeight, trajectoryWeight, temperature, topP, repetitionPenalty;
+                noContextProbe, contextProbeFresh, keepWorkspace, skipDocker, reviewBlind, dockerKeepWarm;
+        private Double reviewWeight, trajectoryWeight, parallelWeight, temperature, topP, repetitionPenalty;
 
         public Builder task(final String v) { task = v; return this; }
         public Builder model(final String v) { model = v; return this; }
         public Builder harness(final String v) { harness = v; return this; }
         public Builder mode(final String v) { mode = v; return this; }
         public Builder planSource(final String v) { planSource = v; return this; }
+        public Builder phases(final String v) { phases = v; return this; }
         public Builder taskWall(final Integer v) { taskWall = v; return this; }
         public Builder taskTokens(final Integer v) { taskTokens = v; return this; }
         public Builder implWall(final Integer v) { implWall = v; return this; }
         public Builder implTokens(final Integer v) { implTokens = v; return this; }
+        public Builder planTokens(final Integer v) { planTokens = v; return this; }
+        public Builder wallBudget(final Integer v) { wallBudget = v; return this; }
         public Builder parallel(final String v) { parallel = v; return this; }
+        public Builder parallelPlan(final String v) { parallelPlan = v; return this; }
+        public Builder parallelWeight(final Double v) { parallelWeight = v; return this; }
         public Builder systemRules(final boolean v) { systemRules = v; return this; }
         public Builder selfReview(final boolean v) { selfReview = v; return this; }
         public Builder trajectoryReview(final boolean v) { trajectoryReview = v; return this; }
@@ -168,6 +199,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public Builder manageDocker(final boolean v) { manageDocker = v; return this; }
         public Builder noContextProbe(final boolean v) { noContextProbe = v; return this; }
         public Builder contextProbeFresh(final boolean v) { contextProbeFresh = v; return this; }
+        public Builder keepWorkspace(final boolean v) { keepWorkspace = v; return this; }
+        public Builder skipDocker(final boolean v) { skipDocker = v; return this; }
         public Builder contextWindow(final Integer v) { contextWindow = v; return this; }
         public Builder firstTokenTimeout(final Integer v) { firstTokenTimeout = v; return this; }
         public Builder compactionTrigger(final Integer v) { compactionTrigger = v; return this; }
@@ -178,6 +211,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public Builder reviewWeight(final Double v) { reviewWeight = v; return this; }
         public Builder trajectoryWeight(final Double v) { trajectoryWeight = v; return this; }
         public Builder trajectoryUse(final String v) { trajectoryUse = v; return this; }
+        public Builder javaHome(final String v) { javaHome = v; return this; }
         public Builder runId(final String v) { runId = v; return this; }
         public Builder temperature(final Double v) { temperature = v; return this; }
         public Builder topP(final Double v) { topP = v; return this; }
@@ -198,10 +232,10 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public Builder dockerKeepWarm(final boolean v) { dockerKeepWarm = v; return this; }
 
         public RunSpec build() {
-            return new RunSpec(task, model, harness, mode, planSource, taskWall, taskTokens, implWall, implTokens,
-                    parallel, systemRules, selfReview, trajectoryReview, reviewerModel, handoffNotes, manageDocker,
-                    noContextProbe, contextProbeFresh, contextWindow, firstTokenTimeout, compactionTrigger, reviewWallSec,
-                    reviewBlind, trajectoryReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse, runId,
+            return new RunSpec(task, model, harness, mode, planSource, phases, taskWall, taskTokens, implWall, implTokens,
+                    planTokens, wallBudget, parallel, parallelPlan, parallelWeight, systemRules, selfReview, trajectoryReview, reviewerModel, handoffNotes, manageDocker,
+                    noContextProbe, contextProbeFresh, keepWorkspace, skipDocker, contextWindow, firstTokenTimeout, compactionTrigger, reviewWallSec,
+                    reviewBlind, trajectoryReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse, javaHome, runId,
                     temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
                     fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, dockerMemoryMib, dockerKeepWarm);
         }
@@ -214,20 +248,22 @@ public record RunSpec(String task, String model, String harness, String mode, St
     public static RunSpec from(final Map<String, Object> spec) {
         return builder()
                 .task(str(spec, "task")).model(str(spec, "model")).harness(str(spec, "harness"))
-                .mode(str(spec, "mode")).planSource(str(spec, "plan_source"))
+                .mode(str(spec, "mode")).planSource(str(spec, "plan_source")).phases(str(spec, "phases"))
                 .taskWall(intOf(spec, "task_wall")).taskTokens(intOf(spec, "task_tokens"))
                 .implWall(intOf(spec, "impl_wall")).implTokens(intOf(spec, "impl_tokens"))
-                .parallel(str(spec, "parallel"))
+                .planTokens(intOf(spec, "plan_tokens")).wallBudget(intOf(spec, "wall_budget"))
+                .parallel(str(spec, "parallel")).parallelPlan(str(spec, "parallel_plan")).parallelWeight(doubleOf(spec, "parallel_weight"))
                 .systemRules(bool(spec, "system_rules", false)).selfReview(bool(spec, "self_review", false))
                 .trajectoryReview(bool(spec, "trajectory_review", false)).reviewerModel(str(spec, "reviewer_model"))
                 .handoffNotes(bool(spec, "handoff_notes", false)).manageDocker(bool(spec, "manage_docker", true))
                 .noContextProbe(bool(spec, "no_context_probe", false)).contextProbeFresh(bool(spec, "context_probe_fresh", false))
+                .keepWorkspace(bool(spec, "keep_workspace", false)).skipDocker(bool(spec, "skip_docker", false))
                 .contextWindow(intOf(spec, "context_window")).firstTokenTimeout(intOf(spec, "first_token_timeout"))
                 .compactionTrigger(intOf(spec, "compaction_trigger")).reviewWallSec(intOf(spec, "review_wall_sec"))
                 .reviewTokens(intOf(spec, "review_tokens"))
                 .reviewBlind(bool(spec, "review_blind", false)).trajectoryReviewerModel(str(spec, "trajectory_reviewer_model"))
                 .reviewWeight(doubleOf(spec, "review_weight")).trajectoryWeight(doubleOf(spec, "trajectory_weight"))
-                .trajectoryUse(str(spec, "trajectory_use")).runId(str(spec, "run_id"))
+                .trajectoryUse(str(spec, "trajectory_use")).javaHome(str(spec, "java_home")).runId(str(spec, "run_id"))
                 .temperature(doubleOf(spec, "temperature")).topP(doubleOf(spec, "top_p"))
                 .topK(intOf(spec, "top_k")).repetitionPenalty(doubleOf(spec, "repetition_penalty"))
                 .maxTokens(intOf(spec, "max_tokens")).reasoningEffort(str(spec, "reasoning_effort"))

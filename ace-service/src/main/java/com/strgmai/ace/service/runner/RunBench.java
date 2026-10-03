@@ -61,6 +61,31 @@ public class RunBench {
 
     static List<String> phasesFor(String task) { return RUNG_PHASES.getOrDefault(task, List.of("implement")); }
 
+    /** Found live 2026-10-03: --phases (JobCfgFactory's cfg "phases") restricts a rung's own
+     *  multi-phase sequence to an explicit comma-separated subset - e.g. resuming past an
+     *  already-completed plan to re-run just the implementation - unset/blank means every phase the
+     *  rung defines, matching queue.py's own "all" default. Package-private: directly unit-tested. */
+    static List<String> phasesWanted(final Map<String, Object> cfg, final List<String> rungPhases) {
+        final Object v = cfg.get("phases");
+        if (!(v instanceof String s) || s.isBlank()) return rungPhases;
+        final Set<String> wanted = Set.of(s.split(","));
+        return rungPhases.stream().filter(wanted::contains).toList();
+    }
+
+    /** p1_plan/p2_implementation always run in orchestrated mode on a rung that defines them: p1_plan
+     *  feeds docs/IMPLEMENTATION_PLAN.md, which every orchestration step depends on. --phases
+     *  deliberately excluding either here was never exercised even in the original Python harness (no
+     *  test covers it) - failing loudly beats silently ignoring the operator's choice (only
+     *  p0_definition is optional); a rung that never had p1_plan/p2_implementation to begin with
+     *  (phasesFor() falls back to "implement") is unaffected either way. Package-private: directly
+     *  unit-tested. */
+    static void requirePlanAndImplementationPhases(final List<String> rungPhases, final List<String> wanted, final String task) {
+        if (rungPhases.contains("p1_plan") && !wanted.contains("p1_plan")
+                || rungPhases.contains("p2_implementation") && !wanted.contains("p2_implementation"))
+            throw new IllegalStateException("orchestrated mode always runs p1_plan and p2_implementation; "
+                    + "--phases cannot exclude either (only p0_definition is optional): task=" + task + " phases=" + wanted);
+    }
+
     static final String IMPLEMENT_TEXT = "Read task/PROMPT.md and do exactly what it asks. Implement it, write tests proving the acceptance "
             + "criteria, run them until green, and record what you did and how you verified it in docs/PROGRESS.md.";
     static final Map<String, String[]> PHASE_TEXT = Map.of(
@@ -157,8 +182,11 @@ public class RunBench {
         final Path ws = wsRoot.resolve("workspace"), home = wsRoot.resolve("home");
         Files.createDirectories(home.resolve(".pi/agent"));
         final String promptText = setUpTaskPrompt(ws, task);
-        cfg.put("java_home", props.javaHome() == null || props.javaHome().isBlank()
-                ? DockerService.sh(20, "/usr/libexec/java_home", "-v", String.valueOf(cfg.getOrDefault("java_major", 21))).out().strip() : props.javaHome());
+        // #228: --java-home (JobCfgFactory -> cfg's "java_home") is a per-run override and must win
+        // over the operator-wide BenchProperties default - this used to always overwrite it unconditionally
+        if (!(cfg.get("java_home") instanceof String jh) || jh.isBlank())
+            cfg.put("java_home", props.javaHome() == null || props.javaHome().isBlank()
+                    ? DockerService.sh(20, "/usr/libexec/java_home", "-v", String.valueOf(cfg.getOrDefault("java_major", 21))).out().strip() : props.javaHome());
         // capped as early as possible, before the agent's own shim (a separate launch path this class
         // doesn't otherwise control) gets a chance to start Docker Desktop uncapped during task work -
         // its VM competing with the model for memory at the worst possible moment is the actual root
@@ -316,7 +344,7 @@ public class RunBench {
         manifest.put("journal", journal.toString());
         final Map<String, Object> facts = JournalFacts.facts(journal.toString(), null, null, List.of(), List.of(), null);
         manifest.put("journal_facts", facts);
-        manifest.put("validity", Validity.validity(manifest, facts, props.maxErrorRate()));
+        manifest.put("validity", Validity.validity(manifest, facts, props.maxErrorRate(), wallBudgetOverride(cfg)));
         writeManifest(rd, manifest);
         final Map<String, Object> oracleReport = oracleWithDocker(cfg, ws, task, rd, manifest);
         Files.writeString(rd.resolve("oracle.json"), json.writerWithDefaultPrettyPrinter().writeValueAsString(oracleReport));
@@ -451,7 +479,10 @@ public class RunBench {
     // package-private (not private): the unload-before/reload-after sequencing around Docker-gated
     // scoring is tested directly here, rather than only indirectly via runOnce()'s much larger surface
     Map<String, Object> oracleWithDocker(final Map<String, Object> cfg, final Path ws, String task, final Path rd, final Map<String, Object> manifest) throws Exception {
-        final boolean manageDocker = Boolean.TRUE.equals(cfg.get("manage_docker"));
+        // #228: --skip-docker (cfg's "skip_docker") - RunOracle.score() already auto-detects Docker
+        // availability and gracefully skips its own Docker-gated checks when unreachable, so the only
+        // remaining gap is suppressing manage_docker's start/stop dance specifically for this phase
+        final boolean manageDocker = Boolean.TRUE.equals(cfg.get("manage_docker")) && !Boolean.TRUE.equals(cfg.get("skip_docker"));
         // frees the run's own weights before Docker comes up, so its VM has real headroom on a
         // memory-constrained host instead of competing with the model server for the same RAM
         // (found live 2026-09-29: Docker Desktop's backend crashed under exactly this contention)
@@ -476,11 +507,13 @@ public class RunBench {
         List<String> phases = phasesFor(task);   // non-L7 rungs run the single `implement` phase with the rung's budget
         final String impl = phases.contains("p2_implementation") ? "p2_implementation" : "implement";
         final Map<String, Integer> rung = rungBudgets(task);
-        for (String pid : phases) {
+        final Integer wallOverride = wallBudgetOverride(cfg);
+        for (String pid : phasesWanted(cfg, phases)) {
             int wall = "p1_plan".equals(pid) ? rung.getOrDefault("plan_sec", 900) : rung.getOrDefault("sec", 14400);
             if ("implement".equals(pid) || "p2_implementation".equals(pid)) wall = implWall(cfg, rung);
+            if (wallOverride != null) wall = wallOverride;   // --wall-budget: every phase's wall, uniformly (smoke tests)
             long tokens = "implement".equals(pid) || "p2_implementation".equals(pid)
-                    ? implTokens(cfg, pid, props) : props.phaseTokens("p1_plan");
+                    ? implTokens(cfg, pid, props) : planTokens(cfg, "p1_plan", props);
             final boolean isImpl = pid.equals(impl);
             final var proxy = proxies.start(journal, tokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
             Map<String, Object> rec;
@@ -531,6 +564,20 @@ public class RunBench {
      *  the rung. */
     static long implTokens(final Map<String, Object> cfg, final String pid, final BenchProperties props) {
         return cfg.get("impl_tokens") instanceof Number it ? it.longValue() : props.phaseTokens(pid);
+    }
+
+    /** #228: --plan-tokens (cfg's "plan_tokens") is the p0_definition/p1_plan counterpart to
+     *  implTokens() above - an explicit per-run override for the planning/definition phases' token
+     *  budget, falling back to the same operator-wide BenchProperties.phaseTokens(pid) default. */
+    static long planTokens(final Map<String, Object> cfg, final String pid, final BenchProperties props) {
+        return cfg.get("plan_tokens") instanceof Number pt ? pt.longValue() : props.phaseTokens(pid);
+    }
+
+    /** #228: --wall-budget (cfg's "wall_budget_override") overrides every phase's wall budget
+     *  uniformly - a smoke-test knob; Validity.validity() marks any run that used it INVALID so it
+     *  can never pollute the leaderboard. */
+    static Integer wallBudgetOverride(final Map<String, Object> cfg) {
+        return cfg.get("wall_budget_override") instanceof Number wb ? wb.intValue() : null;
     }
 
     private Map<String, Object> sessionWithPolicy(Map<String, Object> cfg, String runId, String name, String instruction,
@@ -707,7 +754,13 @@ public class RunBench {
                                    String task) throws Exception {
         cfg.put("_manifest", manifest);
         final List<String> rungPhases = phasesFor(task);
-        if (rungPhases.contains("p0_definition")) {   // L7-style rungs define before they plan (Python run_once loops the rung's phases)
+        final List<String> wanted = phasesWanted(cfg, rungPhases);
+        requirePlanAndImplementationPhases(rungPhases, wanted, task);
+        // --wall-budget: every phase's wall, uniformly (smoke tests) - the same override monolithicPhases() applies
+        final Integer wallOverride = wallBudgetOverride(cfg);
+        final long p0Wall = wallOverride != null ? wallOverride : props.phaseWall("p0_definition");
+        final long p1Wall = wallOverride != null ? wallOverride : props.phaseWall("p1_plan");
+        if (wanted.contains("p0_definition")) {   // L7-style rungs define before they plan (Python run_once loops the rung's phases)
             Map<String, Object> rec;
             // R18: resume past this phase if a prior attempt of THIS SAME run already finished it
             if (RunBenchSupport.tagExists(ws, "phase/p0") && Files.isRegularFile(ws.resolve(PHASE_TEXT.get("p0_definition")[0]))) {
@@ -715,10 +768,10 @@ public class RunBench {
                 rec = new LinkedHashMap<>(Map.of("id", "p0_definition", "rc", 0, "resumed", true));
                 ((Map<String, String>) manifest.get("snapshots")).put("p0", RunBenchSupport.gitOut(ws, "rev-parse", "phase/p0"));
             } else {
-                final var proxy = proxies.start(journal, (long) props.phaseTokens("p0_definition"), null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+                final var proxy = proxies.start(journal, planTokens(cfg, "p0_definition", props), null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
                 try {
                     rec = sessionWithPolicy(cfg, runId, "p0_definition", PHASE_TEXT.get("p0_definition")[1],
-                            props.phaseWall("p0_definition"), (long) props.phaseTokens("p0_definition"), rd, ws, journal, proxy, null, null, null, true);
+                            p0Wall, planTokens(cfg, "p0_definition", props), rd, ws, journal, proxy, null, null, null, true);
                 } finally { proxy.stop(); }
                 ((Map<String, String>) manifest.get("snapshots")).put("p0", RunBenchSupport.snapshot(ws, "phase/p0"));
             }
@@ -750,10 +803,10 @@ public class RunBench {
                 p1rec = new LinkedHashMap<>(Map.of("id", "p1_plan", "rc", 0, "resumed", true));
                 planSha = RunBenchSupport.gitOut(ws, "rev-parse", "phase/p1");
             } else {
-                final var proxy = proxies.start(journal, (long) props.phaseTokens("p1_plan"), null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+                final var proxy = proxies.start(journal, planTokens(cfg, "p1_plan", props), null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
                 try {
                     p1rec = sessionWithPolicy(cfg, runId, "p1_plan", PHASE_TEXT.get("p1_plan")[1],
-                            props.phaseWall("p1_plan"), (long) props.phaseTokens("p1_plan"), rd, ws, journal, proxy, null, null, null, true);
+                            p1Wall, planTokens(cfg, "p1_plan", props), rd, ws, journal, proxy, null, null, null, true);
                 } finally { proxy.stop(); }
                 planSha = RunBenchSupport.snapshot(ws, "phase/p1");
             }
@@ -781,6 +834,12 @@ public class RunBench {
         Map<String, Object> parallelPlan = null;
         if (Boolean.TRUE.equals(cfg.getOrDefault("parallel_plan_enabled", true)) && tasks.size() > 1) {
             parallelPlan = parallelPlanStep(cfg, runId, rd, ws, journal, manifest, tasks, stable);
+            // #228: --parallel-weight (cfg's "parallel_plan" map) - Collect.java already reads
+            // manifest's "parallel_plan_config.weight" for agent_result_pct (mirrors review_config/
+            // trajectory_review_config, written the same way by Reviews.java) - "applies only when
+            // the step ran" (queue.py's own help text), hence this lives inside the enabled branch
+            if (cfg.get("parallel_plan") instanceof Map<?, ?> ppCfg && ppCfg.get("weight") instanceof Number w)
+                Reviews.manifestMap(manifest, "parallel_plan_config").put("weight", w.doubleValue());
         }
         List<List<PlanTask>> planWaves = PlanParser.waves(tasks);
         final Map<String, List<String>> ownership = parallelPlan != null && parallelPlan.get("ownership") instanceof Map<?, ?> o ? (Map<String, List<String>>) o : Map.of();

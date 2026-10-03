@@ -10,7 +10,15 @@ public final class Validity {
     private Validity() {}
 
     public static Map<String, Object> validity(final Map<String, Object> manifest, final Map<String, Object> facts, final double maxErrorRate) {
+        return validity(manifest, facts, maxErrorRate, null);
+    }
+
+    /** #228: --wall-budget (cfg's "wall_budget_override") is a smoke-test knob that overrides every
+     *  phase's wall uniformly - run_bench.py's own validity() marks any run that used it INVALID so
+     *  it can never pollute the leaderboard ("wall budget overridden to {n}s (smoke test)"). */
+    public static Map<String, Object> validity(final Map<String, Object> manifest, final Map<String, Object> facts, final double maxErrorRate, final Integer wallBudgetOverride) {
         final List<String> reasons = new ArrayList<>();
+        if (wallBudgetOverride != null) reasons.add("wall budget overridden to " + wallBudgetOverride + "s (smoke test)");
         final boolean orch = "orchestrated".equals(manifest.get("mode"));
         for (Map<String, Object> ph : phases(manifest, "phases")) {
             Object rc = ph.get("rc");
