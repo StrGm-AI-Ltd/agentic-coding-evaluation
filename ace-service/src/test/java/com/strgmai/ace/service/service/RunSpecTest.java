@@ -16,7 +16,7 @@ class RunSpecTest {
     private static RunSpec walls(final Double temperature, final Double topP, final Integer topK,
                                   final Double repetitionPenalty, final Integer maxTokens, final String reasoningEffort,
                                   final Integer parallelPlanWall, final Integer handoffWall, final Integer wrapupWall) {
-        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", null, 3600, null, null, null, null, null, null, null, null, false, false, false, null, false, true, false, false, false, false, null, null, null, null, false, null, null, null, null, null, "r1", temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, null, null, null, null, null, null, null, null, false);
+        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", null, 3600, null, null, null, null, null, null, null, null, null, false, false, false, null, false, true, false, false, false, false, null, null, null, null, false, null, null, null, null, null, "r1", temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, null, null, null, null, null, null, null, null, false, null);
     }
 
     @Test
@@ -300,6 +300,26 @@ class RunSpecTest {
         assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").wallBudget(-1).build());
     }
 
+    /** the plan phase's wall budget was never a per-run override at all, not even in the original
+     *  Python harness (only an operator-wide config value) - this adds one, mirroring plan_tokens. */
+    @Test
+    void argvIncludesPlanWallWhenSet() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").planWall(600).build().argv("r1");
+        assertTrue(argv.contains("--plan-wall=600"));
+    }
+
+    @Test
+    void argvOmitsPlanWallWhenUnset() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
+        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--plan-wall")));
+    }
+
+    @Test
+    void planWallAcceptsZeroAsUnlimitedButRejectsNegative() {
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").planWall(0).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").planWall(-1).build());
+    }
+
     @Test
     void argvIncludesParallelPlanAndWeightWhenSet() {
         final var argv = RunSpec.builder().task("t").model("m").runId("r1").parallelPlan("off").parallelWeight(0.2).build().argv("r1");
@@ -326,6 +346,28 @@ class RunSpecTest {
         assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").parallelWeight(1.1).build());
         assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").parallelWeight(0.0).build());
         assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").parallelWeight(1.0).build());
+    }
+
+    /** --efficiency-weight: opt-in control over how much a run's budget efficiency (wall-clock
+     *  budget left unused) counts toward agent_result_pct - see Collect.efficiencyPct(). */
+    @Test
+    void argvIncludesEfficiencyWeightWhenSet() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").efficiencyWeight(0.2).build().argv("r1");
+        assertTrue(argv.contains("--efficiency-weight=0.2"));
+    }
+
+    @Test
+    void argvOmitsEfficiencyWeightWhenUnset() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
+        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--efficiency-weight")));
+    }
+
+    @Test
+    void efficiencyWeightMustBeWithinZeroToOne() {
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").efficiencyWeight(-0.1).build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").efficiencyWeight(1.1).build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").efficiencyWeight(0.0).build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").efficiencyWeight(1.0).build());
     }
 
     @Test
@@ -369,7 +411,7 @@ class RunSpecTest {
         spec.put("task", "L3p_point_in_time"); spec.put("model", "m1"); spec.put("harness", "ref");
         spec.put("mode", "orchestrated"); spec.put("plan_source", "agent"); spec.put("phases", "p1_plan,p2_implementation");
         spec.put("task_wall", 111); spec.put("task_tokens", 222); spec.put("impl_wall", 333); spec.put("impl_tokens", 444);
-        spec.put("plan_tokens", 445); spec.put("wall_budget", 446);
+        spec.put("plan_wall", 447); spec.put("plan_tokens", 445); spec.put("wall_budget", 446);
         spec.put("parallel", "3"); spec.put("parallel_plan", "off"); spec.put("parallel_weight", 0.15);
         spec.put("system_rules", true); spec.put("self_review", true);
         spec.put("trajectory_review", true); spec.put("reviewer_model", "reviewer-m");
@@ -388,6 +430,7 @@ class RunSpecTest {
         spec.put("fix_wall", 1200); spec.put("fix_tokens", 30000);
         spec.put("parallel_plan_tokens", 9000); spec.put("handoff_tokens", 4000); spec.put("wrapup_tokens", 2500);
         spec.put("docker_memory_mib", 6144); spec.put("docker_keep_warm", true);
+        spec.put("efficiency_weight", 0.17);
 
         final var rs = RunSpec.from(spec);
 
@@ -401,6 +444,7 @@ class RunSpecTest {
         assertEquals(222, rs.taskTokens());
         assertEquals(333, rs.implWall());
         assertEquals(444, rs.implTokens());
+        assertEquals(447, rs.planWall());
         assertEquals(445, rs.planTokens());
         assertEquals(446, rs.wallBudget());
         assertEquals("3", rs.parallel());
@@ -444,6 +488,7 @@ class RunSpecTest {
         assertEquals(2500, rs.wrapupTokens());
         assertEquals(6144, rs.dockerMemoryMib());
         assertTrue(rs.dockerKeepWarm());
+        assertEquals(0.17, rs.efficiencyWeight());
     }
 
     @Test
@@ -460,7 +505,7 @@ class RunSpecTest {
     @Test
     void builderProducesTheSameRunSpecAsThePositionalConstructor() {
         final var viaBuilder = RunSpec.builder().task("t").model("m").runId("r1").temperature(0.5).build();
-        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, false, false, false, null, null, null, null, false, null, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false);
+        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, false, false, false, null, null, null, null, false, null, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, null);
         assertEquals(viaConstructor, viaBuilder);
     }
 }

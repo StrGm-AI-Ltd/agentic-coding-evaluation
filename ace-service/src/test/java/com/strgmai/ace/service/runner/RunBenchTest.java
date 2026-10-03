@@ -151,6 +151,40 @@ class RunBenchTest {
         assertEquals(3000L, RunBench.planTokens(Map.of(), "p1_plan", props));
     }
 
+    /** the plan phase's wall budget was never a per-run override at all, even in the original Python
+     *  harness (only an operator-wide config value, via BenchProperties.phaseWall - already read by
+     *  orchestratedPhase() before this existed). planWall() adds the per-run override on top, and
+     *  preserves the 900s literal default for anyone who has configured neither. */
+    @Test
+    void planWallPrefersTheExplicitCfgOverrideOverEverything() {
+        final BenchProperties props = mock(BenchProperties.class);
+        when(props.phaseWall("p1_plan")).thenReturn(1200);
+        assertEquals(600L, RunBench.planWall(Map.of("plan_wall_sec", 600), "p1_plan", props));
+    }
+
+    @Test
+    void planWallFallsBackToTheOperatorWideConfigWhenNotSetOnTheRun() {
+        final BenchProperties props = mock(BenchProperties.class);
+        when(props.phaseWall("p1_plan")).thenReturn(1200);
+        assertEquals(1200L, RunBench.planWall(Map.of(), "p1_plan", props));
+    }
+
+    @Test
+    void planWallFallsBackToNineHundredSecondsWhenNeitherIsConfigured() {
+        final BenchProperties props = mock(BenchProperties.class);
+        when(props.phaseWall("p1_plan")).thenReturn(0);
+        assertEquals(900L, RunBench.planWall(Map.of(), "p1_plan", props));
+    }
+
+    @Test
+    void planWallAcceptsAnExplicitZeroAsUnlimitedRatherThanFallingBack() {
+        final BenchProperties props = mock(BenchProperties.class);
+        when(props.phaseWall("p1_plan")).thenReturn(1200);
+        // runBounded() treats wallSec <= 0 as unlimited (the system-wide "0 = no budget" convention) -
+        // an explicit 0 must reach it as a literal 0, not silently fall back to the operator default
+        assertEquals(0L, RunBench.planWall(Map.of("plan_wall_sec", 0), "p1_plan", props));
+    }
+
     /** #228: --wall-budget (cfg's "wall_budget_override") - a smoke-test knob that overrides every
      *  phase's wall uniformly. */
     @Test

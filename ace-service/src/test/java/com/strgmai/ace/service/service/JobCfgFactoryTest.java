@@ -51,6 +51,14 @@ class JobCfgFactoryTest {
         assertFalse(without.containsKey("wall_budget_override"));
     }
 
+    /** the plan phase's wall budget was never a per-run override at all, even in the original
+     *  Python harness - this adds one, mirroring plan_tokens' own plumbing. */
+    @Test
+    void planWallIsParsedWhenPresentAndAbsentOtherwise() {
+        assertEquals(600, JobCfgFactory.build(List.of("--plan-wall=600"), props()).get("plan_wall_sec"));
+        assertFalse(JobCfgFactory.build(List.of(), props()).containsKey("plan_wall_sec"));
+    }
+
     @Test
     void javaHomeIsParsedWhenPresentAndAbsentOtherwise() {
         assertEquals("/opt/homebrew/opt/openjdk@21", JobCfgFactory.build(List.of("--java-home=/opt/homebrew/opt/openjdk@21"), props()).get("java_home"));
@@ -229,5 +237,12 @@ class JobCfgFactoryTest {
         final var without = JobCfgFactory.build(List.of(), props());
         assertFalse(without.containsKey("docker_memory_mib"));
         assertEquals(false, without.get("docker_keep_warm"));
+    }
+
+    /** opt-in control over how much budget efficiency counts toward agent_result_pct. */
+    @Test
+    void efficiencyWeightIsParsedWhenPresentAndAbsentOtherwise() {
+        assertEquals(0.2, JobCfgFactory.build(List.of("--efficiency-weight=0.2"), props()).get("efficiency_weight"));
+        assertFalse(JobCfgFactory.build(List.of(), props()).containsKey("efficiency_weight"));
     }
 }

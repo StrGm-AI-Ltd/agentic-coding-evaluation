@@ -52,6 +52,7 @@ public class JobNewView extends VerticalLayout {
     private final IntegerField taskTokens = new IntegerField("task_tokens");
     private final IntegerField implWall = new IntegerField("impl_wall");
     private final IntegerField implTokens = new IntegerField("impl_tokens");
+    private final IntegerField planWall = new IntegerField("plan_wall");
     private final IntegerField planTokens = new IntegerField("plan_tokens");
     private final IntegerField contextWindow = new IntegerField("context_window");
     private final IntegerField firstTokenTimeout = new IntegerField("first_token_timeout");
@@ -60,6 +61,7 @@ public class JobNewView extends VerticalLayout {
     private final IntegerField wallBudget = new IntegerField("wall_budget");
     private final IntegerField priority = new IntegerField("priority");
     private final NumberField parallelWeight = new NumberField("parallel_weight");
+    private final NumberField efficiencyWeight = new NumberField("efficiency_weight");
     private final NumberField reviewWeight = new NumberField("review_weight");
     private final NumberField trajectoryWeight = new NumberField("trajectory_weight");
     private final NumberField temperature = new NumberField("temperature");
@@ -129,6 +131,8 @@ public class JobNewView extends VerticalLayout {
         taskTokens.setMin(1);
         implWall.setMin(1);
         implTokens.setMin(1);
+        planWall.setMin(0);
+        planWall.setPlaceholder("blank = default (900s), 0 = unlimited");
         planTokens.setMin(1);
         contextWindow.setMin(1);
         firstTokenTimeout.setMin(1);
@@ -146,6 +150,9 @@ public class JobNewView extends VerticalLayout {
         wallBudget.setMin(1);
         parallelWeight.setMin(0);
         parallelWeight.setMax(1);
+        efficiencyWeight.setMin(0);
+        efficiencyWeight.setMax(1);
+        efficiencyWeight.setPlaceholder("blank = 0 (opt-in; not blended by default)");
         reviewWeight.setMin(0);
         reviewWeight.setMax(1);
         trajectoryWeight.setMin(0);
@@ -181,9 +188,10 @@ public class JobNewView extends VerticalLayout {
                 Forms.row(taskInfo),
                 Forms.row(phases, parallel, parallelPlan, parallelWeight)));
         add(Forms.section("Budgets",
-                Forms.row(taskWall, taskTokens, implWall, implTokens, planTokens, wallBudget, contextWindow),
+                Forms.row(taskWall, taskTokens, implWall, implTokens, planWall, planTokens, wallBudget, contextWindow),
                 Forms.row(firstTokenTimeout, compactionTrigger),
-                Forms.row(parallelPlanWall, handoffWall, wrapupWall)));
+                Forms.row(parallelPlanWall, handoffWall, wrapupWall),
+                Forms.row(efficiencyWeight)));
         add(Forms.section("Sampler",
                 Forms.row(temperature, topP, topK, repetitionPenalty),
                 Forms.row(maxTokens, reasoningEffort)));
@@ -273,6 +281,7 @@ public class JobNewView extends VerticalLayout {
         raw.put("task_tokens", taskTokens.getValue());
         raw.put("impl_wall", implWall.getValue());
         raw.put("impl_tokens", implTokens.getValue());
+        raw.put("plan_wall", planWall.getValue());
         raw.put("plan_tokens", planTokens.getValue());
         raw.put("context_window", contextWindow.getValue());
         raw.put("first_token_timeout", firstTokenTimeout.getValue());
@@ -280,6 +289,7 @@ public class JobNewView extends VerticalLayout {
         raw.put("parallel", parallel.getValue());
         raw.put("parallel_plan", parallelPlan.getValue());
         raw.put("parallel_weight", parallelWeight.getValue());
+        raw.put("efficiency_weight", efficiencyWeight.getValue());
         raw.put("reviewer_model", reviewerModel.getValue());
         raw.put("review_weight", reviewWeight.getValue());
         raw.put("trajectory_reviewer_model", trajectoryReviewerModel.getValue());
