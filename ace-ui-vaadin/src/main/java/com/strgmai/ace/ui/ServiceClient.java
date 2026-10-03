@@ -114,6 +114,13 @@ public class ServiceClient implements Serializable {
         });
     }
 
+    /** Every rung tasks/ladder.json declares, per GET /api/tasks - every valid --task value, not
+     *  just ones a run has already used. */
+    public List<String> tasks() {
+        return http.get().uri("/api/tasks").retrieve().body(new ParameterizedTypeReference<List<String>>() {
+        });
+    }
+
     public Api.GroupResponse groups() {
         return http.get().uri("/api/groups").retrieve().body(Api.GroupResponse.class);
     }
