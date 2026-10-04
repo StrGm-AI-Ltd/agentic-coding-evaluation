@@ -102,7 +102,19 @@ public final class AgentTools {
         try {
             Map<String, String> full = new LinkedHashMap<>(env);   // drain concurrently: >64KB output would deadlock a read-after-wait
             full.put("CI", "1"); full.put("NO_COLOR", "1"); full.put("TERM", "dumb");
-            final var r = com.strgmai.ace.service.docker.DockerService.proc(to, java.nio.file.Path.of(cwd), full, "zsh", "-lc", cmd);
+            // #243: zsh -lc is a LOGIN shell: it sources /etc/zprofile, which on macOS
+            // unconditionally runs path_helper and rebuilds $PATH with system dirs first -
+            // silently demoting whatever this scrubbed env's own PATH put first (the docker
+            // shim; see RunBenchSupport.scrubbedEnv) to the very end. Found live 2026-10-04: the
+            // shim's own invocation log was never written across an entire run - every `docker`
+            // call the agent made resolved straight past it to the real CLI, bypassing
+            // Docker-on-demand entirely. Re-exporting PATH as the command's own first statement
+            // undoes that rewrite without losing whatever else -l provides. A blank/absent PATH
+            // (e.g. a bare unit-test env) is left alone, so path_helper's own system defaults
+            // still apply.
+            final String path = full.get("PATH");
+            final String guarded = path == null || path.isBlank() ? cmd : "export PATH=" + shellQuote(path) + "; " + cmd;
+            final var r = com.strgmai.ace.service.docker.DockerService.proc(to, java.nio.file.Path.of(cwd), full, "zsh", "-lc", guarded);
             rc = r.rc();
             out = r.out() + (r.err().isBlank() ? "" : "\n[stderr]\n" + r.err());
             out = ANSI.matcher(out).replaceAll("");
@@ -118,6 +130,11 @@ public final class AgentTools {
             if (out.length() > BASH_MAX_CHARS) out = out.substring(0, BASH_MAX_CHARS / 2) + "\n… [truncated] …\n" + out.substring(out.length() - BASH_MAX_CHARS / 2);
         }
         return new Outcome((out.isBlank() ? "(no output)" : out.strip()) + "\n[exit " + rc + "]", rc != 0);
+    }
+
+    /** POSIX single-quoting: safe against anything the value contains, including spaces and `$`. */
+    static String shellQuote(final String s) {
+        return "'" + s.replace("'", "'\\''") + "'";
     }
 
     public static Duration bashTimeout(int requested) { return Duration.ofSeconds(Math.min(1800, Math.max(5, requested))); }

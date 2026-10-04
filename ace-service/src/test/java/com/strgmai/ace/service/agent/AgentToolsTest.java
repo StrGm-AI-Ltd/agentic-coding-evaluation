@@ -64,6 +64,37 @@ class AgentToolsTest {
         assertFalse(ansi.output().contains("\u001b[31m"), "ANSI must be stripped");
     }
 
+    /** #243: found live 2026-10-04: zsh -lc is a LOGIN shell, so it sources /etc/zprofile - which on
+     *  macOS unconditionally runs path_helper and rebuilds $PATH with system dirs first, silently
+     *  demoting whatever this scrubbed env's own PATH put first (the docker shim) to the very end.
+     *  Confirmed live: the docker shim's own invocation log was never written across an entire
+     *  run, because every `docker` call resolved straight past it to a real CLI elsewhere on the
+     *  rebuilt PATH. This pins that a scrubbed PATH's own first entry survives regardless. */
+    @Test
+    void bashPreservesAScrubbedPathsOwnOrderingDespiteTheLoginShellsPathHelper() throws IOException {
+        final var ws = Files.createTempDirectory("ws");
+        final var shimDir = Files.createTempDirectory("shimdir").toString();
+        final AgentTools.Outcome out = AgentTools.bash(ws.toString(), Map.of("command", "echo $PATH"), Map.of("PATH", shimDir + ":/usr/bin:/bin"));
+        assertFalse(out.isError(), out.output());
+        assertTrue(out.output().startsWith(shimDir + ":"), "the scrubbed PATH's own first entry must still be first: " + out.output());
+    }
+
+    @Test
+    void bashLeavesPathAloneWhenTheEnvDoesNotSetOne() throws IOException {
+        // a bare unit-test env (no PATH at all) must behave exactly as before this fix - path_helper's
+        // own system defaults still apply, nothing here forces PATH to an empty string
+        final var ws = Files.createTempDirectory("ws");
+        final AgentTools.Outcome out = AgentTools.bash(ws.toString(), Map.of("command", "echo hi"), Map.of());
+        assertFalse(out.isError(), out.output());
+        assertTrue(out.output().startsWith("hi"), out.output());
+    }
+
+    @Test
+    void shellQuoteEscapesEmbeddedSingleQuotes() {
+        assertEquals("'it'\\''s'", AgentTools.shellQuote("it's"));
+        assertEquals("'plain'", AgentTools.shellQuote("plain"));
+    }
+
     @Test
     void compactionStubsOnlyOldestToolOutputsAndNeverThePack() {
         // system, pack (first user), then alternating assistant/toolResult pairs
