@@ -186,8 +186,8 @@ class RunBenchTest {
         assertEquals(0L, RunBench.planWall(Map.of("plan_wall_sec", 0), "p1_plan", props));
     }
 
-    /** #228: --wall-budget (cfg's "wall_budget_override") - a smoke-test knob that overrides every
-     *  phase's wall uniformly. */
+    /** #228: --wall-budget (cfg's "wall_budget_override") - a genuine experimental setting that
+     *  overrides every phase's wall uniformly, instead of one at a time. */
     @Test
     void wallBudgetOverrideReadsTheCfgValueWhenPresent() {
         assertEquals(300, RunBench.wallBudgetOverride(Map.of("wall_budget_override", 300)));

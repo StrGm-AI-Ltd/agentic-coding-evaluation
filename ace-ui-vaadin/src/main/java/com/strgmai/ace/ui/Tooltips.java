@@ -84,10 +84,10 @@ final class Tooltips {
     static final String PLAN_TOKENS = "Completion-token budget for the p0_definition/p1_plan sessions. "
             + "Blank = the operator-wide per-phase token default.";
 
-    static final String WALL_BUDGET = "Smoke-test override only: forces every phase's wall-clock budget "
-            + "to this one value, no matter what the rung or any other wall setting would normally give "
-            + "it. Using this automatically marks the run INVALID (recorded as 'wall budget overridden… "
-            + "(smoke test)') so it can never appear on a leaderboard. Leave blank for a real run.";
+    static final String WALL_BUDGET = "Forces every phase's wall-clock budget to this one value at "
+            + "once, no matter what the rung or any other wall setting would normally give it - a "
+            + "genuine experimental setting, just one that overrides several budgets in a single move "
+            + "instead of one at a time. Blank = each phase keeps its own budget.";
 
     static final String CONTEXT_WINDOW = "Pins the model's context window to this exact token count and "
             + "skips the step-0 probe (whose only job is to measure one). Leave blank to let the probe "

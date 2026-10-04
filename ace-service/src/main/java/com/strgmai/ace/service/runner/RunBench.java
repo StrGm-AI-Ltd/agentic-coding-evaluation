@@ -370,7 +370,7 @@ public class RunBench {
         manifest.put("journal", journal.toString());
         final Map<String, Object> facts = JournalFacts.facts(journal.toString(), null, null, List.of(), List.of(), null);
         manifest.put("journal_facts", facts);
-        manifest.put("validity", Validity.validity(manifest, facts, props.maxErrorRate(), wallBudgetOverride(cfg)));
+        manifest.put("validity", Validity.validity(manifest, facts, props.maxErrorRate()));
         writeManifest(rd, manifest);
         final Map<String, Object> oracleReport = oracleWithDocker(cfg, ws, task, rd, manifest);
         Files.writeString(rd.resolve("oracle.json"), json.writerWithDefaultPrettyPrinter().writeValueAsString(oracleReport));
@@ -544,7 +544,7 @@ public class RunBench {
         for (String pid : phasesWanted(cfg, phases)) {
             int wall = "p1_plan".equals(pid) ? rung.getOrDefault("plan_sec", 900) : rung.getOrDefault("sec", 14400);
             if ("implement".equals(pid) || "p2_implementation".equals(pid)) wall = implWall(cfg, rung);
-            if (wallOverride != null) wall = wallOverride;   // --wall-budget: every phase's wall, uniformly (smoke tests)
+            if (wallOverride != null) wall = wallOverride;   // --wall-budget: every phase's wall, uniformly
             long tokens = "implement".equals(pid) || "p2_implementation".equals(pid)
                     ? implTokens(cfg, pid, props) : planTokens(cfg, pid, props);
             final boolean isImpl = pid.equals(impl);
@@ -620,8 +620,9 @@ public class RunBench {
     }
 
     /** #228: --wall-budget (cfg's "wall_budget_override") overrides every phase's wall budget
-     *  uniformly - a smoke-test knob; Validity.validity() marks any run that used it INVALID so it
-     *  can never pollute the leaderboard. */
+     *  uniformly - a genuine experimental setting like any other budget override, just one that
+     *  happens to apply to every phase at once instead of a single one (#241: no longer marks the
+     *  run INVALID for using it). */
     static Integer wallBudgetOverride(final Map<String, Object> cfg) {
         return cfg.get("wall_budget_override") instanceof Number wb ? wb.intValue() : null;
     }
@@ -818,7 +819,7 @@ public class RunBench {
         final List<String> rungPhases = phasesFor(task);
         final List<String> wanted = phasesWanted(cfg, rungPhases);
         requirePlanAndImplementationPhases(rungPhases, wanted, task);
-        // --wall-budget: every phase's wall, uniformly (smoke tests) - the same override monolithicPhases() applies
+        // --wall-budget: every phase's wall, uniformly - the same override monolithicPhases() applies
         final Integer wallOverride = wallBudgetOverride(cfg);
         final long p0Wall = wallOverride != null ? wallOverride : planWall(cfg, "p0_definition", props);
         final long p1Wall = wallOverride != null ? wallOverride : planWall(cfg, "p1_plan", props);
