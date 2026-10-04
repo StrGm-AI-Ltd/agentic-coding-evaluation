@@ -39,6 +39,19 @@ class PacksTest {
         Packs.setScale(1.0, Map.of());
     }
 
+    /** #245: found live: a handoff session has the FULL context of the task it's continuing from
+     *  (continueSession=true) but kept re-deriving it from scratch anyway - rerunning tests,
+     *  reading git history, re-reading source files - burning most of its budget before ever
+     *  writing the file. The instruction must say explicitly not to, not just imply it via
+     *  "then stop". */
+    @Test
+    void handoffInstructionTellsItNotToReVerifyWhatItAlreadyKnows() {
+        final String instr = Packs.handoffInstruction("T2");
+        assertTrue(instr.contains("handoff/T2.md"));
+        assertTrue(instr.toLowerCase().contains("do not run tests"));
+        assertTrue(instr.toLowerCase().contains("already have everything you need"));
+    }
+
     @Test
     void theHygieneRulesNameTheRunsWindow() {
         Packs.setWindow(79872);
