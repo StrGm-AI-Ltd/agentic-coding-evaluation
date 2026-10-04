@@ -33,7 +33,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         // implWall/implTokens/contextWindow/maxTokens are capacities, not spending budgets a run can
         // choose to leave uncapped (a 0-token generation or a 0-wide context window is meaningless) -
         // these still require a genuinely positive value. planTokens/wallBudget (queue.py: gt=0) are
-        // the same class - a 0-token plan budget or a 0-second smoke-test wall is meaningless too.
+        // the same class - a 0-token plan budget or a 0-second wall-budget override is meaningless too.
         implWall = positive(implWall); implTokens = positive(implTokens);
         contextWindow = positive(contextWindow); maxTokens = positive(maxTokens);
         planTokens = positive(planTokens); wallBudget = positive(wallBudget);

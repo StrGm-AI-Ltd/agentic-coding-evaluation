@@ -64,7 +64,7 @@ public class JobNewView extends VerticalLayout {
     private final IntegerField handoffTokens = new IntegerField("Handoff token budget");
     private final IntegerField wrapupTokens = new IntegerField("Wrap-up token budget");
     private final IntegerField dockerMemoryMib = new IntegerField("Docker memory cap (MiB)");
-    private final IntegerField wallBudget = new IntegerField("Wall budget override (smoke test)");
+    private final IntegerField wallBudget = new IntegerField("Wall budget override (all phases)");
     private final IntegerField priority = new IntegerField("Priority");
     private final NumberField parallelWeight = new NumberField("Parallelization weight");
     private final NumberField efficiencyWeight = new NumberField("Efficiency weight");
