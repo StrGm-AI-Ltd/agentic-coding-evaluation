@@ -182,6 +182,60 @@ class TailerTest {
         assertEquals("T2", started.get("label"));
     }
 
+    /** Found live: the sessions grid's description showed only "Task T2" while a run was still in
+     *  progress - no hint of what T2 actually is. Packs.taskPack()'s own first line already carries
+     *  the task's title; this is what lets the live view show it too, not just the finished
+     *  manifest. */
+    @Test
+    void sessionStartedForwardsTheTaskTitleWhenAMatchingPackExists() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.createDirectories(runDir.resolve("packs"));
+        Files.writeString(runDir.resolve("packs/T2.md"), "# Current task: T2 — Real Gradle wrapper + project baseline\n\nmore stuff\n");
+        Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"), SESSION_HEADER);
+        final var events = new Tailer().poll(runDir);
+        final var started = events.stream().filter(e -> "session_started".equals(e.get("type"))).findFirst().orElseThrow();
+        assertEquals("Real Gradle wrapper + project baseline", started.get("task_title"));
+    }
+
+    @Test
+    void sessionStartedOmitsTaskTitleWhenNoMatchingPackExists() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"), SESSION_HEADER);
+        final var events = new Tailer().poll(runDir);
+        final var started = events.stream().filter(e -> "session_started".equals(e.get("type"))).findFirst().orElseThrow();
+        assertFalse(started.containsKey("task_title"), "must be absent, not merely null, when there's no matching pack");
+    }
+
+    /** A handoff/continuation/wrapup/fix session shares its base task's own pack file - its own
+     *  label ("T2-handoff") never matches a pack file directly. */
+    @Test
+    void sessionStartedStripsKnownSuffixesToFindTheBasePacksTaskTitle() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.createDirectories(runDir.resolve("packs"));
+        Files.writeString(runDir.resolve("packs/T2.md"), "# Current task: T2 — Real Gradle wrapper + project baseline\n");
+        final var header = "{\"type\": \"session\", \"id\": \"755478fc-f323-565e-92f8-1a5b10584e41\", "
+                + "\"model\": \"m\", \"ts\": \"t\", \"agent\": \"a\", \"label\": \"T2-handoff\"}\n";
+        Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"), header);
+        final var events = new Tailer().poll(runDir);
+        final var started = events.stream().filter(e -> "session_started".equals(e.get("type"))).findFirst().orElseThrow();
+        assertEquals("Real Gradle wrapper + project baseline", started.get("task_title"));
+    }
+
+    @Test
+    void sessionStartedOmitsTaskTitleWhenThePacksFirstLineDoesNotMatchTheExpectedHeaderShape() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.createDirectories(runDir.resolve("packs"));
+        Files.writeString(runDir.resolve("packs/T2.md"), "not the expected header shape at all\n");
+        Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"), SESSION_HEADER);
+        final var events = new Tailer().poll(runDir);
+        final var started = events.stream().filter(e -> "session_started".equals(e.get("type"))).findFirst().orElseThrow();
+        assertFalse(started.containsKey("task_title"));
+    }
+
     /** The sessions grid's new "wall time" column needs the session's own start ts, computed against
      *  its "end" ts once the session finishes (see sessionEndForwardsItsOwnTimestamp below). */
     @Test
