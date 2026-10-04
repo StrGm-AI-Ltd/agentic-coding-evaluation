@@ -26,6 +26,10 @@ public final class Tailer {
     private final Set<String> doneSessionFiles = new HashSet<>();
     private boolean executionOrderReported;
 
+    // mirrors JobLiveState.LABEL_SUFFIXES (ace-ui-vaadin) - a continuation/wrapup/handoff/fix
+    // session shares its base task's own pack file, not one of its own
+    private static final List<String> LABEL_SUFFIXES = List.of("-continue", "-wrapup", "-handoff", "-fix");
+
     public List<Map<String, Object>> poll(final Path runDir) {
         final List<Map<String, Object>> events = new ArrayList<>();
         newFiles(runDir.resolve("packs"), events);
@@ -88,10 +92,19 @@ public final class Tailer {
                         if (!"session".equals(r.path("type").asText())) continue;
                         sessionIds.add(key);
                         sessionIdByFile.put(key, r.path("id").asText());
-                        events.add(Map.of("type", "session_started", "session_id", r.path("id").asText(),
-                                "agent", r.path("agent").asText(), "model", r.path("model").asText(),
-                                "label", r.path("label").asText(""), "ts", r.path("ts").asText(""),
-                                "path", "sessions/" + p.getFileName()));
+                        final var label = r.path("label").asText("");
+                        // Map.of is null-hostile; task_title is absent whenever there's no matching pack
+                        final var event = new LinkedHashMap<String, Object>();
+                        event.put("type", "session_started");
+                        event.put("session_id", r.path("id").asText());
+                        event.put("agent", r.path("agent").asText());
+                        event.put("model", r.path("model").asText());
+                        event.put("label", label);
+                        event.put("ts", r.path("ts").asText(""));
+                        event.put("path", "sessions/" + p.getFileName());
+                        final var title = taskTitle(dir, label);
+                        if (title != null) event.put("task_title", title);
+                        events.add(event);
                     } catch (Exception e) {
                         log.debug("session header for {} not fully written yet, retrying next poll: {}", p, e.toString());
                         continue;
@@ -100,6 +113,31 @@ public final class Tailer {
                 if (!doneSessionFiles.contains(key)) sessionEnd(p, key, events);
             }
         } catch (IOException e) { log.debug("could not list session dir {}: {}", dir, e.toString()); }
+    }
+
+    /** A plan task's human-readable title, straight from Packs.taskPack()'s own first line
+     *  ("# Current task: &lt;id&gt; — &lt;title&gt;") - the only place it lives while a run is still in
+     *  progress (the manifest, which also carries it, isn't written until the whole run finishes).
+     *  "Task T1" on its own says nothing about what T1 actually is; this is what lets the live
+     *  sessions grid show "Task T1 — Real Gradle wrapper + project baseline" instead. null when
+     *  there's no matching pack file (PARALLEL_PLAN/INTEGRATION/REVIEW/the monolithic phases all
+     *  lack one) or the first line doesn't parse - a session with no title is left unenriched,
+     *  never given a wrong one. */
+    private static String taskTitle(final Path sessionsDir, final String label) {
+        if (label == null || label.isBlank()) return null;
+        var baseId = label;
+        for (final String suffix : LABEL_SUFFIXES)
+            if (baseId.endsWith(suffix)) { baseId = baseId.substring(0, baseId.length() - suffix.length()); break; }
+        final Path pack = sessionsDir.getParent().resolve("packs").resolve(baseId + ".md");
+        if (!Files.isRegularFile(pack)) return null;
+        final String prefix = "# Current task: " + baseId + " — ";
+        try (var reader = Files.newBufferedReader(pack, StandardCharsets.UTF_8)) {
+            final String firstLine = reader.readLine();
+            return firstLine != null && firstLine.startsWith(prefix) ? firstLine.substring(prefix.length()) : null;
+        } catch (IOException e) {
+            log.debug("could not read the task title out of {}: {}", pack, e.toString());
+            return null;
+        }
     }
 
     /** A session's own transcript carries its real completion signal — a trailing {"type":"end",

@@ -90,6 +90,29 @@ class JobLiveStateTest {
         assertEquals("", JobLiveState.sessionDescription(Json.MAPPER.readTree("{}")));
     }
 
+    /** Found live: "Task T2" on its own says nothing about what T2 actually is - Tailer reads the
+     *  title straight from the task's own pack file and forwards it as task_title. */
+    @Test
+    void sessionDescription_appendsTheTaskTitleWhenPresent() throws Exception {
+        final var data = Json.MAPPER.readTree("{\"label\": \"T2\", \"task_title\": \"Real Gradle wrapper + project baseline\"}");
+        assertEquals("Task T2 — Real Gradle wrapper + project baseline", JobLiveState.sessionDescription(data));
+    }
+
+    @Test
+    void sessionDescription_appendsTheTaskTitleAfterASuffix() throws Exception {
+        final var data = Json.MAPPER.readTree("{\"label\": \"T3-handoff\", \"task_title\": \"Real Gradle wrapper + project baseline\"}");
+        assertEquals("Task T3 (handoff) — Real Gradle wrapper + project baseline", JobLiveState.sessionDescription(data));
+    }
+
+    @Test
+    void sessionDescription_unaffectedByTaskTitleOnANonTaskLabel() throws Exception {
+        // PARALLEL_PLAN/INTEGRATION/REVIEW/etc. never carry a task_title in practice (Tailer only
+        // looks one up for a plan task id), but the switch's other branches must still ignore it
+        // even if they somehow did
+        final var data = Json.MAPPER.readTree("{\"label\": \"INTEGRATION\", \"task_title\": \"should be ignored\"}");
+        assertEquals("Integration", JobLiveState.sessionDescription(data));
+    }
+
     private static JsonNode labelNode(final String label) {
         return Json.MAPPER.readTree("{\"label\": \"" + label + "\"}");
     }

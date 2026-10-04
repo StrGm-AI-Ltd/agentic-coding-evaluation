@@ -156,7 +156,9 @@ public final class JobLiveState implements Serializable {
     /** RunBench names every session with the stage/task it's actually for - a plan phase
      *  ("p0_definition", "p1_plan"), a plan task id ("T1".."T4"), "PARALLEL_PLAN"/"INTEGRATION", a
      *  reviewer ("REVIEW"/"TRAJECTORY_REVIEW"), or one of those with a continuation suffix - turned
-     *  human-readable here rather than showing the raw internal name verbatim. */
+     *  human-readable here rather than showing the raw internal name verbatim. A plan task id also
+     *  gets its own title appended (Tailer reads it straight from the task's own pack file - "Task
+     *  T2" on its own says nothing about what T2 actually is) when one was found. */
     static String sessionDescription(final JsonNode data) {
         // package-private (not private): tested directly against the full label taxonomy, like
         // Tailer's own pure static helpers, rather than only indirectly via apply()
@@ -167,6 +169,8 @@ public final class JobLiveState implements Serializable {
         for (final var s : LABEL_SUFFIXES) {
             if (base.endsWith(s)) { suffix = " (" + s.substring(1) + ")"; base = base.substring(0, base.length() - s.length()); break; }
         }
+        final var title = Fmt.textOr(data.path("task_title"), null);
+        final var titleSuffix = title == null || title.isBlank() ? "" : " — " + title;
         return switch (base) {
             case "p0_definition" -> "Definition" + suffix;
             case "p1_plan" -> "Plan" + suffix;
@@ -175,7 +179,7 @@ public final class JobLiveState implements Serializable {
             case "INTEGRATION" -> "Integration" + suffix;
             case "REVIEW" -> "Self review" + suffix;
             case "TRAJECTORY_REVIEW" -> "Trajectory review" + suffix;
-            default -> "Task " + base + suffix;   // a plain plan-task id, e.g. "T2"
+            default -> "Task " + base + suffix + titleSuffix;   // a plain plan-task id, e.g. "T2"
         };
     }
 
