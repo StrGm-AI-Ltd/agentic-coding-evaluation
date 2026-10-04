@@ -68,15 +68,16 @@ public class WorkerService {
     private volatile boolean cancelCurrent;
     private volatile Future<?> currentJobFuture;
 
-    /** port of worker.py guard(): the treatment pin (blocked), the run lock (waiting_lock), and
-     *  preflight for the model THIS job will request - all before the budget is spent */
+    /** port of worker.py guard(): the run lock (waiting_lock) and preflight for the model THIS job
+     *  will request - all before the budget is spent. #247: a treatment-pin mismatch used to block
+     *  here outright; now it's a genuine experimental hazard the operator is warned about, not a
+     *  reason to stall a run that would otherwise finish fine. */
     String guard(JobQueue.Job job) {
-        // the treatment pin: the build that enqueued this job must be the build about to run it, or
-        // the arms of an experiment straddle a redeploy and stop being comparable
+        // #247: the arms of an experiment may now straddle a redeploy - warn, but let the job run;
+        // an operator reading the logs can judge for themselves whether the result is still comparable
         if (job.pinnedRunnerSha() != null && !job.pinnedRunnerSha().equals(pin.current()))
-            return "treatment: job was enqueued against build " + job.pinnedRunnerSha() + ", this build is "
-                    + pin.current() + "; the service was rebuilt while the job was queued and its results would not be "
-                    + "comparable with the arms already run. Redeploy that build, or requeue the job from this one";
+            log.warn("job {}: treatment-pin mismatch - enqueued against build {}, this build is {}; running anyway",
+                    job.id(), job.pinnedRunnerSha(), pin.current());
         try {
             if (runLock == null) {
                 // the SAME lock file the Python service uses: "one benchmark run at a time" is an invariant
@@ -107,8 +108,8 @@ public class WorkerService {
         final String refusal = guard(job);
         if (refusal != null) {   // waiting_lock/blocked: the job stays, it is retried when the cause clears
             // blocked = a cause the job cannot outwait (claim() only re-picks queued/waiting_lock rows):
-            // a fatal preflight and a treatment mismatch both need an operator. The lock clears on its own.
-            queue.setStatus(job.id(), refusal.startsWith("preflight") || refusal.startsWith("treatment") ? "blocked" : "waiting_lock", refusal);
+            // a fatal preflight needs an operator. The lock clears on its own.
+            queue.setStatus(job.id(), refusal.startsWith("preflight") ? "blocked" : "waiting_lock", refusal);
             return;
         }
         busy.set(true);
