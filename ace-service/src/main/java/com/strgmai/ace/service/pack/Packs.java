@@ -338,10 +338,16 @@ public final class Packs {
             + "host-built jar fails). Stop when everything is green OR when your budget is nearly spent (see the Budget section; "
             + "check `date`). Before you stop, append exactly one line to docs/PROGRESS.md: `INTEGRATION | done | <evidence>` "
             + "or `INTEGRATION | partial | <what remains>`.";
+    // #245: found live - this session continues the task's own session (continueSession=true) and
+    // already has everything it needs, but kept re-deriving it from scratch anyway: re-running
+    // tests, reading git history, re-reading source files, burning most of its budget before ever
+    // writing the file. Saying so explicitly, not just implying it via "then stop".
     public static String handoffInstruction(final String id) {
         return "Write the file handoff/" + id + ".md for a colleague who will implement the remaining tasks in a fresh session: the "
-                + "decisions you made, gotchas, conventions, and facts they need (endpoints, class names, config keys). At most "
-                + "600 words, no code listings. Then stop.";
+                + "decisions you made, gotchas, conventions, and facts they need (endpoints, class names, config keys). You already "
+                + "have everything you need from this task's own session - do not run tests, inspect git history, or re-read source "
+                + "files to double-check yourself; write directly from what you already know. At most 600 words, no code listings. "
+                + "Then stop.";
     }
     public static final String FIX_INSTRUCTION = """
             The harness merged the parallel tasks {tasks} into this repository and found the problems listed above. Fix them: resolve every
