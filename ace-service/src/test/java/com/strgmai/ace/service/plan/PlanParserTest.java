@@ -32,6 +32,27 @@ class PlanParserTest {
         assertEquals("the REST endpoints", tasks.get(1).goal);
     }
 
+    /** #257, found live: a model's own plan markdown bolds the label AND its colon together
+     *  ("**Goal:**"), closing the "**" AFTER the colon rather than before it - every field used to
+     *  leak that trailing "**" straight into the captured value (e.g. goal becoming "** Give
+     *  `trading-service`..."), corrupting the real prompt sent back to the model on every later
+     *  task, not just the display. Both bold styles must parse identically. */
+    @Test
+    void boldLabelAndColonTogetherDoesNotLeakTrailingStarsIntoTheValue() {
+        final String md = """
+                ## T1 — model the schema
+                - **Goal:** Give `trading-service` its full schema.
+                - **Affected services:** trading-service, postgres.
+                - **Dependencies:** none.
+                - **Acceptance criterion:** `./gradlew test` is green.
+                """;
+        final PlanTask t = PlanParser.parse(md).get(0);
+        assertEquals("Give `trading-service` its full schema", t.goal);
+        assertEquals("trading-service, postgres", t.services);
+        assertEquals("`./gradlew test` is green", t.acceptance);
+        assertFalse(t.goal.startsWith("*"), "the closing ** must never leak into the value: " + t.goal);
+    }
+
     @Test
     void aTableRowIsATask() {
         final String md = "| T1 | model the schema | migration-service | - | tables exist |\n| T2 | implement the API | api-service | T1 | /orders returns 201 |\n";
