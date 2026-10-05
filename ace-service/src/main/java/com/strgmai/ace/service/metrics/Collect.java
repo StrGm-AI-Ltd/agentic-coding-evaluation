@@ -29,7 +29,12 @@ public final class Collect {
         final Map<String, Object> phases = new LinkedHashMap<>();
         long totalSec = 0;
         for (Map<String, Object> ph : (List<Map<String, Object>>) manifest.getOrDefault("phases", List.of())) {
-            final String a = String.valueOf(ph.get("start_iso")), b = String.valueOf(ph.get("end_iso"));
+            // #250: found live - String.valueOf(null) returns the literal string "null", not a real
+            // null, so a resumed phase (R18: skipped this attempt, never recorded a real start/end
+            // timestamp) sailed straight past JournalFacts.facts()'s "sinceIso == null" guard and
+            // crashed OffsetDateTime.parse("null") AFTER oracle.json had already scored successfully
+            // - the run's real result was silently thrown away behind a "failed" status.
+            final String a = Objects.toString(ph.get("start_iso"), null), b = Objects.toString(ph.get("end_iso"), null);
             final Map<String, Object> f = com.strgmai.ace.service.runner.JournalFacts.facts(journal.toString(), a, b, null, null, null);
             final long sec = ph.get("seconds") instanceof Number n ? Math.round(n.doubleValue()) : 0;
             totalSec += sec;
