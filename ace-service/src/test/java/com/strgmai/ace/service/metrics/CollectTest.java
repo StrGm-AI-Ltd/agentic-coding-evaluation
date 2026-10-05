@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
@@ -31,6 +32,22 @@ class CollectTest {
         final Map<String, Object> out = Collect.collect(runDir, manifest);
         final Map<String, Object> leaderboard = (Map<String, Object>) out.get("leaderboard");
         assertEquals(1049L, ((Number) leaderboard.get("total_wall_sec")).longValue());
+    }
+
+    /** #250: found live - a resumed phase (R18: skipped this attempt, so it never recorded a real
+     *  start/end timestamp) has start_iso/end_iso missing from the manifest. String.valueOf(null)
+     *  turns that into the literal string "null", which sails past JournalFacts.facts()'s own
+     *  "sinceIso == null" guard and crashes OffsetDateTime.parse("null") - but only once a REAL
+     *  journal file exists (an empty @TempDir run short-circuits before ever reaching that parse,
+     *  which is why the other tests in this file never caught it). */
+    @Test
+    void aResumedPhaseWithNoRecordedTimestampsDoesNotCrashFactsCollection(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);
+        Files.writeString(runDir.resolve("interactions.jsonl"), "");   // must exist, even if empty
+        final Map<String, Object> manifest = Map.of(
+                "phases", List.of(Map.of("id", "p1_plan", "seconds", 0.0)),   // no start_iso/end_iso at all
+                "tasks", List.of(), "waves", List.of());
+        assertDoesNotThrow(() -> Collect.collect(runDir, manifest));
     }
 
     @Test
