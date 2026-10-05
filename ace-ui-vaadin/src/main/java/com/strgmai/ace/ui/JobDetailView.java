@@ -261,6 +261,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         line.setSpacing(true);
         if (job.cancel_requested() && !JobStatuses.isTerminal(job.status())) {
             line.add(new Span("cancel requested — stops at the next step boundary"));
+        } else if (job.pause_requested() && !JobStatuses.isTerminal(job.status())) {
+            line.add(new Span("pause requested — stops at the next step boundary, resumable with Resume"));
         }
         kindLine.setText("job #" + job.id() + " · " + job.kind()
                 + (job.arm() != null ? " · " + job.arm() + " r" + job.repeat() : ""));
@@ -270,7 +272,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
     /** Rebuilt only when the offered actions change — focus is preserved between cycles. */
     private void updateActions(final Api.Job job) {
-        final var signature = job.status() + "|" + job.cancel_requested() + "|" + runImported
+        final var signature = job.status() + "|" + job.cancel_requested() + "|" + job.pause_requested() + "|" + runImported
                 + "|" + (job.stdout_path() != null) + "|" + (job.run_id() != null);
         if (signature.equals(lastActionsSignature)) {
             return;
@@ -291,8 +293,21 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 }
             }));
         }
+        if (JobStatuses.canPause(job.status(), job.cancel_requested(), job.pause_requested())) {
+            actions.add(new Button("Pause", e -> {
+                try {
+                    client.pause(job.id());
+                    refresh();
+                } catch (final Exception ex) {
+                    log.warn("could not pause job {}: {}", job.id(), ex.toString());
+                    Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
+                }
+            }));
+        }
         if (JobStatuses.canRequeue(job.status())) {
-            actions.add(new Button("Requeue", e -> {
+            // "paused" reads as Resume - same requeue endpoint either way, R18's own git-tag resume
+            // mechanism in the kept workspace is what actually picks the run back up
+            actions.add(new Button("paused".equals(job.status()) ? "Resume" : "Requeue", e -> {
                 try {
                     client.requeue(job.id());
                     refresh();
@@ -470,6 +485,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             case "blocked" ->
                     "this job is blocked — requeue it (queue or experiment page); its results "
                     + "appear once it finishes with a score";
+            case "paused" ->
+                    "this job is paused — press Resume to pick up right where it left off; its "
+                    + "results appear once it finishes with a score";
             case "failed", "cancelled" ->
                     "this job ended without a scored result — such runs are never imported";
             case "succeeded" ->

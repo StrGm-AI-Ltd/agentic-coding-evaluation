@@ -66,6 +66,7 @@ public class WorkerService {
 
     private java.nio.channels.FileChannel runLock;
     private volatile boolean cancelCurrent;
+    private volatile boolean pauseCurrent;
     private volatile Future<?> currentJobFuture;
 
     /** port of worker.py guard(): the run lock (waiting_lock) and preflight for the model THIS job
@@ -105,6 +106,11 @@ public class WorkerService {
             if (job.experimentId() != null) experiments.finalizeIfDone(job.experimentId());
             return;
         }
+        if (Boolean.TRUE.equals(queue.get(job.id()).get("pause_requested"))) {
+            // not a terminal outcome for the arm - no finalizeIfDone, unlike cancel just above
+            queue.paused(job.id());
+            return;
+        }
         final String refusal = guard(job);
         if (refusal != null) {   // waiting_lock/blocked: the job stays, it is retried when the cause clears
             // blocked = a cause the job cannot outwait (claim() only re-picks queued/waiting_lock rows):
@@ -114,22 +120,29 @@ public class WorkerService {
         }
         busy.set(true);
         cancelCurrent = false;
+        pauseCurrent = false;
         Thread cancelWatch = new Thread(() -> {   // worker.py supervise(): poll cancel_requested, kill the run
             while (busy.get()) {
-                if (Boolean.TRUE.equals(queue.get(job.id()).get("cancel_requested"))) {
+                final Map<String, Object> row = queue.get(job.id());
+                // interrupt the worker thread: a blocking model-server call or Thread.sleep must
+                // unwind NOW, not wait out the rest of the run's budget for the flag to be noticed.
+                // interrupt() alone does not reach a blocking HttpResponseInputStream.read() (R14,
+                // same class of bug as RecordingProxy pre-R12) - probe.abortInflight() closes it directly.
+                // Found live: a single one-shot abort here only closes whatever request happens to
+                // be in flight AT THAT INSTANT. ContextProbe.askRetry() opens a brand new request
+                // right after an aborted one fails (so does probe()'s own loop across context
+                // sizes), and this thread used to stop watching immediately after its first
+                // reaction (the old loop condition was `!cancelCurrent`, true forever once set) -
+                // the job sat "running" indefinitely past cancellation, blocked on that new,
+                // never-aborted request. Keep polling and re-aborting every cycle instead, until
+                // the job itself actually finishes. Pause reacts the exact same way - the only
+                // difference is what the finally block below does with cancelCurrent vs pauseCurrent.
+                if (Boolean.TRUE.equals(row.get("cancel_requested"))) {
                     cancelCurrent = true;
-                    // interrupt the worker thread: a blocking model-server call or Thread.sleep must
-                    // unwind NOW, not wait out the rest of the run's budget for the flag to be noticed.
-                    // interrupt() alone does not reach a blocking HttpResponseInputStream.read() (R14,
-                    // same class of bug as RecordingProxy pre-R12) - probe.abortInflight() closes it directly.
-                    // Found live: a single one-shot abort here only closes whatever request happens to
-                    // be in flight AT THAT INSTANT. ContextProbe.askRetry() opens a brand new request
-                    // right after an aborted one fails (so does probe()'s own loop across context
-                    // sizes), and this thread used to stop watching immediately after its first
-                    // reaction (the old loop condition was `!cancelCurrent`, true forever once set) -
-                    // the job sat "running" indefinitely past cancellation, blocked on that new,
-                    // never-aborted request. Keep polling and re-aborting every cycle instead, until
-                    // the job itself actually finishes.
+                    if (currentJobFuture != null) currentJobFuture.cancel(true);
+                    probe.abortInflight();
+                } else if (Boolean.TRUE.equals(row.get("pause_requested"))) {
+                    pauseCurrent = true;
                     if (currentJobFuture != null) currentJobFuture.cancel(true);
                     probe.abortInflight();
                 }
@@ -170,6 +183,12 @@ public class WorkerService {
                     }
                     queue.finish(job.id(), "cancelled", null, "cancelled mid-run");
                     if (job.experimentId() != null) experiments.finalizeIfDone(job.experimentId());
+                } else if (pauseCurrent) {
+                    // the gentle half of the same interrupt: unlike cancelCurrent above, the results
+                    // dir and workspace are left exactly where they are - 'paused' is resumable via
+                    // Requeue (R18's own git-tag resume mechanism picks up right where this left off),
+                    // not a terminal outcome, so no finalizeIfDone either.
+                    queue.paused(job.id());
                 }
             }
         });

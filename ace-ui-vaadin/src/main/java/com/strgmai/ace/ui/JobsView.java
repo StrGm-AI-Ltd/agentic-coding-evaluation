@@ -121,8 +121,12 @@ public class JobsView extends VerticalLayout {
         if (JobStatuses.canCancel(job.status(), job.cancel_requested())) {
             layout.add(new Button("Cancel", e -> act(() -> client.cancel(job.id()), job)));
         }
+        if (JobStatuses.canPause(job.status(), job.cancel_requested(), job.pause_requested())) {
+            layout.add(new Button("Pause", e -> act(() -> client.pause(job.id()), job)));
+        }
         if (JobStatuses.canRequeue(job.status())) {
-            layout.add(new Button("Requeue", e -> act(() -> client.requeue(job.id()), job)));
+            // "paused" reads as Resume - same requeue endpoint either way
+            layout.add(new Button("paused".equals(job.status()) ? "Resume" : "Requeue", e -> act(() -> client.requeue(job.id()), job)));
         }
         // priority only reorders the queue: meaningless for running/terminal jobs
         if (!JobStatuses.isTerminal(job.status()) && !"running".equals(job.status())) {

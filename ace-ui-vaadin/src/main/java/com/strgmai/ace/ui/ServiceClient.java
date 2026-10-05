@@ -157,6 +157,10 @@ public class ServiceClient implements Serializable {
         return http.post().uri("/api/jobs/{id}/cancel", jobId).retrieve().body(Api.Job.class);
     }
 
+    public Api.Job pause(final String jobId) {
+        return http.post().uri("/api/jobs/{id}/pause", jobId).retrieve().body(Api.Job.class);
+    }
+
     /** POST /api/jobs — enqueue a run; spec maps 1:1 onto the service's RunSpec (snake_case flags). */
     public Api.Job enqueueJob(final Map<String, Object> spec, final int priority) {
         return http.post().uri("/api/jobs")

@@ -109,6 +109,8 @@ class JobDetailViewTest {
                 JobDetailView.runNotImportedHint("waiting_lock"));
         assertTrue(JobDetailView.runNotImportedHint("blocked").startsWith("this job is blocked"),
                 "blocked jobs need a requeue, not a wait — their own message since n20");
+        assertTrue(JobDetailView.runNotImportedHint("paused").startsWith("this job is paused"),
+                "paused jobs need a Resume, not a wait or an ended-without-score message");
 
         assertEquals("this job ended without a scored result — such runs are never imported",
                 JobDetailView.runNotImportedHint("cancelled"));

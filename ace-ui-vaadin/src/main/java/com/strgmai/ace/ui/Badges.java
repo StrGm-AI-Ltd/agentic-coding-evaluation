@@ -39,7 +39,7 @@ public final class Badges {
         return switch (s) {
             case "pass", "succeeded", "finished", "true" -> SUCCESS;
             case "fail", "failed", "error", "false" -> ERROR;
-            case "blocked", "waiting_lock", "skipped", "infra" -> WARNING;
+            case "blocked", "waiting_lock", "skipped", "infra", "paused" -> WARNING;
             case "running" -> PRIMARY;
             default -> CONTRAST; // queued, cancelled, not_attempted, …
         };

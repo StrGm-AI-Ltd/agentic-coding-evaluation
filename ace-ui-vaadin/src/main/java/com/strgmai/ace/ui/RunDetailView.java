@@ -176,7 +176,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
 
     /** What the not-imported panel should say, from the run's own job row. */
     enum NotImportedKind {
-        IN_FLIGHT, ENDED_WITHOUT_SCORE, BLOCKED, UNKNOWN
+        IN_FLIGHT, ENDED_WITHOUT_SCORE, BLOCKED, PAUSED, UNKNOWN
     }
 
     static NotImportedKind notImportedKind(final Api.Job job) {
@@ -185,6 +185,9 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         }
         if ("blocked".equals(job.status())) {
             return NotImportedKind.BLOCKED;
+        }
+        if ("paused".equals(job.status())) {
+            return NotImportedKind.PAUSED;
         }
         return JobStatuses.isTerminal(job.status()) ? NotImportedKind.ENDED_WITHOUT_SCORE
                 : NotImportedKind.IN_FLIGHT;
@@ -223,6 +226,12 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
             case BLOCKED -> {
                 add(Panels.warn("This run's job is blocked — requeue it from the queue page; the "
                         + "run appears here once it finishes with a score."));
+                add(new Button("Open the job",
+                        e -> getUI().ifPresent(ui -> ui.navigate("jobs/" + runJob.id()))));
+            }
+            case PAUSED -> {
+                add(Panels.warn("This run's job is paused — press Resume on the job page to pick up "
+                        + "right where it left off; the run appears here once it finishes with a score."));
                 add(new Button("Open the job",
                         e -> getUI().ifPresent(ui -> ui.navigate("jobs/" + runJob.id()))));
             }

@@ -67,6 +67,38 @@ class JobQueueIT {
         assertThrows(IllegalArgumentException.class, () -> q.enqueue(spec("low-1"), 0, results, "r", "o", null, null, null));   // never twice
     }
 
+    /** Pause: the gentler cancel - same running-gets-the-flag / queued-stops-outright shape, but
+     *  lands on 'paused' (resumable via Requeue) instead of 'cancelled', and the worker's own
+     *  completion (paused()) clears the flag + PID without setting finished_at/exit_code - a paused
+     *  job is not a terminal outcome. */
+    @Test
+    void pauseAndResume() throws Exception {
+        final var q = new JobQueue(dsl());
+        final var results = Files.createTempDirectory("results").toString();
+
+        q.enqueue(spec("pause-1"), 0, results, "r", "o", null, null, null);
+        final JobQueue.Job running = q.claim();
+        q.pause(running.id());
+        assertEquals("running", q.get(running.id()).get("status"));   // a RUNNING job gets the flag; the worker stops it
+        assertTrue((Boolean) q.get(running.id()).get("pause_requested"));
+
+        q.paused(running.id());   // the worker's own completion, once it actually stops
+        assertEquals("paused", q.get(running.id()).get("status"));
+        assertFalse((Boolean) q.get(running.id()).get("pause_requested"));
+        assertNull(q.get(running.id()).get("pid"));
+
+        q.requeue(running.id(), results);   // Resume = the same requeue endpoint
+        assertEquals("queued", q.get(running.id()).get("status"));
+        assertFalse((Boolean) q.get(running.id()).get("pause_requested"));
+
+        q.enqueue(spec("pause-2"), 0, results, "r", "o", null, null, null);
+        final JobQueue.Job queued = q.claim();
+        q.setStatus(queued.id(), "queued", null);
+        q.pause(queued.id());   // a non-running job pauses outright, mirroring cancel
+        assertEquals("paused", q.get(queued.id()).get("status"));
+        assertTrue((Boolean) q.get(queued.id()).get("pause_requested"));
+    }
+
     /** #87: two near-simultaneous enqueue() calls for the SAME explicit run id race past the
      *  pre-checks (not atomic with the insert) and both attempt it - the DB's own
      *  uq_jobs_kind_run_id constraint is the real backstop, but the LOSING request used to surface

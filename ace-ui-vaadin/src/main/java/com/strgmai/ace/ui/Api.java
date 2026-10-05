@@ -135,6 +135,7 @@ public final class Api {
             Integer pid,
             Integer exit_code,
             boolean cancel_requested,
+            boolean pause_requested,
             String stdout_path,
             String result_line,
             String enqueued_at,
