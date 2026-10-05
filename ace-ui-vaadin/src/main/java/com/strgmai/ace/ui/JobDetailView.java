@@ -565,13 +565,25 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         // to keep re-fetching while still unstarted, and stops the moment the real, enriched prompt
         // arrives: it's then stable for the rest of this attempt, so there's no point refetching.
         final Registration[] pollReg = new Registration[1];
+        // #256, found live: Packs.taskPack() caps the whole id/title/goal/services/acceptance
+        // summary block to a fixed prompt-budget size (a real, deliberate cost/context control on
+        // what the MODEL receives, not a bug) - so the version embedded in the raw prompt can cut
+        // "acceptance" off mid-sentence once "goal"/"services" alone already used the budget. The
+        // plan's own goal text (task.goal(), from PlanParser - never capped there) is shown here in
+        // full regardless, since there's no reason the ACE user watching this page should be bound
+        // by the same budget the model's own prompt is deliberately held to.
+        final boolean hasGoal = task.goal() != null && !task.goal().isBlank();
         final Runnable load = () -> {
             try {
                 final var prompt = client.taskPrompt(jobId, task.id());
                 body.removeAll();
+                if (hasGoal) {
+                    body.add(new com.vaadin.flow.component.Html(
+                            "<div class=\"md-body\"><h3>Full task description</h3>" + Markdown.toHtml(task.goal()) + "</div>"));
+                }
                 if (!prompt.started()) {
-                    final var note = new Span("This task hasn't started yet - showing its fixed instruction only; "
-                            + "the rest of its prompt depends on the workspace state at the moment it actually "
+                    final var note = new Span("This task hasn't started yet - the prompt below is its fixed "
+                            + "instruction only; the rest depends on the workspace state at the moment it actually "
                             + "begins. This updates automatically once it does.");
                     note.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em")
                             .set("display", "block").set("margin-bottom", "8px");

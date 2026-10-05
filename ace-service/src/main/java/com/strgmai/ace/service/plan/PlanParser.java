@@ -15,12 +15,18 @@ public final class PlanParser {
     static final Pattern ID_RE = Pattern.compile("\\b(?:T|ST|S|Task|Subtask)[- ]?0*(\\d{1,3})\\b", Pattern.CASE_INSENSITIVE);
     static final Pattern FIELD_HEADING = Pattern.compile("^\\s{0,3}#{2,6}\\s*(goal|objective|services?|components?|dependencies|depends on|after|requires|acceptance(?: criteri\\w+)?|criteri\\w+|verified by|verification|done when)\\s*$", Pattern.CASE_INSENSITIVE);
     static final Pattern CHECK_ID = Pattern.compile("\\b([SPMBCF]\\d{1,2})\\b");
+    // #257, found live: "**Goal:** text" (the bold span wrapping the label AND its colon together,
+    // the common way a model actually writes a bold field label) closes its "**" AFTER the colon,
+    // not before it - every pattern here only ever allowed the optional stars BEFORE the colon, so
+    // that trailing "**" leaked straight into the captured value as a prefix (e.g. goal becoming
+    // "** Give `trading-service`..."). A second optional \*{0,3}\s* right after the colon consumes
+    // it either way, matching both bold styles identically.
     static final Map<String, Pattern> FIELD_RE = Map.of(
-            "goal", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(goal|objective|deliverable|what)\\s*\\*{0,3}\\s*[:—-]\\s*(.+)", Pattern.CASE_INSENSITIVE),
-            "services", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(services?|components?|modules?|affected)\\s*\\*{0,3}\\s*[:—-]\\s*(.+)", Pattern.CASE_INSENSITIVE),
-            "deps", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(dependencies|depends? on|deps|after|requires|prereq(?:uisite)?s?|blocked by)\\s*\\*{0,3}\\s*(?:[:—-]\\s*)?(.+)", Pattern.CASE_INSENSITIVE),
-            "acceptance", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(acceptance(?: criteri(?:on|a))?|criteri(?:on|a)|verified by|verification|done when|test)\\s*\\*{0,3}\\s*[:—-]\\s*(.+)", Pattern.CASE_INSENSITIVE),
-            "checks", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(oracle|checks|scored by)\\s*\\*{0,3}\\s*[:—-]\\s*(.+)", Pattern.CASE_INSENSITIVE));
+            "goal", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(goal|objective|deliverable|what)\\s*\\*{0,3}\\s*[:—-]\\s*\\*{0,3}\\s*(.+)", Pattern.CASE_INSENSITIVE),
+            "services", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(services?|components?|modules?|affected)\\s*\\*{0,3}\\s*[:—-]\\s*\\*{0,3}\\s*(.+)", Pattern.CASE_INSENSITIVE),
+            "deps", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(dependencies|depends? on|deps|after|requires|prereq(?:uisite)?s?|blocked by)\\s*\\*{0,3}\\s*(?:[:—-]\\s*)?\\*{0,3}\\s*(.+)", Pattern.CASE_INSENSITIVE),
+            "acceptance", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(acceptance(?: criteri(?:on|a))?|criteri(?:on|a)|verified by|verification|done when|test)\\s*\\*{0,3}\\s*[:—-]\\s*\\*{0,3}\\s*(.+)", Pattern.CASE_INSENSITIVE),
+            "checks", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(oracle|checks|scored by)\\s*\\*{0,3}\\s*[:—-]\\s*\\*{0,3}\\s*(.+)", Pattern.CASE_INSENSITIVE));
     static final Pattern SEGMENT = Pattern.compile("(?=\\b(?:Goal|Objective|Deliverable|Services?|Components?|Modules?|Dependencies|Depends on|Deps|After|Requires|Prereq\\w*|Blocked by|Acceptance(?: criteri\\w+)?|Criteri\\w+|Verified by|Verification|Done when|Oracle|Checks|Scored by)\\s*[:—-])", Pattern.CASE_INSENSITIVE);
     static final Pattern LIST_HEAD = Pattern.compile("^\\s*(?:[-*]|\\d+[.)])\\s+\\*{0,3}\\s*(?:T|ST|Task|Subtask)[- ]?\\d", Pattern.CASE_INSENSITIVE);
 
