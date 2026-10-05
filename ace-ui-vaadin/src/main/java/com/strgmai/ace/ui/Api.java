@@ -126,7 +126,12 @@ public final class Api {
     public record PlanResponse(List<PlanTask> tasks, String error) {
     }
 
-    public record PlanTask(int order, String id, String title, String goal, List<String> deps) {
+    /** implemented/handoff_done come from the workspace's own R18 git tags (phase/{id},
+     *  phase/{id}-handoff) - the resume-independent source of truth for "is this task actually
+     *  done," since a task finished in a PRIOR attempt never produces a live session event in a
+     *  fresh page view. See JobDetailView.taskStatus(). */
+    public record PlanTask(int order, String id, String title, String goal, List<String> deps,
+                           boolean implemented, boolean handoff_done) {
     }
 
     /** GET /api/jobs/{id}/tasks/{taskId}/prompt — progressively enriched: text is always the task's

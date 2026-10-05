@@ -228,6 +228,9 @@ class BenchControllerTest {
                 Dependencies: T1
                 """);
         when(props.resultsDir()).thenReturn(resultsDir.toString());
+        // no workspace at this path at all (not even a .git) - implemented/handoff_done must read as
+        // false, not throw, same as RunBenchSupport.tagExists() already guarantees for a bare path
+        when(props.workspaceRoot()).thenReturn(Files.createTempDirectory("ws-root").toString());
         when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
 
         mvc.perform(get("/api/jobs/" + JOB_1 + "/plan"))
@@ -235,9 +238,50 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.tasks[0].id").value("T1"))
                 .andExpect(jsonPath("$.tasks[0].goal").value("create the entities"))
                 .andExpect(jsonPath("$.tasks[0].order").value(0))
+                .andExpect(jsonPath("$.tasks[0].implemented").value(false))
+                .andExpect(jsonPath("$.tasks[0].handoff_done").value(false))
                 .andExpect(jsonPath("$.tasks[1].id").value("T2"))
                 .andExpect(jsonPath("$.tasks[1].goal").value("the REST endpoints"))
                 .andExpect(jsonPath("$.tasks[1].order").value(1));
+    }
+
+    /** #254, found live: a task finished in a PRIOR attempt is resumed straight past (R18) and so
+     *  never produces a live session event in a fresh page view - the UI's status column must fall
+     *  back to these flags (the workspace's own git tags) rather than reading a genuinely-finished
+     *  task as "not started" forever. */
+    @Test
+    void jobPlanReadsImplementedAndHandoffDoneFromTheWorkspacesOwnR18Tags() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir);
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), """
+                # Plan
+                ## T1 — model the schema
+                - Goal: create the entities
+                - Dependencies: none
+                ## T2: implement the API
+                Goal: the REST endpoints
+                Dependencies: T1
+                """);
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T1");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T1-handoff");
+        // T2 is implemented but its handoff hasn't run yet - a real, common mid-run state
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T2");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/plan"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tasks[0].id").value("T1"))
+                .andExpect(jsonPath("$.tasks[0].implemented").value(true))
+                .andExpect(jsonPath("$.tasks[0].handoff_done").value(true))
+                .andExpect(jsonPath("$.tasks[1].id").value("T2"))
+                .andExpect(jsonPath("$.tasks[1].implemented").value(true))
+                .andExpect(jsonPath("$.tasks[1].handoff_done").value(false));
     }
 
     @Test

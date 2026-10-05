@@ -183,7 +183,15 @@ public class BenchController {
     /** the plan's own task list (id/title/goal/deps), in planned execution order - keyed by job id,
      *  not run id, so it works on a still-running job (just reads a results-dir file directly; no
      *  import/manifest needed, unlike /api/runs/{id}). Empty "tasks" before p1_plan has produced a
-     *  plan at all (monolithic mode, or an orchestrated run that hasn't reached p1 yet). */
+     *  plan at all (monolithic mode, or an orchestrated run that hasn't reached p1 yet).
+     *
+     *  #254, found live: "implemented"/"handoff_done" come from the workspace's own R18 git tags
+     *  (phase/{id}, phase/{id}-handoff), not from live SSE session events - a task completed in a
+     *  PRIOR attempt (resumed straight past, per R18) never produces a session_started/session_done
+     *  event in THIS page's live view at all, so the UI's own session-derived status alone always
+     *  read a genuinely-finished task as "not started". The git tags are the real, resume-independent
+     *  source of truth for "is this task actually done" - the UI still prefers live session data when
+     *  it has it (for a real-time "running" state), falling back to these only when it doesn't. */
     @GetMapping("/api/jobs/{id}/plan")
     public Map<String, Object> plan(@PathVariable UUID id) {
         final Map<String, Object> job = queue.get(id);
@@ -195,12 +203,15 @@ public class BenchController {
             tasks = PlanParser.parseFile(planFile);
         } catch (final com.strgmai.ace.service.plan.PlanError e) { return Map.of("tasks", List.of(), "error", e.toString()); }
         catch (final Exception e) { return Map.of("tasks", List.of()); }
+        final Path ws = Path.of(props.workspaceRoot(), String.valueOf(job.get("run_id")), "workspace");
         final List<Map<String, Object>> rows = new ArrayList<>();
         int order = 0;
         for (final List<PlanTask> wave : PlanParser.waves(tasks))
             for (final PlanTask t : wave)
                 rows.add(Map.of("order", order++, "id", t.id, "title", t.title == null ? "" : t.title,
-                        "goal", t.goal == null ? "" : t.goal, "deps", t.deps == null ? List.of() : t.deps));
+                        "goal", t.goal == null ? "" : t.goal, "deps", t.deps == null ? List.of() : t.deps,
+                        "implemented", com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/" + t.id),
+                        "handoff_done", com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/" + t.id + "-handoff")));
         return Map.of("tasks", rows);
     }
 
