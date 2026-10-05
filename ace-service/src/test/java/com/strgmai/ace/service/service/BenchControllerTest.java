@@ -2,6 +2,7 @@ package com.strgmai.ace.service.service;
 
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.metrics.StatsService;
+import com.strgmai.ace.service.pack.Packs;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -208,6 +209,80 @@ class BenchControllerTest {
         when(queue.get(JOB_99)).thenThrow(new org.springframework.dao.EmptyResultDataAccessException(1));
 
         mvc.perform(get("/api/jobs/" + JOB_99)).andExpect(status().isNotFound());
+    }
+
+    /** keyed by job id, not run id - unlike /api/runs/{id}/files/..., this must work on a still-
+     *  running, never-imported job (it just reads a results-dir file directly). */
+    @Test
+    void jobPlanParsesTheResultsDirsPlanFileInExecutionOrder() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir);
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), """
+                # Plan
+                ## T1 — model the schema
+                - Goal: create the entities
+                - Dependencies: none
+                ## T2: implement the API
+                Goal: the REST endpoints
+                Dependencies: T1
+                """);
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/plan"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tasks[0].id").value("T1"))
+                .andExpect(jsonPath("$.tasks[0].goal").value("create the entities"))
+                .andExpect(jsonPath("$.tasks[0].order").value(0))
+                .andExpect(jsonPath("$.tasks[1].id").value("T2"))
+                .andExpect(jsonPath("$.tasks[1].goal").value("the REST endpoints"))
+                .andExpect(jsonPath("$.tasks[1].order").value(1));
+    }
+
+    @Test
+    void jobPlanIsAnEmptyListBeforeAnyPlanFileExists() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        Files.createDirectories(resultsDir.resolve("run-1"));   // the run dir exists; no plan yet
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/plan"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tasks").isArray())
+                .andExpect(jsonPath("$.tasks").isEmpty());
+    }
+
+    @Test
+    void taskPromptReturnsTheRealRecordedPromptOnceTheTaskHasStarted() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var packs = resultsDir.resolve("run-1/packs");
+        Files.createDirectories(packs);
+        Files.writeString(packs.resolve("T1.md"), "## Frozen API contract\nAll money is BigDecimal.");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T1/prompt"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.started").value(true))
+                .andExpect(jsonPath("$.text", containsString("Frozen API contract")))
+                .andExpect(jsonPath("$.text", containsString("BigDecimal")));
+    }
+
+    /** the task hasn't run yet: still shows the static instruction every task shares (a pure
+     *  function of the id - safe to compute ahead of time), just not enriched with the dynamic part
+     *  yet - see Packs.taskPack()'s own dependence on live workspace state (RunBench.java). */
+    @Test
+    void taskPromptShowsTheStaticInstructionBeforeThePackFileExists() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        Files.createDirectories(resultsDir.resolve("run-1"));
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T3/prompt"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.started").value(false))
+                .andExpect(jsonPath("$.text").value(Packs.taskInstruction("T3")));
     }
 
     @Test

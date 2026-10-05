@@ -5,6 +5,9 @@ import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.config.JsonColumns;
 import com.strgmai.ace.service.metrics.StatsService;
 import com.strgmai.ace.service.oracle.CheckId;
+import com.strgmai.ace.service.pack.Packs;
+import com.strgmai.ace.service.plan.PlanParser;
+import com.strgmai.ace.service.plan.PlanTask;
 import org.jooq.DSLContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -176,6 +179,51 @@ public class BenchController {
      *  page (GET /api/jobs/{id}) had nothing to call. */
     @GetMapping("/api/jobs/{id}")
     public Map<String, Object> job(@PathVariable UUID id) { return queue.get(id); }
+
+    /** the plan's own task list (id/title/goal/deps), in planned execution order - keyed by job id,
+     *  not run id, so it works on a still-running job (just reads a results-dir file directly; no
+     *  import/manifest needed, unlike /api/runs/{id}). Empty "tasks" before p1_plan has produced a
+     *  plan at all (monolithic mode, or an orchestrated run that hasn't reached p1 yet). */
+    @GetMapping("/api/jobs/{id}/plan")
+    public Map<String, Object> plan(@PathVariable UUID id) {
+        final Map<String, Object> job = queue.get(id);
+        final List<PlanTask> tasks;
+        try {
+            final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
+            final Path planFile = base.resolve("IMPLEMENTATION_PLAN.md");
+            if (!Files.isRegularFile(planFile) || !isContainedEvenViaSymlinks(base, planFile)) return Map.of("tasks", List.of());
+            tasks = PlanParser.parseFile(planFile);
+        } catch (final com.strgmai.ace.service.plan.PlanError e) { return Map.of("tasks", List.of(), "error", e.toString()); }
+        catch (final Exception e) { return Map.of("tasks", List.of()); }
+        final List<Map<String, Object>> rows = new ArrayList<>();
+        int order = 0;
+        for (final List<PlanTask> wave : PlanParser.waves(tasks))
+            for (final PlanTask t : wave)
+                rows.add(Map.of("order", order++, "id", t.id, "title", t.title == null ? "" : t.title,
+                        "goal", t.goal == null ? "" : t.goal, "deps", t.deps == null ? List.of() : t.deps));
+        return Map.of("tasks", rows);
+    }
+
+    /** the task's prompt, progressively enriched. taskInstruction(id) is a fixed template (just a
+     *  function of the id) so it's always shown, even before the task starts; the dynamic part -
+     *  packs/{id}.md - only exists once the harness has actually computed it (Packs.taskPack()
+     *  depends on the live, mutating workspace: git history, docs/PROGRESS.md, prior tasks' diffs,
+     *  not just the plan), so "started" tells the UI whether it's looking at the real, full prompt
+     *  or just the static instruction every task shares. */
+    @GetMapping("/api/jobs/{id}/tasks/{taskId}/prompt")
+    public Map<String, Object> taskPrompt(@PathVariable UUID id, @PathVariable String taskId) {
+        final Map<String, Object> job = queue.get(id);
+        final String instruction = Packs.taskInstruction(taskId);
+        try {
+            final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
+            final Path pack = base.resolve("packs").resolve(taskId + ".md");
+            if (!Files.isRegularFile(pack) || !isContainedEvenViaSymlinks(base, pack))
+                return Map.of("started", false, "text", instruction);
+            return Map.of("started", true, "text", instruction + "\n\n" + Files.readString(pack));
+        } catch (final Exception e) {
+            return Map.of("started", false, "text", instruction);
+        }
+    }
 
     @PostMapping("/api/jobs")
     public Map<String, Object> enqueue(final @RequestBody Map<String, Object> body) {

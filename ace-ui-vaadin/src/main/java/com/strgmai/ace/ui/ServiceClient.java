@@ -161,6 +161,14 @@ public class ServiceClient implements Serializable {
         return http.post().uri("/api/jobs/{id}/pause", jobId).retrieve().body(Api.Job.class);
     }
 
+    public Api.PlanResponse jobPlan(final String jobId) {
+        return http.get().uri("/api/jobs/{id}/plan", jobId).retrieve().body(Api.PlanResponse.class);
+    }
+
+    public Api.TaskPrompt taskPrompt(final String jobId, final String taskId) {
+        return http.get().uri("/api/jobs/{id}/tasks/{taskId}/prompt", jobId, taskId).retrieve().body(Api.TaskPrompt.class);
+    }
+
     /** POST /api/jobs — enqueue a run; spec maps 1:1 onto the service's RunSpec (snake_case flags). */
     public Api.Job enqueueJob(final Map<String, Object> spec, final int priority) {
         return http.post().uri("/api/jobs")

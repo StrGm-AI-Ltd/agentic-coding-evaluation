@@ -120,6 +120,21 @@ public final class Api {
     public record ImportResult(List<String> imported, List<String> skipped) {
     }
 
+    /** GET /api/jobs/{id}/plan — the plan's own task list, in planned execution order. Works on a
+     *  still-running job (reads a results-dir file directly; no import needed). goal is the task's
+     *  real description (PlanParser's richest field); title is its heading text, often terser. */
+    public record PlanResponse(List<PlanTask> tasks, String error) {
+    }
+
+    public record PlanTask(int order, String id, String title, String goal, List<String> deps) {
+    }
+
+    /** GET /api/jobs/{id}/tasks/{taskId}/prompt — progressively enriched: text is always the task's
+     *  static instruction at minimum; started=true means it's enriched with the real, dynamic part
+     *  the harness computed right as that task's session began (packs/{id}.md). */
+    public record TaskPrompt(boolean started, String text) {
+    }
+
     /** One queue job — GET /api/jobs, /api/jobs/{id}, and the job-mutating endpoints. */
     public record Job(
             String id,
