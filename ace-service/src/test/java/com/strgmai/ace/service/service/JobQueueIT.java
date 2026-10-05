@@ -82,6 +82,13 @@ class JobQueueIT {
         assertEquals("running", q.get(running.id()).get("status"));   // a RUNNING job gets the flag; the worker stops it
         assertTrue((Boolean) q.get(running.id()).get("pause_requested"));
 
+        // a real run leaves real files behind - pause() never moves them aside (unlike cancel's
+        // _aborted/ move), so they're still sitting at the live path when Resume is clicked. #253,
+        // found live: requeue()'s own "results dir exists, move it aside first" guard (built for
+        // cancel/failed/blocked, where that WOULD be a leftover-conflict anomaly) wrongly refused a
+        // paused job's own, still-in-place, perfectly legitimate directory.
+        Files.createDirectories(java.nio.file.Path.of(results, "pause-1"));
+        Files.writeString(java.nio.file.Path.of(results, "pause-1", "manifest.json"), "{}");
         q.paused(running.id());   // the worker's own completion, once it actually stops
         assertEquals("paused", q.get(running.id()).get("status"));
         assertFalse((Boolean) q.get(running.id()).get("pause_requested"));
@@ -90,6 +97,8 @@ class JobQueueIT {
         q.requeue(running.id(), results);   // Resume = the same requeue endpoint
         assertEquals("queued", q.get(running.id()).get("status"));
         assertFalse((Boolean) q.get(running.id()).get("pause_requested"));
+        assertTrue(Files.isRegularFile(java.nio.file.Path.of(results, "pause-1", "manifest.json")),
+                "resuming a paused job must never touch its still-in-place results dir");
 
         q.enqueue(spec("pause-2"), 0, results, "r", "o", null, null, null);
         final JobQueue.Job queued = q.claim();
