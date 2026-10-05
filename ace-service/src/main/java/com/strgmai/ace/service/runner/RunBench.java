@@ -1030,6 +1030,27 @@ public class RunBench {
     }
 
     private void handoffStep(final Map<String, Object> cfg, final String runId, final PlanTask t, final Path rd, final Path ws, final Path journal, final Map<String, Object> manifest, Map<String, Object> rec) throws Exception {
+        final Path hp = ws.resolve("handoff").resolve(t.id + ".md");
+        // R18: resume past this handoff if a prior attempt of THIS SAME run already finished it.
+        // #249, found live: unlike every other phase, this one had no tagExists check at all - a
+        // restarted run unconditionally re-ran EVERY handoff from scratch, even ones already
+        // committed. With --keep-workspace across many restarts this isn't just wasted budget: a
+        // resumed handoff session can find itself staring at a workspace whose LATER tasks are
+        // already fully implemented (from a prior attempt that got further before being
+        // interrupted), flatly contradicting its own "write for a colleague who implements the
+        // remaining tasks" framing - one session spent 3+ hours trying to reconcile that instead of
+        // just stopping, because nothing here told it the handoff was already done.
+        if (RunBenchSupport.tagExists(ws, "phase/" + t.id + "-handoff")) {
+            log.info("run {}: phase/{}-handoff already completed in a prior attempt, resuming past it", runId, t.id);
+            if (Files.isRegularFile(hp)) {
+                final String txt = Files.readString(hp);
+                manifestHandoffs(manifest).add(new String[]{t.id, txt});
+                rec.put("handoff_chars", txt.length());
+            }
+            rec.put("handoff_seconds", 0.0);
+            rec.put("handoff_rc", 0);
+            return;
+        }
         // 0 means unlimited (the system-wide "0 = no budget" convention)
         final long handoffTokens = cfg.get("handoff_tokens") instanceof Number ht ? ht.longValue() : 0L;
         final var proxy = proxies.start(journal, handoffTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
@@ -1045,7 +1066,6 @@ public class RunBench {
                             rd.resolve("sessions"), handoffSid, true, rd.resolve("packs/stable.md").toString(), ws.toString(),
                             proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("model"),
                             (Map<String, String>) cfg.get("_agent_env")));
-            final Path hp = ws.resolve("handoff").resolve(t.id + ".md");
             if (Files.isRegularFile(hp)) {
                 final String txt = Files.readString(hp);
                 manifestHandoffs(manifest).add(new String[]{t.id, txt});
@@ -1057,6 +1077,7 @@ public class RunBench {
             }
             rec.put("handoff_seconds", h.seconds());
             rec.put("handoff_rc", h.rc());
+            RunBenchSupport.snapshot(ws, "phase/" + t.id + "-handoff");   // so a future resume can skip this (see tagExists check above)
         } finally { proxy.stop(); }
     }
 
