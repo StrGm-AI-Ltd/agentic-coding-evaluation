@@ -44,6 +44,6 @@ final class ApiFixtures {
     /** A full job row, minimal — for blocked-reason fetching and requeue tests. */
     static Api.Job job(final long id, final String status, final String blockedReason) {
         return new Api.Job(String.valueOf(id), null, null, null, "run", "r-" + id, List.of(), status, blockedReason,
-                0, null, null, false, null, null, null, null, null);
+                0, null, null, false, false, null, null, null, null, null);
     }
 }

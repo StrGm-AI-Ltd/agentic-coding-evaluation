@@ -32,8 +32,8 @@ public class JobQueue {
 
     public record Job(UUID id, UUID experimentId, String arm, Integer repeat, String kind, String runId,
                       List<String> argv, String status, String blockedReason, int priority, Integer pid,
-                      Integer exitCode, boolean cancelRequested, String stdoutPath, String resultLine,
-                      String pinnedRunnerSha, String pinnedOracleSha) {}
+                      Integer exitCode, boolean cancelRequested, boolean pauseRequested, String stdoutPath,
+                      String resultLine, String pinnedRunnerSha, String pinnedOracleSha) {}
 
     public Map<String, Object> enqueue(RunSpec spec, int priority, String resultsDir, String runnerSha, String oracleSha,
                                        UUID experimentId, String arm, Integer repeat) {
@@ -128,21 +128,47 @@ public class JobQueue {
 
     public Map<String, Object> requeue(final UUID jobId, final String resultsDir) {
         final Map<String, Object> job = get(jobId);
-        if (!List.of("failed", "cancelled", "blocked").contains(job.get("status")))
-            throw new IllegalStateException("job " + jobId + " is " + job.get("status") + "; only failed, cancelled or blocked jobs can be requeued");
+        if (!List.of("failed", "cancelled", "blocked", "paused").contains(job.get("status")))
+            throw new IllegalStateException("job " + jobId + " is " + job.get("status") + "; only failed, cancelled, blocked or paused jobs can be requeued");
         if ("run".equals(job.get("kind")) && java.nio.file.Path.of(resultsDir, String.valueOf(job.get("run_id"))).toFile().exists())
             throw new IllegalStateException("results/" + job.get("run_id") + " exists and a re-run would mix its files. Move it aside first");
         // status IN (...) in the WHERE makes the update atomic with the check above: a concurrent
         // cancel of a blocked job must not be silently un-done by the flip back to 'queued'
         int updated = dsl.update(JOBS)
-                .set(JOBS.STATUS, "queued").set(JOBS.CANCEL_REQUESTED, false).setNull(JOBS.BLOCKED_REASON)
+                .set(JOBS.STATUS, "queued").set(JOBS.CANCEL_REQUESTED, false).set(JOBS.PAUSE_REQUESTED, false).setNull(JOBS.BLOCKED_REASON)
                 .setNull(JOBS.PID).setNull(JOBS.EXIT_CODE).setNull(JOBS.RESULT_LINE)
                 .setNull(JOBS.STARTED_AT).setNull(JOBS.FINISHED_AT).set(JOBS.ENQUEUED_AT, now())
-                .where(JOBS.ID.eq(jobId).and(JOBS.STATUS.in("failed", "cancelled", "blocked")))
+                .where(JOBS.ID.eq(jobId).and(JOBS.STATUS.in("failed", "cancelled", "blocked", "paused")))
                 .execute();
         if (updated == 0)
             throw new IllegalStateException("job " + jobId + " status changed concurrently; re-try the requeue");
         return get(jobId);
+    }
+
+    /** Pause: a gentler cancel. A RUNNING job gets the flag (the worker stops it and lands on
+     *  'paused', not 'cancelled' - its results dir and workspace are left exactly where they are);
+     *  anything not yet started (queued/waiting_lock) is paused outright, mirroring cancel's own
+     *  "anything queued is cancelled outright" shortcut. */
+    public Map<String, Object> pause(final UUID jobId) {
+        final Map<String, Object> job = get(jobId);
+        if (RunSpec.TERMINAL.contains(job.get("status")))
+            throw new IllegalStateException("job " + jobId + " is already " + job.get("status"));
+        int updated = dsl.update(JOBS)
+                .set(JOBS.PAUSE_REQUESTED, true)
+                .set(JOBS.STATUS, org.jooq.impl.DSL.when(JOBS.STATUS.eq("running"), JOBS.STATUS).otherwise("paused"))
+                .where(JOBS.ID.eq(jobId).and(JOBS.STATUS.notIn("succeeded", "failed", "cancelled")))
+                .execute();
+        if (updated == 0)
+            throw new IllegalStateException("job " + jobId + " transitioned to a terminal state concurrently");
+        return get(jobId);
+    }
+
+    /** the worker's own completion of a pause: landed on 'paused', flag cleared, PID gone (it isn't
+     *  running any more) - but unlike finish(), no finished_at/exit_code set: this is not a terminal
+     *  outcome, the job is sitting there ready for Requeue to pick back up. */
+    public void paused(final UUID jobId) {
+        dsl.update(JOBS).set(JOBS.STATUS, "paused").set(JOBS.PAUSE_REQUESTED, false).setNull(JOBS.PID)
+                .where(JOBS.ID.eq(jobId)).execute();
     }
 
     public Map<String, Object> get(final UUID jobId) {
@@ -166,8 +192,8 @@ public class JobQueue {
         return new Job(r.getId(), r.getExperimentId(), r.getArm(), r.getRepeat(), r.getKind(), r.getRunId(),
                 fromJson(r.getArgv()), r.getStatus(), r.getBlockedReason(),
                 r.getPriority() == null ? 0 : r.getPriority(), r.getPid(), r.getExitCode(),
-                Boolean.TRUE.equals(r.getCancelRequested()), r.getStdoutPath(), r.getResultLine(),
-                r.getPinnedRunnerSha(), r.getPinnedOracleSha());
+                Boolean.TRUE.equals(r.getCancelRequested()), Boolean.TRUE.equals(r.getPauseRequested()),
+                r.getStdoutPath(), r.getResultLine(), r.getPinnedRunnerSha(), r.getPinnedOracleSha());
     }
 
     private static String now() { return Instant.now().toString(); }

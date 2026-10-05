@@ -22,12 +22,26 @@ class JobStatusesTest {
 
     @Test
     void canRequeue_matrix() {
-        for (final var status : new String[]{"failed", "cancelled", "blocked"}) {
+        for (final var status : new String[]{"failed", "cancelled", "blocked", "paused"}) {
             assertTrue(JobStatuses.canRequeue(status), status + " must be requeueable (queue.requeue accepts it)");
         }
         for (final var status : new String[]{"succeeded", "queued", "waiting_lock", "running"}) {
             assertFalse(JobStatuses.canRequeue(status), status + " must not be requeueable");
         }
+    }
+
+    /** 'paused' has no Python equivalent - it's the new Pause button's resumable, non-terminal status. */
+    @Test
+    void canPause_matrix() {
+        for (final var status : new String[]{"queued", "waiting_lock", "running", "blocked"}) {
+            assertTrue(JobStatuses.canPause(status, false, false), status + " must be pausable");
+        }
+        for (final var status : new String[]{"succeeded", "failed", "cancelled"}) {
+            assertFalse(JobStatuses.canPause(status, false, false), status + " is terminal, not pausable");
+        }
+        assertFalse(JobStatuses.canPause("running", true, false), "already-cancel-requested must not re-offer Pause");
+        assertFalse(JobStatuses.canPause("running", false, true), "already-pause-requested must not re-offer Pause");
+        assertFalse(JobStatuses.isTerminal("paused"), "paused must be resumable, never terminal");
     }
 
     @Test

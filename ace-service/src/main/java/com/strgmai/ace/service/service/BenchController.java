@@ -194,6 +194,9 @@ public class BenchController {
         if (job.get("experiment_id") instanceof UUID experimentId) experiments.finalizeIfDone(experimentId);
         return job;
     }
+    // unlike cancel just above, a still-queued job pauses outright as a non-terminal state (not
+    // finished for its arm) - no finalizeIfDone here
+    @PostMapping("/api/jobs/{id}/pause") public Map<String, Object> pause(@PathVariable UUID id) { return queue.pause(id); }
     @PostMapping("/api/jobs/{id}/requeue") public Map<String, Object> requeue(@PathVariable UUID id) { return queue.requeue(id, props.resultsDir()); }
     @PostMapping("/api/jobs/{id}/priority") public Map<String, Object> priority(final @PathVariable UUID id, final @RequestBody Map<String, Object> body) {
         // a missing or non-numeric priority would NPE/CCE into a 500 on the raw (int) cast

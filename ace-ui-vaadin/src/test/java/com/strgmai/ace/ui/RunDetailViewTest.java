@@ -103,6 +103,9 @@ class RunDetailViewTest {
         assertEquals(RunDetailView.NotImportedKind.BLOCKED,
                 RunDetailView.notImportedKind(ApiFixtures.job(37, "blocked", "dirty tree")),
                 "a blocked job needs a requeue, not a wait");
+        assertEquals(RunDetailView.NotImportedKind.PAUSED,
+                RunDetailView.notImportedKind(ApiFixtures.job(37, "paused", null)),
+                "a paused job needs a Resume, not an in-flight wait or an ended-without-score message");
         assertEquals(RunDetailView.NotImportedKind.ENDED_WITHOUT_SCORE,
                 RunDetailView.notImportedKind(ApiFixtures.job(36, "cancelled", null)));
         assertEquals(RunDetailView.NotImportedKind.ENDED_WITHOUT_SCORE,
