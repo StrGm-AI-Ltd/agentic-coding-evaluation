@@ -130,7 +130,13 @@ public class JobQueue {
         final Map<String, Object> job = get(jobId);
         if (!List.of("failed", "cancelled", "blocked", "paused").contains(job.get("status")))
             throw new IllegalStateException("job " + jobId + " is " + job.get("status") + "; only failed, cancelled, blocked or paused jobs can be requeued");
-        if ("run".equals(job.get("kind")) && java.nio.file.Path.of(resultsDir, String.valueOf(job.get("run_id"))).toFile().exists())
+        // #253, found live: a paused job's results dir is SUPPOSED to still be there - pause()
+        // deliberately never moves it aside (that's the entire point of pause over cancel: nothing
+        // to lose). Only failed/cancelled/blocked are checked for a conflicting leftover directory -
+        // for those, cancel's own finally block already moved it to _aborted/ before landing on that
+        // status, so one still sitting at the live path is exactly the anomaly this guards against.
+        if (!"paused".equals(job.get("status")) && "run".equals(job.get("kind"))
+                && java.nio.file.Path.of(resultsDir, String.valueOf(job.get("run_id"))).toFile().exists())
             throw new IllegalStateException("results/" + job.get("run_id") + " exists and a re-run would mix its files. Move it aside first");
         // status IN (...) in the WHERE makes the update atomic with the check above: a concurrent
         // cancel of a blocked job must not be silently un-done by the flip back to 'queued'
