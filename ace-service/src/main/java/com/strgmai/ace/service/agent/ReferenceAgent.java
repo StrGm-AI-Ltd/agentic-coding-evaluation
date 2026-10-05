@@ -11,6 +11,7 @@ import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import dev.langchain4j.model.chat.response.*;
 import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
+import dev.langchain4j.model.openai.OpenAiTokenUsage;
 import dev.langchain4j.model.output.FinishReason;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -76,6 +77,17 @@ public class ReferenceAgent {
         if (name.equals("INTEGRATION")) return "integrate";
         if (name.equals("REVIEW") || name.equals("TRAJECTORY_REVIEW")) return "review";
         return "implement";
+    }
+
+    /** #248: found live - oMLX's prefix cache genuinely works (verified against the raw
+     *  interactions.jsonl response bodies, which show real, growing cached-token counts), but every
+     *  session log in this project's history has recorded "cached": 0 regardless, because the only
+     *  call site writing that field never read it at all. The real value rides along on the
+     *  OpenAI-compatible response as tokenUsage's own subtype. */
+    static int cachedTokens(final ChatResponse resp) {
+        if (resp.metadata() == null || !(resp.metadata().tokenUsage() instanceof OpenAiTokenUsage oaiUsage)) return 0;
+        if (oaiUsage.inputTokensDetails() == null || oaiUsage.inputTokensDetails().cachedTokens() == null) return 0;
+        return oaiUsage.inputTokensDetails().cachedTokens();
     }
 
     public record SessionResult(String id, int rc, double seconds, String finish, int turns, int toolErrors,
@@ -256,7 +268,7 @@ public class ReferenceAgent {
                     ? null : resp.metadata().tokenUsage().outputTokenCount();
             final List<ToolExecutionRequest> calls = ai.hasToolExecutionRequests() ? ai.toolExecutionRequests() : List.of();
             session.assistant(ai.thinking(), ai.text(), calls, finish, Map.of("input", promptTokens == null ? 0 : promptTokens,
-                    "output", completion == null ? 0 : completion, "cached", 0));
+                    "output", completion == null ? 0 : completion, "cached", cachedTokens(resp)));
             msgs.add(ai);
             if (calls.isEmpty()) {
                 session.end(turns, toolErrors, compactions, finish);

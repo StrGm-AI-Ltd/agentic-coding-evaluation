@@ -1,6 +1,11 @@
 package com.strgmai.ace.service.agent;
 
 import com.strgmai.ace.service.config.BenchProperties;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.chat.response.ChatResponseMetadata;
+import dev.langchain4j.model.openai.OpenAiTokenUsage;
+import dev.langchain4j.model.output.TokenUsage;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -26,6 +31,31 @@ class ReferenceAgentTest {
         assertEquals("integrate", ReferenceAgent.reasoningKind("INTEGRATION"));
         assertEquals("review", ReferenceAgent.reasoningKind("REVIEW"));
         assertEquals("review", ReferenceAgent.reasoningKind("TRAJECTORY_REVIEW"));
+    }
+
+    /** #248: found live - the model server's prefix cache genuinely works, but this project's own
+     *  session logs recorded "cached": 0 on every turn ever run, because this call site never read
+     *  the real value off the response. */
+    @Test
+    void cachedTokensReadsTheRealValueOffTheOpenAiResponse() {
+        final ChatResponse withCache = ChatResponse.builder().aiMessage(AiMessage.from("hi"))
+                .metadata(ChatResponseMetadata.builder().tokenUsage(OpenAiTokenUsage.builder()
+                        .inputTokenCount(5000).outputTokenCount(100)
+                        .inputTokensDetails(OpenAiTokenUsage.InputTokensDetails.builder().cachedTokens(2048).build())
+                        .build()).build()).build();
+        assertEquals(2048, ReferenceAgent.cachedTokens(withCache));
+
+        final ChatResponse noDetails = ChatResponse.builder().aiMessage(AiMessage.from("hi"))
+                .metadata(ChatResponseMetadata.builder().tokenUsage(OpenAiTokenUsage.builder()
+                        .inputTokenCount(100).outputTokenCount(10).build()).build()).build();
+        assertEquals(0, ReferenceAgent.cachedTokens(noDetails), "no inputTokensDetails must read as 0, not NPE");
+
+        final ChatResponse notOpenAi = ChatResponse.builder().aiMessage(AiMessage.from("hi"))
+                .metadata(ChatResponseMetadata.builder().tokenUsage(new TokenUsage(100, 10)).build()).build();
+        assertEquals(0, ReferenceAgent.cachedTokens(notOpenAi), "a non-OpenAI TokenUsage must read as 0, not throw");
+
+        final ChatResponse noMetadata = ChatResponse.builder().aiMessage(AiMessage.from("hi")).build();
+        assertEquals(0, ReferenceAgent.cachedTokens(noMetadata));
     }
 
     @Test
