@@ -170,6 +170,11 @@ class ServiceClientWireTest {
         if ("POST /api/jobs/5/requeue".equals(method + " " + uri)) return JOB_JSON;
         if ("POST /api/jobs/5/priority".equals(method + " " + uri)) return JOB_JSON;
         if ("GET /api/jobs/5".equals(method + " " + uri)) return JOB_JSON;
+        if ("POST /api/jobs/5/pause".equals(method + " " + uri)) return JOB_JSON.replace("queued", "paused");
+        if ("GET /api/jobs/5/plan".equals(method + " " + uri))
+            return "{\"tasks\":[{\"order\":0,\"id\":\"T1\",\"title\":\"model the schema\",\"goal\":\"create the entities\",\"deps\":[]}],\"error\":null}";
+        if ("GET /api/jobs/5/tasks/T1/prompt".equals(method + " " + uri))
+            return "{\"started\":true,\"text\":\"Implement task T1 only.\\n\\n## Frozen API contract\"}";
         if ("GET /api/groups".equals(method + " " + uri)) return GROUPS_JSON;
         if ("POST /api/compare".equals(method + " " + uri)) {
             return body.contains("\"include_invalid\":true")
@@ -298,6 +303,29 @@ class ServiceClientWireTest {
         assertEquals("POST /api/jobs/5/cancel", last().method() + " " + last().uri());
         assertEquals("queued", client.requeue("5").status());
         assertEquals("POST /api/jobs/5/requeue", last().method() + " " + last().uri());
+    }
+
+    @Test
+    void pause_postsToTheDedicatedPausePath() {
+        assertEquals("paused", client.pause("5").status());
+        assertEquals("POST /api/jobs/5/pause", last().method() + " " + last().uri());
+    }
+
+    @Test
+    void jobPlan_mapsOrderedTasksWithGoalAndDeps() {
+        final var plan = client.jobPlan("5");
+        assertEquals("GET /api/jobs/5/plan", last().method() + " " + last().uri());
+        assertEquals(1, plan.tasks().size());
+        assertEquals("T1", plan.tasks().get(0).id());
+        assertEquals("create the entities", plan.tasks().get(0).goal());
+    }
+
+    @Test
+    void taskPrompt_mapsStartedAndText() {
+        final var prompt = client.taskPrompt("5", "T1");
+        assertEquals("GET /api/jobs/5/tasks/T1/prompt", last().method() + " " + last().uri());
+        assertTrue(prompt.started());
+        assertTrue(prompt.text().contains("Frozen API contract"));
     }
 
     @Test

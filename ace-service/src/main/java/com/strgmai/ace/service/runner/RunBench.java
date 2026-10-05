@@ -876,6 +876,14 @@ public class RunBench {
             p1rec.put("artifact", PHASE_TEXT.get("p1_plan")[0]);
             p1rec.put("artifact_present", Files.isRegularFile(ws.resolve("docs/IMPLEMENTATION_PLAN.md")));
             ((List<Map<String, Object>>) manifest.get("phases")).add(p1rec);
+            // mirrors TASK_DEFINITION.md's own copy right after p0_definition above - without this,
+            // an agent-generated plan lives only in ws (the agent's live, ephemeral workspace) and is
+            // never visible in rd until exportSource() runs, at the very end of the whole run. The
+            // "reference" plan source above already lands at this same rd path before the task loop
+            // even starts; this just gives agent-generated plans the same live visibility (e.g. for a
+            // job-scoped "show me the plan" API call while the run is still in progress).
+            if (Files.isRegularFile(ws.resolve("docs/IMPLEMENTATION_PLAN.md")))
+                Files.copy(ws.resolve("docs/IMPLEMENTATION_PLAN.md"), rd.resolve("IMPLEMENTATION_PLAN.md"), StandardCopyOption.REPLACE_EXISTING);
         }
         if ("reference".equals(planSource)) {   // the reference plan is a recorded phase too (rc=0, 0 s)
             Map<String, Object> p1rec = new LinkedHashMap<>(Map.of("id", "p1_plan", "rc", 0, "seconds", 0.0,

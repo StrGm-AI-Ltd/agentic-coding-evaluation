@@ -50,6 +50,10 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     /** Built once so the user's column sorting survives the 2 s live updates. */
     private final Grid<JobLiveState.RequestRow> requestsGrid = buildRequestsGrid();
     private final Grid<JobLiveState.SessionRow> sessionsGrid = buildSessionsGrid();
+    private final Grid<Api.PlanTask> planGrid = buildPlanGrid();
+    // fetched once and cached - the plan itself never changes once p1_plan has produced it; the
+    // status column still refreshes every poll cycle from live.sessions(), re-rendered via setItems()
+    private List<Api.PlanTask> planTasks = List.of();
 
     // The live-requests sort keys — typed and null-safe (the ClassCastException regression).
     static final Comparator<JobLiveState.RequestRow> REQUESTS_BY_TS =
@@ -190,7 +194,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         liveSection.getStyle().set("margin-top", "16px");
         final var liveTitle = new H3("Live");
         liveTitle.getStyle().set("margin", "0 0 4px 0");
-        liveSection.add(liveTitle, plannedOrderLine, stepLine, sessionsGrid, requestsLine, lostNotice, terminalNote,
+        liveSection.add(liveTitle, plannedOrderLine, planGrid, stepLine, sessionsGrid, requestsLine, lostNotice, terminalNote,
                 requestsGrid, logTail);
         plannedOrderLine.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.9em");
         stepLine.getStyle().set("font-weight", "600");
@@ -337,6 +341,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
     private void updateLive() {
         final var terminal = currentJob != null && JobStatuses.isTerminal(currentJob.status());
+        updatePlanGrid(terminal);
         lostNotice.setVisible(sseThread != null && !sseThread.isAlive()
                 && !terminal && !sseStopped);
         terminalNote.setVisible(terminal);
@@ -471,6 +476,93 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         sessions.setAllRowsVisible(true);
         sessions.setVisible(false);
         return sessions;
+    }
+
+    /** The plan's own task table: planned order, id, description, and a live status - replaces the
+     *  bare "T1 → T2" of plannedOrderLine with something a reader can actually act on. A row click
+     *  opens the task's real prompt (openTaskPromptDialog). The status column closes over `live` (an
+     *  instance field, not the row item), re-evaluated every time updatePlanGrid() re-sets the grid's
+     *  items on the same 2 s poll cycle as everything else on this page. */
+    private Grid<Api.PlanTask> buildPlanGrid() {
+        final var grid = new Grid<>(Api.PlanTask.class, false);
+        grid.addColumn(Api.PlanTask::order).setHeader("#").setAutoWidth(true).setFlexGrow(0);
+        grid.addColumn(Api.PlanTask::id).setHeader("task").setAutoWidth(true).setFlexGrow(0);
+        grid.addColumn(t -> t.goal() == null || t.goal().isBlank()
+                        ? (t.title() == null ? "" : t.title()) : t.goal())
+                .setHeader("description").setFlexGrow(1);
+        grid.addColumn(t -> taskStatus(live.sessions(), t.id(),
+                        currentJob != null && JobStatuses.isTerminal(currentJob.status())))
+                .setHeader("status").setAutoWidth(true).setFlexGrow(0);
+        grid.addItemClickListener(e -> openTaskPromptDialog(e.getItem()));
+        grid.getStyle().set("cursor", "pointer");
+        grid.setAllRowsVisible(true);
+        grid.setVisible(false);
+        return grid;
+    }
+
+    /** Fetches the plan once (it never changes once p1_plan has produced it - a resumed task keeps
+     *  the same plan) and caches it; re-sets the grid's items every call regardless, so the status
+     *  column (closed over live.sessions(), not part of Api.PlanTask itself) stays current. */
+    private void updatePlanGrid(final boolean terminal) {
+        if (planTasks.isEmpty() && jobId != null) {
+            try {
+                final var resp = client.jobPlan(jobId);
+                if (resp != null && resp.tasks() != null && !resp.tasks().isEmpty()) planTasks = resp.tasks();
+            } catch (final Exception e) {
+                log.debug("could not fetch plan for job {}: {}", jobId, e.toString());
+            }
+        }
+        planGrid.setItems(planTasks);
+        planGrid.setVisible(!planTasks.isEmpty());
+    }
+
+    /** A plan task's live status, derived from its matching session's description (RunBench names
+     *  every task session "Task &lt;id&gt;[ suffix][ — title]" - JobLiveState.sessionDescription()).
+     *  Anchored with a trailing space/exact match so "T1" never matches a session actually for "T10"/
+     *  "T11". The LAST matching session wins - a resumed/retried task gets a fresh session sharing
+     *  the same description prefix, and that's the one whose state is current. terminal is only the
+     *  fallback for a task this page never saw any live session for at all (e.g. the page was opened
+     *  fresh on an already-finished job) - "not started" would be an outright wrong claim there. */
+    static String taskStatus(final List<JobLiveState.SessionRow> sessions, final String taskId, final boolean terminal) {
+        final var prefix = "Task " + taskId;
+        JobLiveState.SessionRow last = null;
+        for (final var s : sessions) {
+            final var d = s.description();
+            if (d != null && (d.equals(prefix) || d.startsWith(prefix + " "))) last = s;
+        }
+        if (last != null) return last.endedStage() == null ? "running" : last.endedStage();
+        return terminal ? "see Run detail" : "not started";
+    }
+
+    /** The entire task prompt, on demand - taskPrompt.started tells us whether what we're showing is
+     *  just the fixed instruction every task shares, or the real thing enriched with the dynamic part
+     *  the harness computed once this task's session actually began. */
+    private void openTaskPromptDialog(final Api.PlanTask task) {
+        final var dialog = new com.vaadin.flow.component.dialog.Dialog();
+        dialog.setHeaderTitle(task.id() + (task.title() == null || task.title().isBlank() ? "" : " — " + task.title()));
+        dialog.setWidth("min(800px, 90vw)");
+        dialog.setHeight("min(600px, 80vh)");
+        final var body = new Div();
+        body.getStyle().set("overflow", "auto");
+        body.add(new Span("Loading…"));
+        dialog.add(body);
+        dialog.getFooter().add(new Button("Close", e -> dialog.close()));
+        dialog.open();
+        try {
+            final var prompt = client.taskPrompt(jobId, task.id());
+            body.removeAll();
+            if (!prompt.started()) {
+                final var note = new Span("This task hasn't started yet - showing its fixed instruction only; "
+                        + "the rest of its prompt depends on the workspace state at the moment it actually begins.");
+                note.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em")
+                        .set("display", "block").set("margin-bottom", "8px");
+                body.add(note);
+            }
+            body.add(new com.vaadin.flow.component.Html("<div class=\"md-body\">" + Markdown.toHtml(prompt.text()) + "</div>"));
+        } catch (final Exception ex) {
+            body.removeAll();
+            body.add(Panels.error(client.errorText(ex)));
+        }
     }
 
     /**

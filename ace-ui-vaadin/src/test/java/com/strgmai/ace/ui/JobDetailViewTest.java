@@ -156,4 +156,43 @@ class JobDetailViewTest {
     void plannedOrderText_emptyWavesYieldsEmptyText() {
         assertEquals("", JobDetailView.plannedOrderText(List.of()));
     }
+
+    private static JobLiveState.SessionRow sessionRow(final String description, final String endedStage) {
+        return new JobLiveState.SessionRow("sid", "sid", description, endedStage, null, null, null, null, null, null, null);
+    }
+
+    @Test
+    void taskStatus_noMatchingSessionIsNotStartedUnlessTerminal() {
+        assertEquals("not started", JobDetailView.taskStatus(List.of(), "T2", false));
+        assertEquals("see Run detail", JobDetailView.taskStatus(List.of(), "T2", true),
+                "a terminal job with no live session for this task must not claim it was never started");
+    }
+
+    @Test
+    void taskStatus_runningWhileItsSessionHasNoEndedStageYet() {
+        final var sessions = List.of(sessionRow("Task T2", null));
+        assertEquals("running", JobDetailView.taskStatus(sessions, "T2", false));
+    }
+
+    @Test
+    void taskStatus_reportsTheSessionsOwnFinishReasonOnceEnded() {
+        final var sessions = List.of(sessionRow("Task T2 — implement the API", "stop"));
+        assertEquals("stop", JobDetailView.taskStatus(sessions, "T2", false));
+    }
+
+    /** "T1" must never match a session actually for "T10"/"T11" - both share "Task T1" as a string
+     *  prefix, but not as the exact anchored match taskStatus requires. */
+    @Test
+    void taskStatus_doesNotFalseMatchATaskIdThatIsAPrefixOfAnothersId() {
+        final var sessions = List.of(sessionRow("Task T10 (handoff)", "stop"));
+        assertEquals("not started", JobDetailView.taskStatus(sessions, "T1", false));
+    }
+
+    /** a resumed/retried task gets a fresh session sharing the same description prefix - the LAST
+     *  one (the current attempt) wins, not the abandoned first attempt. */
+    @Test
+    void taskStatus_theLastMatchingSessionWinsOverAnEarlierAbandonedAttempt() {
+        final var sessions = List.of(sessionRow("Task T3 (handoff)", "interrupted"), sessionRow("Task T3 (handoff)", null));
+        assertEquals("running", JobDetailView.taskStatus(sessions, "T3", false));
+    }
 }
