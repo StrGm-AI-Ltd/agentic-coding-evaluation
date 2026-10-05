@@ -161,23 +161,27 @@ class JobDetailViewTest {
         return new JobLiveState.SessionRow("sid", "sid", description, endedStage, null, null, null, null, null, null, null);
     }
 
+    private static Api.PlanTask planTask(final String id, final boolean implemented, final boolean handoffDone) {
+        return new Api.PlanTask(0, id, "", "", List.of(), implemented, handoffDone);
+    }
+
     @Test
     void taskStatus_noMatchingSessionIsNotStartedUnlessTerminal() {
-        assertEquals("not started", JobDetailView.taskStatus(List.of(), "T2", false));
-        assertEquals("see Run detail", JobDetailView.taskStatus(List.of(), "T2", true),
+        assertEquals("not started", JobDetailView.taskStatus(List.of(), planTask("T2", false, false), false));
+        assertEquals("see Run detail", JobDetailView.taskStatus(List.of(), planTask("T2", false, false), true),
                 "a terminal job with no live session for this task must not claim it was never started");
     }
 
     @Test
     void taskStatus_runningWhileItsSessionHasNoEndedStageYet() {
         final var sessions = List.of(sessionRow("Task T2", null));
-        assertEquals("running", JobDetailView.taskStatus(sessions, "T2", false));
+        assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T2", false, false), false));
     }
 
     @Test
     void taskStatus_reportsTheSessionsOwnFinishReasonOnceEnded() {
         final var sessions = List.of(sessionRow("Task T2 — implement the API", "stop"));
-        assertEquals("stop", JobDetailView.taskStatus(sessions, "T2", false));
+        assertEquals("stop", JobDetailView.taskStatus(sessions, planTask("T2", false, false), false));
     }
 
     /** "T1" must never match a session actually for "T10"/"T11" - both share "Task T1" as a string
@@ -185,7 +189,7 @@ class JobDetailViewTest {
     @Test
     void taskStatus_doesNotFalseMatchATaskIdThatIsAPrefixOfAnothersId() {
         final var sessions = List.of(sessionRow("Task T10 (handoff)", "stop"));
-        assertEquals("not started", JobDetailView.taskStatus(sessions, "T1", false));
+        assertEquals("not started", JobDetailView.taskStatus(sessions, planTask("T1", false, false), false));
     }
 
     /** a resumed/retried task gets a fresh session sharing the same description prefix - the LAST
@@ -193,6 +197,25 @@ class JobDetailViewTest {
     @Test
     void taskStatus_theLastMatchingSessionWinsOverAnEarlierAbandonedAttempt() {
         final var sessions = List.of(sessionRow("Task T3 (handoff)", "interrupted"), sessionRow("Task T3 (handoff)", null));
-        assertEquals("running", JobDetailView.taskStatus(sessions, "T3", false));
+        assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T3", false, false), false));
+    }
+
+    /** #254, found live: a task finished in a PRIOR attempt is resumed straight past (R18) and so
+     *  never produces a live session event in a fresh page view - session data alone always read a
+     *  genuinely-finished task as "not started". Falls back to the workspace's own git tags. */
+    @Test
+    void taskStatus_fallsBackToTheWorkspacesOwnTagsWhenThereIsNoLiveSessionAtAll() {
+        assertEquals("done", JobDetailView.taskStatus(List.of(), planTask("T1", true, true), false));
+        assertEquals("implemented (handoff pending)", JobDetailView.taskStatus(List.of(), planTask("T1", true, false), false));
+        assertEquals("not started", JobDetailView.taskStatus(List.of(), planTask("T1", false, false), false));
+    }
+
+    /** a live session, even a long-abandoned/interrupted one, still outranks the tag fallback - the
+     *  tags are only consulted when there is NO live session data for this task at all. */
+    @Test
+    void taskStatus_aLiveSessionOutranksTheTagFallback() {
+        final var sessions = List.of(sessionRow("Task T2", null));
+        assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T2", true, true), false),
+                "a currently-running session must win even if the tags also say done");
     }
 }

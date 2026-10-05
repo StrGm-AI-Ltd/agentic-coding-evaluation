@@ -490,7 +490,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         grid.addColumn(t -> t.goal() == null || t.goal().isBlank()
                         ? (t.title() == null ? "" : t.title()) : t.goal())
                 .setHeader("description").setFlexGrow(1);
-        grid.addColumn(t -> taskStatus(live.sessions(), t.id(),
+        grid.addColumn(t -> taskStatus(live.sessions(), t,
                         currentJob != null && JobStatuses.isTerminal(currentJob.status())))
                 .setHeader("status").setAutoWidth(true).setFlexGrow(0);
         grid.addItemClickListener(e -> openTaskPromptDialog(e.getItem()));
@@ -516,21 +516,31 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         planGrid.setVisible(!planTasks.isEmpty());
     }
 
-    /** A plan task's live status, derived from its matching session's description (RunBench names
-     *  every task session "Task &lt;id&gt;[ suffix][ — title]" - JobLiveState.sessionDescription()).
-     *  Anchored with a trailing space/exact match so "T1" never matches a session actually for "T10"/
-     *  "T11". The LAST matching session wins - a resumed/retried task gets a fresh session sharing
-     *  the same description prefix, and that's the one whose state is current. terminal is only the
-     *  fallback for a task this page never saw any live session for at all (e.g. the page was opened
-     *  fresh on an already-finished job) - "not started" would be an outright wrong claim there. */
-    static String taskStatus(final List<JobLiveState.SessionRow> sessions, final String taskId, final boolean terminal) {
-        final var prefix = "Task " + taskId;
+    /** A plan task's status, PREFERRING its matching live session (RunBench names every task
+     *  session "Task &lt;id&gt;[ suffix][ — title]" - JobLiveState.sessionDescription() - anchored
+     *  with a trailing space/exact match so "T1" never matches a session actually for "T10"/"T11";
+     *  the LAST matching session wins, since a resumed/retried task gets a fresh session sharing the
+     *  same description prefix and that's the one whose state is current) for a real-time "running"
+     *  signal, but falling back to the task's own implemented/handoff_done flags - the workspace's
+     *  R18 git tags (phase/{id}, phase/{id}-handoff), resume-independent - when there's no live
+     *  session at all.
+     *
+     *  #254, found live: a task completed in a PRIOR attempt is resumed straight past (R18) and so
+     *  never produces a session_started/session_done event in a FRESH page's live view - session
+     *  data alone read a genuinely-finished task as "not started" every time. terminal is only the
+     *  very last resort, for a task neither signal has anything on at all (e.g. the plan file itself
+     *  couldn't be matched to a tag for some reason) - "not started" would be an outright wrong claim
+     *  on an already-finished job there. */
+    static String taskStatus(final List<JobLiveState.SessionRow> sessions, final Api.PlanTask task, final boolean terminal) {
+        final var prefix = "Task " + task.id();
         JobLiveState.SessionRow last = null;
         for (final var s : sessions) {
             final var d = s.description();
             if (d != null && (d.equals(prefix) || d.startsWith(prefix + " "))) last = s;
         }
         if (last != null) return last.endedStage() == null ? "running" : last.endedStage();
+        if (task.handoff_done()) return "done";
+        if (task.implemented()) return "implemented (handoff pending)";
         return terminal ? "see Run detail" : "not started";
     }
 
@@ -544,25 +554,47 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         dialog.setHeight("min(600px, 80vh)");
         final var body = new Div();
         body.getStyle().set("overflow", "auto");
-        body.add(new Span("Loading…"));
         dialog.add(body);
         dialog.getFooter().add(new Button("Close", e -> dialog.close()));
-        dialog.open();
-        try {
-            final var prompt = client.taskPrompt(jobId, task.id());
-            body.removeAll();
-            if (!prompt.started()) {
-                final var note = new Span("This task hasn't started yet - showing its fixed instruction only; "
-                        + "the rest of its prompt depends on the workspace state at the moment it actually begins.");
-                note.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em")
-                        .set("display", "block").set("margin-bottom", "8px");
-                body.add(note);
+
+        // #255, found live: opened before the task's dynamic part exists (packs/{id}.md isn't
+        // written until the harness actually starts that session), this used to be stuck showing
+        // just the static instruction forever - taskPrompt only ever fetched once, at open time, and
+        // nothing made it look again once the real content landed. Piggybacks on the page's own poll
+        // cycle (already running every 2s for a non-terminal job - see update()'s setPollInterval)
+        // to keep re-fetching while still unstarted, and stops the moment the real, enriched prompt
+        // arrives: it's then stable for the rest of this attempt, so there's no point refetching.
+        final Registration[] pollReg = new Registration[1];
+        final Runnable load = () -> {
+            try {
+                final var prompt = client.taskPrompt(jobId, task.id());
+                body.removeAll();
+                if (!prompt.started()) {
+                    final var note = new Span("This task hasn't started yet - showing its fixed instruction only; "
+                            + "the rest of its prompt depends on the workspace state at the moment it actually "
+                            + "begins. This updates automatically once it does.");
+                    note.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em")
+                            .set("display", "block").set("margin-bottom", "8px");
+                    body.add(note);
+                } else if (pollReg[0] != null) {
+                    pollReg[0].remove();
+                    pollReg[0] = null;
+                }
+                body.add(new com.vaadin.flow.component.Html("<div class=\"md-body\">" + Markdown.toHtml(prompt.text()) + "</div>"));
+            } catch (final Exception ex) {
+                body.removeAll();
+                body.add(Panels.error(client.errorText(ex)));
             }
-            body.add(new com.vaadin.flow.component.Html("<div class=\"md-body\">" + Markdown.toHtml(prompt.text()) + "</div>"));
-        } catch (final Exception ex) {
-            body.removeAll();
-            body.add(Panels.error(client.errorText(ex)));
-        }
+        };
+        dialog.addOpenedChangeListener(e -> {
+            if (!e.isOpened() && pollReg[0] != null) {
+                pollReg[0].remove();
+                pollReg[0] = null;
+            }
+        });
+        dialog.open();
+        load.run();
+        getUI().ifPresent(ui -> pollReg[0] = ui.addPollListener(e -> load.run()));
     }
 
     /**

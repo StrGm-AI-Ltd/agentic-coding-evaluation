@@ -172,7 +172,8 @@ class ServiceClientWireTest {
         if ("GET /api/jobs/5".equals(method + " " + uri)) return JOB_JSON;
         if ("POST /api/jobs/5/pause".equals(method + " " + uri)) return JOB_JSON.replace("queued", "paused");
         if ("GET /api/jobs/5/plan".equals(method + " " + uri))
-            return "{\"tasks\":[{\"order\":0,\"id\":\"T1\",\"title\":\"model the schema\",\"goal\":\"create the entities\",\"deps\":[]}],\"error\":null}";
+            return "{\"tasks\":[{\"order\":0,\"id\":\"T1\",\"title\":\"model the schema\",\"goal\":\"create the entities\","
+                    + "\"deps\":[],\"implemented\":true,\"handoff_done\":false}],\"error\":null}";
         if ("GET /api/jobs/5/tasks/T1/prompt".equals(method + " " + uri))
             return "{\"started\":true,\"text\":\"Implement task T1 only.\\n\\n## Frozen API contract\"}";
         if ("GET /api/groups".equals(method + " " + uri)) return GROUPS_JSON;
@@ -318,6 +319,8 @@ class ServiceClientWireTest {
         assertEquals(1, plan.tasks().size());
         assertEquals("T1", plan.tasks().get(0).id());
         assertEquals("create the entities", plan.tasks().get(0).goal());
+        assertTrue(plan.tasks().get(0).implemented());
+        assertFalse(plan.tasks().get(0).handoff_done());
     }
 
     @Test
