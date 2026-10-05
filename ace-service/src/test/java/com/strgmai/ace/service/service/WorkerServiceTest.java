@@ -17,11 +17,12 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-/** Unit tests for WorkerService.guard()'s three refusal paths (port of worker.py guard()): the
- *  treatment pin (#4/#5), the run lock, and a fatal preflight check. Dependencies are mocked so no
- *  Spring context or real Docker/model-server is needed. guard() hardcodes the lock path under
- *  user.home, so each lock-touching test points user.home at a private temp dir to stay hermetic
- *  and never contend with a real ~/.cache/agentbench/run.lock on this machine. */
+/** Unit tests for WorkerService.guard()'s refusal paths (port of worker.py guard()): the run lock
+ *  and a fatal preflight check, plus the treatment-pin mismatch which (#247) now only logs a
+ *  warning rather than refusing. Dependencies are mocked so no Spring context or real
+ *  Docker/model-server is needed. guard() hardcodes the lock path under user.home, so each
+ *  lock-touching test points user.home at a private temp dir to stay hermetic and never contend
+ *  with a real ~/.cache/agentbench/run.lock on this machine. */
 class WorkerServiceTest {
 
     private static WorkerService worker(JobQueue queue, Preflight preflight, TreatmentPin pin) {
@@ -67,20 +68,22 @@ class WorkerServiceTest {
         verify(experiments).finalizeIfDone(experimentId);
     }
 
+    /** #247: a treatment-pin mismatch (the build that enqueued the job differs from the build about
+     *  to run it) used to block the job outright. It's now just a logged warning - an experiment
+     *  straddling a redeploy still gets to run, instead of stalling until an operator requeues it. */
     @Test
-    void treatmentPinMismatchIsBlockedBeforeTouchingTheRunLock() throws Exception {
+    void treatmentPinMismatchWarnsButDoesNotBlock() throws Exception {
+        final var tmpHome = Files.createTempDirectory("fake-home");
         final JobQueue queue = mock(JobQueue.class);
         final TreatmentPin pin = mock(TreatmentPin.class);
         when(pin.current()).thenReturn("build-xyz999");
-        final WorkerService ws = worker(queue, mock(Preflight.class), pin);
+        final Preflight preflight = mock(Preflight.class);
+        when(preflight.check(any())).thenReturn(new Preflight.Report(List.of(), false));
+        final WorkerService ws = worker(queue, preflight, pin);
 
-        // pinnedRunnerSha differs from the running build's digest: the arms of an experiment must not
-        // straddle a redeploy silently
-        final String result = withFakeHome("/nonexistent-should-never-be-touched", () -> ws.guard(job("build-abc123")));
+        final String result = withFakeHome(tmpHome.toString(), () -> ws.guard(job("build-abc123")));
 
-        assertNotNull(result);
-        assertTrue(result.startsWith("treatment: job was enqueued against build build-abc123"), result);
-        assertTrue(result.contains("build-xyz999"), result);
+        assertNull(result, "a treatment-pin mismatch must not refuse the job");
     }
 
     @Test
@@ -100,12 +103,12 @@ class WorkerServiceTest {
             // a second FileChannel on the SAME file within THIS JVM throws OverlappingFileLockException
             // rather than tryLock() returning null (that null path is what a genuinely different
             // process/JVM gets); guard()'s catch-all still turns either into a non-null refusal, and
-            // poll() maps any non-"preflight"/non-"treatment" refusal to waiting_lock (see WorkerService.poll())
+            // poll() maps any non-"preflight" refusal to waiting_lock (see WorkerService.poll())
             final String result = withFakeHome(tmpHome.toString(), () -> ws.guard(job(null)));
 
             assertNotNull(result);
             assertTrue(result.startsWith("run.lock"), result);
-            assertFalse(result.startsWith("preflight") || result.startsWith("treatment"));   // -> waiting_lock, not blocked
+            assertFalse(result.startsWith("preflight"));   // -> waiting_lock, not blocked
         } finally {
             holder.close();
         }
