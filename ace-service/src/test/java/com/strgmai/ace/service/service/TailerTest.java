@@ -248,6 +248,30 @@ class TailerTest {
         assertEquals("t", started.get("ts"));
     }
 
+    /** Found live: a restarted task's old session file sits alongside the new one on disk, and
+     *  Files.newDirectoryStream (what newSessions() used to list with) gives no ordering guarantee
+     *  at all - the live view's "last sighting wins" logic for a task's current status then depends
+     *  entirely on the order session_started events arrive in. Written here in the OPPOSITE of
+     *  filename order (the later-timestamped file hits disk first) specifically to catch a
+     *  regression back to an unordered listing, which on many filesystems would happen to pass by
+     *  accident in write order. */
+    @Test
+    void sessionStartedEventsArriveInFilenameOrderRegardlessOfWriteOrder() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("sessions"));
+        final var laterHeader = "{\"type\": \"session\", \"id\": \"a1111111-1111-1111-1111-111111111111\", "
+                + "\"model\": \"m\", \"ts\": \"t\", \"agent\": \"a\", \"label\": \"T13-later\"}\n";
+        final var earlierHeader = "{\"type\": \"session\", \"id\": \"b2222222-2222-2222-2222-222222222222\", "
+                + "\"model\": \"m\", \"ts\": \"t\", \"agent\": \"a\", \"label\": \"T13-earlier\"}\n";
+        Files.writeString(runDir.resolve("sessions/2026-01-02T00-00-00.000Z_a1111111-1111-1111-1111-111111111111.jsonl"), laterHeader);
+        Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_b2222222-2222-2222-2222-222222222222.jsonl"), earlierHeader);
+
+        final var labels = new Tailer().poll(runDir).stream()
+                .filter(e -> "session_started".equals(e.get("type"))).map(e -> e.get("label")).toList();
+
+        assertEquals(List.of("T13-earlier", "T13-later"), labels, "filename (timestamp) order, not disk-write order");
+    }
+
     /** The live sessions grid always showed "running", even long after a session had genuinely
      *  finished: the old detection ported from Python looked for a "done after N turns (finish=X)"
      *  line in a *.log file nothing in this Java runner ever writes. The real signal is a session's

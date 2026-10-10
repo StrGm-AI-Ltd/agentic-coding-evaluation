@@ -3,9 +3,11 @@ package com.strgmai.ace.service.service;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 
 import java.util.NoSuchElementException;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.mock;
@@ -53,5 +55,20 @@ class ApiExceptionHandlerTest {
         final var detail = String.valueOf(res.getBody().get("detail"));
         assertFalse(detail.contains("jdbc:sqlite"), "the raw exception message must never reach the client: " + detail);
         assertFalse(detail.contains("/Users/"), "no internal path must leak into the client-visible message: " + detail);
+    }
+
+    /** Found live: an SSE stream's response can die mid-connection (client gone, or the whole
+     *  service restarted while /events was open) - by the time this exception reaches here the
+     *  response is already unusable, so writing even the normal {"detail": ...} body throws its
+     *  OWN HttpMessageNotWritableException (no converter for a Map against a Content-Type already
+     *  committed to text/event-stream). The fix is to write nothing at all - this just confirms the
+     *  handler does not itself throw. */
+    @Test
+    void sseConnectionGoneWritesNoBodyAndNeverThrows() {
+        final HttpServletRequest req = mock(HttpServletRequest.class);
+        when(req.getMethod()).thenReturn("GET");
+        when(req.getRequestURI()).thenReturn("/api/jobs/abc123/events");
+
+        assertDoesNotThrow(() -> handler.sseConnectionGone(new AsyncRequestNotUsableException("response not usable"), req));
     }
 }

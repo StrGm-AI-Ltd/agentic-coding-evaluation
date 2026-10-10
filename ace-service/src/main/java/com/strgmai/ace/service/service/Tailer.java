@@ -79,40 +79,52 @@ public final class Tailer {
         }
     }
 
+    /** Found live: a restarted task's old session file sits alongside the new one, same canonical
+     *  id (same bug class as #305's AgentSession lookup). Tailer is stateless per connection, so a
+     *  reconnect replays every session_started it finds from scratch - and Files.newDirectoryStream
+     *  gives NO ordering guarantee at all, meaning the replay used to arrive in essentially random
+     *  order. Since the live view's "which session is this task's current one" logic just keeps the
+     *  LAST sighting in stream order, an out-of-order replay could leave an OLDER, already-concluded
+     *  session's status (e.g. "budget") stuck showing as the task's current state, with the actual
+     *  newer, still-running one never surfacing. Sorted by filename (its own ISO-timestamp prefix) -
+     *  same filename-comparison convention #305 already established, rather than mtime (what
+     *  newFiles() above sorts by): a session file is never touched again after creation, so its name
+     *  alone is the reliable chronological key. */
     private void newSessions(final Path dir, final List<Map<String, Object>> events) {
         if (!Files.isDirectory(dir)) return;
-        try (DirectoryStream<Path> s = Files.newDirectoryStream(dir)) {
-            for (Path p : s) {
-                if (!Files.isRegularFile(p)) continue;
-                final String key = p.getFileName().toString();
-                if (!sessionIds.contains(key)) {
-                    try {
-                        final String first = Files.readString(p, StandardCharsets.UTF_8).split("\n", 2)[0];
-                        final JsonNode r = JSON.readTree(first);
-                        if (!"session".equals(r.path("type").asText())) continue;
-                        sessionIds.add(key);
-                        sessionIdByFile.put(key, r.path("id").asText());
-                        final var label = r.path("label").asText("");
-                        // Map.of is null-hostile; task_title is absent whenever there's no matching pack
-                        final var event = new LinkedHashMap<String, Object>();
-                        event.put("type", "session_started");
-                        event.put("session_id", r.path("id").asText());
-                        event.put("agent", r.path("agent").asText());
-                        event.put("model", r.path("model").asText());
-                        event.put("label", label);
-                        event.put("ts", r.path("ts").asText(""));
-                        event.put("path", "sessions/" + p.getFileName());
-                        final var title = taskTitle(dir, label);
-                        if (title != null) event.put("task_title", title);
-                        events.add(event);
-                    } catch (Exception e) {
-                        log.debug("session header for {} not fully written yet, retrying next poll: {}", p, e.toString());
-                        continue;
-                    }
+        List<Path> paths;
+        try (java.util.stream.Stream<Path> stream = Files.list(dir)) {   // the stream holds a directory FD - it must be closed
+            paths = stream.filter(Files::isRegularFile).sorted(Comparator.comparing(p -> p.getFileName().toString())).toList();
+        } catch (IOException e) { log.debug("could not list session dir {}: {}", dir, e.toString()); return; }
+        for (Path p : paths) {
+            final String key = p.getFileName().toString();
+            if (!sessionIds.contains(key)) {
+                try {
+                    final String first = Files.readString(p, StandardCharsets.UTF_8).split("\n", 2)[0];
+                    final JsonNode r = JSON.readTree(first);
+                    if (!"session".equals(r.path("type").asText())) continue;
+                    sessionIds.add(key);
+                    sessionIdByFile.put(key, r.path("id").asText());
+                    final var label = r.path("label").asText("");
+                    // Map.of is null-hostile; task_title is absent whenever there's no matching pack
+                    final var event = new LinkedHashMap<String, Object>();
+                    event.put("type", "session_started");
+                    event.put("session_id", r.path("id").asText());
+                    event.put("agent", r.path("agent").asText());
+                    event.put("model", r.path("model").asText());
+                    event.put("label", label);
+                    event.put("ts", r.path("ts").asText(""));
+                    event.put("path", "sessions/" + p.getFileName());
+                    final var title = taskTitle(dir, label);
+                    if (title != null) event.put("task_title", title);
+                    events.add(event);
+                } catch (Exception e) {
+                    log.debug("session header for {} not fully written yet, retrying next poll: {}", p, e.toString());
+                    continue;
                 }
-                if (!doneSessionFiles.contains(key)) sessionEnd(p, key, events);
             }
-        } catch (IOException e) { log.debug("could not list session dir {}: {}", dir, e.toString()); }
+            if (!doneSessionFiles.contains(key)) sessionEnd(p, key, events);
+        }
     }
 
     /** A plan task's human-readable title, straight from Packs.taskPack()'s own first line
