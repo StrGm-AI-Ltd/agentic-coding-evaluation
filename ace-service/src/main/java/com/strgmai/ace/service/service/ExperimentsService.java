@@ -72,7 +72,9 @@ public class ExperimentsService {
                                 Integer reviewTokens, Integer fixWall, Integer fixTokens,
                                 Integer parallelPlanTokens, Integer handoffTokens, Integer wrapupTokens,
                                 Integer dockerMemoryMib, boolean dockerKeepWarm,
-                                Double parallelWeight, Double efficiencyWeight) {}
+                                Double parallelWeight, Double efficiencyWeight,
+                                boolean judgeEnabled, Integer judgeEveryNTurns, String judgeModel, Integer judgeWallSec, Integer judgeTokens,
+                                boolean budgetRescueEnabled, Integer rescueWallSec, Integer rescueTokens, Integer rescueKeepRecentTurns) {}
 
     private CommonParams resolveCommon(final Map<String, Object> params) {
         final String reviewerModel = str(params.get("reviewer_model"));
@@ -86,7 +88,9 @@ public class ExperimentsService {
                 reviewTokens(params), fixWall(params), fixTokens(params),
                 parallelPlanTokens(params), handoffTokens(params), wrapupTokens(params),
                 dockerMemoryMib(params), dockerKeepWarm(params),
-                parallelWeight(params), efficiencyWeight(params));
+                parallelWeight(params), efficiencyWeight(params),
+                judgeEnabled(params), judgeEveryNTurns(params), judgeModel(params), judgeWallSec(params), judgeTokens(params),
+                budgetRescueEnabled(params), rescueWallSec(params), rescueTokens(params), rescueKeepRecentTurns(params));
     }
 
     public List<ArmSpec> plan(String template, Map<String, Object> params, final int k) {
@@ -126,7 +130,7 @@ public class ExperimentsService {
                                 .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                                 .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                                 .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
-                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight()).judgeEnabled(cp.judgeEnabled()).judgeEveryNTurns(cp.judgeEveryNTurns()).judgeModel(cp.judgeModel()).judgeWallSec(cp.judgeWallSec()).judgeTokens(cp.judgeTokens()).budgetRescueEnabled(cp.budgetRescueEnabled()).rescueWallSec(cp.rescueWallSec()).rescueTokens(cp.rescueTokens()).rescueKeepRecentTurns(cp.rescueKeepRecentTurns())
                                 .build()));
             }
             case "model_ab" -> {
@@ -148,7 +152,7 @@ public class ExperimentsService {
                             .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                             .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                             .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
-                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight()).judgeEnabled(cp.judgeEnabled()).judgeEveryNTurns(cp.judgeEveryNTurns()).judgeModel(cp.judgeModel()).judgeWallSec(cp.judgeWallSec()).judgeTokens(cp.judgeTokens()).budgetRescueEnabled(cp.budgetRescueEnabled()).rescueWallSec(cp.rescueWallSec()).rescueTokens(cp.rescueTokens()).rescueKeepRecentTurns(cp.rescueKeepRecentTurns())
                             .build()));
                     specs.add(new ArmSpec("B", i, RunSpec.builder()
                             .task(task).model(b).mode("orchestrated").planSource("reference").taskWall(wall)
@@ -161,7 +165,7 @@ public class ExperimentsService {
                             .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                             .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                             .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
-                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight()).judgeEnabled(cp.judgeEnabled()).judgeEveryNTurns(cp.judgeEveryNTurns()).judgeModel(cp.judgeModel()).judgeWallSec(cp.judgeWallSec()).judgeTokens(cp.judgeTokens()).budgetRescueEnabled(cp.budgetRescueEnabled()).rescueWallSec(cp.rescueWallSec()).rescueTokens(cp.rescueTokens()).rescueKeepRecentTurns(cp.rescueKeepRecentTurns())
                             .build()));
                 }
             }
@@ -194,7 +198,7 @@ public class ExperimentsService {
                                 .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                                 .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                                 .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
-                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight()).judgeEnabled(cp.judgeEnabled()).judgeEveryNTurns(cp.judgeEveryNTurns()).judgeModel(cp.judgeModel()).judgeWallSec(cp.judgeWallSec()).judgeTokens(cp.judgeTokens()).budgetRescueEnabled(cp.budgetRescueEnabled()).rescueWallSec(cp.rescueWallSec()).rescueTokens(cp.rescueTokens()).rescueKeepRecentTurns(cp.rescueKeepRecentTurns())
                                 .build()));
             }
             default -> throw new IllegalArgumentException("unknown template " + template + "; known: harness_effect, model_ab, agent_ab");
@@ -355,6 +359,50 @@ public class ExperimentsService {
 
     Double efficiencyWeight(Map<String, Object> params) {
         return params.get("efficiency_weight") == null ? null : numD(params.get("efficiency_weight"));
+    }
+
+    // #259: the same bug class as parallelWeight/efficiencyWeight just above, recurred for the
+    // newest feature added after that audit - JobNewView/RunSpec/JobCfgFactory all support the
+    // mid-task judge, but ExperimentsService never resolved any of its five fields back out of an
+    // experiment's own params, so the judge could never be enabled for an experiment arm at all -
+    // only a single ad-hoc job could turn it on, defeating the feature for exactly the workflow
+    // (batch A/B experiments) it matters most for.
+    boolean judgeEnabled(Map<String, Object> params) {
+        return Boolean.TRUE.equals(params.get("judge_enabled"));
+    }
+
+    Integer judgeEveryNTurns(Map<String, Object> params) {
+        return params.get("judge_every_n_turns") == null ? null : num(params.get("judge_every_n_turns"));
+    }
+
+    String judgeModel(Map<String, Object> params) {
+        return str(params.get("judge_model"));
+    }
+
+    Integer judgeWallSec(Map<String, Object> params) {
+        return params.get("judge_wall_sec") == null ? null : num(params.get("judge_wall_sec"));
+    }
+
+    Integer judgeTokens(Map<String, Object> params) {
+        return params.get("judge_tokens") == null ? null : num(params.get("judge_tokens"));
+    }
+
+    // #307: the budget-exhaustion rescue step - same resolution shape as judge's five fields above,
+    // same reason: an experiment arm needs to be able to turn this on too, not just a single job
+    boolean budgetRescueEnabled(Map<String, Object> params) {
+        return Boolean.TRUE.equals(params.get("budget_rescue_enabled"));
+    }
+
+    Integer rescueWallSec(Map<String, Object> params) {
+        return params.get("rescue_wall_sec") == null ? null : num(params.get("rescue_wall_sec"));
+    }
+
+    Integer rescueTokens(Map<String, Object> params) {
+        return params.get("rescue_tokens") == null ? null : num(params.get("rescue_tokens"));
+    }
+
+    Integer rescueKeepRecentTurns(Map<String, Object> params) {
+        return params.get("rescue_keep_recent_turns") == null ? null : num(params.get("rescue_keep_recent_turns"));
     }
 
     // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded

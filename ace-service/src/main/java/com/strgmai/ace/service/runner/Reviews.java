@@ -280,7 +280,14 @@ public class Reviews {
 
     /** external providers bypass the proxy (their credentials and endpoints are their own) */
     String externalBase(String reviewer, Map<String, Object> cfg) {
-        final String provider = reviewer.substring(0, reviewer.indexOf('/'));
+        // #295: a reviewer-model override with no "provider/" prefix at all (a plausible operator
+        // mistake - the run's own --model flag everywhere else is a bare name) made indexOf('/')
+        // return -1, and substring(0, -1) threw StringIndexOutOfBoundsException with nothing here
+        // to catch it, failing review/trajectory-review's entire (optional, calibration-only) step
+        // AND the whole run around it. No "/" at all is just an unrecognised provider, same as any
+        // other unknown provider name - fall back to the configured endpoint instead of crashing.
+        final int slash = reviewer.indexOf('/');
+        final String provider = slash < 0 ? "" : reviewer.substring(0, slash);
         final var known = com.strgmai.ace.service.agent.ProviderConfig.byName(provider);
         return known != null ? known.baseUrl : String.valueOf(cfg.getOrDefault("endpoint", props.endpoint()));
     }

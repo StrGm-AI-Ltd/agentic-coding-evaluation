@@ -85,10 +85,21 @@ public class JobNewView extends VerticalLayout {
     private final Checkbox trajectoryReview = new Checkbox("Trajectory review");
     private final Checkbox noContextProbe = new Checkbox("Skip context probe");
     private final Checkbox contextProbeFresh = new Checkbox("Fresh context probe");
-    private final Checkbox keepWorkspace = new Checkbox("Keep workspace");
     private final Checkbox manageDocker = new Checkbox("Manage Docker");
     private final Checkbox skipDocker = new Checkbox("Skip Docker");
     private final Checkbox dockerKeepWarm = new Checkbox("Keep Docker warm");
+    // #269: run-level judge baseline - see Tooltips.JUDGE_ENABLED for why this must exist here,
+    // not only on the per-task Restart tab (JobDetailView.buildRestartTab()).
+    private final Checkbox judgeEnabled = new Checkbox("Mid-task judge");
+    private final IntegerField judgeEveryNTurns = new IntegerField("Judge every N turns");
+    private final TextField judgeModel = new TextField("Judge model");
+    private final IntegerField judgeWallSec = new IntegerField("Judge wall-clock budget");
+    private final IntegerField judgeTokens = new IntegerField("Judge token budget");
+    // #307: the budget-exhaustion rescue step - same run-level-baseline reasoning as the judge above
+    private final Checkbox budgetRescueEnabled = new Checkbox("Budget-exhaustion rescue");
+    private final IntegerField rescueWallSec = new IntegerField("Rescue wall-clock budget");
+    private final IntegerField rescueTokens = new IntegerField("Rescue token budget");
+    private final IntegerField rescueKeepRecentTurns = new IntegerField("Rescue: recent turns kept");
     private final VerticalLayout errors = new VerticalLayout();
     // populated once in loadSuggestions(); looked up by name as the operator picks a rung, so
     // picking a task shows what it actually tests before the job is ever enqueued
@@ -256,9 +267,30 @@ public class JobNewView extends VerticalLayout {
         trajectoryReview.setTooltipText(Tooltips.TRAJECTORY_REVIEW);
         noContextProbe.setTooltipText(Tooltips.NO_CONTEXT_PROBE);
         contextProbeFresh.setTooltipText(Tooltips.CONTEXT_PROBE_FRESH);
-        keepWorkspace.setTooltipText(Tooltips.KEEP_WORKSPACE);
         manageDocker.setTooltipText(Tooltips.MANAGE_DOCKER);
         skipDocker.setTooltipText(Tooltips.SKIP_DOCKER);
+        judgeEnabled.setTooltipText(Tooltips.JUDGE_ENABLED);
+        judgeEveryNTurns.setMin(1);
+        judgeEveryNTurns.setPlaceholder("blank = default (10)");
+        judgeEveryNTurns.setTooltipText(Tooltips.JUDGE_EVERY_N_TURNS);
+        judgeModel.setPlaceholder("blank = the run's own model, routed locally");
+        judgeModel.setTooltipText(Tooltips.JUDGE_MODEL);
+        judgeWallSec.setMin(1);
+        judgeWallSec.setPlaceholder("blank = unlimited");
+        judgeWallSec.setTooltipText(Tooltips.JUDGE_WALL_SEC);
+        judgeTokens.setMin(1);
+        judgeTokens.setPlaceholder("blank = unlimited");
+        judgeTokens.setTooltipText(Tooltips.JUDGE_TOKENS);
+        budgetRescueEnabled.setTooltipText(Tooltips.BUDGET_RESCUE_ENABLED);
+        rescueWallSec.setMin(1);
+        rescueWallSec.setPlaceholder("blank = unlimited");
+        rescueWallSec.setTooltipText(Tooltips.RESCUE_WALL_SEC);
+        rescueTokens.setMin(1);
+        rescueTokens.setPlaceholder("blank = unlimited");
+        rescueTokens.setTooltipText(Tooltips.RESCUE_TOKENS);
+        rescueKeepRecentTurns.setMin(0);
+        rescueKeepRecentTurns.setPlaceholder("blank = operator default");
+        rescueKeepRecentTurns.setTooltipText(Tooltips.RESCUE_KEEP_RECENT_TURNS);
 
         add(new H2("New job"));
         add(new RouterLink("← Queue", JobsView.class));
@@ -283,9 +315,14 @@ public class JobNewView extends VerticalLayout {
                 Forms.row(reviewerModel, reviewWeight, reviewBlind),
                 Forms.row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse, trajectoryReview),
                 Forms.row(reviewWallSec, reviewTokens)));
+        add(Forms.section("Judge",
+                Forms.row(judgeEnabled, judgeEveryNTurns, judgeModel),
+                Forms.row(judgeWallSec, judgeTokens)));
+        add(Forms.section("Budget rescue",
+                Forms.row(budgetRescueEnabled, rescueWallSec, rescueTokens, rescueKeepRecentTurns)));
         add(Forms.section("Model & flags",
                 Forms.row(model, handoffNotes, systemRules, selfReview),
-                Forms.row(javaHome, noContextProbe, contextProbeFresh, keepWorkspace),
+                Forms.row(javaHome, noContextProbe, contextProbeFresh),
                 Forms.row(manageDocker, skipDocker, dockerMemoryMib, dockerKeepWarm, priority)));
 
         final var submit = new Button("Enqueue job", e -> submit());
@@ -411,9 +448,17 @@ public class JobNewView extends VerticalLayout {
         raw.put("trajectory_review", trajectoryReview.getValue());
         raw.put("no_context_probe", noContextProbe.getValue());
         raw.put("context_probe_fresh", contextProbeFresh.getValue());
-        raw.put("keep_workspace", keepWorkspace.getValue());
         raw.put("manage_docker", manageDocker.getValue());
         raw.put("skip_docker", skipDocker.getValue());
+        raw.put("judge_enabled", judgeEnabled.getValue());
+        raw.put("judge_every_n_turns", judgeEveryNTurns.getValue());
+        raw.put("judge_model", judgeModel.getValue());
+        raw.put("judge_wall_sec", judgeWallSec.getValue());
+        raw.put("judge_tokens", judgeTokens.getValue());
+        raw.put("budget_rescue_enabled", budgetRescueEnabled.getValue());
+        raw.put("rescue_wall_sec", rescueWallSec.getValue());
+        raw.put("rescue_tokens", rescueTokens.getValue());
+        raw.put("rescue_keep_recent_turns", rescueKeepRecentTurns.getValue());
         return raw;
     }
 

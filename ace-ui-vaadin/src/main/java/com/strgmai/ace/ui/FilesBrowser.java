@@ -8,10 +8,6 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -22,6 +18,12 @@ import java.util.Set;
  * lists the run's results dir (top level + one subdir level, excluding workspace/,
  * mirroring run_files() in the service's api.py). Clicking a row opens the file in a new
  * tab: text files formatted at the file-view route, everything else raw from the service.
+ *
+ * #270: the listing itself goes through GET /api/runs/{id}/files (ServiceClient.runFiles()),
+ * not a direct Files.list() against run.results_dir() - that path is ace-service's OWN,
+ * recorded for whatever host it runs on; ace-ui-vaadin is explicitly documented (README.md) to
+ * support running against a non-colocated ace-service, where a local filesystem read would
+ * silently render "no result files" instead of actually listing anything.
  */
 @CssImport("./styles/clickable-grid.css")
 public class FilesBrowser extends VerticalLayout {
@@ -33,7 +35,7 @@ public class FilesBrowser extends VerticalLayout {
     private final ServiceClient client;
     private final String runId;
 
-    public FilesBrowser(final ServiceClient client, final String runId, final String resultsDir) {
+    public FilesBrowser(final ServiceClient client, final String runId) {
         this.client = client;
         this.runId = runId;
         setPadding(false);
@@ -41,20 +43,27 @@ public class FilesBrowser extends VerticalLayout {
 
         add(Panels.sectionTitle("Files"));
 
-        final var files = listFiles(resultsDir);
+        final List<Api.RunFile> files;
+        try {
+            files = client.runFiles(runId);
+        } catch (final Exception e) {
+            log.warn("could not list files for run {}: {}", runId, e.toString());
+            add(new Div("no result files"));
+            return;
+        }
         if (files.isEmpty()) {
             add(new Div("no result files"));
             return;
         }
 
-        final var grid = new Grid<>(String.class, false);
-        grid.addColumn(name -> name).setHeader("path").setFlexGrow(1);
-        grid.addColumn(name -> sizeOf(resultsDir, name)).setHeader("size")
+        final var grid = new Grid<>(Api.RunFile.class, false);
+        grid.addColumn(Api.RunFile::path).setHeader("path").setFlexGrow(1);
+        grid.addColumn(f -> sizeText(f.size())).setHeader("size")
                 .setTextAlign(ColumnTextAlign.END).setAutoWidth(true)
-                .setComparator(Comparator.comparingLong(name -> sizeOr(resultsDir, name)));
+                .setComparator(Comparator.comparingLong(f -> f.size() < 0 ? Long.MAX_VALUE : f.size()));
         grid.addClassName("clickable-rows");   // #39: the row itself opens the file, no separate link
         grid.addItemClickListener(e -> getUI().ifPresent(
-                ui -> ui.getPage().open(fileUrl(client, runId, e.getItem()), "_blank")));
+                ui -> ui.getPage().open(fileUrl(client, runId, e.getItem().path()), "_blank")));
         grid.setItems(files);
         grid.setAllRowsVisible(true);
         grid.setMaxHeight("300px");
@@ -78,63 +87,12 @@ public class FilesBrowser extends VerticalLayout {
         return dot >= 0 && TEXT_SUFFIXES.contains(name.substring(dot).toLowerCase(Locale.ROOT));
     }
 
-    static String sizeOf(final String resultsDir, final String name) {
-        try {
-            final var size = sizeBytes(resultsDir, name);
-            return size < 0 ? "–" : size < 1024 ? size + " B"
-                    : size < 1024 * 1024 ? String.format("%.1f KiB", size / 1024.0)
-                    : String.format("%.1f MiB", size / 1024.0 / 1024.0);
-        } catch (final IOException e) {
-            log.debug("could not stat {}/{}: {}", resultsDir, name, e.toString());
-            return "–";
-        }
-    }
-
-    private static long sizeBytes(final String resultsDir, final String name) throws IOException {
-        return Files.size(Path.of(resultsDir, name.split("/")));
-    }
-
-    /** Sort key for the size column: actual bytes, missing files last. */
-    static long sizeOr(final String resultsDir, final String name) {
-        try {
-            return sizeBytes(resultsDir, name);
-        } catch (final IOException e) {
-            log.debug("could not stat {}/{} for sorting: {}", resultsDir, name, e.toString());
-            return Long.MAX_VALUE;
-        }
-    }
-
-    /** Mirrors run_files() in the service's api.py: top-level files plus one level of subdirs. */
-    static List<String> listFiles(final String resultsDir) {
-        if (resultsDir == null || resultsDir.isBlank()) {
-            return List.of();
-        }
-        final var base = Path.of(resultsDir);
-        if (!Files.isDirectory(base)) {
-            return List.of();
-        }
-        // returned as List<String>; empty-diamond under var would infer ArrayList<Object>
-        final List<String> files = new ArrayList<>();
-        try (var top = Files.list(base)) {
-            for (final var path : top.sorted().toList()) {
-                final var name = path.getFileName().toString();
-                if (Files.isRegularFile(path)) {
-                    files.add(name);
-                } else if (Files.isDirectory(path) && !"workspace".equals(name)) {
-                    try (var inner = Files.list(path)) {
-                        inner.sorted()
-                                .filter(Files::isRegularFile)
-                                .forEach(child -> files.add(name + "/" + child.getFileName()));
-                    }
-                }
-            }
-        } catch (final IOException e) {
-            // the directory itself was already confirmed to exist above, so this is a genuine
-            // read failure (permissions, a TOCTOU removal) - the browser then shows "no files",
-            // indistinguishable from a truly empty run, unless this is logged
-            log.warn("could not list files under {}: {}", resultsDir, e.toString());
-            return List.of();
-        }
-        return files;
+    /** #270: the size column's own text, from the size GET /api/runs/{id}/files already returned -
+     *  no local stat call needed any more. -1 (BenchController.fileEntry()'s own marker for a
+     *  failed server-side stat) renders the same "–" FilesBrowser always showed for that case. */
+    static String sizeText(final long size) {
+        return size < 0 ? "–" : size < 1024 ? size + " B"
+                : size < 1024 * 1024 ? String.format("%.1f KiB", size / 1024.0)
+                : String.format("%.1f MiB", size / 1024.0 / 1024.0);
     }
 }

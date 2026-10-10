@@ -75,6 +75,11 @@ public class ExperimentNewView extends VerticalLayout {
     private final IntegerField fixTokens = new IntegerField("Fix-up token budget");
     private final IntegerField dockerMemoryMib = new IntegerField("Docker memory cap (MiB)");
     private final Checkbox dockerKeepWarm = new Checkbox("Keep Docker warm");
+    // #307: the budget-exhaustion rescue step - same run-level-baseline reasoning as JobNewView's own
+    private final Checkbox budgetRescueEnabled = new Checkbox("Budget-exhaustion rescue");
+    private final IntegerField rescueWallSec = new IntegerField("Rescue wall-clock budget");
+    private final IntegerField rescueTokens = new IntegerField("Rescue token budget");
+    private final IntegerField rescueKeepRecentTurns = new IntegerField("Rescue: recent turns kept");
     private final Checkbox orch = new Checkbox("Orchestrated arm");
     private final Checkbox mono = new Checkbox("Monolithic arm");
     private final Checkbox monoRules = new Checkbox("Monolithic + rules arm");
@@ -232,6 +237,16 @@ public class ExperimentNewView extends VerticalLayout {
         dockerMemoryMib.setPlaceholder("blank = default (4096 MiB)");
         dockerMemoryMib.setTooltipText(Tooltips.DOCKER_MEMORY_MIB);
         dockerKeepWarm.setTooltipText(Tooltips.DOCKER_KEEP_WARM);
+        budgetRescueEnabled.setTooltipText(Tooltips.BUDGET_RESCUE_ENABLED);
+        rescueWallSec.setMin(1);
+        rescueWallSec.setPlaceholder("blank = unlimited");
+        rescueWallSec.setTooltipText(Tooltips.RESCUE_WALL_SEC);
+        rescueTokens.setMin(1);
+        rescueTokens.setPlaceholder("blank = unlimited");
+        rescueTokens.setTooltipText(Tooltips.RESCUE_TOKENS);
+        rescueKeepRecentTurns.setMin(0);
+        rescueKeepRecentTurns.setPlaceholder("blank = operator default");
+        rescueKeepRecentTurns.setTooltipText(Tooltips.RESCUE_KEEP_RECENT_TURNS);
 
         orch.setValue(true);
         mono.setValue(true);
@@ -249,7 +264,8 @@ public class ExperimentNewView extends VerticalLayout {
                 Forms.row(parallelPlanWall, handoffWall, wrapupWall),
                 Forms.row(parallelPlanTokens, handoffTokens, wrapupTokens),
                 Forms.row(fixWall, fixTokens),
-                Forms.row(dockerMemoryMib, dockerKeepWarm)));
+                Forms.row(dockerMemoryMib, dockerKeepWarm),
+                Forms.row(budgetRescueEnabled, rescueWallSec, rescueTokens, rescueKeepRecentTurns)));
 
         // NB: Vaadin components have exactly ONE parent — a shared field must live in
         // one section only (this bug shipped the model picker away from harness_effect
@@ -401,6 +417,10 @@ public class ExperimentNewView extends VerticalLayout {
         raw.put("fix_tokens", fixTokens.getValue());
         raw.put("docker_memory_mib", dockerMemoryMib.getValue());
         raw.put("docker_keep_warm", dockerKeepWarm.getValue());
+        raw.put("budget_rescue_enabled", budgetRescueEnabled.getValue());
+        raw.put("rescue_wall_sec", rescueWallSec.getValue());
+        raw.put("rescue_tokens", rescueTokens.getValue());
+        raw.put("rescue_keep_recent_turns", rescueKeepRecentTurns.getValue());
         switch (currentTemplate) {
             case "harness_effect" -> {
                 raw.put("model", model.getValue());
@@ -446,6 +466,8 @@ public class ExperimentNewView extends VerticalLayout {
                 Map.entry("wrapup_tokens", wrapupTokens), Map.entry("max_turns", maxTurns),
                 Map.entry("fix_wall", fixWall), Map.entry("fix_tokens", fixTokens),
                 Map.entry("docker_memory_mib", dockerMemoryMib),
+                Map.entry("rescue_wall_sec", rescueWallSec), Map.entry("rescue_tokens", rescueTokens),
+                Map.entry("rescue_keep_recent_turns", rescueKeepRecentTurns),
                 Map.entry("model", model), Map.entry("model_a", modelA),
                 Map.entry("model_b", modelB), Map.entry("parallel", parallel));
     }

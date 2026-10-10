@@ -1,13 +1,16 @@
 package com.strgmai.ace.service.agent;
 
 import com.strgmai.ace.service.config.BenchProperties;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.ChatResponseMetadata;
 import dev.langchain4j.model.openai.OpenAiTokenUsage;
+import dev.langchain4j.model.output.FinishReason;
 import dev.langchain4j.model.output.TokenUsage;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -56,6 +59,30 @@ class ReferenceAgentTest {
 
         final ChatResponse noMetadata = ChatResponse.builder().aiMessage(AiMessage.from("hi")).build();
         assertEquals(0, ReferenceAgent.cachedTokens(noMetadata));
+    }
+
+    /** #256: a 200 response with no content, no tool_calls, and no finish_reason is a dead stream,
+     *  not a legitimate content-free turn - reproduced live on a restarted T7 session. */
+    @Test
+    void isEmptyModelResponseDetectsOnlyTheDeadStreamShape() {
+        final ChatResponse deadStream = ChatResponse.builder().aiMessage(AiMessage.from(""))
+                .metadata(ChatResponseMetadata.builder().build()).build();
+        assertTrue(ReferenceAgent.isEmptyModelResponse(deadStream), "blank text + no tool calls + no finish reason");
+
+        final ChatResponse noMetadataEither = ChatResponse.builder().aiMessage(AiMessage.from("")).build();
+        assertTrue(ReferenceAgent.isEmptyModelResponse(noMetadataEither), "missing metadata reads the same as a missing finish reason");
+
+        final ChatResponse legitimateStop = ChatResponse.builder().aiMessage(AiMessage.from("done"))
+                .metadata(ChatResponseMetadata.builder().finishReason(FinishReason.STOP).build()).build();
+        assertFalse(ReferenceAgent.isEmptyModelResponse(legitimateStop), "a real finish reason means the stream actually completed");
+
+        final ChatResponse toolCallOnly = ChatResponse.builder()
+                .aiMessage(AiMessage.from(List.of(ToolExecutionRequest.builder().id("1").name("bash").arguments("{}").build())))
+                .build();
+        assertFalse(ReferenceAgent.isEmptyModelResponse(toolCallOnly), "a tool call is real work, even with no finish reason yet");
+
+        final ChatResponse blankFinishButText = ChatResponse.builder().aiMessage(AiMessage.from("some content")).build();
+        assertFalse(ReferenceAgent.isEmptyModelResponse(blankFinishButText), "real text means the model actually said something");
     }
 
     @Test
@@ -119,7 +146,7 @@ class ReferenceAgentTest {
     @Test
     void apiKeyForRecognisesProviderUrlVariantsConsistently() {
         final var agent = new ReferenceAgent(new BenchProperties(
-                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null));
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null));
         assertEquals("sk-openai", agent.apiKeyFor("https://api.openai.com/v1/", "m",
                 Map.of("OPENAI_API_KEY", "sk-openai")));
         assertEquals("sk-anthropic", agent.apiKeyFor("https://api.anthropic.com/v1/2023-06-01", "m",

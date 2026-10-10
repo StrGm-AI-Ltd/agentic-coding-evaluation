@@ -43,7 +43,7 @@ public class TradingController {
     public ResponseEntity<?> holdings(@PathVariable String id, @RequestParam(required = false) String asOf) {
         Instant as = null;
         if (asOf != null && !asOf.isBlank()) {
-            try { as = Instant.parse(asOf.replace(' ', 'T').endsWith("Z") ? asOf.replace(' ', 'T') : asOf.replace(' ', 'T') + "Z"); }
+            try { as = AsOf.parse(asOf); }
             catch (Exception e) { return ResponseEntity.status(400).body(Map.of("error", "bad asOf")); }
         }
         final Map<String, Object> h = svc.holdings(id, as);

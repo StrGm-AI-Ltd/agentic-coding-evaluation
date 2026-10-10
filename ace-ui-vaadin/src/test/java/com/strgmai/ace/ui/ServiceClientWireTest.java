@@ -173,9 +173,26 @@ class ServiceClientWireTest {
         if ("POST /api/jobs/5/pause".equals(method + " " + uri)) return JOB_JSON.replace("queued", "paused");
         if ("GET /api/jobs/5/plan".equals(method + " " + uri))
             return "{\"tasks\":[{\"order\":0,\"id\":\"T1\",\"title\":\"model the schema\",\"goal\":\"create the entities\","
-                    + "\"deps\":[],\"implemented\":true,\"handoff_done\":false}],\"error\":null}";
+                    + "\"deps\":[],\"implemented\":true,\"handoff_done\":false,\"reported_status\":\"partial\","
+                    + "\"reported_detail\":\"schema done, validation still missing\"}],\"error\":null}";
         if ("GET /api/jobs/5/tasks/T1/prompt".equals(method + " " + uri))
             return "{\"started\":true,\"text\":\"Implement task T1 only.\\n\\n## Frozen API contract\"}";
+        if ("GET /api/jobs/5/tasks/T1/diff".equals(method + " " + uri))
+            return "{\"started\":true,\"finished\":true,\"before_sha\":\"aaa111\",\"after_sha\":\"bbb222\","
+                    + "\"diff\":\"--- a/App.java\\n+++ b/App.java\\n+class App {}\",\"diff_truncated\":false,"
+                    + "\"new_files\":[{\"path\":\"NewThing.java\",\"content\":\"class NewThing {}\",\"truncated\":false}],"
+                    + "\"new_files_truncated\":false,\"error\":null}";
+        if ("GET /api/jobs/5/tasks/T1/attempts".equals(method + " " + uri))
+            return "[{\"task_id\":\"T1\",\"attempt_started\":\"2026-10-06T04:21:47Z\",\"attempt_ended\":\"2026-10-06T05:43:31Z\","
+                    + "\"params\":{\"task_wall_sec\":20000,\"task_tokens\":0,\"max_turns\":400},\"overridden\":false,"
+                    + "\"rc\":0,\"seconds\":4904.3,\"reported_status\":\"unfinished\",\"reported_detail\":\"budget exhausted\"}]";
+        if ("POST /api/jobs/5/tasks/T1/restart".equals(method + " " + uri)) return JOB_JSON.replace("queued", "paused");
+        if ("GET /api/jobs/5/sessions/p1_plan/prompt".equals(method + " " + uri))
+            return "{\"started\":true,\"text\":\"Read task/PROMPT.md and docs/TASK_DEFINITION.md.\"}";
+        if ("GET /api/jobs/5/sessions/p1_plan/diff".equals(method + " " + uri))
+            return "{\"started\":true,\"finished\":false,\"before_sha\":\"ccc333\",\"after_sha\":\"\","
+                    + "\"diff\":\"\",\"diff_truncated\":false,\"new_files\":[],\"new_files_truncated\":false,\"error\":null}";
+        if ("POST /api/jobs/5/sessions/p1_plan/restart".equals(method + " " + uri)) return JOB_JSON.replace("queued", "paused");
         if ("GET /api/groups".equals(method + " " + uri)) return GROUPS_JSON;
         if ("POST /api/compare".equals(method + " " + uri)) {
             return body.contains("\"include_invalid\":true")
@@ -321,6 +338,8 @@ class ServiceClientWireTest {
         assertEquals("create the entities", plan.tasks().get(0).goal());
         assertTrue(plan.tasks().get(0).implemented());
         assertFalse(plan.tasks().get(0).handoff_done());
+        assertEquals("partial", plan.tasks().get(0).reported_status());
+        assertEquals("schema done, validation still missing", plan.tasks().get(0).reported_detail());
     }
 
     @Test
@@ -329,6 +348,67 @@ class ServiceClientWireTest {
         assertEquals("GET /api/jobs/5/tasks/T1/prompt", last().method() + " " + last().uri());
         assertTrue(prompt.started());
         assertTrue(prompt.text().contains("Frozen API contract"));
+    }
+
+    @Test
+    void taskDiff_mapsFinishedShasDiffAndNewFiles() {
+        final var diff = client.taskDiff("5", "T1");
+        assertEquals("GET /api/jobs/5/tasks/T1/diff", last().method() + " " + last().uri());
+        assertTrue(diff.started());
+        assertTrue(diff.finished());
+        assertEquals("aaa111", diff.before_sha());
+        assertEquals("bbb222", diff.after_sha());
+        assertTrue(diff.diff().contains("+class App {}"));
+        assertEquals(1, diff.new_files().size());
+        assertEquals("NewThing.java", diff.new_files().get(0).path());
+        assertTrue(diff.new_files().get(0).content().contains("class NewThing"));
+    }
+
+    @Test
+    void taskAttempts_mapsParamsAndOutcomePerAttempt() {
+        final var attempts = client.taskAttempts("5", "T1");
+        assertEquals("GET /api/jobs/5/tasks/T1/attempts", last().method() + " " + last().uri());
+        assertEquals(1, attempts.size());
+        final var a = attempts.get(0);
+        assertEquals("T1", a.task_id());
+        assertEquals(20000, ((Number) a.params().get("task_wall_sec")).intValue());
+        assertFalse(a.overridden());
+        assertEquals(0, a.rc());
+        assertEquals("unfinished", a.reported_status());
+        assertEquals("budget exhausted", a.reported_detail());
+    }
+
+    @Test
+    void restartTask_postsOverridesAndReturnsTheUpdatedJob() {
+        final var job = client.restartTask("5", "T1", Map.of("task_wall_sec", 40000));
+        assertEquals("POST /api/jobs/5/tasks/T1/restart", last().method() + " " + last().uri());
+        assertEquals(40000, Json.MAPPER.readTree(last().body()).path("overrides").path("task_wall_sec").asInt());
+        assertEquals("paused", job.status());
+    }
+
+    @Test
+    void sessionPrompt_hitsTheSessionsPathNotTheTasksOne() {
+        final var prompt = client.sessionPrompt("5", "p1_plan");
+        assertEquals("GET /api/jobs/5/sessions/p1_plan/prompt", last().method() + " " + last().uri());
+        assertTrue(prompt.started());
+        assertTrue(prompt.text().contains("TASK_DEFINITION.md"));
+    }
+
+    @Test
+    void sessionDiff_mapsTheInProgressShape() {
+        final var diff = client.sessionDiff("5", "p1_plan");
+        assertEquals("GET /api/jobs/5/sessions/p1_plan/diff", last().method() + " " + last().uri());
+        assertTrue(diff.started());
+        assertFalse(diff.finished());
+        assertEquals("ccc333", diff.before_sha());
+    }
+
+    @Test
+    void restartSession_postsOverridesAndReturnsTheUpdatedJob() {
+        final var job = client.restartSession("5", "p1_plan", Map.of("max_turns", 600));
+        assertEquals("POST /api/jobs/5/sessions/p1_plan/restart", last().method() + " " + last().uri());
+        assertEquals(600, Json.MAPPER.readTree(last().body()).path("overrides").path("max_turns").asInt());
+        assertEquals("paused", job.status());
     }
 
     @Test

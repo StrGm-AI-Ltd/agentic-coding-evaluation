@@ -1,12 +1,6 @@
 package com.strgmai.ace.ui;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -14,59 +8,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+/** #270: the actual file LISTING (top-level + one subdir level, workspace/ excluded, size stats)
+ *  moved to BenchController.files() (see BenchControllerTest's own equivalent of this file's
+ *  former listFiles/sizeOf/sizeOr tests) - FilesBrowser itself now only renders whatever
+ *  ServiceClient.runFiles() returns, so what's left here is purely the client-side-only pieces:
+ *  the size column's own formatting, text-vs-raw routing, and URL encoding. */
 class FilesBrowserTest {
 
-    @TempDir
-    Path dir;
-
-    private void write(final Path path, final String content) throws IOException {
-        Files.createDirectories(path.getParent());
-        Files.writeString(path, content);
-    }
-
+    /** The size column's display (T-9a) - now formatting a size the SERVER already computed,
+     *  rather than stat'ing a local file. */
     @Test
-    void listsTopLevelSortedAndOneSubdirLevel() throws IOException {
-        write(dir.resolve("oracle.json"), "{}");
-        write(dir.resolve("alpha.log"), "x");
-        write(dir.resolve("instructions/T1.json"), "{}");
-        write(dir.resolve("instructions/T2.json"), "{}");
-        write(dir.resolve("instructions/deep/T3.json"), "{}"); // two levels: must not appear
-
-        final var files = FilesBrowser.listFiles(dir.toString());
-        assertEquals(List.of("alpha.log", "instructions/T1.json", "instructions/T2.json", "oracle.json"), files);
-    }
-
-    @Test
-    void excludesWorkspaceAndNonRegularEntries() throws IOException {
-        write(dir.resolve("workspace/secret.json"), "{}");
-        write(dir.resolve("sub/ok.txt"), "x");
-        Files.createDirectory(dir.resolve("emptydir"));
-
-        final var files = FilesBrowser.listFiles(dir.toString());
-        assertEquals(List.of("sub/ok.txt"), files);
-        assertFalse(files.stream().anyMatch(f -> f.startsWith("workspace/")));
-    }
-
-    @Test
-    void blankMissingAndNullReturnEmpty() {
-        assertEquals(List.of(), FilesBrowser.listFiles(null));
-        assertEquals(List.of(), FilesBrowser.listFiles(""));
-        assertEquals(List.of(), FilesBrowser.listFiles("/definitely/not/a/real/dir"));
-    }
-
-    /** The size column's display and sort key (T-9a). */
-    @Test
-    void sizeOf_formatsBytesKiBMiB() throws IOException {
-        write(dir.resolve("a.json"), "x".repeat(512));
-        write(dir.resolve("b.json"), "x".repeat(2048));
-        write(dir.resolve("c.json"), "x".repeat(3 * 1024 * 1024));
-        assertEquals("512 B", FilesBrowser.sizeOf(dir.toString(), "a.json"));
-        assertEquals("2.0 KiB", FilesBrowser.sizeOf(dir.toString(), "b.json"));
-        assertEquals("3.0 MiB", FilesBrowser.sizeOf(dir.toString(), "c.json"));
-        assertEquals("–", FilesBrowser.sizeOf(dir.toString(), "missing.json"),
-                "missing files format as – and sort last via sizeOr");
-        assertEquals(Long.MAX_VALUE, FilesBrowser.sizeOr(dir.toString(), "missing.json"));
-        assertEquals(2048L, FilesBrowser.sizeOr(dir.toString(), "b.json"));
+    void sizeText_formatsBytesKiBMiB() {
+        assertEquals("512 B", FilesBrowser.sizeText(512));
+        assertEquals("2.0 KiB", FilesBrowser.sizeText(2048));
+        assertEquals("3.0 MiB", FilesBrowser.sizeText(3L * 1024 * 1024));
+        assertEquals("–", FilesBrowser.sizeText(-1), "BenchController.fileEntry()'s own failed-stat marker (-1) renders as –");
     }
 
     @Test

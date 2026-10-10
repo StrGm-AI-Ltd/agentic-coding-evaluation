@@ -13,7 +13,15 @@ final class JobCfgFactory {
     private JobCfgFactory() {}
 
     static Map<String, Object> build(final List<String> argv, final BenchProperties props) {
+        return build(argv, props, Map.of());
+    }
+
+    /** #263: taskOverrides (a job's own task_overrides column, parsed) carries per-task budget
+     *  overrides set via the restart-task endpoint - {"T7": {"task_wall_sec": 40000}}. RunBench
+     *  checks this, keyed by task id, before falling back to this cfg's own run-wide defaults. */
+    static Map<String, Object> build(final List<String> argv, final BenchProperties props, final Map<String, Object> taskOverrides) {
         final Map<String, Object> cfg = new LinkedHashMap<>();
+        cfg.put("task_overrides", taskOverrides == null ? Map.of() : taskOverrides);
         cfg.put("results_root", props.resultsDir());
         cfg.put("workspace_root", props.workspaceRoot());
         cfg.put("model", argv.stream().filter(a -> a.startsWith("--model=")).map(a -> a.substring(8)).findFirst().orElse(props.model()));
@@ -36,7 +44,6 @@ final class JobCfgFactory {
         if (WorkerService.flag(argv, "--plan-tokens") != null) cfg.put("plan_tokens", Long.parseLong(WorkerService.flag(argv, "--plan-tokens")));
         if (WorkerService.flag(argv, "--wall-budget") != null) cfg.put("wall_budget_override", Integer.parseInt(WorkerService.flag(argv, "--wall-budget")));
         if (WorkerService.flag(argv, "--java-home") != null) cfg.put("java_home", WorkerService.flag(argv, "--java-home"));
-        cfg.put("keep_workspace", argv.contains("--keep-workspace"));
         cfg.put("skip_docker", argv.contains("--skip-docker"));
         if (WorkerService.flag(argv, "--parallel-plan") != null)
             cfg.put("parallel_plan_enabled", "on".equals(WorkerService.flag(argv, "--parallel-plan")));
@@ -119,6 +126,25 @@ final class JobCfgFactory {
         if (WorkerService.flag(argv, "--trajectory-weight") != null) trajectoryReview.put("weight", Double.parseDouble(WorkerService.flag(argv, "--trajectory-weight")));
         trajectoryReview.put("use", WorkerService.flag(argv, "--trajectory-use"));
         cfg.put("trajectory_review", trajectoryReview);
+        // #265: a mid-task trajectory judge - same nested-map shape as "review" above, but read
+        // (and task-override-able) only at the task loop's own call sites in RunBench, never at
+        // p0/p1/PARALLEL_PLAN/wrap-up/handoff/review - see RunBench's own judge wiring
+        final Map<String, Object> judge = new LinkedHashMap<>();
+        judge.put("enabled", argv.contains("--judge"));
+        judge.put("every_n_turns", WorkerService.flag(argv, "--judge-every-n-turns") != null
+                ? Integer.parseInt(WorkerService.flag(argv, "--judge-every-n-turns")) : 10);
+        judge.put("model", WorkerService.flag(argv, "--judge-model"));
+        if (WorkerService.flag(argv, "--judge-wall-sec") != null) judge.put("wall_sec", Integer.parseInt(WorkerService.flag(argv, "--judge-wall-sec")));
+        if (WorkerService.flag(argv, "--judge-tokens") != null) judge.put("tokens", Integer.parseInt(WorkerService.flag(argv, "--judge-tokens")));
+        cfg.put("judge", judge);
+        // #307: the budget-exhaustion rescue step - same nested-map shape as "judge" above, read
+        // only at the task loop's own call site in RunBench (rescueStep()), never anywhere else
+        final Map<String, Object> budgetRescue = new LinkedHashMap<>();
+        budgetRescue.put("enabled", argv.contains("--budget-rescue"));
+        if (WorkerService.flag(argv, "--rescue-wall-sec") != null) budgetRescue.put("wall_sec", Integer.parseInt(WorkerService.flag(argv, "--rescue-wall-sec")));
+        if (WorkerService.flag(argv, "--rescue-tokens") != null) budgetRescue.put("tokens", Integer.parseInt(WorkerService.flag(argv, "--rescue-tokens")));
+        if (WorkerService.flag(argv, "--rescue-keep-recent-turns") != null) budgetRescue.put("keep_recent_turns", Integer.parseInt(WorkerService.flag(argv, "--rescue-keep-recent-turns")));
+        cfg.put("budget_rescue", budgetRescue);
         return cfg;
     }
 }

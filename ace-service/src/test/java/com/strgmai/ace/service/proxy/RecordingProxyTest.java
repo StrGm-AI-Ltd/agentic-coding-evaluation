@@ -33,7 +33,7 @@ class RecordingProxyTest {
 
     private static BenchProperties props(final String upstreamBase) {
         return new BenchProperties(null, upstreamBase, null, null, null, null, 100,
-                null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null);
     }
 
     /** forward() replies to the client BEFORE its own journalRecord() write, so a test reading the
@@ -440,6 +440,43 @@ class RecordingProxyTest {
                 assertTrue(response.body().contains("invalid_request"), response.body());
             }
             assertFalse(upstreamCalled.get(), "an unparseable request must never reach upstream unmetered/unpinned");
+        } finally {
+            proxy.stop();
+            upstream.stop(0);
+        }
+    }
+
+    /** #260: inflight exists so stop()/abortInflight() can close every genuinely in-flight upstream
+     *  response (R12) - it must never accumulate stale entries once an exchange (streamed or not)
+     *  has actually finished, success or failure alike. */
+    @Test
+    void inflightNeverAccumulatesEntriesAcrossOrdinaryNonStreamedAndStreamedExchanges() throws Exception {
+        final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        upstream.createContext("/v1/chat/completions", ex -> {
+            ex.getRequestBody().readAllBytes();
+            final byte[] body = "{\"choices\":[{\"message\":{\"content\":\"hi\"}}]}".getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().set("Content-Type", "application/json");
+            ex.sendResponseHeaders(200, body.length);
+            try (var os = ex.getResponseBody()) { os.write(body); }
+        });
+        upstream.start();
+        final var journal = Files.createTempFile("proxy-test", ".jsonl");
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        try {
+            final var proxyBase = proxy.start(journal, 1000L, null);
+            final var client = HttpClient.newHttpClient();
+            for (int i = 0; i < 5; i++) {
+                final var request = HttpRequest.newBuilder(URI.create(proxyBase + "/chat/completions"))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString("{\"messages\":[],\"stream\":false}"))
+                        .build();
+                assertEquals(200, client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode());
+            }
+            // forward() replies to the client, THEN runs its own finally block - same race
+            // awaitJournalLines() above already documents, so poll rather than assert immediately
+            int size = proxy.inflightSize();
+            for (int i = 0; i < 100 && size != 0; i++) { Thread.sleep(20); size = proxy.inflightSize(); }
+            assertEquals(0, size, "inflight must be empty once every exchange has actually finished");
         } finally {
             proxy.stop();
             upstream.stop(0);

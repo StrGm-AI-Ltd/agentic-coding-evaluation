@@ -26,6 +26,8 @@ import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
 import static com.strgmai.ace.service.jooq.Tables.RUNS;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.emptyString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -211,6 +213,17 @@ class BenchControllerTest {
         mvc.perform(get("/api/jobs/" + JOB_99)).andExpect(status().isNotFound());
     }
 
+    /** #296: events() used to validate the job id ASYNCHRONOUSLY, inside SSE_EXECUTOR, after the
+     *  HTTP 200 text/event-stream response was already committed - EmptyResultDataAccessException
+     *  thrown that late never reaches ApiExceptionHandler, so a bad id surfaced as a broken SSE
+     *  connection instead of a clean 404 like every other /api/jobs/{id}/* endpoint. */
+    @Test
+    void eventsForAMissingJobMapsTo404NotABrokenSseStream() throws Exception {
+        when(queue.get(JOB_99)).thenThrow(new org.springframework.dao.EmptyResultDataAccessException(1));
+
+        mvc.perform(get("/api/jobs/" + JOB_99 + "/events")).andExpect(status().isNotFound());
+    }
+
     /** keyed by job id, not run id - unlike /api/runs/{id}/files/..., this must work on a still-
      *  running, never-imported job (it just reads a results-dir file directly). */
     @Test
@@ -284,6 +297,81 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.tasks[1].handoff_done").value(false));
     }
 
+    /** #261/#262: unlike implemented/handoff_done (which only say the SESSION ran to completion),
+     *  reported_status carries whether the task actually SUCCEEDED - its own self-reported
+     *  done/partial/blocked line, or the harness's "unfinished" fallback when even a dedicated
+     *  wrap-up chance came back empty - and reported_detail carries WHY (how it was verified, or
+     *  what cut it off). T3 here is implemented but has no PROGRESS.md line at all yet (its own
+     *  wrap-up/fallback write hasn't happened) - both must be null, not a false "done", for a task
+     *  still genuinely mid-session. */
+    @Test
+    void jobPlanReadsReportedStatusFromProgressMdIncludingTheHarnessFallback() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir);
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), """
+                # Plan
+                ## T1 — model the schema
+                - Goal: create the entities
+                - Dependencies: none
+                ## T2: implement the API
+                Goal: the REST endpoints
+                Dependencies: T1
+                ## T3: a third task
+                Goal: something else
+                Dependencies: T2
+                """);
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        Files.createDirectories(ws.resolve("docs"));
+        Files.writeString(ws.resolve("docs/PROGRESS.md"), """
+                T1 | done | all tests green
+                T2 | unfinished | budget exhausted before a status was written
+                """);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T1");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T2");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/plan"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tasks[0].id").value("T1"))
+                .andExpect(jsonPath("$.tasks[0].reported_status").value("done"))
+                .andExpect(jsonPath("$.tasks[0].reported_detail").value("all tests green"))
+                .andExpect(jsonPath("$.tasks[1].id").value("T2"))
+                .andExpect(jsonPath("$.tasks[1].reported_status").value("unfinished"))
+                .andExpect(jsonPath("$.tasks[1].reported_detail").value("budget exhausted before a status was written"))
+                .andExpect(jsonPath("$.tasks[2].id").value("T3"))
+                .andExpect(jsonPath("$.tasks[2].reported_status").doesNotExist())
+                .andExpect(jsonPath("$.tasks[2].reported_detail").doesNotExist());
+    }
+
+    /** #257's same leak, a different field: a model bolding the whole line (`**T1** | **blocked** |
+     *  **why**`) must not leave a trailing "**" in the captured detail. */
+    @Test
+    void jobPlanStripsTrailingBoldStarsFromReportedDetail() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir);
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), "## T1 — a task\n- Goal: something\n");
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        Files.createDirectories(ws.resolve("docs"));
+        Files.writeString(ws.resolve("docs/PROGRESS.md"), "**T1** | **blocked** | **missing a DB migration**\n");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T1");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/plan"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tasks[0].reported_status").value("blocked"))
+                .andExpect(jsonPath("$.tasks[0].reported_detail").value("missing a DB migration"));
+    }
+
     @Test
     void jobPlanIsAnEmptyListBeforeAnyPlanFileExists() throws Exception {
         final var resultsDir = Files.createTempDirectory("results");
@@ -327,6 +415,401 @@ class BenchControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.started").value(false))
                 .andExpect(jsonPath("$.text").value(Packs.taskInstruction("T3")));
+    }
+
+    /** #259: a finished task's own net change is the diff between its phase tag and that tag's
+     *  first parent - exactly what that task's own commit introduced, nothing from before it. */
+    @Test
+    void taskDiffShowsTheNetChangeBetweenTheTaskTagAndItsFirstParentWhenFinished() throws Exception {
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/start");
+        Files.writeString(ws.resolve("App.java"), "class App { int x = 1; }");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T1");
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T1/diff"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.started").value(true))
+                .andExpect(jsonPath("$.finished").value(true))
+                .andExpect(jsonPath("$.diff", containsString("App.java")))
+                .andExpect(jsonPath("$.diff", containsString("+class App")))
+                .andExpect(jsonPath("$.new_files").isEmpty());
+    }
+
+    /** #260, found live: a full unpacked Eclipse Temurin JDK landed at .toolchains/ straight in a
+     *  real run's project root and got committed whole alongside the task's real source - with
+     *  nothing to exclude it (predating VENDORED_PATHS growing that entry), it's still TRACKED in
+     *  history, so the fix has to drop it at display time, not just stop it being re-added. */
+    @Test
+    void taskDiffDropsVendoredFilesLikeAnUnpackedJdkEvenWhenTheyAreTrackedInHistory() throws Exception {
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/start");
+        Files.writeString(ws.resolve("App.java"), "class App { int x = 1; }");
+        Files.createDirectories(ws.resolve(".toolchains/jdk-21/Contents/Home/bin"));
+        Files.writeString(ws.resolve(".toolchains/jdk-21/Contents/Home/NOTICE"), "Notices for Eclipse Temurin");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T1");
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T1/diff"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.diff", containsString("App.java")))
+                .andExpect(jsonPath("$.diff", not(containsString(".toolchains"))))
+                .andExpect(jsonPath("$.diff", not(containsString("Temurin"))));
+    }
+
+    /** #260 regression, found live: a first attempt at this filter post-processed the diff TEXT,
+     *  skipping a file's hunk only once its own "+++ b/"/"--- a/" line confirmed a vendored path -
+     *  but a BINARY file (every single file in a real unpacked JDK, confirmed live) gets neither
+     *  line at all; git emits "Binary files a/X and b/X differ" instead, so that filter missed
+     *  every one of them. The actual fix pushes the exclusion into the git invocation itself
+     *  (pathspec ":!<prefix>**"), which handles binary/text/renamed/mode-only changes identically
+     *  since it operates before git ever produces output, not after. */
+    @Test
+    void taskDiffDropsVendoredBinaryFilesToo() throws Exception {
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/start");
+        Files.writeString(ws.resolve("App.java"), "class App { int x = 1; }");
+        Files.createDirectories(ws.resolve(".toolchains/jdk-21/Contents/Home/bin"));
+        // a NUL byte is exactly what makes git classify a file as binary, same as a real `java` executable
+        Files.write(ws.resolve(".toolchains/jdk-21/Contents/Home/bin/java"), new byte[]{0x7f, 'E', 'L', 'F', 0x00, 0x01, 0x02});
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T1");
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T1/diff"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.diff", containsString("App.java")))
+                .andExpect(jsonPath("$.diff", not(containsString(".toolchains"))))
+                .andExpect(jsonPath("$.diff", not(containsString("Binary files"))));
+    }
+
+    /** Same filter, the in-progress/untracked path - deliberately set up like a workspace
+     *  INITIALISED BEFORE .toolchains/ was ever added to VENDORED_PATHS (its own .git/info/exclude
+     *  predates the fix and has no idea about it), so only the code-level filter in taskDiff()
+     *  itself - not git's own --exclude-standard - can be what catches this. */
+    @Test
+    void taskDiffDropsVendoredNewFilesWhenStillInProgress() throws Exception {
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        new ProcessBuilder("git", "-C", ws.toString(), "init", "-q").start().waitFor();
+        new ProcessBuilder("git", "-C", ws.toString(), "config", "user.email", "bench@local").start().waitFor();
+        new ProcessBuilder("git", "-C", ws.toString(), "config", "user.name", "bench").start().waitFor();
+        Files.createDirectories(ws.resolve(".git/info"));
+        Files.writeString(ws.resolve(".git/info/exclude"), "build/\n.gradle/\n");   // no .toolchains/ - an old workspace
+        new ProcessBuilder("git", "-C", ws.toString(), "commit", "-q", "--allow-empty", "-m", "phase/start").start().waitFor();
+        new ProcessBuilder("git", "-C", ws.toString(), "tag", "phase/start").start().waitFor();
+
+        Files.writeString(ws.resolve("Service.java"), "class Service {}");
+        Files.createDirectories(ws.resolve(".toolchains/jdk-21/Contents/Home/bin"));
+        Files.writeString(ws.resolve(".toolchains/jdk-21/Contents/Home/NOTICE"), "Notices for Eclipse Temurin");
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T1/diff"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.new_files[0].path").value("Service.java"))
+                .andExpect(jsonPath("$.new_files", org.hamcrest.Matchers.hasSize(1)));
+    }
+
+    /** #259 regression, found live: the AGENT's own session can `git commit` its own work itself
+     *  (its own message, nothing to do with our phase/* tags) before our own snapshot() ever runs -
+     *  when that happens, snapshot()'s wrapper commit has nothing left to add (--allow-empty lets
+     *  it succeed anyway), so the task's real change sits in the tag's PARENT commit, not inside
+     *  the tag's own commit at all. A naive <tag>^..{tag} diff came back silently empty on the very
+     *  first real task of a real run despite 38 real files having been added - this is exactly what
+     *  nearestPhaseTagSha()'s tag-walk (not a plain git-parent walk) exists to survive. */
+    @Test
+    void taskDiffFindsTheRealChangeEvenWhenTheAgentCommittedItBeforeOurOwnSnapshotDid() throws Exception {
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/start");
+        Files.writeString(ws.resolve("App.java"), "class App { int x = 1; }");
+        new ProcessBuilder("git", "-C", ws.toString(), "add", "-A").start().waitFor();
+        new ProcessBuilder("git", "-C", ws.toString(), "commit", "-q", "-m", "T1: agent's own commit message").start().waitFor();
+        // our own snapshot() finds nothing left to add - its commit is empty, same as it was live
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T1");
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T1/diff"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.finished").value(true))
+                .andExpect(jsonPath("$.diff", containsString("App.java")))
+                .andExpect(jsonPath("$.diff", containsString("+class App")));
+    }
+
+    /** A task still running (or paused mid-session) has no phase tag yet: "before" is HEAD and the
+     *  change so far is the live, uncommitted working tree - a modified tracked file shows up in
+     *  diff, and a brand new untracked file (git diff alone never shows those) shows up in
+     *  new_files instead, full content included. */
+    @Test
+    void taskDiffShowsTheLiveWorkingTreeAgainstHeadWhenStillInProgress() throws Exception {
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/start");
+        Files.writeString(ws.resolve("App.java"), "class App {}");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T1");
+        Files.writeString(ws.resolve("App.java"), "class App { int y = 2; }");
+        Files.writeString(ws.resolve("NewThing.java"), "class NewThing {}");
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T2/diff"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.started").value(true))
+                .andExpect(jsonPath("$.finished").value(false))
+                .andExpect(jsonPath("$.after_sha").value(""))
+                .andExpect(jsonPath("$.diff", containsString("App.java")))
+                .andExpect(jsonPath("$.new_files[0].path").value("NewThing.java"))
+                .andExpect(jsonPath("$.new_files[0].content", containsString("class NewThing")));
+    }
+
+    /** Same bug, same fix, the in-progress branch: before HAS to walk past any commit the agent
+     *  already made on its own, not stop at git-parent-of-HEAD (which IS that commit whenever one
+     *  exists) - otherwise the diff would only ever show the delta since that commit, missing
+     *  everything the agent already committed itself earlier in the same still-running session. */
+    @Test
+    void taskDiffIncludesWorkTheAgentAlreadyCommittedItselfPlusWhateverIsStillUncommitted() throws Exception {
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/start");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T1");
+        // T2 is in progress: the agent already committed some of its own work, unprompted...
+        Files.writeString(ws.resolve("Service.java"), "class Service { int a = 1; }");
+        new ProcessBuilder("git", "-C", ws.toString(), "add", "-A").start().waitFor();
+        new ProcessBuilder("git", "-C", ws.toString(), "commit", "-q", "-m", "T2: wip").start().waitFor();
+        // ...and still has further, uncommitted work on top of that
+        Files.writeString(ws.resolve("Service.java"), "class Service { int a = 1; int b = 2; }");
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T2/diff"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.finished").value(false))
+                // Service.java must show as a brand NEW file (relative to phase/T1) - if "before"
+                // had stopped at the agent's own commit instead, this would be a plain one-line
+                // modification with no "new file mode" header at all
+                .andExpect(jsonPath("$.diff", containsString("new file mode")))
+                .andExpect(jsonPath("$.diff", containsString("a = 1")))
+                .andExpect(jsonPath("$.diff", containsString("b = 2")));
+    }
+
+    @Test
+    void taskDiffIsNotStartedWhenTheWorkspaceDoesNotExistYet() throws Exception {
+        final var wsRoot = Files.createTempDirectory("ws-root");   // no run-1 dir created inside at all
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T1/diff"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.started").value(false))
+                .andExpect(jsonPath("$.finished").value(false));
+    }
+
+    @Test
+    void restartTaskRequiresAPausedJob() throws Exception {
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "running"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/restart").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail", containsString("paused")));
+        verify(queue, never()).setTaskOverride(any(), any(), any());
+    }
+
+    @Test
+    void restartTaskRequiresAnExistingPhaseTag() throws Exception {
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/start");   // T2 itself never ran
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/restart").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail", containsString("nothing to restart")));
+    }
+
+    @Test
+    void restartTaskRejectsUnknownOverrideFields() throws Exception {
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/start");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T2");
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/restart").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"overrides\":{\"model\":\"some-other-model\"}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail", containsString("model")));
+    }
+
+    /** #263: the full flow - a backup tag preserves the discarded state, the workspace resets to
+     *  right before T2 (T2's own net change AND T3's, which depends on it, both get discarded),
+     *  phase/T2 and phase/T3's own tags (and their handoffs) are gone so R18 will redo them on
+     *  resume, T1's own tag is untouched, and the override gets persisted for T2 specifically. */
+    @Test
+    void restartTaskCreatesBackupResetsWorkspaceAndCascadesTagDeletion() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir);
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), """
+                ## T1 — first
+                - Goal: a
+                ## T2 — second
+                - Goal: b
+                - Dependencies: T1
+                ## T3 — third
+                - Goal: c
+                - Dependencies: T2
+                """);
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/start");
+        Files.writeString(ws.resolve("T1.txt"), "t1");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T1");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T1-handoff");
+        Files.writeString(ws.resolve("T2.txt"), "t2 (the buggy attempt)");
+        final String beforeT2 = com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "rev-parse", "HEAD");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T2");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T2-handoff");
+        Files.writeString(ws.resolve("T3.txt"), "t3 (built on the buggy T2)");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T3");
+        final String beforeRestartHead = com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "rev-parse", "HEAD");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
+        when(queue.setTaskOverride(eq(JOB_1), eq("T2"), anyMap()))
+                .thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/restart").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"overrides\":{\"task_wall_sec\":40000}}"))
+                .andExpect(status().isOk());
+
+        verify(queue).setTaskOverride(JOB_1, "T2", Map.of("task_wall_sec", 40000));
+        // the backup tag exists and still points at the pre-reset HEAD (T3's own commit)
+        final String backupTags = com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "tag", "-l", "backup/T2-*");
+        assertFalse(backupTags.isBlank(), "a backup tag must exist before anything is discarded");
+        assertEquals(beforeRestartHead, com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "rev-parse", backupTags.strip()),
+                "the backup tag must capture HEAD exactly as it was right before the reset (T3's own commit)");
+        // the workspace itself is back to exactly T2's own pre-state - T3's file is gone, T2's own is gone too
+        assertEquals(beforeT2, com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "rev-parse", "HEAD"));
+        assertTrue(Files.isRegularFile(ws.resolve("T1.txt")));
+        assertFalse(Files.exists(ws.resolve("T2.txt")));
+        assertFalse(Files.exists(ws.resolve("T3.txt")));
+        // T1 is untouched; T2 and T3 (cascaded, since T3 depends on T2) are cleared for R18 to redo
+        assertTrue(com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/T1"));
+        assertTrue(com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/T1-handoff"));
+        assertFalse(com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/T2"));
+        assertFalse(com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/T2-handoff"));
+        assertFalse(com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/T3"));
+    }
+
+    @Test
+    void restartSessionRejectsAnUnknownName() throws Exception {
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/sessions/T2/restart").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail", containsString("not a restartable phase session")));
+        verify(queue, never()).setTaskOverride(any(), any(), any());
+    }
+
+    @Test
+    void restartSessionRequiresAPausedJob() throws Exception {
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "running"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/sessions/p1_plan/restart").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail", containsString("paused")));
+        verify(queue, never()).setTaskOverride(any(), any(), any());
+    }
+
+    /** #264: restarting p1_plan - a PRE-task phase - must cascade through PARALLEL_PLAN and every
+     *  task (T1, T2), since the plan itself is being redone, but must leave phase/p0 (an EARLIER
+     *  phase) completely untouched. Mirrors restartTaskCreatesBackupResetsWorkspaceAndCascadesTagDeletion's
+     *  own shape, one phase up the chain. */
+    @Test
+    void restartSessionCascadesThroughLaterPhasesAndEveryTask() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir);
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), """
+                ## T1 — first
+                - Goal: a
+                ## T2 — second
+                - Goal: b
+                - Dependencies: T1
+                """);
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/start");
+        Files.writeString(ws.resolve("p0.txt"), "task definition");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/p0");
+        final String beforeP1 = com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "rev-parse", "HEAD");
+        Files.writeString(ws.resolve("p1.txt"), "the plan (truncated, this is the bug)");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/p1");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/parallel_plan");
+        Files.writeString(ws.resolve("T1.txt"), "t1");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T1");
+        Files.writeString(ws.resolve("T2.txt"), "t2");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T2");
+        final String beforeRestartHead = com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "rev-parse", "HEAD");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
+        when(queue.setTaskOverride(eq(JOB_1), eq("p1_plan"), anyMap()))
+                .thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/sessions/p1_plan/restart").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"overrides\":{\"task_wall_sec\":5000}}"))
+                .andExpect(status().isOk());
+
+        verify(queue).setTaskOverride(JOB_1, "p1_plan", Map.of("task_wall_sec", 5000));
+        final String backupTags = com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "tag", "-l", "backup/p1_plan-*");
+        assertFalse(backupTags.isBlank(), "a backup tag must exist before anything is discarded");
+        assertEquals(beforeRestartHead, com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "rev-parse", backupTags.strip()));
+        assertEquals(beforeP1, com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "rev-parse", "HEAD"));
+        assertTrue(Files.isRegularFile(ws.resolve("p0.txt")));
+        assertFalse(Files.exists(ws.resolve("p1.txt")));
+        assertFalse(Files.exists(ws.resolve("T1.txt")));
+        assertFalse(Files.exists(ws.resolve("T2.txt")));
+        // p0 is EARLIER and untouched; p1/parallel_plan/every task are cleared for R18 to redo
+        assertTrue(com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/p0"));
+        assertFalse(com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/p1"));
+        assertFalse(com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/parallel_plan"));
+        assertFalse(com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/T1"));
+        assertFalse(com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/T2"));
+    }
+
+    @Test
+    void sessionPromptReturnsTheFixedInstructionForPlainPlanPhases() throws Exception {
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/sessions/p1_plan/prompt"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.started").value(true))
+                .andExpect(jsonPath("$.text", containsString("IMPLEMENTATION_PLAN.md")));
+    }
+
+    @Test
+    void sessionPromptIsGracefulForAnUnknownName() throws Exception {
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/sessions/T7/prompt"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.started").value(false))
+                .andExpect(jsonPath("$.text").value(""));
     }
 
     @Test
@@ -642,5 +1125,75 @@ class BenchControllerTest {
         m.put("verdict", "NOT supported at alpha=0.10");
         m.put("note", "this comparison's own 90% CI is 10.0 points wide");
         return m;
+    }
+
+    // ---- #270: GET /api/runs/{id}/files - the listing moved here from ace-ui-vaadin's own
+    // FilesBrowser, which used to read run.results_dir() off the local filesystem directly; these
+    // pin the exact semantics FilesBrowserTest's own (now-removed) listFiles()/sizeOf() tests used
+    // to cover, now against a real response from this endpoint.
+
+    @Test
+    void filesListsTopLevelSortedPlusOneSubdirLevelExcludingWorkspace() throws Exception {
+        final var resultsDir = Files.createTempDirectory("files-test");
+        Files.writeString(resultsDir.resolve("oracle.json"), "{}");
+        Files.writeString(resultsDir.resolve("alpha.log"), "x");
+        Files.createDirectories(resultsDir.resolve("instructions"));
+        Files.writeString(resultsDir.resolve("instructions/T1.json"), "{}");
+        Files.writeString(resultsDir.resolve("instructions/T2.json"), "{}");
+        Files.createDirectories(resultsDir.resolve("instructions/deep"));
+        Files.writeString(resultsDir.resolve("instructions/deep/T3.json"), "{}");   // two levels deep: must not appear
+        Files.createDirectories(resultsDir.resolve("workspace"));
+        Files.writeString(resultsDir.resolve("workspace/secret.json"), "{}");   // never listed
+        Files.createDirectory(resultsDir.resolve("emptydir"));   // a dir with no regular files contributes nothing
+
+        dsl.insertInto(RUNS).set(RUNS.RUN_ID, "files-run").set(RUNS.RESULTS_DIR, resultsDir.toString())
+                .set(RUNS.TASK, "t").set(RUNS.MODEL, "m").set(RUNS.MODE, "monolithic")
+                .set(RUNS.KEY_HASH, "k").set(RUNS.POOLABLE, true).set(RUNS.ORACLE, "{}").execute();
+
+        mvc.perform(get("/api/runs/files-run/files"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(4)))
+                .andExpect(jsonPath("$[0].path").value("alpha.log"))
+                .andExpect(jsonPath("$[1].path").value("instructions/T1.json"))
+                .andExpect(jsonPath("$[2].path").value("instructions/T2.json"))
+                .andExpect(jsonPath("$[3].path").value("oracle.json"))
+                .andExpect(jsonPath("$[*].path", not(hasItem(containsString("workspace")))))
+                .andExpect(jsonPath("$[*].path", not(hasItem(containsString("deep")))));
+    }
+
+    @Test
+    void filesReportsTheRealByteSizeOfEachFile() throws Exception {
+        final var resultsDir = Files.createTempDirectory("files-test-size");
+        Files.writeString(resultsDir.resolve("a.json"), "x".repeat(512));
+
+        dsl.insertInto(RUNS).set(RUNS.RUN_ID, "files-size-run").set(RUNS.RESULTS_DIR, resultsDir.toString())
+                .set(RUNS.TASK, "t").set(RUNS.MODEL, "m").set(RUNS.MODE, "monolithic")
+                .set(RUNS.KEY_HASH, "k").set(RUNS.POOLABLE, true).set(RUNS.ORACLE, "{}").execute();
+
+        mvc.perform(get("/api/runs/files-size-run/files"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].path").value("a.json"))
+                .andExpect(jsonPath("$[0].size").value(512));
+    }
+
+    @Test
+    void filesOnAnUnimportedRunIdIs404NotAnEmptyList() throws Exception {
+        mvc.perform(get("/api/runs/not-a-real-run/files")).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void aBareFilesRequestWithNoPathSegmentListsRatherThanFallingIntoTheFileServingRoute() throws Exception {
+        // regression guard: /api/runs/{id}/files/{*path} (the file-SERVING sibling) must never
+        // swallow this bare, path-less request - it would otherwise try to serve a file literally
+        // named "" and 404 for the wrong reason (not found) instead of this returning a real list.
+        final var resultsDir = Files.createTempDirectory("files-test-bare");
+        Files.writeString(resultsDir.resolve("only.txt"), "x");
+        dsl.insertInto(RUNS).set(RUNS.RUN_ID, "files-bare-run").set(RUNS.RESULTS_DIR, resultsDir.toString())
+                .set(RUNS.TASK, "t").set(RUNS.MODEL, "m").set(RUNS.MODE, "monolithic")
+                .set(RUNS.KEY_HASH, "k").set(RUNS.POOLABLE, true).set(RUNS.ORACLE, "{}").execute();
+
+        mvc.perform(get("/api/runs/files-bare-run/files"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].path").value("only.txt"));
     }
 }

@@ -18,9 +18,15 @@ public record BenchProperties(
         Integer compactionTrigger,
         String resultsDir,
         String workspaceRoot,
-        Integer pollSec,
+        // #298: pollSec and referenceServerPort removed. pollSec was dead SURFACE only, not a dead
+        // BINDING - WorkerService's own @Scheduled(fixedDelayString = "${ace.poll-sec:10}000")
+        // reads the SAME ace.poll-sec property directly via Spring's own placeholder resolution
+        // (the poll interval is genuinely honored; only this record's own accessor for it was
+        // never read by anything). referenceServerPort was fully dead: nothing in main code ever
+        // references ReferenceServer at all (it has no main(), constructed only from one test with
+        // its own explicit port) - the oracle does not, in fact, start one on demand, despite what
+        // application.yml's own comment used to claim.
         Double maxErrorRate,
-        Integer referenceServerPort,
         String javaHome,
         String omlxServerLog,
         Map<String, Integer> phaseWallSec,
@@ -28,6 +34,19 @@ public record BenchProperties(
 
     public static final String HARNESS_VERSION = "jls-ref-1.0";   // goes into provenance + the comparability key
     public static final int RESULT_SCHEMA = 3;                   // port of registry.RESULT_SCHEMA
+
+    /** #277: "this run's schema matches the current build and it actually has a full weighted
+     *  score" used to be two independently hand-written boolean expressions - ImporterService's
+     *  own (over a plain Map, persisted into RUNS.POOLABLE) and StatsService's own (over a Jackson
+     *  JsonNode, recomputed fresh whenever /api/compare or /api/groups loads a run from disk) -
+     *  easy to update one on a future schema change and forget the other, silently desyncing the
+     *  persisted column from what a fresh computation would say. `hasWeightedScorePct` is a plain
+     *  boolean, not the raw Map/JsonNode, so this works identically from either representation -
+     *  each caller decides what "has a real weighted score" means for ITS OWN representation
+     *  (a plain Map's null check vs. a JsonNode's isNull()/has() distinction) and passes the result in. */
+    public static boolean poolable(final Object schemaVersion, final boolean hasWeightedScorePct) {
+        return java.util.Objects.equals(schemaVersion, RESULT_SCHEMA) && hasWeightedScorePct;
+    }
 
     /** #173: used to be a stub ignoring `phase` entirely and always returning 0 - a real
      *  @ConfigurationProperties record advertising a per-phase budget surface with no backing field

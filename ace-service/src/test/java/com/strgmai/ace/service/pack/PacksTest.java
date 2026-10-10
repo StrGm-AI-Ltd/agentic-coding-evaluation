@@ -52,6 +52,40 @@ class PacksTest {
         assertTrue(instr.toLowerCase().contains("already have everything you need"));
     }
 
+    /** #307: the rescue step's own ask must name the CURRENT, concrete failure verbatim - the
+     *  model's own last tool call before running out of budget was almost certainly not "run the
+     *  tests" (the harness runs those separately, after the session already ended), so nothing in
+     *  its own trajectory reliably surfaces this - and must say explicitly not to re-explore,
+     *  mirroring handoffInstructionTellsItNotToReVerifyWhatItAlreadyKnows() above. */
+    @Test
+    void rescueInstructionNamesTheCurrentFailureAndSaysNotToReExplore() {
+        final String instr = Packs.rescueInstruction("T13", "`gradle test` run by the harness: RED — 13 tests, 1 failed, rc=[1]");
+        assertTrue(instr.contains("T13"));
+        assertTrue(instr.contains("13 tests, 1 failed"), "the exact fresh verification output must appear verbatim, not paraphrased");
+        assertTrue(instr.toLowerCase().contains("do not re-read"));
+        assertTrue(instr.toLowerCase().contains("do not restart the approach"));
+        assertTrue(instr.contains("docs/PROGRESS.md"), "an honest escape hatch if it genuinely cannot finish either");
+    }
+
+    /** #304, found live: taskPack()'s own handoff section used to take whichever notes fit a total
+     *  char cap starting from the FRONT of the accumulated list (plan order), with no regard for
+     *  which of them the task being packed actually depends on - a task deep in the dependency
+     *  graph could see two early, irrelevant tasks' notes eat the whole budget and never see its
+     *  own direct dependencies' notes at all, no matter how small they were. */
+    @Test
+    void relevantHandoffsKeepsOnlyTheTasksOwnDeclaredDependencies() {
+        final var handoffs = List.of(new String[]{"T1", "T1's note"}, new String[]{"T2", "T2's note"}, new String[]{"T5", "T5's note"});
+        assertEquals(List.of("T5"), Packs.relevantHandoffs(handoffs, List.of("T5", "T8")).stream().map(h -> h[0]).toList(),
+                "T8 has no handoff at all yet - only T5's matches");
+    }
+
+    @Test
+    void relevantHandoffsFallsBackToTheFullListWhenThereAreNoDeclaredDeps() {
+        final var handoffs = List.of(new String[]{"T1", "T1's note"}, new String[]{"T2", "T2's note"});
+        assertSame(handoffs, Packs.relevantHandoffs(handoffs, null), "no deps (e.g. the synthetic INTEGRATION task) - see everything");
+        assertSame(handoffs, Packs.relevantHandoffs(handoffs, List.of()));
+    }
+
     @Test
     void theHygieneRulesNameTheRunsWindow() {
         Packs.setWindow(79872);

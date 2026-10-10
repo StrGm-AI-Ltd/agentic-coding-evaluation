@@ -108,7 +108,6 @@ public final class ContextProbe {
                         obj.path("error").path("message").asText(null), elapsed(t0));
             }
             final var br = new java.io.BufferedReader(new java.io.InputStreamReader(r.body()));
-            final StringBuilder u = null;
             for (String line; (line = br.readLine()) != null; ) {
                 if (!line.startsWith("data:")) continue;
                 final String data = line.substring(5).strip();
@@ -553,7 +552,13 @@ public final class ContextProbe {
         final Map<String, Integer> candidates = new LinkedHashMap<>();
         candidates.put("memory", Math.max(memoryWindow, 0));
         if (perf != null) candidates.put("performance", perf / 2048 * 2048);
-        if (props.contextWindow() != null) candidates.put("operator cap", props.contextWindow());
+        // #298, found live: the raw accessor let an operator's `ace.context-window: 0` - following
+        // this codebase's own pervasive "0 = unlimited" convention for every other budget knob -
+        // get added as a real, non-null "operator cap" CANDIDATE, where it then always wins as the
+        // smallest and floors `usable` at the 2048 minimum below regardless of the model's real
+        // measured capacity - silently crippling every run on that setup. effectiveContextWindow()
+        // already treats null-or-non-positive as "unset".
+        if (props.effectiveContextWindow() != null) candidates.put("operator cap", props.effectiveContextWindow());
         final Map.Entry<String, Integer> limited = candidates.entrySet().stream().min(Map.Entry.comparingByValue()).orElse(null);
         String limitedBy = limited == null ? "memory" : limited.getKey();
         if ("cap".equals(rec.get("binding")) && "memory".equals(limitedBy)) limitedBy = "positional/cap";

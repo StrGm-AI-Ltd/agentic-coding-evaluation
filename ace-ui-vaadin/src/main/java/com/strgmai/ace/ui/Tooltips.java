@@ -62,6 +62,46 @@ final class Tooltips {
             + "finished instantly, 0 = at or over budget). Unlike the other weighted terms, this is "
             + "opt-in only - it defaults to 0, so leaving it blank changes nothing about the score.";
 
+    // #269: a run-level judge baseline - task-scoped only (never p0/p1/PARALLEL_PLAN/wrap-up/
+    // handoff/review). A task's own Restart tab can still enable/retune the judge retroactively
+    // once it has already run once and the job is paused - these fields are what let it be on
+    // from turn 1 of the FIRST attempt instead.
+    static final String JUDGE_ENABLED = "Enables the mid-task trajectory judge: every N turns (see "
+            + "'Judge every N turns'), a separate LLM session reads the task's own goal, budget, what "
+            + "it has produced so far, and its recent trajectory, and returns guidance injected as the "
+            + "next turn's own instruction - meant to catch a task drifting off its stated goal before "
+            + "it burns its whole budget on the wrong thing. Task-scoped only (p0/p1/PARALLEL_PLAN/"
+            + "wrap-up/handoff/review sessions never run it). Off by default.";
+
+    static final String JUDGE_EVERY_N_TURNS = "How many agent turns pass between judge checkpoints. "
+            + "Blank = 10. Only applies when the judge is enabled.";
+
+    static final String JUDGE_MODEL = "Which model acts as the judge, as 'provider/model' (e.g. "
+            + "'openai/gpt-4') for an external provider, or a bare model name to use the SAME local "
+            + "model the run itself uses. Blank = the run's own model, routed locally.";
+
+    static final String JUDGE_WALL_SEC = "Wall-clock seconds given to each judge checkpoint's own "
+            + "session - separate from the task's own budget. Blank = unlimited.";
+
+    static final String JUDGE_TOKENS = "Completion-token budget for each judge checkpoint's own "
+            + "session - separate from the task's own budget. Blank = unlimited.";
+
+    static final String BUDGET_RESCUE_ENABLED = "Enables the budget-exhaustion rescue step: when a task's "
+            + "own main session runs out of its token budget (not a wall timeout, not a crash), one more "
+            + "dedicated session reconnects to it - its own prior history compacted to its most recent "
+            + "turns first, so the reconnect stays cheap - and is told to fix exactly the harness's own "
+            + "freshly re-run test failures, nothing more. Tracked separately from the task's own result.";
+
+    static final String RESCUE_WALL_SEC = "Wall-clock seconds given to the rescue session - separate from "
+            + "the task's own budget. Blank = unlimited. Only applies when the rescue step is enabled.";
+
+    static final String RESCUE_TOKENS = "Completion-token budget for the rescue session - separate from "
+            + "the task's own budget. Blank = unlimited. Only applies when the rescue step is enabled.";
+
+    static final String RESCUE_KEEP_RECENT_TURNS = "How many of the task's own most recent turns the rescue "
+            + "session keeps verbatim when it reconnects; everything older is stubbed to keep the reconnect's "
+            + "own prefill cheap. Blank = the operator-wide compaction default.";
+
     static final String TASK_WALL = "Orchestrated mode: wall-clock seconds given to each individual task "
             + "(and to the INTEGRATION step). Blank = derived from the rung's own time budget via the "
             + "step-0 context probe's measured window.";
@@ -206,11 +246,6 @@ final class Tooltips {
 
     static final String CONTEXT_PROBE_FRESH = "Forces a fresh step-0 context-probe measurement instead "
             + "of reusing a cached one from an earlier run against the same setup.";
-
-    static final String KEEP_WORKSPACE = "When checked, the run's workspace and HOME directory are NOT "
-            + "deleted after the run finishes - normally they're deleted once the git-bundle snapshot in "
-            + "results/<run_id>/workspace.bundle is confirmed written, since that bundle is the durable "
-            + "record. Useful for inspecting the live workspace afterward, at the cost of disk space.";
 
     static final String MANAGE_DOCKER = "When checked, the harness starts Docker Desktop itself before "
             + "the run needs it (capped at a configured memory limit) and quits it afterward, rather than "

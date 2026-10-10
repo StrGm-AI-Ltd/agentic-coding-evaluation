@@ -37,7 +37,7 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(new JobLiveState.SessionRow(
-                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc (high)", "", null, null, null, null, null, null, null, null)), state.sessions());
+                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc (high)", "", null, null, null, null, null, null, null, null, null)), state.sessions());
     }
 
     /** The sessions grid's new "ts" column (2026-09-25): the session's own start time, same field
@@ -157,7 +157,7 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(new JobLiveState.SessionRow(
-                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc", "", "tool_calls", null, null, null, null, null, null, null)), state.sessions());
+                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc", "", "tool_calls", null, null, null, null, null, null, null, null)), state.sessions());
     }
 
     /** The whole point of matching by real id: a run's sessions need not finish in the order they
@@ -179,8 +179,8 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(
-                new JobLiveState.SessionRow("aaaaaaaa-0000-0000-0000-000000000000", "aaaaaaaa", "", null, null, null, null, null, null, null, null),
-                new JobLiveState.SessionRow("bbbbbbbb-0000-0000-0000-000000000000", "bbbbbbbb", "", "stop", null, null, null, null, null, null, null)), state.sessions(),
+                new JobLiveState.SessionRow("aaaaaaaa-0000-0000-0000-000000000000", "aaaaaaaa", "", null, null, null, null, null, null, null, null, null),
+                new JobLiveState.SessionRow("bbbbbbbb-0000-0000-0000-000000000000", "bbbbbbbb", "", "stop", null, null, null, null, null, null, null, null)), state.sessions(),
                 "the second-started session is the one marked done; the first (still open) is unaffected");
     }
 
@@ -263,6 +263,73 @@ class JobLiveStateTest {
         assertNull(sessions.get(0).totalTokens(), "the abandoned attempt never saw this request");
         assertEquals("stop", sessions.get(1).endedStage(), "the retry is the one that actually finished");
         assertEquals(42L, sessions.get(1).totalTokens());
+    }
+
+    /** #301, found live: Tailer hands a fresh client a brand-new "session_started" for EVERY session
+     *  file it finds, on every connection ("stateless across connections", so a late-joining viewer
+     *  still gets full history) - including one that is genuinely still running with no "end" yet.
+     *  Before this fix, a replayed session_started for that still-open attempt was indistinguishable
+     *  from a real retry and got marked "interrupted" on every reconnect, even though nothing failed.
+     *  The same "path" (unique per physical session file, unlike session_id which is deliberately
+     *  shared across retries) arriving twice must be a no-op: one row, still open. */
+    @Test
+    void aReplayedSessionStartedWithTheSamePathIsANoOpNotARetry() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "2026-10-09T19:13:21Z", "path": "sessions/2026-10-09T19-13-21.463Z_aaaaaaaa.jsonl"}
+
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "2026-10-09T19:13:21Z", "path": "sessions/2026-10-09T19-13-21.463Z_aaaaaaaa.jsonl"}
+
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "2026-10-09T19:13:21Z", "path": "sessions/2026-10-09T19-13-21.463Z_aaaaaaaa.jsonl"}
+
+                """).forEach(state::apply);
+        final var sessions = state.sessions();
+        assertEquals(1, sessions.size(), "three replays of the SAME attempt must still be exactly one row");
+        assertNull(sessions.get(0).endedStage(), "still running - never marked interrupted by its own replay");
+    }
+
+    /** A session_started with a DIFFERENT path for the same id is still a genuine retry (a new
+     *  physical session file - AgentSession always mints a fresh timestamped filename, continuation
+     *  or not) and must still mark the abandoned attempt "interrupted", exactly as before #301. */
+    @Test
+    void aSessionStartedWithADifferentPathIsStillARealRetry() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "path": "sessions/2026-10-09T19-06-33.119Z_aaaaaaaa.jsonl"}
+
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "path": "sessions/2026-10-09T19-13-21.463Z_aaaaaaaa.jsonl"}
+
+                """).forEach(state::apply);
+        final var sessions = state.sessions();
+        assertEquals(2, sessions.size(), "a genuinely different path is a new attempt, not a replay");
+        assertEquals("interrupted", sessions.get(0).endedStage());
+        assertNull(sessions.get(1).endedStage());
+    }
+
+    /** A replay of an attempt that has ALREADY been resolved (its session_done already applied) must
+     *  also be a no-op on the resolved row - not just the still-running case above. */
+    @Test
+    void aReplayedSessionStartedForAnAlreadyDoneAttemptLeavesItResolved() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "path": "sessions/2026-10-09T19-06-33.119Z_aaaaaaaa.jsonl"}
+
+                event: session_done
+                data: {"type": "session_done", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "finish": "tool_execution"}
+
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "path": "sessions/2026-10-09T19-06-33.119Z_aaaaaaaa.jsonl"}
+
+                """).forEach(state::apply);
+        final var sessions = state.sessions();
+        assertEquals(1, sessions.size(), "the replay of the same path must not open a second row");
+        assertEquals("tool_execution", sessions.get(0).endedStage(), "still resolved, not reopened");
     }
 
     /** RecordingProxy tags every request with the session's full id (X-Ace-Session-Id, unambiguous
@@ -645,7 +712,7 @@ class JobLiveStateTest {
                 data: {"reasoning_effort": null}
 
                 """).forEach(state::apply);
-        assertEquals(List.of(new JobLiveState.SessionRow("", "?", "", null, null, null, null, null, null, null, null)), state.sessions(),
+        assertEquals(List.of(new JobLiveState.SessionRow("", "?", "", null, null, null, null, null, null, null, null, null)), state.sessions(),
                 "missing ids render as ? without throwing");
     }
 

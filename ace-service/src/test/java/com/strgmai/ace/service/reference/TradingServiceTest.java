@@ -186,4 +186,79 @@ class TradingServiceTest {
         buggy.order(a, "AAPL", "BUY", "1", "0.10", null);
         assertEquals("9.9", buggy.account(a).get("availableBalance"));   // a float repr, not "9.90": the F5 catch
     }
+
+    // ---- #283/#284/#261, found live by review: real bugs in this CORRECT-BY-DEFAULT fixture
+
+    @Test
+    void aMissingAccountIdFieldIsRejectedWith400NotAnNpe() {
+        final var o = svc.order(null, "AAPL", "BUY", "1", "10.00", null);
+        assertEquals(400, o.status());
+        assertEquals("bad account", o.body().get("error"));
+    }
+
+    @Test
+    void aNonPositiveLimitPriceCannotMintFunds() {
+        final String a = account();
+        svc.deposit(a, "100.00");
+        final var o = svc.order(a, "AAPL", "BUY", "1", "-1000000", null);
+        assertEquals(400, o.status());
+        assertEquals("100.00", svc.account(a).get("availableBalance"));   // unchanged - no funds minted
+    }
+
+    @Test
+    void aZeroLimitPriceIsAlsoRejected() {
+        final String a = account();
+        svc.deposit(a, "100.00");
+        assertEquals(400, svc.order(a, "AAPL", "BUY", "1", "0", null).status());
+    }
+
+    /** #261: 50 threads each deposit $1.00 into the SAME account concurrently; every deposit must
+     *  land - a lost update under the old get()-then-put() race would show up here as a final
+     *  balance under $50.00. Repeats the whole burst a few times, since a single run of a timing
+     *  bug can pass by luck. */
+    @Test
+    void concurrentDepositsToTheSameAccountNeverLoseAnUpdate() throws InterruptedException {
+        final String a = account();
+        for (int round = 0; round < 5; round++) {
+            final int n = 50;
+            final var ready = new java.util.concurrent.CyclicBarrier(n);
+            final var threads = new java.util.ArrayList<Thread>();
+            for (int i = 0; i < n; i++) {
+                final var t = new Thread(() -> {
+                    try { ready.await(); } catch (Exception ignore) {}
+                    svc.deposit(a, "1.00");
+                });
+                threads.add(t);
+                t.start();
+            }
+            for (var t : threads) t.join();
+        }
+        assertEquals(0, new BigDecimal("250.00").compareTo(new BigDecimal((String) svc.account(a).get("availableBalance"))),
+                "every one of the 250 concurrent $1.00 deposits must land: " + svc.account(a).get("availableBalance"));
+    }
+
+    /** same race, on the BUY path's funds check - 20 threads each BUY exactly as much as the
+     *  account can afford ONE of; under the old race, more than one could read the same starting
+     *  balance and pass the funds check, overspending the account into the negative. */
+    @Test
+    void concurrentBuysNeverOverspendTheAccount() throws InterruptedException {
+        final String a = account();
+        svc.deposit(a, "100.00");   // exactly enough for 10 buys at $10.00 (AAPL) each, never 11
+        final int n = 20;
+        final var ready = new java.util.concurrent.CyclicBarrier(n);
+        final var successes = new java.util.concurrent.atomic.AtomicInteger(0);
+        final var threads = new java.util.ArrayList<Thread>();
+        for (int i = 0; i < n; i++) {
+            final var t = new Thread(() -> {
+                try { ready.await(); } catch (Exception ignore) {}
+                if (svc.order(a, "AAPL", "BUY", "1", "10.00", null).status() == 201) successes.incrementAndGet();
+            });
+            threads.add(t);
+            t.start();
+        }
+        for (var t : threads) t.join();
+        assertEquals(10, successes.get(), "exactly 10 of the 20 concurrent buys can be funded");
+        assertTrue(new BigDecimal((String) svc.account(a).get("availableBalance")).compareTo(BigDecimal.ZERO) >= 0,
+                "the account must never go negative: " + svc.account(a).get("availableBalance"));
+    }
 }

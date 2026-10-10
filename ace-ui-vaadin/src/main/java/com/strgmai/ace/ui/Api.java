@@ -3,6 +3,7 @@ package com.strgmai.ace.ui;
 import tools.jackson.databind.JsonNode;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * JSON payload records mirroring agentbench_service's /api endpoints
@@ -129,15 +130,56 @@ public final class Api {
     /** implemented/handoff_done come from the workspace's own R18 git tags (phase/{id},
      *  phase/{id}-handoff) - the resume-independent source of truth for "is this task actually
      *  done," since a task finished in a PRIOR attempt never produces a live session event in a
-     *  fresh page view. See JobDetailView.taskStatus(). */
+     *  fresh page view. reported_status is a different axis entirely: whether the task's session
+     *  actually SUCCEEDED, not just that it ran to completion - "done"/"partial"/"blocked" (the
+     *  agent's own self-report) or "unfinished" (the harness's own fallback, written only once even
+     *  a dedicated wrap-up chance came back empty); null until the task's main session has ended.
+     *  reported_detail is the free-text half of that same self-reported line - how it was verified,
+     *  what's missing, why it's blocked, or the harness fallback's own fixed explanation.
+     *  See JobDetailView.taskStatus(). */
     public record PlanTask(int order, String id, String title, String goal, List<String> deps,
-                           boolean implemented, boolean handoff_done) {
+                           boolean implemented, boolean handoff_done, String reported_status, String reported_detail) {
     }
 
     /** GET /api/jobs/{id}/tasks/{taskId}/prompt — progressively enriched: text is always the task's
      *  static instruction at minimum; started=true means it's enriched with the real, dynamic part
      *  the harness computed right as that task's session began (packs/{id}.md). */
     public record TaskPrompt(boolean started, String text) {
+    }
+
+    /** GET /api/jobs/{id}/tasks/{taskId}/diff — the task's own net change. finished=true means
+     *  before_sha/after_sha bound its own completed commit (or wave merge); finished=false means
+     *  after_sha is empty and diff/new_files are the live, uncommitted working tree against
+     *  before_sha (HEAD) instead — see BenchController.taskDiff(). */
+    public record TaskDiff(boolean started, boolean finished, String before_sha, String after_sha,
+                           String diff, boolean diff_truncated, List<NewFile> new_files,
+                           boolean new_files_truncated, String error) {
+    }
+
+    /** One untracked file a still-running task created — git diff alone never shows these. */
+    public record NewFile(String path, String content, boolean truncated) {
+    }
+
+    /** #270: GET /api/runs/{id}/files — one entry per file in the run's own results dir (top-level
+     *  files plus one level of subdirs, workspace/ excluded). size is -1 when the file could not be
+     *  stat'd (same "–" FilesBrowser's own sizeOf() already renders for that case). */
+    public record RunFile(String path, long size) {
+    }
+
+    /** #263: GET /api/jobs/{id}/tasks/{taskId}/attempts — one entry per past run of this task
+     *  (every run, not just a restarted/overridden one), newest first. params mirrors the
+     *  restart-task endpoint's own override fields (task_wall_sec/task_tokens/max_turns), always
+     *  present with whatever effective value was actually used, override or run default.
+     *  reported_status/reported_detail are the same self-reported outcome/reason PlanTask already
+     *  carries for the CURRENT attempt - here, for every attempt. */
+    public record TaskAttempt(String task_id, String attempt_started, String attempt_ended,
+                              Map<String, Object> params, boolean overridden, int rc, double seconds,
+                              String reported_status, String reported_detail) {
+    }
+
+    /** #265: GET /api/jobs/{id}/tasks/{taskId}/judge — one entry per turn the mid-task judge fired
+     *  for this task, ascending by turn. */
+    public record JudgeCheckpoint(int turn, String prompt, String recommendation) {
     }
 
     /** One queue job — GET /api/jobs, /api/jobs/{id}, and the job-mutating endpoints. */
@@ -160,7 +202,14 @@ public final class Api {
             String result_line,
             String enqueued_at,
             String started_at,
-            String finished_at) {
+            String finished_at,
+            // #266: GET /api/jobs/{id}/.jobs() already returns this (BenchController runs every row
+            // through JsonColumns.parse(), which lists "task_overrides" among the keys it parses as
+            // nested JSON) - this DTO just never declared the field, so Jackson's "unknown JSON
+            // properties are ignored" setting silently dropped it on the way into the UI. Without
+            // this, buildRestartTab()/buildSessionRestartTab() can never show an operator what
+            // override values (if any) are already active for a task from a previous restart.
+            Map<String, Object> task_overrides) {
     }
 
     /** One experiment — GET /api/experiments and /api/experiments/{id} (detail adds jobs). */

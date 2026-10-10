@@ -31,8 +31,16 @@ public final class AgentSession {
         Path found = null;
         if (appendIfExists)
             try (var s = Files.list(sessionDir)) {
+                // #305, found live: a restarted task leaves its OLD file (same sessionId, different
+                // timestamp prefix) sitting alongside the new one Files.list() gives no ordering
+                // guarantee at all, so .findFirst() could return either - comparing filenames picks
+                // the most recent one instead, since the filename's own leading ISO-8601 timestamp
+                // (set below, identical width/format on every file) sorts lexically exactly like it
+                // sorts chronologically. Deliberately NOT Files.getLastModifiedTime(): a bulk
+                // operation touching several files' mtimes to the same instant has already been
+                // observed live, drifting mtime away from actual write order.
                 found = s.filter(p -> p.getFileName().toString().contains(sessionId) && p.getFileName().toString().endsWith(".jsonl"))
-                        .findFirst().orElse(null);
+                        .max(Comparator.comparing(p -> p.getFileName().toString())).orElse(null);
             } catch (IOException e) {
                 // found stays null below, so --continue silently starts a NEW session instead of
                 // resuming the existing one - a real correctness issue, not just a display glitch
@@ -182,6 +190,27 @@ public final class AgentSession {
             }
         } catch (IOException e) { log.warn("could not read session {} for usage accounting: {}", sessionFile, e.toString()); }
         return t;
+    }
+
+    /** #265: the LAST assistant turn's own text, straight from the session file - for a session
+     *  with no other return channel for its own output (e.g. the judge, whose SessionResult alone
+     *  carries no text at all). Same "re-read the session file for something SessionResult doesn't
+     *  carry" pattern as usage() above. Blank (never null) if the session never produced any text
+     *  (e.g. it only ever called tools, or the file is missing/unreadable). */
+    public static String lastAssistantText(final Path sessionFile) {
+        if (sessionFile == null || !Files.isRegularFile(sessionFile)) return "";
+        String last = "";
+        try {
+            for (String line : Files.readAllLines(sessionFile, StandardCharsets.UTF_8)) {
+                JsonNode r;
+                try { r = JSON.readTree(line); } catch (Exception e) { log.debug("could not parse session line looking for the last assistant text, skipping it: {}", e.toString()); continue; }
+                if (!"message".equals(r.path("type").asText()) || !"assistant".equals(r.path("message").path("role").asText())) continue;
+                for (JsonNode part : r.path("message").path("content")) {
+                    if ("text".equals(part.path("type").asText()) && part.hasNonNull("text")) last = part.get("text").asText();
+                }
+            }
+        } catch (IOException e) { log.warn("could not read session {} for its last assistant text: {}", sessionFile, e.toString()); }
+        return last;
     }
 
     /** port of compact(): stub the oldest tool outputs, keep the newest `keepRecentTurns` assistant

@@ -212,6 +212,50 @@ class ImporterServiceTest {
         assertEquals(List.of("run-unscored"), result.get("skipped"));
     }
 
+    /** #288, found live: importRun() throwing on one bad run directory (an unknown check id from
+     *  an older oracle schema - see anUnknownCheckIdRollsBackTheWholeImportLeavingNoPartialState
+     *  above, which pins that ITS OWN transaction rolls back cleanly) used to propagate straight
+     *  out of importAll()'s loop and abort the WHOLE batch - every directory enumerated after the
+     *  bad one (filesystem order, not sorted) was never even attempted, surfacing as a generic 500
+     *  instead of the partial {imported, skipped} report the UI expects. */
+    @Test
+    void oneBadRunDirectoryNeverBlocksTheRestOfTheBatch() throws Exception {
+        final DSLContext db = dsl();
+        final var resultsDir = Files.createTempDirectory("results");
+
+        final Path good1 = resultsDir.resolve("run-good-1");
+        Files.createDirectories(good1);
+        write(good1, "oracle.json", """
+                {"task": "L3p_point_in_time", "schema_version": 3, "weighted_score_pct": 80.0,
+                 "functional_score_pct": 90.0, "functional_points_got": 9, "functional_denominator": 10,
+                 "points_got": 8, "denominator": 10, "partial_score_pct": 75.0, "results": []}""");
+
+        final Path bad = resultsDir.resolve("run-bad");
+        Files.createDirectories(bad);
+        write(bad, "oracle.json", """
+                {"task": "L3p_point_in_time", "schema_version": 3, "weighted_score_pct": 80.0,
+                 "functional_score_pct": 90.0, "functional_points_got": 9, "functional_denominator": 10,
+                 "points_got": 8, "denominator": 10, "partial_score_pct": 75.0,
+                 "results": [{"id": "NOT_A_REAL_CHECK_ID", "status": "pass", "detail": null}]}""");
+
+        final Path good2 = resultsDir.resolve("run-good-2");
+        Files.createDirectories(good2);
+        write(good2, "oracle.json", """
+                {"task": "L3p_point_in_time", "schema_version": 3, "weighted_score_pct": 70.0,
+                 "functional_score_pct": 80.0, "functional_points_got": 8, "functional_denominator": 10,
+                 "points_got": 7, "denominator": 10, "partial_score_pct": 65.0, "results": []}""");
+
+        final Map<String, List<String>> result = new ImporterService(db).importAll(resultsDir);
+
+        assertTrue(result.get("imported").containsAll(List.of("run-good-1", "run-good-2")),
+                "both good runs must still be imported despite the bad one between them: " + result);
+        assertTrue(result.get("skipped").contains("run-bad"), "the bad run must land in skipped, not crash the whole batch: " + result);
+        assertEquals(0, db.fetchCount(RUNS, RUNS.RUN_ID.eq("run-bad")), "the bad run's own transaction must still roll back cleanly, no partial state");
+        assertEquals(0, db.fetchCount(CHECK_RESULTS, CHECK_RESULTS.RUN_ID.eq("run-bad")));
+        assertEquals(1, db.fetchCount(RUNS, RUNS.RUN_ID.eq("run-good-1")));
+        assertEquals(1, db.fetchCount(RUNS, RUNS.RUN_ID.eq("run-good-2")));
+    }
+
     /** #217: a run_id's workspace persists across restarts, so an interrupted-and-retried
      *  phase/task's session_id gets reused - the SAME canonical id ends up with multiple session
      *  files, one per attempt. Every file but the latest for a given id is an earlier, abandoned

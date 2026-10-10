@@ -144,7 +144,26 @@ class JobQueueIT {
                 "the losing request must surface as IllegalStateException (409), not a raw DB exception: " + loser);
     }
 
+    /** #273, found live: WorkerService's cancel-watch thread can flag a job's own cancellation
+     *  AFTER its try-block already called finish(..., "succeeded", ...) - the race this guard
+     *  closes is exactly "finish() called a second time on an already-terminal job," regardless of
+     *  what the second call asks for. */
+    @Test
+    void finishNeverOverwritesAnAlreadyTerminalStatus() throws Exception {
+        final var q = new JobQueue(dsl());
+        final var results = Files.createTempDirectory("results").toString();
+        q.enqueue(spec("finish-race"), 0, results, "r", "o", null, null, null);
+        final JobQueue.Job job = q.claim();
+
+        q.finish(job.id(), "succeeded", 0, "it worked");
+        assertEquals("succeeded", q.get(job.id()).get("status"));
+
+        q.finish(job.id(), "cancelled", null, "cancelled mid-run");   // the race: a now-moot second call
+        assertEquals("succeeded", q.get(job.id()).get("status"), "a genuinely succeeded job must never be flipped to cancelled");
+        assertEquals("it worked", q.get(job.id()).get("result_line"), "the first call's own result must survive too");
+    }
+
     private static RunSpec spec(final String runId) {
-        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", null, 3600, null, null, null, null, null, null, null, null, null, false, false, false, null, false, true, false, false, false, false, null, null, null, null, false, null, null, null, null, null, runId, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, null);
+        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", null, 3600, null, null, null, null, null, null, null, null, null, false, false, false, null, false, true, false, false, false, null, null, null, null, false, null, null, null, null, null, runId, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, null, false, null, null, null, null, false, null, null, null);
     }
 }

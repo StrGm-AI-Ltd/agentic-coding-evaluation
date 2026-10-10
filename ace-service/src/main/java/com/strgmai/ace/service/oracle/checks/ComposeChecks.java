@@ -36,8 +36,15 @@ public final class ComposeChecks {
 
     static final List<String> DB_HINTS = List.of("postgres", "db", "database", "redis", "kafka", "zookeeper", "rabbit", "mongo", "flyway", "liquibase", "migrat");
     static final ObjectMapper JSON = new ObjectMapper();
+    // #281: F6 (f6ContractConformance) grades EVERY observed response so far against the contract -
+    // it must run AFTER F7/F8/F9, not before them, or it grades an incomplete set of exchanges.
+    // Each F-check appends its own calls to the shared suite.calls list as it runs, and this
+    // LinkedHashSet's own iteration order IS the dispatch order - F6 used to sit before F7/F8/F9,
+    // so F7's deposit-rounding call, F8's asOf-boundary call, and F9's idempotency-key-repeat call
+    // (the one call that can ever produce a "POST /orders 200" response - SCHEMAS has a dedicated
+    // entry for exactly that shape) had never happened yet when F6 graded the suite.
     static final Set<CheckId> IDS = new LinkedHashSet<>(List.of(CheckId.C1, CheckId.C2, CheckId.F1, CheckId.F2, CheckId.F3, CheckId.F4,
-            CheckId.F5, CheckId.F6, CheckId.F7, CheckId.F8, CheckId.F9));
+            CheckId.F5, CheckId.F7, CheckId.F8, CheckId.F9, CheckId.F6));
 
     static DockerService.Sh compose(String proj, Path cf, final int timeout, final String... args) {
         final List<String> cmd = new ArrayList<>(List.of("docker", "compose", "-p", proj, "-f", cf.toString()));

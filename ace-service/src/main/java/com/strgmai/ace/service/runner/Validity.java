@@ -23,8 +23,12 @@ public final class Validity {
         for (Map<String, Object> t : phases(manifest, "tasks"))
             if (t.get("rc") != null && !t.get("rc").equals(0) && !t.get("rc").equals(124) && !Boolean.TRUE.equals(t.get("token_budget_exhausted")))
                 reasons.add(t.get("id") + ": agent exited rc=" + t.get("rc"));
-        for (Object rc : manifest.get("proxy_rcs") instanceof List<?> l ? l : List.of())
-            if (rc != null && !rc.equals(0) && !rc.equals(-15) && !rc.equals(-9)) reasons.add("proxy died rc=" + rc);
+        // #294: a "proxy_rcs" dead-proxy check used to sit here - removed. Nothing ever wrote that
+        // manifest key (RecordingProxy is an in-JVM thread-based relay, not a forked subprocess
+        // with its own exit code - there was never a real "rc" for it to report), so the loop only
+        // ever iterated an empty list and could never fire. "A dead proxy" per this class's own
+        // javadoc is already covered in spirit by the error-rate check just below: a proxy that
+        // genuinely died mid-run shows up as upstream_errors/502s in facts, not as a process code.
         int requests = ((Number) facts.getOrDefault("requests", 0)).intValue();   // (int) would CCE on a Long from JSON deserialization
         final long errors = ((Number) facts.getOrDefault("errors", 0)).longValue() + ((Number) facts.getOrDefault("upstream_errors", 0)).longValue();
         if (requests > 0 && (double) errors / requests > maxErrorRate)

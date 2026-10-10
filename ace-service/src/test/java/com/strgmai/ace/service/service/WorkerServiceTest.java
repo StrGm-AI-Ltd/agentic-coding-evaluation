@@ -36,7 +36,7 @@ class WorkerServiceTest {
 
     private static JobQueue.Job job(final String pinnedRunnerSha) {
         return new JobQueue.Job(JOB_1, null, "orch", 1, "run", "run-1", List.of("--task=L3p_point_in_time", "--model=m"),
-                "queued", null, 0, null, null, false, false, null, null,pinnedRunnerSha, pinnedRunnerSha);
+                "queued", null, 0, null, null, false, false, null, null, pinnedRunnerSha, pinnedRunnerSha, java.util.Map.of());
     }
 
     private static String withFakeHome(String tmpHome, final java.util.concurrent.Callable<String> body) throws Exception {
@@ -52,7 +52,7 @@ class WorkerServiceTest {
     void pollFinalizesTheExperimentWhenAPreCancelledJobIsClaimed() throws Exception {
         final UUID experimentId = UUID.fromString("00000000-0000-0000-0000-0000000000e2");
         final JobQueue.Job job = new JobQueue.Job(JOB_1, experimentId, "orch", 1, "run", "run-1",
-                List.of("--task=L3p_point_in_time", "--model=m"), "queued", null, 0, null, null, false, false, null, null,null, null);
+                List.of("--task=L3p_point_in_time", "--model=m"), "queued", null, 0, null, null, false, false, null, null, null, null, java.util.Map.of());
         final JobQueue queue = mock(JobQueue.class);
         when(queue.list()).thenReturn(List.of());
         when(queue.claim()).thenReturn(job);
@@ -137,7 +137,7 @@ class WorkerServiceTest {
 
         JobQueue.Job job = new JobQueue.Job(JOB_1, null, "A", 1, "run", "run-1",
                 List.of("--task=L3p_point_in_time", "--model=m", "--mode=orchestrated", "--self-review", "--trajectory-review"),
-                "queued", null, 0, null, null, false, false, null, null,"build-abc123", "build-abc123");
+                "queued", null, 0, null, null, false, false, null, null, "build-abc123", "build-abc123", java.util.Map.of());
         when(queue.claim()).thenReturn(job);
         when(queue.get(JOB_1)).thenReturn(Map.of("cancel_requested", false));
 
@@ -187,7 +187,7 @@ class WorkerServiceTest {
 
         final JobQueue.Job job = new JobQueue.Job(JOB_1, null, "A", 1, "run", "run-1",
                 List.of("--task=L3p_point_in_time", "--model=m"),
-                "queued", null, 0, null, null, false, false, null, null,"build-abc123", "build-abc123");
+                "queued", null, 0, null, null, false, false, null, null, "build-abc123", "build-abc123", java.util.Map.of());
         when(queue.claim()).thenReturn(job);
         final var cancelRequested = new java.util.concurrent.atomic.AtomicBoolean(false);
         when(queue.get(JOB_1)).thenAnswer(inv -> Map.of("cancel_requested", cancelRequested.get()));
@@ -234,7 +234,7 @@ class WorkerServiceTest {
 
         final JobQueue.Job job = new JobQueue.Job(JOB_1, null, "A", 1, "run", "run-1",
                 List.of("--task=L3p_point_in_time", "--model=m"),
-                "queued", null, 0, null, null, false, false, null, null, "build-abc123", "build-abc123");
+                "queued", null, 0, null, null, false, false, null, null, "build-abc123", "build-abc123", java.util.Map.of());
         when(queue.claim()).thenReturn(job);
         final var pauseRequested = new java.util.concurrent.atomic.AtomicBoolean(false);
         when(queue.get(JOB_1)).thenAnswer(inv -> Map.of("cancel_requested", false, "pause_requested", pauseRequested.get()));
@@ -248,12 +248,63 @@ class WorkerServiceTest {
 
         verify(probe, timeout(6000).atLeast(1)).abortInflight();
         verify(queue, timeout(6000)).paused(JOB_1);
-        // the interrupted runOnce() throws, so finish() DOES get called once on the way through (as
-        // "failed", same as a real cancel) - what must never happen is landing on "cancelled"
-        // instead of paused() actually winning as the job's final state
+        // #289: the interrupted runOnce() throws, but the catch block now recognises pauseCurrent
+        // and stays out of finish()'s way entirely (it used to call finish(..., "failed", ...)
+        // unconditionally here, which both mislabelled a deliberate pause as a crash in the logs
+        // and - after #273's own finish() guard - could have won the terminal-status race against
+        // paused() winning correctly) - what must never happen is landing on "cancelled" OR
+        // "failed" instead of paused() actually winning as the job's final state.
         verify(queue, never()).finish(eq(JOB_1), eq("cancelled"), any(), any());
+        verify(queue, never()).finish(eq(JOB_1), eq("failed"), any(), any());
         assertTrue(Files.isRegularFile(runDir.resolve("marker.txt")), "a paused run's results must never move aside");
         assertFalse(Files.isDirectory(resultsDir.resolve("_aborted")), "pause must never create an _aborted/ move");
+    }
+
+    /** #289/#273: a genuinely cancelled (not merely paused) job must still land on "cancelled",
+     *  never "failed" - the catch block used to call finish(..., "failed", ...) unconditionally on
+     *  the way through, which (after JobQueue.finish() started refusing to overwrite an already-
+     *  terminal status, #273) won the race against the finally block's own correct "cancelled"
+     *  write, leaving a genuinely cancelled job stuck on "failed" instead. */
+    @Test
+    void cancelAbortsTheInFlightCallAndLandsOnCancelledNeverFailed() throws Exception {
+        final var tmpHome = Files.createTempDirectory("fake-home");
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir);
+        final JobQueue queue = mock(JobQueue.class);
+        when(queue.list()).thenReturn(List.of());
+        final TreatmentPin pin = mock(TreatmentPin.class);
+        when(pin.current()).thenReturn("build-abc123");
+        final Preflight preflight = mock(Preflight.class);
+        when(preflight.check(any())).thenReturn(new Preflight.Report(List.of(), false));
+        final BenchProperties props = mock(BenchProperties.class);
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(Files.createTempDirectory("ws").toString());
+        when(props.model()).thenReturn("m");
+        final RunBench runBench = mock(RunBench.class);
+        final ContextProbe probe = mock(ContextProbe.class);
+        when(runBench.runOnce(any(), any(), any(), any(), any())).thenAnswer(inv -> {
+            Thread.sleep(7000);   // interruptible, same reasoning as the pause test above
+            return Map.of();
+        });
+
+        final JobQueue.Job job = new JobQueue.Job(JOB_1, null, "A", 1, "run", "run-1",
+                List.of("--task=L3p_point_in_time", "--model=m"),
+                "queued", null, 0, null, null, false, false, null, null, "build-abc123", "build-abc123", java.util.Map.of());
+        when(queue.claim()).thenReturn(job);
+        final var cancelRequested = new java.util.concurrent.atomic.AtomicBoolean(false);
+        when(queue.get(JOB_1)).thenAnswer(inv -> Map.of("cancel_requested", cancelRequested.get(), "pause_requested", false, "status", "running"));
+
+        final WorkerService ws = new WorkerService(queue, runBench, mock(ImporterService.class),
+                mock(ExperimentsService.class), preflight, pin, props, probe);
+
+        withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
+        Thread.sleep(500);
+        cancelRequested.set(true);   // simulate the user clicking Cancel mid-run
+
+        verify(probe, timeout(6000).atLeast(1)).abortInflight();
+        verify(queue, timeout(6000)).finish(eq(JOB_1), eq("cancelled"), any(), any());
+        verify(queue, never()).finish(eq(JOB_1), eq("failed"), any(), any());
     }
 
     @Test

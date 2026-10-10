@@ -55,8 +55,11 @@ public final class StatsService {
             };
             key.put(k, v);
         }
-        boolean poolable = o.path("schema_version").asInt(-1) == com.strgmai.ace.service.config.BenchProperties.RESULT_SCHEMA
-                && !o.path("weighted_score_pct").isNull() && o.path("weighted_score_pct") != null && o.has("weighted_score_pct");
+        // #277: shared with ImporterService's own identical concept (BenchProperties.poolable());
+        // this representation's own "has a real weighted score" check (JsonNode's isNull()/has()
+        // distinction, not a plain Map's null check) stays here, passed in as a plain boolean.
+        boolean poolable = com.strgmai.ace.service.config.BenchProperties.poolable(o.path("schema_version").asInt(-1),
+                !o.path("weighted_score_pct").isNull() && o.has("weighted_score_pct"));
         final Map<String, String> checkStatus = new LinkedHashMap<>();
         for (JsonNode r : o.path("results")) checkStatus.put(r.path("id").asText(), r.path("status").asText());
         return new RunSummary(runDir.toString(), o.path("task").asText(),

@@ -300,7 +300,16 @@ public final class BuildChecks {
                 final int[] st = testStats(croots.get(i));
                 ex += st[0]; fl += st[1];
             }
-            if (!infraHits.isEmpty() && ex == 0) {
+            // #282: used to also require ex == 0 (no tests executed ANYWHERE) before treating this
+            // as INFRA - inconsistent with B1's own precedent just above, which short-circuits to
+            // INFRA the moment ANY root hits an infra pattern, regardless of what other roots did.
+            // On a multi-root L7 run, one root's infra hiccup (registry blip, daemon crash) during
+            // an otherwise-successful multi-service test run used to fall through to the normal
+            // scoring branch below, where rcs.stream().allMatch(r -> r == 0) is false because of
+            // THAT root's non-zero rc - scoring the whole thing a real FAIL with no indication one
+            // of those codes was infrastructure's fault, not the agent's (the one thing this class's
+            // own INFRA-classification machinery exists to prevent).
+            if (!infraHits.isEmpty()) {
                 for (CheckId c : List.of(CheckId.B2, CheckId.B3)) out.add(new CheckResult(c, CheckStatus.INFRA, head(infraHits.get(0), 160)));
                 return out;
             }

@@ -157,7 +157,11 @@ abstract class DockerCleanupTask extends DefaultTask {
         projects.findAll { it.Name ==~ /ab\d+/ }.each { p ->
             execOps.exec { commandLine docker, 'compose', '-p', p.Name, 'down', '-v', '--remove-orphans', '--rmi', 'local'; ignoreExitValue = true }
         }
-        execOps.exec { commandLine docker, 'image', 'prune', '-f'; ignoreExitValue = true }
+        // #297: removed a trailing `docker image prune -f` here - it was NOT scoped to this
+        // project at all (unlike the --rmi local teardown just above, which only ever removes the
+        // ab\d+-named stacks' own images). A host-wide dangling-image prune silently deleted any
+        // OTHER untagged image an operator had sitting around from unrelated work, every single
+        // time dockerTest ran, with no confirmation and no filter.
     }
 }
 tasks.register('dockerCleanup', DockerCleanupTask) {

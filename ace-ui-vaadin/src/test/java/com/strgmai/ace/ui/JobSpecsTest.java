@@ -48,11 +48,31 @@ class JobSpecsTest {
         raw.put("skip_docker", false);
         raw.put("self_review", null); // a null boolean still yields an explicit false, like the service form
         raw.put("docker_keep_warm", true);
+        raw.put("judge_enabled", false);
         final var spec = JobSpecs.build("L1", raw);
         assertEquals(Boolean.TRUE, spec.get("manage_docker"));
         assertEquals(Boolean.FALSE, spec.get("skip_docker"));
         assertEquals(Boolean.FALSE, spec.get("self_review"));
         assertEquals(Boolean.TRUE, spec.get("docker_keep_warm"));
+        assertEquals(Boolean.FALSE, spec.get("judge_enabled"));
+    }
+
+    /** #269: judge_* exist on RunSpec/JobCfgFactory, but JobNewView had no fields for them at all -
+     *  a fresh job could never have the mid-task judge enabled from turn 1 of its first task. */
+    @Test
+    void judgeFieldsFlowThrough() {
+        final var raw = new LinkedHashMap<String, Object>();
+        raw.put("judge_enabled", true);
+        raw.put("judge_every_n_turns", 7);
+        raw.put("judge_model", "openai/gpt-4");
+        raw.put("judge_wall_sec", 120);
+        raw.put("judge_tokens", 4000);
+        final var spec = JobSpecs.build("L1", raw);
+        assertEquals(Boolean.TRUE, spec.get("judge_enabled"));
+        assertEquals(Integer.valueOf(7), spec.get("judge_every_n_turns"));
+        assertEquals("openai/gpt-4", spec.get("judge_model"));
+        assertEquals(Integer.valueOf(120), spec.get("judge_wall_sec"));
+        assertEquals(Integer.valueOf(4000), spec.get("judge_tokens"));
     }
 
     @Test

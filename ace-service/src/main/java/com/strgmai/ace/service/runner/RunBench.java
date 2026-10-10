@@ -53,10 +53,11 @@ public class RunBench {
     private final RunOracle oracle;
     private final Reviews reviews;
     private final ContextProbe probe;
+    private final Judge judge;
     private final ObjectMapper json = new ObjectMapper();
 
-    public RunBench(BenchProperties props, ReferenceAgent agent, PiAgent piAgent, RecordingProxyFactory proxies, RunOracle oracle, Reviews reviews, ContextProbe probe) {
-        this.props = props; this.agent = agent; this.piAgent = piAgent; this.proxies = proxies; this.oracle = oracle; this.reviews = reviews; this.probe = probe;
+    public RunBench(BenchProperties props, ReferenceAgent agent, PiAgent piAgent, RecordingProxyFactory proxies, RunOracle oracle, Reviews reviews, ContextProbe probe, Judge judge) {
+        this.props = props; this.agent = agent; this.piAgent = piAgent; this.proxies = proxies; this.oracle = oracle; this.reviews = reviews; this.probe = probe; this.judge = judge;
     }
 
     //todo phases should not be hardcoded
@@ -104,7 +105,7 @@ public class RunBench {
 
     static final String IMPLEMENT_TEXT = "Read task/PROMPT.md and do exactly what it asks. Implement it, write tests proving the acceptance "
             + "criteria, run them until green, and record what you did and how you verified it in docs/PROGRESS.md.";
-    static final Map<String, String[]> PHASE_TEXT = Map.of(
+    public static final Map<String, String[]> PHASE_TEXT = Map.of(
             "p0_definition", new String[]{"docs/TASK_DEFINITION.md", "Read task/PROMPT.md. Do PHASE 0 ONLY: write docs/TASK_DEFINITION.md. Write no code."},
             "p1_plan", new String[]{"docs/IMPLEMENTATION_PLAN.md", "Read task/PROMPT.md and docs/TASK_DEFINITION.md. Do PHASE 1 ONLY: write docs/IMPLEMENTATION_PLAN.md as ordered subtasks with ids (T1, T2, ...), each with a goal, dependencies, and a verifiable acceptance criterion. Write no code."},
             "p2_implementation", new String[]{"docs/PROGRESS.md", "Read task/PROMPT.md and docs/IMPLEMENTATION_PLAN.md. Do PHASE 2: implement subtasks one at a time in dependency order; for each, implement it, write tests proving its acceptance criterion, run them until green, then append the result to docs/PROGRESS.md. Continue until every subtask is done."},
@@ -112,19 +113,186 @@ public class RunBench {
 
     static String nowIso() { return Instant.now().toString(); }
 
-    /** `T3 | done | ...` / `T3 | blocked | ...` status lines the task instruction asks for */
+    /** `T3 | done | ...` / `T3 | blocked | ...` status lines the task instruction asks for.
+     *  Excludes the harness's own synthetic fallback line (Packs.fallbackStatus) - this method
+     *  decides whether that fallback still needs to be WRITTEN, so it must never recognize its own
+     *  past output as an already-written report. See reportedStatus() for the UI-facing twin that
+     *  DOES want to see it - there it is informative, not something to avoid recognizing. */
     static String progressStatus(Path ws, final String tid) {
+        final var r = scanProgressStatus(ws, tid, true);
+        return r == null ? null : r.status();
+    }
+
+    /** `T3 | status | detail` - the free-text detail half of a self-reported status line: how it
+     *  was verified (done), what's missing (partial), why (blocked), or - for the harness's own
+     *  "unfinished" fallback - the fixed explanation of what cut the session off. Exactly as
+     *  written, trailing "**" bold-close stripped (#257's same leak, a different field). */
+    public record ReportedStatus(String status, String detail) {}
+
+    /** #261: the same self-reported status line as progressStatus(), but for DISPLAY - including
+     *  the harness's own "unfinished" fallback (Packs.fallbackStatus), unlike progressStatus()
+     *  above. An operator watching a run wants to see that a task's own session never got to
+     *  self-certify (even its dedicated wrap-up chance came back empty - see this class's own
+     *  fallback-writing call sites), not have that silently read the same as a genuine "done" -
+     *  and WHY, from the same line's own detail half (#262). */
+    public static ReportedStatus reportedStatus(final Path ws, final String tid) {
+        return scanProgressStatus(ws, tid, false);
+    }
+
+    private static ReportedStatus scanProgressStatus(final Path ws, final String tid, final boolean excludeHarnessFallback) {
         final Path p = ws.resolve("docs/PROGRESS.md");
         if (!Files.isRegularFile(p)) return null;
         try {
-            String st = null;
-            final Pattern re = Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*\\|?\\s*\\*{0,3}" + Pattern.quote(tid) + "\\*{0,3}\\s*\\|\\s*\\*{0,3}(\\w+)", Pattern.CASE_INSENSITIVE);
+            ReportedStatus result = null;
+            final Pattern re = Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*\\|?\\s*\\*{0,3}" + Pattern.quote(tid)
+                    + "\\*{0,3}\\s*\\|\\s*\\*{0,3}(\\w+)\\*{0,3}(?:\\s*\\|\\s*\\*{0,3}(.*))?$", Pattern.CASE_INSENSITIVE);
             for (String line : Files.readAllLines(p)) {
                 final java.util.regex.Matcher m = re.matcher(line);
-                if (m.find() && !line.contains("budget exhausted before a status was written")) st = m.group(1).toLowerCase();
+                if (m.find() && !(excludeHarnessFallback && line.contains("budget exhausted before a status was written"))) {
+                    final String detail = m.group(2) == null ? "" : m.group(2).strip().replaceAll("\\*{1,3}$", "");
+                    result = new ReportedStatus(m.group(1).toLowerCase(), detail);
+                }
             }
-            return st;
+            return result;
         } catch (Exception e) { return null; }
+    }
+
+    /** #263: taskId's own entry in cfg's task_overrides map (set via the restart-task endpoint),
+     *  or Map.of() if this task has none - never null, so every call site below can key off it
+     *  directly without its own null guard. Looking this up by task id is naturally a no-op for
+     *  every non-task session name (p0_definition, p1_plan, INTEGRATION, a FIX id, ...): none of
+     *  those ever appear as a key in task_overrides, since only the restart endpoint ever writes
+     *  one, and only ever keyed by a real plan task id. */
+    static Map<String, Object> taskOverride(final Map<String, Object> cfg, final String taskId) {
+        return cfg.get("task_overrides") instanceof Map<?, ?> all && all.get(taskId) instanceof Map<?, ?> o
+                ? (Map<String, Object>) o : Map.of();
+    }
+
+    static int effectiveInt(final Map<String, Object> override, final String key, final int fallback) {
+        return override.get(key) instanceof Number n ? n.intValue() : fallback;
+    }
+
+    static long effectiveLong(final Map<String, Object> override, final String key, final long fallback) {
+        return override.get(key) instanceof Number n ? n.longValue() : fallback;
+    }
+
+    /** #258: a session that died on a `length` finish gets one continuation with what is LEFT of
+     *  its budget - rc==124 (already wall-timed-out) is excluded since there is nothing left to
+     *  continue INTO, and wall<=0 means unlimited (the system-wide "0 = no budget" convention, so
+     *  there's always "enough" remaining regardless of elapsedSec). No longer gated on session
+     *  kind - p0_definition/p1_plan face the exact same per-call output ceiling as a task session,
+     *  so excluding them (as this used to) just meant a truncated plan-writing turn silently
+     *  killed the whole run instead of getting the same recovery chance a task already had. */
+    static boolean shouldRetryOnLengthFinish(final String finish, final int rc, final long wall, final long elapsedSec) {
+        return "length".equals(finish) && rc != 124 && (wall <= 0 || wall - elapsedSec > 120);
+    }
+
+    /** #265: the run-level "judge" cfg map, with any judge_enabled/judge_every_n_turns/judge_model
+     *  restart override (RESTART_OVERRIDE_KEYS' own flat names) replacing the corresponding nested
+     *  key. judge_wall_sec/judge_tokens are deliberately NOT task-overridable - the judge's own
+     *  session budget is a run/operator-level choice, not exposed on the restart form. */
+    static Map<String, Object> effectiveJudgeCfg(final Map<String, Object> cfg, final Map<String, Object> taskOverride) {
+        final Map<String, Object> runLevel = cfg.get("judge") instanceof Map<?, ?> j ? (Map<String, Object>) j : Map.of();
+        final Map<String, Object> out = new LinkedHashMap<>(runLevel);
+        if (taskOverride.get("judge_enabled") instanceof Boolean b) out.put("enabled", b);
+        if (taskOverride.get("judge_every_n_turns") instanceof Number n) out.put("every_n_turns", n.intValue());
+        if (taskOverride.get("judge_model") instanceof String s && !s.isBlank()) out.put("model", s);
+        return out;
+    }
+
+    /** #265: whether `turn` is due for a judge check - everyN<=1 means every turn (0/negative is
+     *  already rejected by RunSpec's own validation before this is ever built from a real run, but
+     *  a restart override is validated far more loosely, so this stays safe for any value &lt;=1
+     *  rather than risking a divide-by-zero on a hand-crafted 0). */
+    static boolean isJudgeTurn(final int turn, final int everyN) {
+        return everyN <= 1 || turn % everyN == 0;
+    }
+
+    /** builds this task's own judge checkpoint - null when disabled, so ReferenceAgent.run() never
+     *  even calls into it (the callback itself decides the every-N-turns gating, not run()'s loop -
+     *  see JudgeCheckpoint's own javadoc). */
+    private ReferenceAgent.JudgeCheckpoint buildJudgeCheckpoint(final Map<String, Object> cfg, final String runId, final Path ws, final Path rd,
+            final String taskId, final String goal, final long effWall, final long effTokens, final Map<String, Object> taskOverride) {
+        final Map<String, Object> judgeCfg = effectiveJudgeCfg(cfg, taskOverride);
+        if (!Boolean.TRUE.equals(judgeCfg.get("enabled"))) return null;
+        final int everyN = judgeCfg.get("every_n_turns") instanceof Number n ? n.intValue() : 10;
+        final ReferenceAgent.JudgeCheckpoint raw = judge.checkpoint(cfg, runId, ws, rd, proxies, taskId, goal, effWall, effTokens, System.currentTimeMillis(), judgeCfg);
+        return (turn, trajectory) -> isJudgeTurn(turn, everyN) ? raw.check(turn, trajectory) : null;
+    }
+
+    /** #300/#302: the task's own in-session handoff ask - null when handoff_notes is off for this
+     *  run (`handoffs`, built by the caller from that cfg flag - see its own declaration), or this
+     *  task's handoff is already done (same tagExists guard handoffStep() itself checks first). In
+     *  those null cases nothing changes - a call site simply never gets a real hook.
+     *
+     *  Otherwise, the SAME closure is threaded into every one of this task's own session calls
+     *  (main, its length-retry continuation, its wrap-up - see sessionWithPolicy) rather than just
+     *  the wrap-up call: `asked` makes it fire AT MOST ONCE across however many of those actually
+     *  happen for this one task, and the `progressStatus(ws, taskId) == null` check defers it until
+     *  the task's own self-reported status line is ALREADY on disk - handoff still logically comes
+     *  after status, never before it, same as the original wrap-up-only design, but now it fires
+     *  on whichever of those three calls turns out to genuinely be last: the main call itself, if
+     *  the task self-reports status without ever needing a wrap-up (found live on T9 - no wrap-up
+     *  ran, so the old wrap-up-only wiring left it with no in-session chance at all and fell all the
+     *  way back to the cold continueSession=true session); the wrap-up call otherwise, exactly as
+     *  before. ReferenceAgent.run()'s own `!"length".equals(finish)` guard (see its javadoc) keeps a
+     *  truncated response on any of those calls from ever reaching this at all. The instruction text
+     *  is the exact same Packs.handoffInstruction() the cold fallback path in handoffStep() already
+     *  sends, so the ask itself is identical regardless of which path actually answers it. */
+    ReferenceAgent.FinalTurn buildHandoffFinalTurn(final List<String[]> handoffs, final Path ws, final String taskId) {
+        if (handoffs == null || RunBenchSupport.tagExists(ws, "phase/" + taskId + "-handoff")) return null;
+        final boolean[] asked = {false};
+        return trajectory -> {
+            if (asked[0] || progressStatus(ws, taskId) == null) return null;
+            asked[0] = true;
+            return Packs.handoffInstruction(taskId);
+        };
+    }
+
+    /** #262, found live: the harness's own fallback status line always carried an empty tail, so
+     *  "budget exhausted" showed even when the real cause (confirmed live: an oMLX memory-guard
+     *  rejection, nothing to do with any configured budget) was available or inferable. rc==2 is
+     *  chatWithRetry's own retries-exhausted TransientError (the exact shape an infra rejection
+     *  takes); rc==124 is runBounded's own task-wall timeout; anything else reaching here is a
+     *  session that returned normally but produced no further output on its last turn (T7's own
+     *  actual case) - a real, if rarer, anomaly worth pointing at the journal for, not silence. */
+    static String fallbackTail(final int rc, final long wallSec, final int turns, final String endIso) {
+        return switch (rc) {
+            case 2 -> " (the model's own call failed and its retries were exhausted - see the "
+                    + "service log around " + endIso + " for the underlying error, e.g. an "
+                    + "upstream model-server rejection)";
+            case 124 -> " (task-wall budget of " + wallSec + "s exceeded)";
+            default -> " (the model produced no further output after " + turns
+                    + " turns - check interactions.jsonl for this session around " + endIso + ")";
+        };
+    }
+
+    /** #263: one JSON line per attempt at a plan task's own main session, appended to
+     *  rd/task_attempts.jsonl - every run of a task, not just a restarted/overridden one, so a
+     *  future "why did this fail" investigation (#261/#262's own motivating case) starts from a
+     *  real history instead of manual interactions.jsonl archaeology. Best-effort: a logging
+     *  failure here must never fail the run itself. */
+    private void logTaskAttempt(final Path rd, final Path ws, final String taskId, final Map<String, Object> override,
+                                final int effTaskWall, final long effTaskTokens, final int effMaxTurns, final Map<String, Object> rec) {
+        try {
+            final Map<String, Object> params = new LinkedHashMap<>();
+            params.put("task_wall_sec", effTaskWall);
+            params.put("task_tokens", effTaskTokens);
+            params.put("max_turns", effMaxTurns);
+            final ReportedStatus reported = reportedStatus(ws, taskId);
+            final Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("task_id", taskId);
+            entry.put("attempt_started", rec.get("start_iso"));
+            entry.put("attempt_ended", rec.get("end_iso"));
+            entry.put("params", params);
+            entry.put("overridden", !override.isEmpty());
+            entry.put("rc", rec.get("rc"));
+            entry.put("seconds", rec.get("seconds"));
+            entry.put("reported_status", reported == null ? null : reported.status());
+            entry.put("reported_detail", reported == null ? null : reported.detail());
+            Files.writeString(rd.resolve("task_attempts.jsonl"), json.writeValueAsString(entry) + "\n",
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (Exception e) { log.warn("could not log task attempt for {}: {}", taskId, e.toString()); }
     }
 
     //todo should be in a separate file
@@ -240,9 +408,14 @@ public class RunBench {
             }
             cfg.put("_decode_curve", decodeCurve);
         } else {
-            // the job's own pinned window (queue runs, per arm) wins over the operator's global one
+            // the job's own pinned window (queue runs, per arm) wins over the operator's global one.
+            // #298: effectiveContextWindow(), not the raw accessor - this codebase's own pervasive
+            // "0 = unlimited" convention (every other budget knob throughout this class) means an
+            // operator setting ace.context-window: 0 to mean "no cap" expects that, not for the
+            // window to collapse to a literal 0; effectiveContextWindow() already treats
+            // null-or-non-positive as "unset" so this default applies the same way either case.
             int window = cfg.get("context_window") instanceof Number n ? n.intValue()
-                    : props.contextWindow() == null ? 262144 : props.contextWindow();
+                    : props.effectiveContextWindow() == null ? 262144 : props.effectiveContextWindow();
             // Map.of() rejects a null value outright - min_decode_tps IS null here: skipping the probe
             // (step 0's whole job is measuring it) means there is no measured decode throughput
             final Map<String, Object> derivedNoProbe = new LinkedHashMap<>();
@@ -317,7 +490,16 @@ public class RunBench {
         // table entirely (design rule 5: "record what was sent, not what was configured");
         // unset stays "default"
         manifest.put("reasoning_policy", cfg.get("reasoning_effort") instanceof String re && !re.isBlank() ? re : "default");
-        ((Map<String, String>) manifest.get("snapshots")).put("start", RunBenchSupport.snapshot(ws, "phase/start"));
+        // #265, found live: this fires on every run() invocation - the original job start AND every
+        // resume-after-pause, force-moving the SAME tag each time (RunBenchSupport.snapshot does
+        // `git tag -f`) - so it marks "where THIS attempt began," not "the run's true beginning."
+        // It was named "phase/start" and so matched nearestPhaseTagSha's own "phase/*" glob,
+        // silently winning over the real task-boundary tag (e.g. phase/T3) it's nearer to after any
+        // pause/resume - diffAgainstTag (the UI's Changes tab) and Judge.currentDiffSummary() both
+        // call nearestPhaseTagSha, so both were silently showing only the diff since the last
+        // resume, not the task's real cumulative diff. Named outside the "phase/*" namespace so it
+        // can never collide with a real phase/task boundary again.
+        ((Map<String, String>) manifest.get("snapshots")).put("start", RunBenchSupport.snapshot(ws, "run/start"));
         Path journal = rd.resolve("interactions.jsonl");
 
         final List<Map<String, Object>> contentions = (List<Map<String, Object>>) manifest.get("contention_events");
@@ -328,8 +510,10 @@ public class RunBench {
         if ("orchestrated".equals(mode)) orchestratedPhase(cfg, runId, rd, ws, home, journal, manifest, planSource, promptText, taskWall, taskTokens, task);
         else monolithicPhases(cfg, runId, rd, ws, journal, manifest, promptText, task);
         writeManifest(rd, manifest);
-        // R17: bundle the agent's actual solution NOW - this is the ONLY bundle. Nothing after this
-        // point ever adds anything worth re-bundling for: oracle scoring never commits at all, and
+        // R17: bundle the agent's actual solution NOW - this is the FINAL bundle (#306's own
+        // snapshotRunProgress() already took one after every task/wave along the way, but this is
+        // the one that must land AFTER the whole run, not just after the last task). Nothing after
+        // this point ever adds anything worth re-bundling for: oracle scoring never commits at all, and
         // Reviews.selfReview()/trajectoryReview() revert any source the reviewer touched (git checkout
         // back to their own pre-review snapshot) before their own commit, so the tracked source there
         // is byte-for-byte identical to what's bundled here already; their own report artifacts
@@ -391,9 +575,13 @@ public class RunBench {
         writeManifest(rd, manifest);
         //todo ACE should be model provider agnostic
         captureOmlxLog(rd, manifest);
-        // never delete without a confirmed, actually-usable copy already in rd (see exportSource
-        // above) - losing disk space on a scratch dir is recoverable, losing the run's own output is not
-        if (sourceExported && !Boolean.TRUE.equals(cfg.get("keep_workspace"))) { deleteRecursive(ws); deleteRecursive(home); }
+        // ws is never deleted: it's the run's own git repo, and the ONLY place a task's commit
+        // (manifest.snapshots.<id>) can be `git show`n directly - workspace.bundle/source/ in rd
+        // are a second, resilient copy for when ws's $TMPDIR location gets swept, not a replacement
+        // for being able to inspect the real thing. home has no such role (just the scrubbed HOME
+        // copy agent sessions ran under) and is still cleaned up once a usable copy of the source
+        // is confirmed sitting in rd.
+        if (sourceExported) deleteRecursive(home);
         return manifest;
     }
 
@@ -493,6 +681,22 @@ public class RunBench {
         } finally {
             try { Files.deleteIfExists(tar); } catch (Exception e) { log.debug("could not remove leftover source tar {}: {}", tar, e.toString()); }
         }
+    }
+
+    /** #306, found live: manifest.json/workspace.bundle/rd/source/ used to be written ONCE, only
+     *  after the ENTIRE run (every task, every wave, INTEGRATION) finished - a run whose later
+     *  tasks take hours (T8 alone took 6+, T13 8.88 before exhausting its own budget) left every
+     *  EARLIER task's already-committed, tagged, genuinely-done work with no plain, ready-to-run
+     *  export and no structured manifest record at all, recoverable only by reaching into `ws`'s own
+     *  git history directly - exactly what answering "is T13's code still there?" required, live.
+     *  Both git(archive|bundle) calls these three wrap are cheap (seconds, for this repo's size)
+     *  against a task that takes hours, so re-running them after every task is not worth gating on a
+     *  "has anything actually changed" check - this is always called right after a task's own
+     *  rc/handoff are already settled, so `manifest` is never mid-update when it's written out. */
+    private void snapshotRunProgress(final Path ws, final Path rd, final Map<String, Object> manifest) throws Exception {
+        writeManifest(rd, manifest);
+        bundleWorkspace(ws, rd);
+        exportSource(ws, rd);
     }
 
     static void deleteRecursive(Path p) {
@@ -636,11 +840,40 @@ public class RunBench {
             final String appendSystem, final String cwd, final String proxyBase, final Consumer<String> abortProxy,
             final long firstTokenTimeoutMs, final int compactionTrigger, final int maxTurns, final String model,
             final Map<String, String> extraEnv) throws Exception {
+        return runAgentSession(cfg, name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase,
+                abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, null);
+    }
+
+    /** #265: the judge-aware form - only the task loop's own main-session call site ever passes a
+     *  real JudgeCheckpoint; every other call site (p0/p1/PARALLEL_PLAN/wrap-up/continue/handoff/
+     *  reviews) goes through the convenience overload above with judge=null. PiAgent is an external
+     *  subprocess harness with no in-process turn loop to hook into at all (the judge needs live
+     *  access to msgs, a LangChain4j-specific, in-process concept) - the judge is silently ignored
+     *  on that branch rather than threaded through, since this feature cannot apply there. */
+    private ReferenceAgent.SessionResult runAgentSession(final Map<String, Object> cfg, final String name, final String instruction,
+            final long wallSec, final Long tokenBudget, final Path sessionDir, final String sessionId, final boolean continueSession,
+            final String appendSystem, final String cwd, final String proxyBase, final Consumer<String> abortProxy,
+            final long firstTokenTimeoutMs, final int compactionTrigger, final int maxTurns, final String model,
+            final Map<String, String> extraEnv, final ReferenceAgent.JudgeCheckpoint judge) throws Exception {
+        return runAgentSession(cfg, name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase,
+                abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, null);
+    }
+
+    /** #300: adds the in-session handoff fast path's own FinalTurn hook (see its javadoc) on top of
+     *  the judge-aware form above - only sessionWithPolicy's own wrap-up call site ever passes a
+     *  real one (see its javadoc for why only there), everything else goes through one of the
+     *  convenience overloads above with finalTurn=null. PiAgent ignores this the same way it
+     *  already ignores judge, for the same reason (no in-process loop to hook into). */
+    private ReferenceAgent.SessionResult runAgentSession(final Map<String, Object> cfg, final String name, final String instruction,
+            final long wallSec, final Long tokenBudget, final Path sessionDir, final String sessionId, final boolean continueSession,
+            final String appendSystem, final String cwd, final String proxyBase, final Consumer<String> abortProxy,
+            final long firstTokenTimeoutMs, final int compactionTrigger, final int maxTurns, final String model,
+            final Map<String, String> extraEnv, final ReferenceAgent.JudgeCheckpoint judge, final ReferenceAgent.FinalTurn finalTurn) throws Exception {
         return "pi".equals(cfg.get("harness"))
                 ? piAgent.run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase,
                         abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv)
                 : agent.run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase,
-                        abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv);
+                        abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, finalTurn);
     }
 
     private Map<String, Object> sessionWithPolicy(Map<String, Object> cfg, String runId, String name, String instruction,
@@ -650,14 +883,36 @@ public class RunBench {
         return sessionWithPolicy(cfg, runId, name, instruction, wall, tokens, rd, ws, journal, proxy, appendSystem, sessionId, envOverride, false);
     }
 
-    /** a session + the stop protocol: budget clock, one `continue` on a length finish with the
-     *  remaining budget, a wrap-up continuation when no status was written, the harness's fallback
-     *  line, the budget-refusal verdict, the docker window. plainPlan=true for definition/plan
-     *  phases: no clock, no docker note, no wrap-up, no verification (R4 C-3). */
     private Map<String, Object> sessionWithPolicy(Map<String, Object> cfg, String runId, String name, String instruction,
                                                   long wall, long tokens, Path rd, Path ws, Path journal,
                                                   RecordingProxyFactory.ProxySession proxy, String appendSystem, String sessionId,
                                                   Map<String, String> envOverride, boolean plainPlan) throws Exception {
+        return sessionWithPolicy(cfg, runId, name, instruction, wall, tokens, rd, ws, journal, proxy, appendSystem, sessionId, envOverride, plainPlan, null);
+    }
+
+    private Map<String, Object> sessionWithPolicy(Map<String, Object> cfg, String runId, String name, String instruction,
+                                                  long wall, long tokens, Path rd, Path ws, Path journal,
+                                                  RecordingProxyFactory.ProxySession proxy, String appendSystem, String sessionId,
+                                                  Map<String, String> envOverride, boolean plainPlan, ReferenceAgent.JudgeCheckpoint judge) throws Exception {
+        return sessionWithPolicy(cfg, runId, name, instruction, wall, tokens, rd, ws, journal, proxy, appendSystem, sessionId, envOverride, plainPlan, judge, null);
+    }
+
+    /** a session + the stop protocol: budget clock, one `continue` on a length finish with the
+     *  remaining budget, a wrap-up continuation when no status was written, the harness's fallback
+     *  line, the budget-refusal verdict, the docker window. plainPlan=true for definition/plan
+     *  phases: no clock, no docker note, no wrap-up, no verification (R4 C-3). `judge` (#265) is
+     *  only ever non-null from the task loop's own main-session call - the continuation/wrap-up
+     *  calls further down this same method never get one, by design (see the task loop's own
+     *  comment for why). `finalTurn` (#300/#302) is likewise only ever non-null from the task loop's
+     *  own call, but - unlike `judge` - IS forwarded to every one of main/continuation/wrap-up below:
+     *  it's a one-shot, stateful closure (buildHandoffFinalTurn) that only actually asks once the
+     *  task's own status is already on disk, so it safely fires on whichever of those three calls
+     *  turns out to be genuinely last, never more than once. */
+    private Map<String, Object> sessionWithPolicy(Map<String, Object> cfg, String runId, String name, String instruction,
+                                                  long wall, long tokens, Path rd, Path ws, Path journal,
+                                                  RecordingProxyFactory.ProxySession proxy, String appendSystem, String sessionId,
+                                                  Map<String, String> envOverride, boolean plainPlan, ReferenceAgent.JudgeCheckpoint judge,
+                                                  ReferenceAgent.FinalTurn finalTurn) throws Exception {
         final Map<String, String> env = envOverride != null ? envOverride : (Map<String, String>) cfg.get("_agent_env");
         final var dw = new DockerWindowMonitor(env == null ? null : env.get("ACE_DOCKER_LOG"));
         // the run's OWN requested model (--model=): a single worker JVM handles every queued job in
@@ -665,12 +920,18 @@ public class RunBench {
         // silently run every task against whatever model happens to be configured process-wide instead
         // of the model this run actually asked for (a real, previously silent mismatch)
         final String runModel = (String) cfg.get("model");
+        // #263: taskOverride is Map.of() for every non-task session name (p0_definition, FIX ids,
+        // INTEGRATION, ...) - the lookup is naturally a no-op there, only a restarted plan task's
+        // own id ever has an entry.
+        final Map<String, Object> override = taskOverride(cfg, name);
         // 0 means unlimited (the system-wide "0 = no budget" convention)
-        final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number ftt ? ftt.longValue() : 0L;
+        final long firstTokenTimeoutMs = override.get("first_token_timeout_sec") instanceof Number sec ? sec.longValue() * 1000L
+                : cfg.get("first_token_timeout_ms") instanceof Number ftt ? ftt.longValue() : 0L;
         final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
         // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded
         // ReferenceAgent-local constant with no run-level override at all
-        final int maxTurns = cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS;
+        final int maxTurns = effectiveInt(override, "max_turns",
+                cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS);
         final long t0 = System.currentTimeMillis();
         // wall <= 0 means unlimited (the system-wide "0 = no budget" convention) - a "hard deadline"
         // of right now would be actively misleading, not just an edge case of the normal wording
@@ -692,15 +953,19 @@ public class RunBench {
         try {
             rec = RunBenchSupport.runBounded(wall, name, rd.resolve("sessions"), sid, proxy.abort(), () -> runAgentSession(cfg, name, full, wall, tokens,
                     rd.resolve("sessions"), sid, false, appendSystem, ws.toString(), proxy.base(), proxy.abort(),
-                    firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env));
+                    firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, judge, finalTurn));
         } finally { if (monitor != null) stopMonitor(monitor); }
         if (!plainPlan) appendWindows(manifestOf(cfg), dw, name);
         // P-1: a session that died on a `length` finish gets one continuation with what is LEFT (R4
         // C-7). wall/tokens <= 0 means unlimited (the system-wide "0 = no budget" convention): there
         // is always "enough" remaining wall-clock, and what's LEFT of an unlimited token budget is
         // still unlimited, not a collapsed-to-minimum 1000.
-        if (!plainPlan && "length".equals(rec.finish()) && rec.rc() != 124
-                && (wall <= 0 || wall - (System.currentTimeMillis() - t0) / 1000 > 120)) {
+        // #258, found live: this used to be gated !plainPlan, so p0_definition/p1_plan never got
+        // this retry at all - a truncated plan-writing turn just silently killed the whole run
+        // (orchestratedPhase() then throws PlanError trying to parse the never-written file). p0/p1
+        // face the exact same per-call output ceiling as a task session; nothing about this retry
+        // is task-specific, so there was never a reason to exclude them.
+        if (shouldRetryOnLengthFinish(rec.finish(), rec.rc(), wall, (System.currentTimeMillis() - t0) / 1000)) {
             final long spent = ((Number) JournalFacts.facts(journal.toString(), rec.start().toString(), nowIso(), null, null, null).getOrDefault("completion_tokens", 0L)).longValue();
             long remaining = tokens <= 0 ? 0 : Math.max(1000, tokens - spent);   // what is LEFT, not a fresh budget (R4 C-7); a fresh proxy enforces it
             final var contProxy = proxies.start(journal, remaining, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
@@ -709,7 +974,7 @@ public class RunBench {
                 rec = RunBenchSupport.runBounded(contWall, name + "-continue", rd.resolve("sessions"), sid, contProxy.abort(), () -> runAgentSession(cfg, name + "-continue",
                         "Your previous turn was cut off at the output limit. Continue the task from where you stopped; be concise and act with tools.",
                         contWall, remaining, rd.resolve("sessions"), sid, true, appendSystem, ws.toString(), contProxy.base(), contProxy.abort(),
-                        firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env));
+                        firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, finalTurn));
             } finally { contProxy.stop(); }
         }
         final Map<String, Object> out = RunBench.sessionRecord(rec, name);
@@ -731,16 +996,24 @@ public class RunBench {
             final String wrapInstr = name.startsWith("p") || name.equals("implement") ? Packs.MONO_WRAPUP_INSTRUCTION : Packs.wrapupInstruction(name);
             // the wrap-up is a continuation on top of the task budget: its own proxy with its own token
             // budget (run_bench run_task) - 0 means unlimited (the system-wide "0 = no budget" convention)
-            final long wrapupTokens = cfg.get("wrapup_tokens") instanceof Number wt ? wt.longValue() : 0L;
+            final long wrapupTokens = effectiveLong(override, "wrapup_tokens", cfg.get("wrapup_tokens") instanceof Number wt ? wt.longValue() : 0L);
             final var wrapProxy = proxies.start(journal, wrapupTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
             // 0 means unlimited (the system-wide "0 = no budget" convention)
-            final int wrapupBase = cfg.get("wrapup_wall_sec") instanceof Number wb ? wb.intValue() : 0;
+            final int wrapupBase = effectiveInt(override, "wrapup_wall_sec", cfg.get("wrapup_wall_sec") instanceof Number wb ? wb.intValue() : 0);
             final long wrapWall = (long) (wrapupBase * scale);
             final ReferenceAgent.SessionResult w;   // assigned exactly once below; a legal blank final
+            // #300/#302: finalTurn also reaches the main call and its length-retry continuation
+            // above (see this method's own javadoc) - this is simply the THIRD place it might fire,
+            // not special-cased for that reason any more. Still withheld specifically here if `rec`
+            // (the main session's own result, set above - never this wrap-up's own `w`) already
+            // timed out (rc==124): the task loop's own handoffStep() call skips a timed-out task the
+            // same way, and firing it here would ask for a handoff the task loop was never going to
+            // credit anyway.
+            final ReferenceAgent.FinalTurn wrapFinalTurn = rec.rc() == 124 ? null : finalTurn;
             try {
                 w = RunBenchSupport.runBounded(wrapWall, name + "-wrapup", rd.resolve("sessions"), canonicalSessionId, wrapProxy.abort(),
                         () -> runAgentSession(cfg, name + "-wrapup", wrapInstr, wrapWall, wrapupTokens, rd.resolve("sessions"), canonicalSessionId,
-                                true, appendSystem, ws.toString(), wrapProxy.base(), wrapProxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env));
+                                true, appendSystem, ws.toString(), wrapProxy.base(), wrapProxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, wrapFinalTurn));
             } finally { wrapProxy.stop(); }
             out.put("wrapup_rc", w.rc());
             out.put("wrapup_seconds", w.seconds());
@@ -748,10 +1021,17 @@ public class RunBench {
             reported = progressStatus(ws, name);
         }
         if (!plainPlan && reported == null) {   // the harness owns the status trail
+            // #262, found live: this used to always pass "" here, so "budget exhausted" showed even
+            // when the real cause (confirmed live: an oMLX memory-guard rejection, nothing to do with
+            // any configured budget) was available or inferable. rec still describes the MAIN
+            // session specifically (not the wrap-up's own w, scoped to the branch above and absent
+            // entirely when rc==2 skipped the wrap-up) - that is exactly what decided there would be
+            // no status line, so it is the right thing to name here regardless of which branch ran.
+            final String tail = fallbackTail(rec.rc(), wall, rec.turns(), rec.end().toString());
             final Path pp = ws.resolve("docs/PROGRESS.md");
             Files.createDirectories(pp.getParent());
             final String existing = Files.isRegularFile(pp) ? Files.readString(pp) : "";
-            Files.writeString(pp, (existing.isEmpty() || existing.endsWith("\n") ? "" : "\n") + Packs.fallbackStatus(name, "") + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            Files.writeString(pp, (existing.isEmpty() || existing.endsWith("\n") ? "" : "\n") + Packs.fallbackStatus(name, tail) + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
             reported = "unfinished";
             out.put("status_by_harness", true);
         }
@@ -831,10 +1111,16 @@ public class RunBench {
                 rec = new LinkedHashMap<>(Map.of("id", "p0_definition", "rc", 0, "resumed", true));
                 ((Map<String, String>) manifest.get("snapshots")).put("p0", RunBenchSupport.gitOut(ws, "rev-parse", "phase/p0"));
             } else {
-                final var proxy = proxies.start(journal, planTokens(cfg, "p0_definition", props), null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+                // same reasoning as #263's task-loop override (see below): the proxy's own token
+                // budget is sized at creation, so a restarted p0_definition's override must apply
+                // here too, not just inside sessionWithPolicy
+                final var p0Override = taskOverride(cfg, "p0_definition");
+                final int effP0Wall = effectiveInt(p0Override, "task_wall_sec", (int) p0Wall);
+                final long effP0Tokens = effectiveLong(p0Override, "task_tokens", planTokens(cfg, "p0_definition", props));
+                final var proxy = proxies.start(journal, effP0Tokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
                 try {
                     rec = sessionWithPolicy(cfg, runId, "p0_definition", PHASE_TEXT.get("p0_definition")[1],
-                            p0Wall, planTokens(cfg, "p0_definition", props), rd, ws, journal, proxy, null, null, null, true);
+                            effP0Wall, effP0Tokens, rd, ws, journal, proxy, null, null, null, true);
                 } finally { proxy.stop(); }
                 ((Map<String, String>) manifest.get("snapshots")).put("p0", RunBenchSupport.snapshot(ws, "phase/p0"));
             }
@@ -866,10 +1152,13 @@ public class RunBench {
                 p1rec = new LinkedHashMap<>(Map.of("id", "p1_plan", "rc", 0, "resumed", true));
                 planSha = RunBenchSupport.gitOut(ws, "rev-parse", "phase/p1");
             } else {
-                final var proxy = proxies.start(journal, planTokens(cfg, "p1_plan", props), null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+                final var p1Override = taskOverride(cfg, "p1_plan");
+                final int effP1Wall = effectiveInt(p1Override, "task_wall_sec", (int) p1Wall);
+                final long effP1Tokens = effectiveLong(p1Override, "task_tokens", planTokens(cfg, "p1_plan", props));
+                final var proxy = proxies.start(journal, effP1Tokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
                 try {
                     p1rec = sessionWithPolicy(cfg, runId, "p1_plan", PHASE_TEXT.get("p1_plan")[1],
-                            p1Wall, planTokens(cfg, "p1_plan", props), rd, ws, journal, proxy, null, null, null, true);
+                            effP1Wall, effP1Tokens, rd, ws, journal, proxy, null, null, null, true);
                 } finally { proxy.stop(); }
                 planSha = RunBenchSupport.snapshot(ws, "phase/p1");
             }
@@ -952,7 +1241,9 @@ public class RunBench {
                 json.writeValueAsString(planWaves.stream().map(w -> w.stream().map(t -> t.id).toList()).toList()));
 
         String prev = null; Path prevSession = null; String prevVerified = null;
-        final List<String[]> handoffs = Boolean.TRUE.equals(cfg.get("handoff_notes")) ? new ArrayList<>() : null;
+        // #303: loadHandoffs returns manifestHandoffs(manifest) itself, backfilled from disk for
+        // any task already tagged done - see its own javadoc for why both of those matter
+        final List<String[]> handoffs = Boolean.TRUE.equals(cfg.get("handoff_notes")) ? loadHandoffs(ws, tasks, manifest) : null;
         List<String[]> mergeConflicts = new ArrayList<>();
         for (List<PlanTask> w : planWaves) {
             if (w.isEmpty()) continue;
@@ -971,21 +1262,41 @@ public class RunBench {
                         snapshots.put(t.id, new String[]{String.valueOf(manifestSnap(manifest, "p1", planSha)), after});
                         mergeConflicts.clear();
                     } else {
+                        RunBenchSupport.clearStaleProgressLine(ws, t.id);
                         final String tp = Packs.taskPack(ws, t, tasks, snapshots, doneSet(snapshots), prev, prevSession, handoffs, prevVerified, mergeConflicts.isEmpty() ? null : mergeConflicts, null);
                         Files.writeString(rd.resolve("packs/" + t.id + ".md"), tp);
-                        final var proxy = proxies.start(journal, taskTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+                        // #263: a restarted task's own task_wall_sec/task_tokens override (set via
+                        // the restart-task endpoint) takes effect right here, since the proxy's own
+                        // token-budget enforcement is sized at creation, not re-checked against
+                        // whatever sessionWithPolicy is later told - overriding only there would
+                        // leave the OLD, un-overridden token budget still enforced underneath it.
+                        final var taskOverride = taskOverride(cfg, t.id);
+                        final int effTaskWall = effectiveInt(taskOverride, "task_wall_sec", taskWall);
+                        final long effTaskTokens = effectiveLong(taskOverride, "task_tokens", taskTokens);
+                        final var proxy = proxies.start(journal, effTaskTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+                        final var judgeCheckpoint = buildJudgeCheckpoint(cfg, runId, ws, rd, t.id, t.goal, effTaskWall, effTaskTokens, taskOverride);
+                        final var handoffFinalTurn = buildHandoffFinalTurn(handoffs, ws, t.id);
                         try {
                             rec = sessionWithPolicy(cfg, runId, t.id, Packs.taskInstruction(t.id) + "\n\n" + tp,
-                                    taskWall, taskTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null);
+                                    effTaskWall, effTaskTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null, false, judgeCheckpoint, handoffFinalTurn);
                         } finally { proxy.stop(); }
+                        // #307: before anything downstream (the phase tag, logTaskAttempt, handoffStep)
+                        // ever looks at this task's own final state - a successful rescue changes what
+                        // that state actually is, so everything after this point must see it, not the
+                        // pre-rescue one
+                        rescueStep(cfg, runId, t, rd, ws, journal, rec, taskOverride);
                         final String after = RunBenchSupport.snapshot(ws, "phase/" + t.id);
                         ((Map<String, String>) manifest.get("snapshots")).put(t.id, after);
                         snapshots.put(t.id, new String[]{String.valueOf(manifestSnap(manifest, "p1", planSha)), after});
                         mergeConflicts.clear();
+                        final int effMaxTurns = effectiveInt(taskOverride, "max_turns",
+                                cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS);
+                        logTaskAttempt(rd, ws, t.id, taskOverride, effTaskWall, effTaskTokens, effMaxTurns, rec);
                     }
                     rec.put("title", t.title);
                     ((List<Map<String, Object>>) manifest.get("tasks")).add(rec);
                     if (handoffs != null && ((int) rec.get("rc")) != 124) handoffStep(cfg, runId, t, rd, ws, journal, manifest, rec);
+                    snapshotRunProgress(ws, rd, manifest);
                     prev = t.id;
                     prevSession = agentSessionFile(rd, runId, t.id);
                     prevVerified = VerifyTask.verifyText(VerifyTask.verify(ws, cfg, rd.resolve("verify/" + t.id + ".log")));
@@ -995,6 +1306,7 @@ public class RunBench {
             // ---- parallel wave: every task in its own worktree + HOME copy + tagged journal; then merge into the main workspace ----
             wave = runParallelWave(cfg, runId, rd, ws, home, journal, manifest, tasks, snapshots, w, parallel, ownership,
                     promptText, stable, taskWall, taskTokens, handoffs, prevVerified, mergeConflicts, planSha);
+            snapshotRunProgress(ws, rd, manifest);
             prev = null; prevSession = null;
             prevVerified = "after the merged wave " + w.stream().map(t -> t.id).toList() + ": " + wave.get("verification_text");
             mergeConflicts = (List<String[]>) wave.get("merge_conflicts");
@@ -1042,7 +1354,7 @@ public class RunBench {
         // R18: resume past this handoff if a prior attempt of THIS SAME run already finished it.
         // #249, found live: unlike every other phase, this one had no tagExists check at all - a
         // restarted run unconditionally re-ran EVERY handoff from scratch, even ones already
-        // committed. With --keep-workspace across many restarts this isn't just wasted budget: a
+        // committed. Since ws survives every restart now, this isn't just wasted budget: a
         // resumed handoff session can find itself staring at a workspace whose LATER tasks are
         // already fully implemented (from a prior attempt that got further before being
         // interrupted), flatly contradicting its own "write for a colleague who implements the
@@ -1057,6 +1369,18 @@ public class RunBench {
             }
             rec.put("handoff_seconds", 0.0);
             rec.put("handoff_rc", 0);
+            return;
+        }
+        // #300: the task's own wrap-up turn may already have answered this ask inline - see the
+        // FinalTurn hook built by buildHandoffFinalTurn() and threaded into sessionWithPolicy's own
+        // wrap-up call. Same live session/connection as the task's own work, so there is no cold
+        // continueSession=true call to make here at all; only the bookkeeping the cold path below
+        // does after ITS OWN call is left to do.
+        if (Files.isRegularFile(hp)) {
+            recordHandoffContent(ws, manifest, rec, t.id, hp);
+            rec.put("handoff_seconds", 0.0);
+            rec.put("handoff_rc", 0);
+            RunBenchSupport.snapshot(ws, "phase/" + t.id + "-handoff");   // so a future resume can skip this (see tagExists check above)
             return;
         }
         // 0 means unlimited (the system-wide "0 = no budget" convention)
@@ -1074,24 +1398,147 @@ public class RunBench {
                             rd.resolve("sessions"), handoffSid, true, rd.resolve("packs/stable.md").toString(), ws.toString(),
                             proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("model"),
                             (Map<String, String>) cfg.get("_agent_env")));
-            if (Files.isRegularFile(hp)) {
-                final String txt = Files.readString(hp);
-                manifestHandoffs(manifest).add(new String[]{t.id, txt});
-                String sha;
-                try { sha = RunBenchSupport.gitOut(ws, "hash-object", "-w", hp.toString()); }
-                catch (Exception e) { log.warn("git hash-object failed for handoff {}: {}", t.id, e.toString()); sha = null; }
-                rec.put("handoff_sha", sha == null || sha.isEmpty() ? null : sha);   // one hash-object, not the old double call that wrote the object twice
-                rec.put("handoff_chars", txt.length());
-            }
+            recordHandoffContent(ws, manifest, rec, t.id, hp);
             rec.put("handoff_seconds", h.seconds());
             rec.put("handoff_rc", h.rc());
             RunBenchSupport.snapshot(ws, "phase/" + t.id + "-handoff");   // so a future resume can skip this (see tagExists check above)
         } finally { proxy.stop(); }
     }
 
+    /** the handoff file's content, once it exists: added to the manifest's own running list and
+     *  hash-objected into git (one hash-object, not the old double call that wrote the object
+     *  twice) - shared by handoffStep()'s own cold-session tail and its #300 fast-path branch
+     *  above, the two places this is ever computed for the FIRST time (the tagExists "already
+     *  completed" branch above deliberately skips the sha - see its own comment). A no-op when the
+     *  file doesn't exist (the model, despite being asked, wrote nothing - callers still record
+     *  handoff_seconds/handoff_rc/the completion tag regardless, same as always). */
+    private void recordHandoffContent(final Path ws, final Map<String, Object> manifest, final Map<String, Object> rec,
+                                       final String taskId, final Path hp) throws Exception {
+        if (!Files.isRegularFile(hp)) return;
+        final String txt = Files.readString(hp);
+        manifestHandoffs(manifest).add(new String[]{taskId, txt});
+        String sha;
+        try { sha = RunBenchSupport.gitOut(ws, "hash-object", "-w", hp.toString()); }
+        catch (Exception e) { log.warn("git hash-object failed for handoff {}: {}", taskId, e.toString()); sha = null; }
+        rec.put("handoff_sha", sha == null || sha.isEmpty() ? null : sha);
+        rec.put("handoff_chars", txt.length());
+    }
+
+    /** #307: the run-level "budget_rescue" cfg map, with any budget_rescue_enabled restart override
+     *  (RESTART_OVERRIDE_KEYS' own flat name) replacing the corresponding nested key -
+     *  rescue_wall_sec/rescue_tokens/rescue_keep_recent_turns are deliberately NOT task-overridable,
+     *  same reasoning as effectiveJudgeCfg()'s own judge_wall_sec/judge_tokens exclusion: the
+     *  rescue session's own budget is a run/operator-level choice, not exposed on the restart form. */
+    static Map<String, Object> effectiveRescueCfg(final Map<String, Object> cfg, final Map<String, Object> taskOverride) {
+        final Map<String, Object> runLevel = cfg.get("budget_rescue") instanceof Map<?, ?> r ? (Map<String, Object>) r : Map.of();
+        final Map<String, Object> out = new LinkedHashMap<>(runLevel);
+        if (taskOverride.get("budget_rescue_enabled") instanceof Boolean b) out.put("enabled", b);
+        return out;
+    }
+
+    /** #307: whether a task's own final rc earns it a rescue attempt - extracted as a pure
+     *  predicate (same reasoning as isJudgeTurn/shouldRetryOnLengthFinish above) since rescueStep()
+     *  itself is heavy orchestration with no direct test, same as handoffStep(). Budget-exhausted
+     *  (3) only, never a wall timeout (124, nothing left to spend) or any other rc; never when the
+     *  feature is off; never on the `pi` harness (no in-process loop to compact/reconnect).
+     *  `rescueCfg` is the task's own EFFECTIVE config (effectiveRescueCfg()'s result), not the raw
+     *  run-level map directly, so a restarted task can flip this independent of the run's own
+     *  original choice. */
+    static boolean shouldRescue(final Map<String, Object> rescueCfg, final Map<String, Object> rec, final String harness) {
+        return Boolean.TRUE.equals(rescueCfg.get("enabled")) && rec.get("rc") instanceof Integer rc && rc == 3
+                && !"pi".equals(harness);
+    }
+
+    /** #307: the budget-exhaustion rescue step - the second "fail recovery" mechanism alongside the
+     *  Judge (#265). When a task's own main session chain ends via rc=3 (BudgetExhausted - the
+     *  proxy refused further requests because the session's own token budget ran out; never a wall
+     *  timeout (124) and never a crash), give it ONE more dedicated session before accepting that
+     *  final state. Opt-in (cfg "budget_rescue"."enabled") - a real, visible, restart-tunable knob,
+     *  same philosophy as the Judge, never a silent default - and scoped to the `ref` harness only:
+     *  PiAgent has no in-process turn loop and no concept of `continueSession`-time compaction to
+     *  hook into, the same reason Judge/FinalTurn are PiAgent no-ops elsewhere in this file.
+     *
+     *  Deliberately NOT a cold `continueSession=true` reconnect to the raw history (that is exactly
+     *  the #300 stall mechanism, on the task with the LARGEST accumulated history in the whole run)
+     *  and NOT a trajectory-free fresh pack either (loses whatever the session just tried and ruled
+     *  out immediately before running out of budget - a real risk, not hypothetical: a live judge
+     *  checkpoint on this exact codebase once had to stop a session oscillating on the same fix four
+     *  times in a row). The middle ground: reconnect, but compact the loaded history down to its
+     *  most recent turns BEFORE the first request (`ReferenceAgent`'s own `compactOnLoadKeepRecentTurns`
+     *  - this IS issue #300's original suggested fix, finally with a caller that genuinely needs a
+     *  cold reconnect rather than the in-session injection handoff/wrap-up use instead). On top of
+     *  that, the instruction names the CURRENT, concrete problem explicitly - the harness's own just-
+     *  computed verification output - since the model's own last tool call before running out of
+     *  budget was almost certainly not "run the tests"; nothing in the trajectory, compacted or not,
+     *  reliably surfaces that on its own.
+     *
+     *  Tracked separately (`rescue_seconds`/`rescue_rc`/`rescue_succeeded` on `rec`, mirroring
+     *  `wrapup_seconds`) for the later, still-not-built scoring half (§19 of the project's own
+     *  Second Brain note): this method only builds the mechanism and the data a scoring pass would
+     *  need, not the scoring formula itself. A successful rescue (`rc()==0`) updates `rec`'s own
+     *  "rc"/"verification" in place, so everything the caller does afterward - the phase snapshot,
+     *  `logTaskAttempt`, `handoffStep` - sees the POST-rescue state, not the exhausted one. */
+    private void rescueStep(final Map<String, Object> cfg, final String runId, final PlanTask t, final Path rd, final Path ws,
+                             final Path journal, final Map<String, Object> rec, final Map<String, Object> taskOverride) throws Exception {
+        final Map<String, Object> rescueCfg = effectiveRescueCfg(cfg, taskOverride);
+        if (!shouldRescue(rescueCfg, rec, (String) cfg.get("harness"))) return;
+        final String verificationSummary = VerifyTask.verifyText((Map<String, Object>) rec.get("verification"));
+        // 0 means unlimited (the system-wide "0 = no budget" convention)
+        final long rescueTokens = rescueCfg.get("tokens") instanceof Number n ? n.longValue() : 0L;
+        final var proxy = proxies.start(journal, rescueTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+        final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 0L;
+        final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
+        final int maxTurns = cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS;
+        final int keepRecentTurns = rescueCfg.get("keep_recent_turns") instanceof Number krt ? krt.intValue() : props.keepRecentTurns();
+        try {
+            // the SAME canonical id as the task's own main session - continueSession=true must find
+            // and compact THAT task's own history, not a separate one
+            final String sid = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + t.id).getBytes()).toString();
+            // 0 means unlimited (the system-wide "0 = no budget" convention)
+            final int rescueWall = rescueCfg.get("wall_sec") instanceof Number w ? w.intValue() : 0;
+            final ReferenceAgent.SessionResult h = RunBenchSupport.runBounded(rescueWall, t.id + "-rescue", rd.resolve("sessions"), sid, proxy.abort(),
+                    () -> agent.run(t.id + "-rescue", Packs.rescueInstruction(t.id, verificationSummary), rescueWall, rescueTokens,
+                            rd.resolve("sessions"), sid, true, rd.resolve("packs/stable.md").toString(), ws.toString(),
+                            proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("model"),
+                            (Map<String, String>) cfg.get("_agent_env"), null, false, null, keepRecentTurns));
+            rec.put("rescue_seconds", h.seconds());
+            rec.put("rescue_rc", h.rc());
+            if (h.rc() == 0) {
+                rec.put("rc", 0);
+                rec.put("rescue_succeeded", true);
+                rec.put("verification", VerifyTask.verify(ws, cfg, rd.resolve("verify/" + t.id + "-rescue.log")));
+            }
+        } finally { proxy.stop(); }
+    }
+
     static List<String[]> manifestHandoffs(final Map<String, Object> manifest) {
         if (!(manifest.get("handoffs") instanceof List<?>)) manifest.put("handoffs", new ArrayList<String[]>());
         return (List<String[]>) manifest.get("handoffs");
+    }
+
+    /** #303, found live: `manifestHandoffs(manifest)` and the local `handoffs` list every
+     *  Packs.taskPack() call reads from used to be two DIFFERENT lists - handoffStep() only ever
+     *  appended to the former, so "## Notes left by earlier tasks" never fired for any task, in any
+     *  run, ever. Returning manifestHandoffs(manifest) itself (not a copy) is what fixes that going
+     *  forward: handoffStep()'s own .add() calls now land in the one list taskPack() actually reads.
+     *
+     *  That alone still starts a RESUMED run's list empty, even though earlier tasks' handoffs
+     *  already exist on disk (the in-memory manifest is rebuilt fresh on every orchestratedPhase()
+     *  call, same as every other R18 resume case in this file - the git tags/handoff/*.md files are
+     *  the real source of truth across a resume, not any in-memory state). So this also backfills:
+     *  every task already tagged phase/{id}-handoff gets its handoff/{id}.md content read straight
+     *  into the list before the task loop starts, the same re-read handoffStep()'s own resumed-tag
+     *  branch already does for the ONE task it happens to be revisiting. */
+    static List<String[]> loadHandoffs(final Path ws, final List<PlanTask> tasks, final Map<String, Object> manifest) {
+        final List<String[]> handoffs = manifestHandoffs(manifest);
+        for (final PlanTask t : tasks) {
+            if (!RunBenchSupport.tagExists(ws, "phase/" + t.id + "-handoff")) continue;
+            final Path hp = ws.resolve("handoff").resolve(t.id + ".md");
+            if (!Files.isRegularFile(hp)) continue;
+            try { handoffs.add(new String[]{t.id, Files.readString(hp)}); }
+            catch (IOException e) { log.warn("could not read already-tagged handoff for {}: {}", t.id, e.toString()); }
+        }
+        return handoffs;
     }
 
     /** the agent's parallelisation-plan step; the harness evaluates the schedule and uses it when valid */
@@ -1104,15 +1551,23 @@ public class RunBench {
             log.info("run {}: phase/parallel_plan already completed in a prior attempt, resuming past it", runId);
             ((Map<String, String>) manifest.get("snapshots")).put("parallel_plan", RunBenchSupport.gitOut(ws, "rev-parse", "phase/parallel_plan"));
         } else {
+            // same reasoning as #263's task-loop override, and p0_definition/p1_plan above: a
+            // restarted PARALLEL_PLAN's override must size the proxy at creation, not just whatever
+            // this call site would otherwise pass in
+            final var ppOverride = taskOverride(cfg, "PARALLEL_PLAN");
             // 0 means unlimited (the system-wide "0 = no budget" convention)
-            final long parallelPlanTokens = cfg.get("parallel_plan_tokens") instanceof Number ppt ? ppt.longValue() : 0L;
+            final long parallelPlanTokensDefault = cfg.get("parallel_plan_tokens") instanceof Number ppt ? ppt.longValue() : 0L;
+            final long parallelPlanTokens = effectiveLong(ppOverride, "task_tokens", parallelPlanTokensDefault);
             final var proxy = proxies.start(journal, parallelPlanTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
-            final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 0L;   // 0 = unlimited
+            final long firstTokenTimeoutMs = ppOverride.get("first_token_timeout_sec") instanceof Number sec ? sec.longValue() * 1000L
+                    : cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 0L;   // 0 = unlimited
             final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
-            final int maxTurns = cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS;
+            final int maxTurns = effectiveInt(ppOverride, "max_turns",
+                    cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS);
             final String planSid = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/PARALLEL_PLAN").getBytes()).toString();
             // 0 means unlimited (the system-wide "0 = no budget" convention)
-            final int parallelPlanWall = cfg.get("parallel_plan_wall_sec") instanceof Number pw ? pw.intValue() : 0;
+            final int parallelPlanWallDefault = cfg.get("parallel_plan_wall_sec") instanceof Number pw ? pw.intValue() : 0;
+            final int parallelPlanWall = effectiveInt(ppOverride, "task_wall_sec", parallelPlanWallDefault);
             ReferenceAgent.SessionResult prec;
             try {
                 prec = RunBenchSupport.runBounded(parallelPlanWall, "PARALLEL_PLAN", rd.resolve("sessions"), planSid, proxy.abort(),
@@ -1169,6 +1624,11 @@ public class RunBench {
         // worktree/HOME copy and re-running its session entirely; a synthetic resumed rec keeps
         // it present in the manifest, and the merge loop below merges/re-tags it accordingly.
         final Set<String> resumedTaskIds = new LinkedHashSet<>();
+        // #263: a worktree-add failure (a stale lock file, a leftover branch ref from a crashed
+        // prior attempt, disk pressure) tracked separately from resumedTaskIds - such a task never
+        // gets a worktree at all, unlike a resumed one (whose worktree may legitimately be gone
+        // already, for the OPPOSITE reason: it finished and was cleaned up).
+        final Set<String> setupFailedTaskIds = new LinkedHashSet<>();
         for (PlanTask t : waveTasks) {
             if (RunBenchSupport.tagExists(ws, "phase/" + t.id)) {
                 log.info("run {}: phase/{} already completed in a prior attempt (parallel wave), resuming past it", runId, t.id);
@@ -1177,7 +1637,26 @@ public class RunBench {
                 continue;
             }
             final Path wt = Path.of(ws + "-" + t.id), homeT = Path.of(home + "-home-" + t.id);
-            DockerService.sh(60, "git", "-C", ws.toString(), "worktree", "add", "-q", "-B", "task/" + t.id, wt.toString(), pre);
+            // #263: this result used to be discarded entirely - unlike virtually every other git/
+            // docker subprocess call in this class, which all check rc(). A failure here left the
+            // worktree never created, yet the code proceeded unconditionally into clearStaleProgressLine/
+            // copyTree against it and then started the task's agent session with its cwd pointing at
+            // a non-existent directory - the real cause only surfacing much later as an opaque,
+            // far-from-its-origin failure (a raw IOException from the merge loop's own snapshot()
+            // call, or a cascade of agent tool errors).
+            final var wtAdd = DockerService.sh(60, "git", "-C", ws.toString(), "worktree", "add", "-q", "-B", "task/" + t.id, wt.toString(), pre);
+            if (wtAdd.rc() != 0) {
+                log.warn("run {}: could not create worktree for {} (rc={}): {}", runId, t.id, wtAdd.rc(), wtAdd.out());
+                final Map<String, Object> failed = new LinkedHashMap<>();
+                failed.put("id", t.id);
+                failed.put("rc", 1);
+                failed.put("error", "could not create worktree for " + t.id + ": " + wtAdd.out());
+                failed.put("parallel_wave", waveIds);
+                recs.put(t.id, failed);
+                setupFailedTaskIds.add(t.id);
+                continue;
+            }
+            RunBenchSupport.clearStaleProgressLine(wt, t.id);
             deleteRecursive(homeT);
             copyTree(home, homeT);
             DockerService.dockerTools(homeT.toString());   // each HOME copy gets the shim + plugins too
@@ -1190,19 +1669,29 @@ public class RunBench {
         final Map<String, Throwable> errors = new ConcurrentHashMap<>();   // same race as recs above
         final List<Thread> threads = new ArrayList<>();
         for (PlanTask t : waveTasks) {
-            if (resumedTaskIds.contains(t.id)) continue;
+            if (resumedTaskIds.contains(t.id) || setupFailedTaskIds.contains(t.id)) continue;
             Thread th = new Thread(() -> {
                 try {
                     sem.acquire();
                     try {
-                        final var proxy = proxies.start(taskJournals.get(t.id), taskTokens, t.id, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+                        // #263: same override-before-the-proxy-is-sized reasoning as the sequential loop's own task call site
+                        final var taskOverride = taskOverride(cfg, t.id);
+                        final int effTaskWall = effectiveInt(taskOverride, "task_wall_sec", taskWall);
+                        final long effTaskTokens = effectiveLong(taskOverride, "task_tokens", taskTokens);
+                        final var proxy = proxies.start(taskJournals.get(t.id), effTaskTokens, t.id, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
                         Map<String, String> envT = RunBenchSupport.scrubbedEnv(Path.of(home + "-home-" + t.id).toString(), runId + "/" + t.id, (String) cfg.get("java_home"));   // the task's own HOME copy (R6)
+                        final Path wsT = Path.of(ws + "-" + t.id);
+                        final var judgeCheckpoint = buildJudgeCheckpoint(cfg, runId, wsT, rd, t.id, t.goal, effTaskWall, effTaskTokens, taskOverride);
                         Map<String, Object> rec;
                         try {
                             rec = sessionWithPolicy(cfg, runId, t.id, Packs.taskInstruction(t.id) + "\n\n" + packs.get(t.id),
-                                    taskWall, taskTokens, rd, Path.of(ws + "-" + t.id), taskJournals.get(t.id), proxy,
-                                    rd.resolve("packs/stable.md").toString(), null, envT);
+                                    effTaskWall, effTaskTokens, rd, wsT, taskJournals.get(t.id), proxy,
+                                    rd.resolve("packs/stable.md").toString(), null, envT, false, judgeCheckpoint);
                         } finally { proxy.stop(); }
+                        // #307: same reasoning as the sequential loop's own call site - everything
+                        // downstream (the manifest snapshot below, the wave merge) must see the
+                        // post-rescue state, not the exhausted one
+                        rescueStep(cfg, runId, t, rd, wsT, taskJournals.get(t.id), rec, taskOverride);
                         rec.put("parallel_wave", waveIds);
                         recs.put(t.id, rec);
                     } finally { sem.release(); }
@@ -1234,6 +1723,17 @@ public class RunBench {
         waveRec.put("seconds", Math.round((System.currentTimeMillis() - t0) / 100.0) / 10.0);
         waveRec.put("merges", new ArrayList<Map<String, Object>>());
         for (PlanTask t : waveTasks) {
+            if (setupFailedTaskIds.contains(t.id)) {
+                // #263: no worktree was ever created for this task - nothing to snapshot, merge, or
+                // clean up; its synthetic failure record (added in the setup loop above) still needs
+                // to land in manifest.tasks the same way every other task's record does below.
+                final Map<String, Object> rec = recs.get(t.id);
+                if (rec != null) {
+                    rec.put("title", t.title);
+                    ((List<Map<String, Object>>) manifest.get("tasks")).add(rec);
+                }
+                continue;
+            }
             final var wt = Path.of(ws + "-" + t.id);
             final boolean resumed = resumedTaskIds.contains(t.id);
             // R18: a resumed task's commit + tag already exist from a prior attempt (its worktree
@@ -1244,6 +1744,19 @@ public class RunBench {
             final String after = resumed ? RunBenchSupport.gitOut(ws, "rev-parse", "phase/" + t.id) : RunBenchSupport.snapshot(wt, "phase/" + t.id);
             ((Map<String, String>) manifest.get("snapshots")).put(t.id, after);
             snapshots.put(t.id, new String[]{pre, after});
+            if (!resumed && recs.get(t.id) != null) {
+                final var taskOverride = taskOverride(cfg, t.id);
+                final int effMaxTurns = effectiveInt(taskOverride, "max_turns",
+                        cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS);
+                // #291: wt (the task's OWN worktree), not ws (the shared, pre-merge main workspace,
+                // which doesn't get t.id's branch merged into it until the "git merge" call a few
+                // lines below this one runs) - logTaskAttempt() -> reportedStatus() scans
+                // docs/PROGRESS.md for this task's own self-reported status line, which only exists
+                // in wt at this point. Passing ws here always returned null, for every parallel-wave
+                // task, regardless of what it actually wrote.
+                logTaskAttempt(rd, wt, t.id, taskOverride, effectiveInt(taskOverride, "task_wall_sec", taskWall),
+                        effectiveLong(taskOverride, "task_tokens", taskTokens), effMaxTurns, recs.get(t.id));
+            }
             final DockerService.Sh m = DockerService.sh(600, "git", "-C", ws.toString(), "merge", "--no-ff", "--no-edit", "-m", "merge " + t.id, "task/" + t.id);
             final List<String> cs = new ArrayList<>();
             for (String f : DockerService.sh(20, "git", "-C", ws.toString(), "diff", "--name-only", "--diff-filter=U").out().split("\n"))
