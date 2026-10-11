@@ -76,6 +76,8 @@ public final class JobLiveState implements Serializable {
     private final Deque<RequestRow> recentRequests = new ArrayDeque<>();
     private long requestCount;
     private Long lastTokens;
+    private long totalCompletionTokens;
+    private long totalPromptTokens;
     private String logTail;
     // the run's declared task waves (RunBench writes execution_order.json before any task session
     // starts) - one entry per wave, each a list of task ids; empty until that one-shot event lands
@@ -242,15 +244,25 @@ public final class JobLiveState implements Serializable {
 
     /** Sums a request's completion tokens (when present - not every request does, e.g. errors) into
      *  its session's running total. Visible live, unlike wall time - a session's token spend is known
-     *  request by request, not just at the end. */
+     *  request by request, not just at the end. Also folds into totalCompletionTokens and
+     *  totalPromptTokens, the run-wide totals across every session seen so far - unlike
+     *  recentRequests/the sessions grid, neither of which is a reliable source for this (requests
+     *  are capped at MAX_RECENT_REQUESTS, and a session row only reflects requests attributed to it,
+     *  which this same guard clause below also requires). The two fields are accumulated
+     *  independently - completion_tokens and prompt_tokens come from the same usage block in
+     *  practice, but neither implies the other is present, so each is only added when it actually is. */
     private void accumulateTokens(final JsonNode data) {
         final var sessionId = Fmt.textOr(data.path("session_id"), null);
-        if (sessionId == null || sessionId.isBlank() || !data.path("completion_tokens").isNumber()) return;
+        if (sessionId == null || sessionId.isBlank()) return;
         final int i = currentRowIndex(sessionId);
         if (i < 0) return;
+        if (data.path("prompt_tokens").isNumber()) totalPromptTokens += data.path("prompt_tokens").asLong();
+        if (!data.path("completion_tokens").isNumber()) return;
         final var s = sessions.get(i);
-        final var total = tokenTotals.merge(sessionId, data.path("completion_tokens").asLong(), Long::sum);
+        final var tokens = data.path("completion_tokens").asLong();
+        final var total = tokenTotals.merge(sessionId, tokens, Long::sum);
         sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), total, s.prefillWallSec(), s.decodeWallSec(), s.ts(), s.name()));
+        totalCompletionTokens += tokens;
     }
 
     /** ttft_sec IS the prefill wall time for a request (the elapsed time before the first token
@@ -319,6 +331,21 @@ public final class JobLiveState implements Serializable {
 
     public synchronized Long lastTokens() {
         return lastTokens;
+    }
+
+    /** The run-wide total of generated (completion) tokens across every session seen so far - not
+     *  capped the way recentRequests/MAX_RECENT_REQUESTS is, so this stays accurate for the whole
+     *  life of the run, not just its most recent window. */
+    public synchronized long totalCompletionTokens() {
+        return totalCompletionTokens;
+    }
+
+    /** The run-wide total of prompt (prefill) tokens across every session seen so far - the
+     *  counterpart to totalCompletionTokens(). Typically dwarfs it: an uncompacted session resends
+     *  its whole growing context as the prompt on every turn, so this is dominated by re-sent
+     *  context, not new text the model actually read once. */
+    public synchronized long totalPromptTokens() {
+        return totalPromptTokens;
     }
 
     /** A snapshot copy — never the live deque. */

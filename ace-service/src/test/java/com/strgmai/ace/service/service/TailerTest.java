@@ -113,6 +113,7 @@ class TailerTest {
         assertNull(events.get(0).get("prefill_tok_per_sec"));
         assertNull(events.get(0).get("decode_tok_per_sec"));
         assertNull(events.get(0).get("completion_tokens"));
+        assertNull(events.get(0).get("prompt_tokens"));
     }
 
     /** The sessions grid's new "total tokens" column sums this per session - unlike
@@ -126,6 +127,18 @@ class TailerTest {
                         + "\"response\": {\"usage\": {\"completion_tokens\": 340}}}\n");
         final var events = new Tailer().poll(runDir).stream().filter(e -> "request".equals(e.get("type"))).toList();
         assertEquals(340L, events.get(0).get("completion_tokens"));
+    }
+
+    /** The job page's run-wide "total prompt tokens" figure sums this across every request, the
+     *  same way completion_tokens already feeds "total tokens generated". */
+    @Test
+    void promptTokensAreForwardedFromTheJournalIntoTheRequestEvent() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.writeString(runDir.resolve("interactions.jsonl"),
+                "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
+                        + "\"response\": {\"usage\": {\"prompt_tokens\": 12345}}}\n");
+        final var events = new Tailer().poll(runDir).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        assertEquals(12345L, events.get(0).get("prompt_tokens"));
     }
 
     /** RecordingProxy journals abort_reason alongside client_aborted (2026-09-25) so the requests

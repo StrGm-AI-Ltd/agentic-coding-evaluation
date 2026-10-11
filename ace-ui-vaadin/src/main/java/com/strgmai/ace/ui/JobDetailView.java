@@ -389,7 +389,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         ? "showing the most recent " + recent.size() + " of " + live.requestCount() + " requests"
                         : String.valueOf(live.requestCount());
         requestsLine.setText("requests: " + requestsSummary
-                + (live.lastTokens() == null ? "" : " · last completion tokens " + Fmt.count(live.lastTokens())));
+                + (live.lastTokens() == null ? "" : " · last completion tokens " + Fmt.count(live.lastTokens()))
+                + " · total tokens generated " + Fmt.count(live.totalCompletionTokens())
+                + " · total prompt tokens " + Fmt.count(live.totalPromptTokens()));
 
         requestsGrid.setVisible(!recent.isEmpty());
         requestsGrid.setItems(recent);

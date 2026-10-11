@@ -210,6 +210,9 @@ public final class Tailer {
                 // RESETS on a continuation's fresh proxy (given the REMAINING budget, not zero), so it
                 // undercounts a session that spans one; summing this instead is correct regardless.
                 e.put("completion_tokens", usage.path("completion_tokens").isNumber() ? usage.path("completion_tokens").asLong() : null);
+                // the request's own prompt (prefill) token count, for the run-wide "total prompt
+                // tokens" live figure - summed client-side the same way completion_tokens already is.
+                e.put("prompt_tokens", usage.path("prompt_tokens").isNumber() ? usage.path("prompt_tokens").asLong() : null);
                 events.add(e);
             } catch (Exception ex) { log.debug("could not parse journal line for the live view, skipping it: {}", ex.toString()); }
         }

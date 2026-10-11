@@ -468,6 +468,73 @@ class JobLiveStateTest {
         assertEquals(120L, state.sessions().get(0).totalTokens());
     }
 
+    /** totalCompletionTokens() is the run-wide counterpart to a single session's totalTokens() -
+     *  summed across every session seen so far, not just the one a given request belongs to. */
+    @Test
+    void totalCompletionTokensSumsAcrossEverySession() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "completion_tokens": 120}
+
+                event: session_started
+                data: {"session_id": "bbbbbbbb-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "bbbbbbbb-0000-0000-0000-000000000000", "completion_tokens": 340}
+
+                """).forEach(state::apply);
+        assertEquals(460L, state.totalCompletionTokens());
+    }
+
+    @Test
+    void aRequestWithNoSessionIdDoesNotCountTowardTheTotal() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: request
+                data: {"type": "request", "completion_tokens": 120}
+
+                """).forEach(state::apply);
+        assertEquals(0L, state.totalCompletionTokens());
+    }
+
+    /** totalPromptTokens() is accumulated independently of totalCompletionTokens() - a request
+     *  carries each field only when the underlying usage block actually has it. */
+    @Test
+    void totalPromptTokensSumsAcrossEverySession() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "prompt_tokens": 5000, "completion_tokens": 120}
+
+                event: session_started
+                data: {"session_id": "bbbbbbbb-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "bbbbbbbb-0000-0000-0000-000000000000", "prompt_tokens": 9000}
+
+                """).forEach(state::apply);
+        assertEquals(14000L, state.totalPromptTokens());
+        assertEquals(120L, state.totalCompletionTokens());
+    }
+
+    @Test
+    void aRequestWithNoSessionIdDoesNotCountTowardThePromptTotal() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: request
+                data: {"type": "request", "prompt_tokens": 5000}
+
+                """).forEach(state::apply);
+        assertEquals(0L, state.totalPromptTokens());
+    }
+
     /** ttft_sec IS the prefill wall time for a request; latency_sec - ttft_sec is the decode wall time
      *  for everything after the first token. Both are running sums across the session's own requests. */
     @Test
