@@ -164,4 +164,19 @@ class ReferenceAgentTest {
                     name + " resolved to an unexpected effort: " + effort);
         }
     }
+
+    /** #299-adjacent: the recording proxy's own proactive 400 refusal (RunBench's rescue step is
+     *  only rescue-eligible for THIS specific one, not any other client error) - same "our own
+     *  proxy, so the marker is its exact literal" reasoning isBudgetRefusal() already relies on,
+     *  mirrored for the context-window case. */
+    @Test
+    void isContextWindowRefusalMatchesOnlyThe400WithTheExactMarker() {
+        assertTrue(ReferenceAgent.isContextWindowRefusal(
+                new dev.langchain4j.exception.HttpException(400, com.strgmai.ace.service.proxy.RecordingProxy.CONTEXT_WINDOW_REFUSAL_MARKER + " (details)")));
+        assertFalse(ReferenceAgent.isContextWindowRefusal(
+                new dev.langchain4j.exception.HttpException(400, "some other, unrelated 400")), "a 400 alone means nothing without the marker");
+        assertFalse(ReferenceAgent.isContextWindowRefusal(
+                new dev.langchain4j.exception.HttpException(429, com.strgmai.ace.service.proxy.RecordingProxy.CONTEXT_WINDOW_REFUSAL_MARKER)), "wrong status code - this marker is only ever sent on a 400");
+        assertFalse(ReferenceAgent.isContextWindowRefusal(new RuntimeException("no HTTP status at all")));
+    }
 }

@@ -357,6 +357,10 @@ public class ReferenceAgent {
                 rc = 3; finish = "budget";
                 session.end(turns, toolErrors, compactions, finish);
                 return result(name, rc, t0, finish, turns, toolErrors, compactions, session, start);
+            } catch (ContextWindowExceeded e) {
+                rc = 4; finish = "context_window";
+                session.end(turns, toolErrors, compactions, finish);
+                return result(name, rc, t0, finish, turns, toolErrors, compactions, session, start);
             } catch (TransientError e) {
                 // rc=2 alone gives no way to tell auth failure/5xx/network drop apart after the
                 // fact - the real cause (e's cause carries the HTTP status per chatWithRetry) is
@@ -525,6 +529,7 @@ public class ReferenceAgent {
                 abortProxy.accept(e.getMessage() != null ? e.getMessage() : e.toString());
                 last = e;
                 if (isBudgetRefusal(e)) throw new BudgetExhausted(e);
+                if (isContextWindowRefusal(e)) throw new ContextWindowExceeded(e);
                 final Integer status = httpStatus(e);
                 boolean clientError = status != null ? status >= 400 && status < 500 && status != 429
                         : hasCause(e, dev.langchain4j.exception.NonRetriableException.class);
@@ -675,6 +680,19 @@ public class ReferenceAgent {
         return false;
     }
 
+    /** the recording proxy's own 400: it estimates the next request's prompt size BEFORE sending
+     *  it and refuses proactively rather than letting the model server fail on an overshoot however
+     *  it sees fit to (see RecordingProxy's own comment on that check) - same "our own proxy, so
+     *  the marker is its exact literal" reasoning isBudgetRefusal() above already applies, since a
+     *  plain 400 status alone means nothing on its own. */
+    static boolean isContextWindowRefusal(final Throwable e) {
+        final Integer status = httpStatus(e);
+        if (status != null && status != 400) return false;
+        for (Throwable t = e; t != null && t != t.getCause(); t = t.getCause())
+            if (t.getMessage() != null && t.getMessage().contains(com.strgmai.ace.service.proxy.RecordingProxy.CONTEXT_WINDOW_REFUSAL_MARKER)) return true;
+        return false;
+    }
+
     /** the HTTP status LangChain4j saw, when it kept one (HttpException anywhere in the cause chain) */
     static Integer httpStatus(final Throwable e) {
         for (Throwable t = e; t != null && t != t.getCause(); t = t.getCause())
@@ -698,5 +716,13 @@ public class ReferenceAgent {
     }
 
     static final class BudgetExhausted extends RuntimeException { BudgetExhausted(Throwable c) { super(c); } }
+    /** #299-adjacent: distinct from BudgetExhausted even though both are the harness's own proxy
+     *  proactively refusing a request rather than the model server failing - RunBench.shouldRescue()
+     *  treats both as rescue-eligible (a compacted reconnect fixes either: too much spent, or too
+     *  much accumulated history to fit), but they stay separate rc values/finish reasons so a
+     *  result still says WHICH one happened, same as this codebase's own convention of keeping
+     *  distinct failure reasons distinct everywhere else (rc=124 wall timeout vs rc=3 budget, "stop"
+     *  vs "tool_execution" finish reasons, ...). */
+    static final class ContextWindowExceeded extends RuntimeException { ContextWindowExceeded(Throwable c) { super(c); } }
     static final class TransientError extends RuntimeException { TransientError(Throwable c) { super(c); } }
 }

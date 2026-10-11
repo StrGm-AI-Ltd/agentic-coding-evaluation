@@ -648,14 +648,25 @@ class RunBenchTest {
     }
 
     @Test
-    void isJudgeTurnFiresOnlyEveryNthTurn() {
-        assertTrue(RunBench.isJudgeTurn(10, 10));
-        assertTrue(RunBench.isJudgeTurn(20, 10));
-        assertFalse(RunBench.isJudgeTurn(11, 10));
-        assertFalse(RunBench.isJudgeTurn(9, 10));
-        assertTrue(RunBench.isJudgeTurn(1, 1), "every turn when N is 1");
-        assertTrue(RunBench.isJudgeTurn(7, 0), "a hand-crafted 0 (from a restart override) must never divide by zero - treated as every turn");
-        assertTrue(RunBench.isJudgeTurn(7, -3), "a negative override is the same degenerate case as 0");
+    void dueForJudgeCheckFiresOnceTheIntervalHasElapsedSinceTheLastCheck() {
+        assertTrue(RunBench.dueForJudgeCheck(10, 0, 10), "exactly N turns since the last check (turn 0)");
+        assertFalse(RunBench.dueForJudgeCheck(9, 0, 10), "one turn short");
+        assertTrue(RunBench.dueForJudgeCheck(23, 13, 10), "N turns since the last check, not since turn 0 - #299's interval can shrink mid-task");
+        assertTrue(RunBench.dueForJudgeCheck(7, 0, 0), "a hand-crafted 0 (from a restart override) must never divide by zero - treated as every turn");
+        assertTrue(RunBench.dueForJudgeCheck(7, 0, -3), "a negative override is the same degenerate case as 0");
+    }
+
+    /** #299: the judge checks more often the longer a task stays off track, and recovers once it
+     *  reports on track again - symmetric (halve down / double up), not a hard snap back to
+     *  everyN on the first good verdict, to avoid flapping right at the boundary. */
+    @Test
+    void nextJudgeIntervalHalvesOnOffTrackAndDoublesBackOnTrackCappedAtEveryN() {
+        assertEquals(5, RunBench.nextJudgeInterval(10, 10, true));
+        assertEquals(2, RunBench.nextJudgeInterval(5, 10, true), "keeps halving while it stays off track");
+        assertEquals(1, RunBench.nextJudgeInterval(1, 10, true), "floors at 1 (every turn), never 0 or negative");
+        assertEquals(2, RunBench.nextJudgeInterval(1, 10, false), "doubles back up once on track again");
+        assertEquals(10, RunBench.nextJudgeInterval(8, 10, false), "capped at everyN - never looser than the operator's own configured cadence");
+        assertEquals(10, RunBench.nextJudgeInterval(10, 10, false), "already at everyN and on track - stays put");
     }
 
     /** #265: the run-level "judge" map, with a judge_enabled/judge_every_n_turns/judge_model
@@ -834,11 +845,14 @@ class RunBenchTest {
      *  exhausted, rc=3, 12/13 tests green, one assertion away) as the motivating case; must never
      *  fire for a wall timeout (124, nothing left to spend anyway), must stay off unless the run
      *  explicitly opted in, and must never apply to the `pi` harness (no in-process loop to compact/
-     *  reconnect, same reason Judge/FinalTurn are no-ops there). */
+     *  reconnect, same reason Judge/FinalTurn are no-ops there). #299-adjacent: rc=4
+     *  (ContextWindowExceeded) is rescue-eligible too - same "the harness's own proxy proactively
+     *  refused to continue" shape as rc=3, fixed by the same compacted reconnect. */
     @Test
-    void shouldRescueFiresOnlyForBudgetExhaustionWhenEnabledOnTheRefHarness() {
+    void shouldRescueFiresForBudgetExhaustionOrContextWindowOverflowWhenEnabledOnTheRefHarness() {
         final var enabled = Map.<String, Object>of("enabled", true);
         assertTrue(RunBench.shouldRescue(enabled, Map.of("rc", 3), "ref"), "budget exhausted, feature on, ref harness");
+        assertTrue(RunBench.shouldRescue(enabled, Map.of("rc", 4), "ref"), "context window exceeded - same rescue-eligible shape as budget exhaustion");
         assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 124), "ref"), "a wall timeout - nothing left to spend on a rescue");
         assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 0), "ref"), "already succeeded - nothing to rescue");
         assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 2), "ref"), "a transient infra failure, not a budget exhaustion");
@@ -848,5 +862,6 @@ class RunBenchTest {
         assertFalse(RunBench.shouldRescue(Map.of(), Map.of("rc", 3), "ref"), "no budget_rescue cfg at all - never null, never throws, never fires");
 
         assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 3), "pi"), "the pi harness has no in-process loop to compact/reconnect");
+        assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 4), "pi"), "same, for the context-window rc");
     }
 }

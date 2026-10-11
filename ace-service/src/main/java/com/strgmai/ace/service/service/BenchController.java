@@ -17,6 +17,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.nio.file.*;
 import java.util.*;
+import java.util.regex.Pattern;
 
 import static com.strgmai.ace.service.jooq.Tables.CHECK_RESULTS;
 import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
@@ -405,6 +406,15 @@ public class BenchController {
      *  fired, each file holding the exact prompt it saw and its recommendation. Turn order
      *  (ascending), unlike attempts/history above: these read as a timeline of one task's own
      *  progression, not a list of outcomes to compare. */
+    /** #307-adjacent, found live: judge/&lt;taskId&gt;[-&lt;attemptStamp&gt;]-turn&lt;N&gt;.md - the attempt
+     *  stamp (Judge.attemptStamp(), absent on files written before this fix existed) disambiguates
+     *  a restarted task's own checkpoints from an earlier, now-abandoned attempt's: the SAME turn
+     *  numbers would otherwise collide/coexist with no way to tell which attempt produced either
+     *  one, mixing stale and current comments on the same page with no visual distinction. Only
+     *  the LATEST attempt (by stamp - sorts correctly as a plain string, same convention #305
+     *  established) is ever shown; "" (the legacy, unstamped shape) sorts before any real
+     *  timestamp, so a task restarted after this fix shipped still correctly prefers its new,
+     *  stamped checkpoints over whatever pre-existing legacy ones happen to still be on disk. */
     @GetMapping("/api/jobs/{id}/tasks/{taskId}/judge")
     public List<Map<String, Object>> taskJudge(@PathVariable UUID id, @PathVariable String taskId) {
         final Map<String, Object> job = queue.get(id);
@@ -412,23 +422,29 @@ public class BenchController {
             final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
             final Path dir = base.resolve("judge");
             if (!Files.isDirectory(dir) || !isContainedEvenViaSymlinks(base, dir)) return List.of();
-            final String prefix = taskId + "-turn";
-            final List<Map<String, Object>> out = new ArrayList<>();
+            final Pattern pattern = Pattern.compile(Pattern.quote(taskId) + "-(?:(.+)-)?turn(\\d+)\\.md");
+            final Map<String, List<Path>> byAttempt = new LinkedHashMap<>();
             try (var stream = Files.list(dir)) {
                 for (final Path f : stream.toList()) {
-                    final String fname = f.getFileName().toString();
-                    if (!fname.startsWith(prefix) || !fname.endsWith(".md")) continue;
-                    final int turn;
-                    try { turn = Integer.parseInt(fname.substring(prefix.length(), fname.length() - ".md".length())); }
-                    catch (final NumberFormatException e) { continue; }
-                    final String content = Files.readString(f);
-                    final int promptIdx = content.indexOf("## Prompt");
-                    final int recIdx = content.indexOf("## Recommendation");
-                    final String prompt = promptIdx >= 0 && recIdx > promptIdx
-                            ? content.substring(promptIdx + "## Prompt".length(), recIdx).strip() : "";
-                    final String recommendation = recIdx >= 0 ? content.substring(recIdx + "## Recommendation".length()).strip() : content.strip();
-                    out.add(Map.of("turn", turn, "prompt", prompt, "recommendation", recommendation));
+                    final var m = pattern.matcher(f.getFileName().toString());
+                    if (!m.matches()) continue;
+                    byAttempt.computeIfAbsent(m.group(1) == null ? "" : m.group(1), k -> new ArrayList<>()).add(f);
                 }
+            }
+            if (byAttempt.isEmpty()) return List.of();
+            final String latest = byAttempt.keySet().stream().max(Comparator.naturalOrder()).orElseThrow();
+            final List<Map<String, Object>> out = new ArrayList<>();
+            for (final Path f : byAttempt.get(latest)) {
+                final var m = pattern.matcher(f.getFileName().toString());
+                m.matches();
+                final int turn = Integer.parseInt(m.group(2));
+                final String content = Files.readString(f);
+                final int promptIdx = content.indexOf("## Prompt");
+                final int recIdx = content.indexOf("## Recommendation");
+                final String prompt = promptIdx >= 0 && recIdx > promptIdx
+                        ? content.substring(promptIdx + "## Prompt".length(), recIdx).strip() : "";
+                final String recommendation = recIdx >= 0 ? content.substring(recIdx + "## Recommendation".length()).strip() : content.strip();
+                out.add(Map.of("turn", turn, "prompt", prompt, "recommendation", recommendation));
             }
             out.sort(Comparator.comparingInt(m -> (Integer) m.get("turn")));
             return out;
@@ -787,6 +803,47 @@ public class BenchController {
                 // stream end as "the job reached a terminal state" - silently calling complete()
                 // here on a genuine bug would make the UI think a still-running job had finished
                 log.warn("SSE stream for job {} failed unexpectedly", id, e);
+                emitter.completeWithError(e);
+            }
+        });
+        return emitter;
+    }
+
+    /** An operator-facing, plain-text peek into a task's own live coding session - see
+     *  TaskTranscript's own class javadoc for why this reads the session's raw JSONL directly
+     *  rather than reusing Judge's trajectory rendering (it would silently drop the model's own
+     *  thinking). Same SSE shape as events() above - a tail-capped catch-up batch on first
+     *  connecting (or whenever the task's own session file changes, e.g. a restart), small
+     *  incremental text after that - but scoped to one task's own session, not the whole job. */
+    private static final int TRANSCRIPT_TAIL_CAP_CHARS = 20_000;
+
+    @GetMapping("/api/jobs/{id}/tasks/{taskId}/transcript")
+    public SseEmitter taskTranscript(final @PathVariable UUID id, final @PathVariable String taskId) {
+        queue.get(id); // #296's own reasoning: a bad id must 404 before the stream ever opens
+        final var emitter = new SseEmitter(30 * 60 * 1000L);
+        final var transcript = new TaskTranscript();
+        SSE_EXECUTOR.submit(() -> {
+            try {
+                while (true) {
+                    final Map<String, Object> job = queue.get(id);
+                    final var sessionsDir = Path.of(props.resultsDir(), String.valueOf(job.get("run_id")), "sessions");
+                    final String block = transcript.poll(sessionsDir, taskId, TRANSCRIPT_TAIL_CAP_CHARS);
+                    // sent as a JSON object (never a raw multi-line String - every block here IS
+                    // multi-line) for the same reason every other event on this stream already is:
+                    // a raw string with embedded newlines breaks SSE's own line-oriented framing
+                    // (a spec-compliant multi-line "data:" payload needs one "data:" prefix PER
+                    // line, which this app's own SseParser does not reconstruct from a raw blob).
+                    // JSON-encoding sidesteps that entirely - a JSON string escapes \n, so the
+                    // whole object is always exactly one wire line.
+                    if (block != null) emitter.send(SseEmitter.event().name("line").data(Map.of("type", "line", "text", block)));
+                    emitter.send(SseEmitter.event().name("status").data(Map.of("status", job.get("status"))));
+                    if (RunSpec.TERMINAL.contains(job.get("status"))) { emitter.complete(); return; }
+                    Thread.sleep(2000);
+                }
+            } catch (java.io.IOException e) {
+                emitter.complete(); // a broken pipe from a closed dialog is normal, not a bug
+            } catch (Exception e) {
+                log.warn("task transcript SSE stream for job {} task {} failed unexpectedly", id, taskId, e);
                 emitter.completeWithError(e);
             }
         });

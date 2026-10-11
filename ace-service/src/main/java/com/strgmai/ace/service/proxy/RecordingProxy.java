@@ -113,6 +113,11 @@ public class RecordingProxy {
      *  is the only signal). Referenced directly from ReferenceAgent instead of being re-declared
      *  there as its own separate literal, so a future wording edit can't silently desync the two. */
     public static final String BUDGET_REFUSAL_MARKER = "ace-service: phase output-token budget exhausted";
+    /** #299-adjacent: the prefix ReferenceAgent.isContextWindowRefusal() matches on to recognize
+     *  THIS proxy's own 400 context-window refusal below (a 400 can otherwise mean anything, same
+     *  "the message body is the only signal" reasoning BUDGET_REFUSAL_MARKER already states) -
+     *  same reason to reference it directly rather than re-declare the literal there. */
+    public static final String CONTEXT_WINDOW_REFUSAL_MARKER = "ace-service: context window would be exceeded";
 
     public RecordingProxy(BenchProperties props) { this.props = props; }
 
@@ -237,8 +242,8 @@ public class RecordingProxy {
                 final long promptEstimate = promptTokensEstimate(r);
                 if (promptEstimate + maxTokens > overrides.contextWindow()) {
                     final byte[] out = json.writeValueAsBytes(json.createObjectNode().set("error",
-                            json.createObjectNode().put("message", "ace-service: max_tokens (" + maxTokens + ") + estimated prompt ("
-                                    + promptEstimate + ") would exceed the run's context window (" + overrides.contextWindow() + ")")
+                            json.createObjectNode().put("message", CONTEXT_WINDOW_REFUSAL_MARKER + " (max_tokens " + maxTokens
+                                    + " + estimated prompt " + promptEstimate + " > context window " + overrides.contextWindow() + ")")
                                     .put("type", "context_window_exceeded")));
                     reply(x, 400, out);
                     journalRecord(rec.put("status", 400).put("context_window_exceeded", true)

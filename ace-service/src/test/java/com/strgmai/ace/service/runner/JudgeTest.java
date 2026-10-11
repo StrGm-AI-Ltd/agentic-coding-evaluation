@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** #265: cap()/capTail() are the one thing standing between the judge's own prompt and becoming
@@ -41,6 +42,35 @@ class JudgeTest {
         assertTrue(kept.endsWith("56789"), "the tail (newest part) must survive: " + kept);
         assertTrue(kept.contains("older chars omitted"));
         assertEquals("short", Judge.capTail("short", 100));
+    }
+
+    /** #299: the leading verdict line RunBench's adaptive judge interval reads to decide whether
+     *  to check in sooner next time. Defaults to false (never tightens) on anything unparseable -
+     *  a false negative just keeps the current cadence, while a false positive could ratchet the
+     *  interval down on noise alone. */
+    @Test
+    void isOffTrackReadsTheLeadingVerdictLineCaseInsensitively() {
+        assertTrue(Judge.isOffTrack("OFF TRACK\n\nYou are stuck re-editing the same line."));
+        assertTrue(Judge.isOffTrack("off track - stop re-editing the same line."), "case-insensitive");
+        assertFalse(Judge.isOffTrack("ON TRACK\n\nKeep going, you're nearly done."));
+        assertFalse(Judge.isOffTrack("You're on track."), "no leading verdict line at all - never fabricate one");
+        assertFalse(Judge.isOffTrack(null), "a failed judge call (Judge.checkpoint()'s own try/catch) must not read as off-track");
+        assertFalse(Judge.isOffTrack(""), "blank - no verdict detected");
+    }
+
+    /** Found live: a restarted task's judge checkpoints used to collide with its earlier,
+     *  abandoned attempt's own files (same taskId-turn&lt;N&gt;.md either time) - this is the
+     *  disambiguator BenchController.taskJudge() groups by, so it must be a plain, lexicographically
+     *  sortable string (no colons - not filename-safe on every OS - and fixed-width so two
+     *  attempts always compare correctly regardless of how many fractional digits their own
+     *  millisecond happens to need). */
+    @Test
+    void attemptStampIsColonFreeFixedWidthAndSortsChronologically() {
+        final var earlier = Judge.attemptStamp(java.time.Instant.parse("2026-10-10T08:00:00.000Z").toEpochMilli());
+        final var later = Judge.attemptStamp(java.time.Instant.parse("2026-10-10T15:00:00.500Z").toEpochMilli());
+        assertFalse(earlier.contains(":"), "must be filename-safe on every OS, not just this one: " + earlier);
+        assertEquals(earlier.length(), later.length(), "fixed width, so string comparison is also chronological comparison");
+        assertTrue(earlier.compareTo(later) < 0, "an earlier attempt's stamp must sort before a later one's: " + earlier + " vs " + later);
     }
 
     @Test

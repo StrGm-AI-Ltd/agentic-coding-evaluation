@@ -16,8 +16,10 @@ import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -59,6 +61,11 @@ public class Judge {
             Read the task goal, its budget and elapsed time, what it has produced so far, and its
             recent trajectory. Answer in a SHORT plain-text paragraph (no tools, no file writes):
             is this still the most efficient path to the stated goal, and will it meet its deadline?
+
+            Begin your reply with exactly one line containing only ON TRACK or OFF TRACK - nothing
+            else on that line. The harness reads it to decide how soon to check in again (more
+            often while you're off track, back to normal once you're on track again), so it must
+            be the literal first line every time, even when you are confident.
 
             If it is on track, say that briefly and let it continue - no further comment needed
             beyond confirming that.
@@ -122,8 +129,9 @@ public class Judge {
                             JUDGE_MAX_TURNS, model, extraEnv, null, true));
             final String recommendation = AgentSession.lastAssistantText(res.sessionFile()).strip();
             Files.createDirectories(rd.resolve("judge"));
-            Files.writeString(rd.resolve("judge").resolve(taskId + "-turn" + turn + ".md"),
-                    "# Judge checkpoint: " + taskId + ", turn " + turn + "\n\n## Prompt\n\n" + prompt
+            final String stamp = attemptStamp(taskStartMs);
+            Files.writeString(rd.resolve("judge").resolve(taskId + "-" + stamp + "-turn" + turn + ".md"),
+                    "# Judge checkpoint: " + taskId + ", turn " + turn + " (attempt " + stamp + ")\n\n## Prompt\n\n" + prompt
                             + "\n\n## Recommendation\n\n" + (recommendation.isEmpty() ? "(none)" : recommendation) + "\n");
             return recommendation;
         } finally {
@@ -181,11 +189,45 @@ public class Judge {
         return out.toString();
     }
 
+    /** #299: the leading verdict line the system prompt now requires, for RunBench's own adaptive
+     *  judge interval (checks more often while off track, recovers once on track again). Defaults
+     *  to false - "no verdict detected" - for anything unparseable (null, missing, a model that
+     *  didn't comply): a false negative here just means the next check still happens at whatever
+     *  the current cadence already is, while a false positive could ratchet the interval down
+     *  toward every turn on noise alone - failing toward "don't tighten" is the safer direction. */
+    static boolean isOffTrack(final String recommendation) {
+        if (recommendation == null) return false;
+        final String firstLine = recommendation.strip().lines().findFirst().orElse("");
+        return firstLine.strip().toUpperCase(Locale.ROOT).startsWith("OFF TRACK");
+    }
+
     // package-private (not private): tested directly, same reasoning as RunBench's own
     // taskOverride/effectiveInt/shouldRetryOnLengthFinish - pure, worth testing in isolation
     // rather than only indirectly through a full checkpoint() call.
     static String cap(final String text, final int n) {
         return text == null ? "" : text.length() <= n ? text : text.substring(0, n) + "\n… [truncated at " + n + " chars]";
+    }
+
+    // AgentSession's own session-file naming truncates Instant.toString() to a fixed offset - fine
+    // there since Instant.now() landing on an exact whole second (toString() then omits the
+    // fractional part entirely, making that offset invalid) is astronomically unlikely. taskStartMs
+    // below comes from System.currentTimeMillis(), which has NO sub-millisecond component by
+    // construction - "falls on an exact second" is a 1-in-1000 event there, not a rounding-error
+    // footnote, so attemptStamp() formats explicitly instead of reusing that truncation trick.
+    private static final java.time.format.DateTimeFormatter ATTEMPT_STAMP_FORMAT =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH-mm-ss.SSS'Z'").withZone(java.time.ZoneOffset.UTC);
+
+    /** Found live: a restarted task's judge checkpoints (judge/&lt;taskId&gt;-turn&lt;N&gt;.md) used to
+     *  share the exact same filenames as its earlier, now-abandoned attempt's - same turn numbers,
+     *  no way to tell which attempt a file actually belongs to, so the judge page could show a mix
+     *  of stale and current comments with no visual distinction. taskStartMs (already threaded
+     *  into every checkpoint call, for elapsedSec) is this attempt's own start time - a natural,
+     *  already-available, colon-free, FIXED-WIDTH (always exactly 3 fractional digits) stamp, so
+     *  it sorts correctly as a plain string regardless of whether this exact millisecond happens
+     *  to be a whole second. BenchController.taskJudge() groups by this and only ever shows the
+     *  LATEST attempt. */
+    static String attemptStamp(final long taskStartMs) {
+        return ATTEMPT_STAMP_FORMAT.format(Instant.ofEpochMilli(taskStartMs));
     }
 
     /** keep the NEWEST part, same reasoning Packs.capTail already applies to PROGRESS.md - the

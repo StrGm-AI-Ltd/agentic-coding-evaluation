@@ -313,8 +313,21 @@ public class ServiceClient implements Serializable {
      * aborts the connection — that is the page's detach path.
      */
     public void streamJobEvents(final String jobId, final Consumer<SseEvent> onEvent) throws IOException, InterruptedException {
+        streamSse(baseUrl + "/api/jobs/" + jobId + "/events", onEvent);
+    }
+
+    /**
+     * Blocking consumption of a task's own live transcript stream
+     * (/api/jobs/{id}/tasks/{taskId}/transcript) - the operator-facing "Live" tab's data
+     * source. Same shape/semantics as {@link #streamJobEvents}, just scoped to one task.
+     */
+    public void streamTaskTranscript(final String jobId, final String taskId, final Consumer<SseEvent> onEvent) throws IOException, InterruptedException {
+        streamSse(baseUrl + "/api/jobs/" + jobId + "/tasks/" + encodeSegment(taskId) + "/transcript", onEvent);
+    }
+
+    private void streamSse(final String url, final Consumer<SseEvent> onEvent) throws IOException, InterruptedException {
         final var request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/api/jobs/" + jobId + "/events"))
+                .uri(URI.create(url))
                 .header("Accept", "text/event-stream")
                 .GET()
                 .build();

@@ -638,22 +638,31 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var judgeBody = new Div();
         judgeBody.getStyle().set("overflow", "auto");
         judgeBody.setVisible(false);
+        // the operator-facing live transcript - see openTaskTranscriptTab() below for why this
+        // is its own method rather than inlined like the bodies above (its content keeps
+        // growing from a background thread for as long as the dialog stays open, unlike every
+        // other tab here which is just rebuilt wholesale on each poll tick).
+        final var transcriptBody = new Div();
+        transcriptBody.getStyle().set("overflow", "auto");
+        transcriptBody.setVisible(false);
 
         final var promptTab = new com.vaadin.flow.component.tabs.Tab("Prompt");
         final var changesTab = new com.vaadin.flow.component.tabs.Tab("Changes");
         final var restartTab = new com.vaadin.flow.component.tabs.Tab("Restart");
         final var historyTab = new com.vaadin.flow.component.tabs.Tab("History");
         final var judgeTab = new com.vaadin.flow.component.tabs.Tab("Judge");
-        final var tabs = new com.vaadin.flow.component.tabs.Tabs(promptTab, changesTab, restartTab, historyTab, judgeTab);
+        final var transcriptTab = new com.vaadin.flow.component.tabs.Tab("Live");
+        final var tabs = new com.vaadin.flow.component.tabs.Tabs(promptTab, changesTab, restartTab, historyTab, judgeTab, transcriptTab);
         tabs.addSelectedChangeListener(e -> {
             promptBody.setVisible(tabs.getSelectedTab() == promptTab);
             diffBody.setVisible(tabs.getSelectedTab() == changesTab);
             restartBody.setVisible(tabs.getSelectedTab() == restartTab);
             historyBody.setVisible(tabs.getSelectedTab() == historyTab);
             judgeBody.setVisible(tabs.getSelectedTab() == judgeTab);
+            transcriptBody.setVisible(tabs.getSelectedTab() == transcriptTab);
         });
 
-        final var content = new VerticalLayout(tabs, promptBody, diffBody, restartBody, historyBody, judgeBody);
+        final var content = new VerticalLayout(tabs, promptBody, diffBody, restartBody, historyBody, judgeBody, transcriptBody);
         content.setPadding(false);
         content.setSpacing(false);
         content.setSizeFull();
@@ -796,9 +805,62 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             }
         });
         buildRestartTab(task, dialog, restartBody);
+        openTaskTranscriptTab(task, dialog, transcriptBody);
         dialog.open();
         loadAll.run();
         getUI().ifPresent(ui -> pollReg[0] = ui.addPollListener(e -> loadAll.run()));
+    }
+
+    /** The "Live" tab: a plain-text, operator-facing peek into the task's own coding session -
+     *  what it's thinking, saying, and calling tools to do - streamed from
+     *  /jobs/{id}/tasks/{taskId}/transcript (TaskTranscript on the server side). Unlike every
+     *  other tab in this dialog, its content arrives from a background SSE thread for as long as
+     *  the dialog stays open, not from the page's own 2s poll cycle - same push mechanism the
+     *  main page's own ensureSse()/JobEventLoop already use (this app runs with @Push enabled),
+     *  just scoped to one task's dialog instead of the whole page. Capped client-side too
+     *  (CLIENT_CAP_CHARS) - the server's own initial catch-up batch is already tail-capped, but a
+     *  dialog left open for hours would otherwise still grow its own buffer unboundedly. */
+    private static final int TRANSCRIPT_CLIENT_CAP_CHARS = 40_000;
+
+    private void openTaskTranscriptTab(final Api.PlanTask task, final com.vaadin.flow.component.dialog.Dialog dialog, final Div transcriptBody) {
+        final var buffer = new StringBuilder();
+        final var stopped = new java.util.concurrent.atomic.AtomicBoolean(false);
+        transcriptBody.removeAll();
+        transcriptBody.add(Panels.mono("(waiting for the task's own session to start...)"));
+
+        final java.util.function.Consumer<SseEvent> onEvent = event -> {
+            if (!"line".equals(event.payloadType())) return;
+            final String text = event.data().path("text").asText("");
+            if (text.isBlank()) return;
+            if (!buffer.isEmpty()) buffer.append("\n\n");
+            buffer.append(text);
+            if (buffer.length() > TRANSCRIPT_CLIENT_CAP_CHARS) buffer.delete(0, buffer.length() - TRANSCRIPT_CLIENT_CAP_CHARS);
+            transcriptBody.removeAll();
+            transcriptBody.add(Panels.mono(buffer.toString()));
+            transcriptBody.getElement().executeJs("this.scrollTop = this.scrollHeight");
+        };
+        final Runnable onLost = () -> transcriptBody.add(Panels.error("Live connection lost - reopen this dialog to retry."));
+
+        // #310: captured here, on the UI thread (this method only ever runs on it) - the loop's own
+        // callbacks run on its background thread, where a plain getUI() call would read Vaadin's
+        // internal attach state without the session lock
+        final var ui = getUI().orElse(null);
+        if (ui == null) return; // not attached - nothing to stream into
+        final var loop = new TaskTranscriptLoop(client, jobId, task.id(), stopped::get,
+                event -> ui.access(() -> onEvent.accept(event)),
+                () -> ui.access(onLost::run));
+        final var thread = new Thread(loop, "job-" + jobId + "-task-" + task.id() + "-transcript");
+        thread.setDaemon(true);
+        thread.start();
+        // #307: stopped on EITHER the dialog's own explicit close OR the whole view detaching
+        // (navigation away, session/UI teardown) - the opened-change listener alone missed the
+        // second case entirely, since a Dialog's overlay isn't torn down just because the view
+        // that opened it navigates away, same reasoning the view's own stopSse() already applies
+        // to the page-level SSE loop via addDetachListener. #311: an AtomicBoolean, not a plain
+        // boolean[] - this flag is written here on the UI thread and read on the loop's own
+        // background thread, with no other synchronization between the two.
+        final var detachReg = addDetachListener(e -> stopped.set(true));
+        dialog.addOpenedChangeListener(e -> { if (!e.isOpened()) { stopped.set(true); detachReg.remove(); } });
     }
 
     /** #263: a static form (built ONCE, never rebuilt by the polling loop above - unlike

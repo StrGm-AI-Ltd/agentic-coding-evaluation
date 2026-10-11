@@ -59,12 +59,27 @@ class PacksTest {
      *  mirroring handoffInstructionTellsItNotToReVerifyWhatItAlreadyKnows() above. */
     @Test
     void rescueInstructionNamesTheCurrentFailureAndSaysNotToReExplore() {
-        final String instr = Packs.rescueInstruction("T13", "`gradle test` run by the harness: RED — 13 tests, 1 failed, rc=[1]");
+        final String instr = Packs.rescueInstruction("T13", "ran out of its own token budget",
+                "`gradle test` run by the harness: RED — 13 tests, 1 failed, rc=[1]");
         assertTrue(instr.contains("T13"));
         assertTrue(instr.contains("13 tests, 1 failed"), "the exact fresh verification output must appear verbatim, not paraphrased");
         assertTrue(instr.toLowerCase().contains("do not re-read"));
         assertTrue(instr.toLowerCase().contains("do not restart the approach"));
         assertTrue(instr.contains("docs/PROGRESS.md"), "an honest escape hatch if it genuinely cannot finish either");
+    }
+
+    /** #299-adjacent: the instruction must name the REAL reason the previous session ended -
+     *  "ran out of budget" would be flatly wrong for a context-window overflow, a different
+     *  problem (too much accumulated history, not too much spent) the agent would otherwise have
+     *  no way to know actually happened. */
+    @Test
+    void rescueInstructionReflectsWhicheverReasonItWasGiven() {
+        final String contextWindow = Packs.rescueInstruction("T13", "ran out of context window space (its own conversation history grew too large to fit)", "verified");
+        assertTrue(contextWindow.contains("ran out of context window space"));
+        assertFalse(contextWindow.contains("ran out of its own token budget"));
+
+        final String budget = Packs.rescueInstruction("T13", "ran out of its own token budget", "verified");
+        assertTrue(budget.contains("ran out of its own token budget"));
     }
 
     /** #304, found live: taskPack()'s own handoff section used to take whichever notes fit a total
@@ -84,6 +99,31 @@ class PacksTest {
         final var handoffs = List.of(new String[]{"T1", "T1's note"}, new String[]{"T2", "T2's note"});
         assertSame(handoffs, Packs.relevantHandoffs(handoffs, null), "no deps (e.g. the synthetic INTEGRATION task) - see everything");
         assertSame(handoffs, Packs.relevantHandoffs(handoffs, List.of()));
+    }
+
+    /** #309, found live: relevantHandoffs() falling back to the FULL list for a no-deps task
+     *  (e.g. INTEGRATION, which runs last) used to feed taskPack()'s handoff section an
+     *  unbounded sum once handoff_total was removed as part of #304 - each note still capped
+     *  individually, but nothing capped how many of them landed in the pack at once. */
+    @Test
+    void handoffBlocksCapsTheirTotalSizeEvenWhenEveryIndividualNoteFitsItsOwnCap() {
+        final var huge = "x".repeat(Packs.CAPS.get("handoff_each")); // one note, already at its own individual cap
+        final var handoffs = List.of(
+                new String[]{"T1", huge}, new String[]{"T2", huge}, new String[]{"T3", huge},
+                new String[]{"T4", huge}, new String[]{"T5", huge}); // 5 * handoff_each (4000) = 20000 > handoff_total (12000)
+        final var blocks = Packs.handoffBlocks(handoffs);
+        assertTrue(blocks.length() < 5 * Packs.CAPS.get("handoff_each"), "the sum must be bounded, not just each individual note");
+        assertTrue(blocks.contains("more handoffs omitted by the handoff cap"), "an omitted note must say so, not just silently vanish");
+        assertFalse(blocks.contains("Handoff from T5"), "T5 (added last, so first to exceed the cap) must not appear at all");
+    }
+
+    @Test
+    void handoffBlocksIncludesEveryNoteWhenTheirTotalFitsTheCap() {
+        final var handoffs = List.of(new String[]{"T1", "short note"}, new String[]{"T2", "another short note"});
+        final var blocks = Packs.handoffBlocks(handoffs);
+        assertTrue(blocks.contains("Handoff from T1") && blocks.contains("short note"));
+        assertTrue(blocks.contains("Handoff from T2") && blocks.contains("another short note"));
+        assertFalse(blocks.contains("omitted"));
     }
 
     @Test

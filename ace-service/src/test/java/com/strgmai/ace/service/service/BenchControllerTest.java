@@ -618,6 +618,72 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.finished").value(false));
     }
 
+    /** Found live: a restarted task's judge checkpoints used to share the exact same filenames as
+     *  its earlier, abandoned attempt's (judge/T13-turn10.md, both times) - the page showed a mix
+     *  of stale and current comments with no way to tell them apart. Two attempt stamps here,
+     *  written out of chronological order on disk, to confirm the LATER one wins regardless of
+     *  write order (same reasoning as Tailer's own filename-sort fix). */
+    @Test
+    void taskJudgeShowsOnlyTheLatestAttemptsCheckpoints() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var judgeDir = resultsDir.resolve("run-1/judge");
+        Files.createDirectories(judgeDir);
+        Files.writeString(judgeDir.resolve("T13-2026-10-10T08-00-00.000Z-turn10.md"),
+                "# Judge checkpoint: T13, turn 10 (attempt 2026-10-10T08-00-00.000Z)\n\n"
+                        + "## Prompt\n\nold prompt\n\n## Recommendation\n\nstale, from the abandoned attempt\n");
+        Files.writeString(judgeDir.resolve("T13-2026-10-10T15-00-00.000Z-turn10.md"),
+                "# Judge checkpoint: T13, turn 10 (attempt 2026-10-10T15-00-00.000Z)\n\n"
+                        + "## Prompt\n\nnew prompt\n\n## Recommendation\n\ncurrent, from the restarted attempt\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T13/judge"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].turn").value(10))
+                .andExpect(jsonPath("$[0].recommendation").value("current, from the restarted attempt"));
+    }
+
+    /** Backward compatibility: a judge file written before this fix existed has no attempt stamp
+     *  at all (judge/T13-turn5.md) - it must still be read, not silently become invisible. */
+    @Test
+    void taskJudgeStillReadsLegacyUnstampedCheckpointFiles() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var judgeDir = resultsDir.resolve("run-1/judge");
+        Files.createDirectories(judgeDir);
+        Files.writeString(judgeDir.resolve("T13-turn5.md"), "# Judge checkpoint: T13, turn 5\n\n"
+                + "## Prompt\n\np\n\n## Recommendation\n\nlegacy, unstamped\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T13/judge"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].recommendation").value("legacy, unstamped"));
+    }
+
+    /** A legacy unstamped file and a NEW stamped attempt can coexist on disk (a task restarted
+     *  right after this fix shipped) - the stamped one must still win, since "" (no stamp) sorts
+     *  before any real timestamp. */
+    @Test
+    void taskJudgePrefersAStampedAttemptOverALegacyUnstampedOne() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var judgeDir = resultsDir.resolve("run-1/judge");
+        Files.createDirectories(judgeDir);
+        Files.writeString(judgeDir.resolve("T13-turn5.md"), "# Judge checkpoint: T13, turn 5\n\n"
+                + "## Prompt\n\np\n\n## Recommendation\n\nlegacy, unstamped\n");
+        Files.writeString(judgeDir.resolve("T13-2026-10-10T15-00-00.000Z-turn5.md"),
+                "# Judge checkpoint: T13, turn 5 (attempt 2026-10-10T15-00-00.000Z)\n\n"
+                        + "## Prompt\n\np\n\n## Recommendation\n\ncurrent, stamped\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T13/judge"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].recommendation").value("current, stamped"));
+    }
+
     @Test
     void restartTaskRequiresAPausedJob() throws Exception {
         when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "running"));

@@ -28,7 +28,7 @@ public final class Packs {
     static final Map<String, Integer> BASE_CAPS = new LinkedHashMap<>(Map.ofEntries(
             Map.entry("contract", 12000), Map.entry("plan", 4000), Map.entry("task", 2500), Map.entry("iface_file", 6000),
             Map.entry("iface_total", 14000), Map.entry("tree", 120), Map.entry("diffstat", 40), Map.entry("test_tail", 40),
-            Map.entry("progress", 3000), Map.entry("handoff_each", 4000),
+            Map.entry("progress", 3000), Map.entry("handoff_each", 4000), Map.entry("handoff_total", 12000),
             Map.entry("transcript_head", 24000)));
     public static final Map<String, Integer> CAPS = new LinkedHashMap<>();
     static { setScale(1.0, Map.of()); }
@@ -245,6 +245,32 @@ public final class Packs {
         return deps == null || deps.isEmpty() ? handoffs : handoffs.stream().filter(h -> deps.contains(h[0])).toList();
     }
 
+    /** #304: relevantHandoffs() scopes this down to the task's own direct deps - typically a
+     *  handful of notes, not the whole run's worth - so the total cap below rarely bites in that
+     *  case. But relevantHandoffs() falls back to the FULL, unfiltered list for a task with no
+     *  declared deps at all (e.g. the synthetic INTEGRATION task) - found live (#309): with
+     *  handoff_total removed entirely, INTEGRATION (which runs last, after every other task has
+     *  already left a note) got every note ever recorded, each capped individually
+     *  (handoff_each) but with no bound on their sum. Same running-total/break-with-omitted-
+     *  marker shape dependencyInterfaces()'s own iface_total cap already uses. Extracted (package-
+     *  private, tested directly) rather than only reachable through the full taskPack() call,
+     *  same reasoning this file's other pure helpers already follow. */
+    static String handoffBlocks(final List<String[]> relevant) {
+        final var blocks = new StringBuilder();
+        int total = 0;
+        for (int i = 0; i < relevant.size(); i++) {
+            final String[] h = relevant.get(i);
+            final String block = "### Handoff from " + h[0] + "\n" + cap(h[1], CAPS.get("handoff_each")) + "\n";
+            if (total + block.length() > CAPS.get("handoff_total")) {
+                blocks.append("… [").append(relevant.size() - i).append(" more handoffs omitted by the handoff cap]");
+                break;
+            }
+            blocks.append(block);
+            total += block.length();
+        }
+        return blocks.toString();
+    }
+
     /** the per-task pack: entry, dependency interfaces, tree, parallel-with notes, merge conflicts,
      *  previous task's diffstat + harness verification + last test run, handoffs, PROGRESS.md tail. */
     public static String taskPack(Path ws, PlanTask t, List<PlanTask> tasks, Map<String, String[]> snapshots, Set<String> done,
@@ -276,14 +302,8 @@ public final class Packs {
             if (!lt[1].isBlank()) parts.add("## Last test/build run the agent made in " + prevTask + " (" + lt[0] + ")\n```\n" + lt[1] + "\n```");
         } else if (verified != null) parts.add("## Harness verification\n" + verified);
         if (handoffs != null && !handoffs.isEmpty()) {
-            // #304: relevantHandoffs() already scopes this down to the task's own direct deps -
-            // typically a handful of notes, not the whole run's worth - so there is no longer a
-            // "the first few whole notes starve out the rest" risk worth capping the TOTAL against;
-            // each note is still capped individually (handoff_each).
-            final List<String[]> relevant = relevantHandoffs(handoffs, t.deps);
-            final var blocks = new StringBuilder();
-            for (String[] h : relevant) blocks.append("### Handoff from ").append(h[0]).append('\n').append(cap(h[1], CAPS.get("handoff_each"))).append('\n');
-            if (!blocks.isEmpty()) parts.add("## Notes left by earlier tasks\n" + blocks);
+            final String blocks = handoffBlocks(relevantHandoffs(handoffs, t.deps));
+            if (!blocks.isBlank()) parts.add("## Notes left by earlier tasks\n" + blocks);
         }
         final Path pp = ws.resolve("docs/PROGRESS.md");
         if (Files.exists(pp)) { try { parts.add("## docs/PROGRESS.md\n" + capTail(Files.readString(pp), CAPS.get("progress"))); } catch (IOException e) { log.debug("could not read {} for the pack: {}", pp, e.toString()); } }
@@ -365,8 +385,8 @@ public final class Packs {
     // the model's own last tool call before running out of budget was almost certainly not "run the
     // tests", so nothing in its own trajectory reliably surfaces this on its own - and tells it not
     // to re-explore, mirroring handoffInstruction()'s own "you already have everything you need".
-    public static String rescueInstruction(final String id, final String verificationSummary) {
-        return "Your previous session on " + id + " ran out of its own token budget before finishing. You now have a new, separate "
+    public static String rescueInstruction(final String id, final String reason, final String verificationSummary) {
+        return "Your previous session on " + id + " " + reason + " before finishing. You now have a new, separate "
                 + "budget for this session specifically to close the gap - do not re-read files you already know, do not re-derive "
                 + "context you already have, do not restart the approach from scratch.\n\n"
                 + "The harness just ran the test suite again. Current state:\n" + verificationSummary + "\n\n"

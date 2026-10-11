@@ -200,24 +200,57 @@ public class RunBench {
         return out;
     }
 
-    /** #265: whether `turn` is due for a judge check - everyN<=1 means every turn (0/negative is
-     *  already rejected by RunSpec's own validation before this is ever built from a real run, but
-     *  a restart override is validated far more loosely, so this stays safe for any value &lt;=1
-     *  rather than risking a divide-by-zero on a hand-crafted 0). */
-    static boolean isJudgeTurn(final int turn, final int everyN) {
-        return everyN <= 1 || turn % everyN == 0;
+    /** #265: whether `turn` is due for a judge check, given how many turns have passed since the
+     *  last one and the CURRENT interval (which #299's adaptive logic below can shrink/grow over
+     *  a task's own lifetime - no longer a fixed everyN, so a stateless modulo check can't express
+     *  it). interval&lt;=0 means every turn (0/negative is already rejected by RunSpec's own
+     *  validation before this is ever built from a real run, but a restart override is validated
+     *  far more loosely, so this stays safe rather than risking a divide-by-zero on a hand-crafted
+     *  0 - there is no division here at all now, but the same degenerate input must still mean
+     *  "every turn", not "never"). */
+    static boolean dueForJudgeCheck(final int turn, final int lastCheckedTurn, final int interval) {
+        return interval <= 0 || turn - lastCheckedTurn >= interval;
+    }
+
+    /** #299: the next interval after a check - halved (floor 1) the moment the judge calls the
+     *  task off track, so a drifting session gets re-checked sooner and sooner the longer it
+     *  stays off track; doubled back up (capped at the run's own configured everyN - never looser
+     *  than what the operator actually asked for) once it reports on track again. Symmetric
+     *  recovery rather than snapping straight back to everyN on the first good verdict: the issue
+     *  itself only specifies the tightening direction, and a hard reset risks flapping (tighten,
+     *  reset, tighten, reset) if the agent's own trajectory oscillates right at the boundary. */
+    static int nextJudgeInterval(final int currentInterval, final int everyN, final boolean offTrack) {
+        return offTrack ? Math.max(1, currentInterval / 2) : Math.min(everyN, currentInterval * 2);
     }
 
     /** builds this task's own judge checkpoint - null when disabled, so ReferenceAgent.run() never
-     *  even calls into it (the callback itself decides the every-N-turns gating, not run()'s loop -
-     *  see JudgeCheckpoint's own javadoc). */
+     *  even calls into it (the callback itself decides the gating, not run()'s loop - see
+     *  JudgeCheckpoint's own javadoc). #299: the interval starts at the configured everyN and
+     *  adapts turn by turn via nextJudgeInterval() above, based on the verdict Judge.isOffTrack()
+     *  reads off each real check's own recommendation - skipped (interval left unchanged) on a
+     *  null recommendation, which means the judge call itself failed (Judge.checkpoint()'s own
+     *  try/catch), not that it found anything to report. */
     private ReferenceAgent.JudgeCheckpoint buildJudgeCheckpoint(final Map<String, Object> cfg, final String runId, final Path ws, final Path rd,
             final String taskId, final String goal, final long effWall, final long effTokens, final Map<String, Object> taskOverride) {
         final Map<String, Object> judgeCfg = effectiveJudgeCfg(cfg, taskOverride);
         if (!Boolean.TRUE.equals(judgeCfg.get("enabled"))) return null;
         final int everyN = judgeCfg.get("every_n_turns") instanceof Number n ? n.intValue() : 10;
         final ReferenceAgent.JudgeCheckpoint raw = judge.checkpoint(cfg, runId, ws, rd, proxies, taskId, goal, effWall, effTokens, System.currentTimeMillis(), judgeCfg);
-        return (turn, trajectory) -> isJudgeTurn(turn, everyN) ? raw.check(turn, trajectory) : null;
+        final int[] lastCheckedTurn = {0};
+        final int[] interval = {everyN};
+        return (turn, trajectory) -> {
+            if (!dueForJudgeCheck(turn, lastCheckedTurn[0], interval[0])) return null;
+            lastCheckedTurn[0] = turn;
+            final String recommendation = raw.check(turn, trajectory);
+            if (recommendation != null) {
+                final boolean offTrack = Judge.isOffTrack(recommendation);
+                final int next = nextJudgeInterval(interval[0], everyN, offTrack);
+                if (next != interval[0])
+                    log.info("run {}: judge interval for task {} {} {} -> {} turns", runId, taskId, offTrack ? "tightened" : "relaxed", interval[0], next);
+                interval[0] = next;
+            }
+            return recommendation;
+        };
     }
 
     /** #300/#302: the task's own in-session handoff ask - null when handoff_notes is off for this
@@ -1438,22 +1471,28 @@ public class RunBench {
 
     /** #307: whether a task's own final rc earns it a rescue attempt - extracted as a pure
      *  predicate (same reasoning as isJudgeTurn/shouldRetryOnLengthFinish above) since rescueStep()
-     *  itself is heavy orchestration with no direct test, same as handoffStep(). Budget-exhausted
-     *  (3) only, never a wall timeout (124, nothing left to spend) or any other rc; never when the
-     *  feature is off; never on the `pi` harness (no in-process loop to compact/reconnect).
+     *  itself is heavy orchestration with no direct test, same as handoffStep(). Only the two rc
+     *  values that mean "the harness's OWN proxy proactively refused to continue" - 3
+     *  (BudgetExhausted) and 4 (ContextWindowExceeded, #299-adjacent: found live that disabling
+     *  compaction leaves a long-running session permanently stuck the instant it hits the window,
+     *  since every later request would ALSO overflow it - a compacted reconnect is exactly the fix
+     *  either rc needs) - never a wall timeout (124, nothing left to spend) or any other rc; never
+     *  when the feature is off; never on the `pi` harness (no in-process loop to compact/reconnect).
      *  `rescueCfg` is the task's own EFFECTIVE config (effectiveRescueCfg()'s result), not the raw
      *  run-level map directly, so a restarted task can flip this independent of the run's own
      *  original choice. */
     static boolean shouldRescue(final Map<String, Object> rescueCfg, final Map<String, Object> rec, final String harness) {
-        return Boolean.TRUE.equals(rescueCfg.get("enabled")) && rec.get("rc") instanceof Integer rc && rc == 3
+        return Boolean.TRUE.equals(rescueCfg.get("enabled")) && rec.get("rc") instanceof Integer rc && (rc == 3 || rc == 4)
                 && !"pi".equals(harness);
     }
 
     /** #307: the budget-exhaustion rescue step - the second "fail recovery" mechanism alongside the
-     *  Judge (#265). When a task's own main session chain ends via rc=3 (BudgetExhausted - the
-     *  proxy refused further requests because the session's own token budget ran out; never a wall
-     *  timeout (124) and never a crash), give it ONE more dedicated session before accepting that
-     *  final state. Opt-in (cfg "budget_rescue"."enabled") - a real, visible, restart-tunable knob,
+     *  Judge (#265). When a task's own main session chain ends via rc=3 (BudgetExhausted) or rc=4
+     *  (ContextWindowExceeded) - the proxy proactively refused further requests, either because the
+     *  session's own token budget ran out or because its accumulated history grew too large to fit
+     *  the model's context window; never a wall timeout (124) and never a crash - give it ONE more
+     *  dedicated session before accepting that final state. Opt-in (cfg "budget_rescue"."enabled") -
+     *  a real, visible, restart-tunable knob,
      *  same philosophy as the Judge, never a silent default - and scoped to the `ref` harness only:
      *  PiAgent has no in-process turn loop and no concept of `continueSession`-time compaction to
      *  hook into, the same reason Judge/FinalTurn are PiAgent no-ops elsewhere in this file.
@@ -1482,6 +1521,12 @@ public class RunBench {
                              final Path journal, final Map<String, Object> rec, final Map<String, Object> taskOverride) throws Exception {
         final Map<String, Object> rescueCfg = effectiveRescueCfg(cfg, taskOverride);
         if (!shouldRescue(rescueCfg, rec, (String) cfg.get("harness"))) return;
+        // the instruction must name the REAL reason accurately - "ran out of budget" would be
+        // misleading for rc=4, a different problem (too much accumulated history, not too much
+        // spent) that the agent would otherwise have no way to know actually happened
+        final String reason = Integer.valueOf(4).equals(rec.get("rc"))
+                ? "ran out of context window space (its own conversation history grew too large to fit)"
+                : "ran out of its own token budget";
         final String verificationSummary = VerifyTask.verifyText((Map<String, Object>) rec.get("verification"));
         // 0 means unlimited (the system-wide "0 = no budget" convention)
         final long rescueTokens = rescueCfg.get("tokens") instanceof Number n ? n.longValue() : 0L;
@@ -1497,7 +1542,7 @@ public class RunBench {
             // 0 means unlimited (the system-wide "0 = no budget" convention)
             final int rescueWall = rescueCfg.get("wall_sec") instanceof Number w ? w.intValue() : 0;
             final ReferenceAgent.SessionResult h = RunBenchSupport.runBounded(rescueWall, t.id + "-rescue", rd.resolve("sessions"), sid, proxy.abort(),
-                    () -> agent.run(t.id + "-rescue", Packs.rescueInstruction(t.id, verificationSummary), rescueWall, rescueTokens,
+                    () -> agent.run(t.id + "-rescue", Packs.rescueInstruction(t.id, reason, verificationSummary), rescueWall, rescueTokens,
                             rd.resolve("sessions"), sid, true, rd.resolve("packs/stable.md").toString(), ws.toString(),
                             proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("model"),
                             (Map<String, String>) cfg.get("_agent_env"), null, false, null, keepRecentTurns));
