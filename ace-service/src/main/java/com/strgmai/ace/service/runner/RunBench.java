@@ -54,10 +54,11 @@ public class RunBench {
     private final Reviews reviews;
     private final ContextProbe probe;
     private final Judge judge;
+    private final Intervene intervene;
     private final ObjectMapper json = new ObjectMapper();
 
-    public RunBench(BenchProperties props, ReferenceAgent agent, PiAgent piAgent, RecordingProxyFactory proxies, RunOracle oracle, Reviews reviews, ContextProbe probe, Judge judge) {
-        this.props = props; this.agent = agent; this.piAgent = piAgent; this.proxies = proxies; this.oracle = oracle; this.reviews = reviews; this.probe = probe; this.judge = judge;
+    public RunBench(BenchProperties props, ReferenceAgent agent, PiAgent piAgent, RecordingProxyFactory proxies, RunOracle oracle, Reviews reviews, ContextProbe probe, Judge judge, Intervene intervene) {
+        this.props = props; this.agent = agent; this.piAgent = piAgent; this.proxies = proxies; this.oracle = oracle; this.reviews = reviews; this.probe = probe; this.judge = judge; this.intervene = intervene;
     }
 
     //todo phases should not be hardcoded
@@ -223,23 +224,27 @@ public class RunBench {
         return offTrack ? Math.max(1, currentInterval / 2) : Math.min(everyN, currentInterval * 2);
     }
 
-    /** builds this task's own judge checkpoint - null when disabled, so ReferenceAgent.run() never
-     *  even calls into it (the callback itself decides the gating, not run()'s loop - see
-     *  JudgeCheckpoint's own javadoc). #299: the interval starts at the configured everyN and
-     *  adapts turn by turn via nextJudgeInterval() above, based on the verdict Judge.isOffTrack()
-     *  reads off each real check's own recommendation - skipped (interval left unchanged) on a
-     *  null recommendation, which means the judge call itself failed (Judge.checkpoint()'s own
+    /** builds this task's own per-turn checkpoint - an operator's own mid-task intervention
+     *  (Intervene) ALWAYS takes priority and always gets checked, every turn, regardless of
+     *  whether this task's own judge is enabled; the judge logic below it only ever runs when
+     *  nothing is pending. #299: the interval starts at the configured everyN and adapts turn by
+     *  turn via nextJudgeInterval() above, based on the verdict Judge.isOffTrack() reads off each
+     *  real check's own recommendation - skipped (interval left unchanged) on a null
+     *  recommendation, which means the judge call itself failed (Judge.checkpoint()'s own
      *  try/catch), not that it found anything to report. */
     private ReferenceAgent.JudgeCheckpoint buildJudgeCheckpoint(final Map<String, Object> cfg, final String runId, final Path ws, final Path rd,
             final String taskId, final String goal, final long effWall, final long effTokens, final Map<String, Object> taskOverride) {
         final Map<String, Object> judgeCfg = effectiveJudgeCfg(cfg, taskOverride);
-        if (!Boolean.TRUE.equals(judgeCfg.get("enabled"))) return null;
+        final boolean judgeEnabled = Boolean.TRUE.equals(judgeCfg.get("enabled"));
         final int everyN = judgeCfg.get("every_n_turns") instanceof Number n ? n.intValue() : 10;
-        final ReferenceAgent.JudgeCheckpoint raw = judge.checkpoint(cfg, runId, ws, rd, proxies, taskId, goal, effWall, effTokens, System.currentTimeMillis(), judgeCfg);
+        final ReferenceAgent.JudgeCheckpoint raw = judgeEnabled
+                ? judge.checkpoint(cfg, runId, ws, rd, proxies, taskId, goal, effWall, effTokens, System.currentTimeMillis(), judgeCfg) : null;
         final int[] lastCheckedTurn = {0};
         final int[] interval = {everyN};
         return (turn, trajectory) -> {
-            if (!dueForJudgeCheck(turn, lastCheckedTurn[0], interval[0])) return null;
+            final String intervention = intervene.poll(runId, taskId);
+            if (intervention != null) return intervention;
+            if (raw == null || !dueForJudgeCheck(turn, lastCheckedTurn[0], interval[0])) return null;
             lastCheckedTurn[0] = turn;
             final String recommendation = raw.check(turn, trajectory);
             if (recommendation != null) {
@@ -1312,7 +1317,7 @@ public class RunBench {
                         try {
                             rec = sessionWithPolicy(cfg, runId, t.id, Packs.taskInstruction(t.id) + "\n\n" + tp,
                                     effTaskWall, effTaskTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null, false, judgeCheckpoint, handoffFinalTurn);
-                        } finally { proxy.stop(); }
+                        } finally { proxy.stop(); intervene.clear(runId, t.id); }
                         // #307: before anything downstream (the phase tag, logTaskAttempt, handoffStep)
                         // ever looks at this task's own final state - a successful rescue changes what
                         // that state actually is, so everything after this point must see it, not the
@@ -1732,7 +1737,7 @@ public class RunBench {
                             rec = sessionWithPolicy(cfg, runId, t.id, Packs.taskInstruction(t.id) + "\n\n" + packs.get(t.id),
                                     effTaskWall, effTaskTokens, rd, wsT, taskJournals.get(t.id), proxy,
                                     rd.resolve("packs/stable.md").toString(), null, envT, false, judgeCheckpoint);
-                        } finally { proxy.stop(); }
+                        } finally { proxy.stop(); intervene.clear(runId, t.id); }
                         // #307: same reasoning as the sequential loop's own call site - everything
                         // downstream (the manifest snapshot below, the wave merge) must see the
                         // post-rescue state, not the exhausted one

@@ -34,6 +34,16 @@ public final class Fmt {
         return (total / 3600) + "h" + String.format(Locale.ROOT, "%02d", (total % 3600) / 60) + "m";
     }
 
+    /** e.g. "3d 22h 32m" (the day component omitted when zero) - for a span that, unlike a single
+     *  session's own wall time, can run into multiple days: JobLiveState.totalActiveSeconds(). */
+    public static String daysHoursMinutes(final double totalSeconds) {
+        final var total = (long) totalSeconds;
+        final var days = total / 86400;
+        final var hours = (total % 86400) / 3600;
+        final var minutes = (total % 3600) / 60;
+        return (days > 0 ? days + "d " : "") + hours + "h " + minutes + "m";
+    }
+
     public static String count(final Long value) {
         return value == null ? "–" : String.format(Locale.ROOT, "%,d", value);
     }

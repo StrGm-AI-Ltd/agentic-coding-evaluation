@@ -418,6 +418,65 @@ class JobLiveStateTest {
         assertNull(state.sessions().get(0).wallSec());
     }
 
+    /** The run-wide counterpart to a single session's wallSec() - sums only time actually spent
+     *  inside a session, so the gap BETWEEN two sessions (a pause+redeploy, or just the harness
+     *  process being down) is never included. */
+    @Test
+    void totalActiveSecondsSumsEndedSessionsExcludingTheGapBetweenThem() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "2026-09-25T00:00:00Z"}
+
+                event: session_done
+                data: {"type": "session_done", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "finish": "stop", "ts": "2026-09-25T00:10:00Z"}
+
+                event: session_started
+                data: {"session_id": "bbbbbbbb-0000-0000-0000-000000000000", "ts": "2026-09-26T12:00:00Z"}
+
+                event: session_done
+                data: {"type": "session_done", "session_id": "bbbbbbbb-0000-0000-0000-000000000000", "finish": "stop", "ts": "2026-09-26T12:05:00Z"}
+
+                """).forEach(state::apply);
+        // 10m + 5m = 900s - NOT the ~1.5-day span between the two sessions' timestamps
+        assertEquals(900.0, state.totalActiveSeconds());
+    }
+
+    @Test
+    void totalActiveSecondsCountsAStillRunningSessionFromItsOwnStart() {
+        final var state = new JobLiveState();
+        final var start = java.time.OffsetDateTime.now().minusSeconds(30);
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "%s"}
+
+                """.formatted(start)).forEach(state::apply);
+        final var total = state.totalActiveSeconds();
+        assertTrue(total >= 29 && total < 60, "expected ~30s elapsed, got " + total);
+    }
+
+    /** An abandoned attempt (marked "interrupted", never got a real session_done) contributes
+     *  nothing - a known, documented minor undercount for that rare ungraceful-stop path, versus
+     *  the still-open retry alongside it which DOES count from its own start. */
+    @Test
+    void totalActiveSecondsDoesNotCountAnInterruptedSessionsPartialTime() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "2026-09-28T00:00:00Z"}
+
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "2026-09-28T00:10:00Z"}
+
+                event: session_done
+                data: {"type": "session_done", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "finish": "stop", "ts": "2026-09-28T00:15:00Z"}
+
+                """).forEach(state::apply);
+        // only the retry's own 5m counts - the first (interrupted) row's 10m never happened per any
+        // recorded wallSec
+        assertEquals(300.0, state.totalActiveSeconds());
+    }
+
     @Test
     void wallTimeIsNullWhenEitherTimestampIsMissing() {
         final var state = new JobLiveState();

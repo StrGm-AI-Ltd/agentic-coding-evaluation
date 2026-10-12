@@ -3,6 +3,7 @@ package com.strgmai.ace.service.service;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.metrics.StatsService;
 import com.strgmai.ace.service.pack.Packs;
+import com.strgmai.ace.service.runner.Intervene;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -55,6 +56,7 @@ class BenchControllerTest {
     private StatsService stats;
     private DSLContext dsl;
     private BenchProperties props;
+    private Intervene intervene;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -70,7 +72,8 @@ class BenchControllerTest {
         props = mock(BenchProperties.class);
         final Preflight preflight = mock(Preflight.class);
         final TreatmentPin pin = mock(TreatmentPin.class);
-        final var controller = new BenchController(dsl, queue, importer, experiments, stats, worker, props, preflight, pin);
+        intervene = new Intervene();
+        final var controller = new BenchController(dsl, queue, importer, experiments, stats, worker, props, preflight, pin, intervene);
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ApiExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter())
@@ -682,6 +685,27 @@ class BenchControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(1)))
                 .andExpect(jsonPath("$[0].recommendation").value("current, stamped"));
+    }
+
+    @Test
+    void interveneQueuesTheOperatorsTextForTheGivenTask() throws Exception {
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "running"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/intervene").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"text\": \"stop retrying X, do Y instead\"}"))
+                .andExpect(status().isOk());
+
+        final var delivered = intervene.poll("run-1", "T2");
+        assertTrue(delivered.contains("stop retrying X, do Y instead"));
+    }
+
+    @Test
+    void interveneRejectsBlankText() throws Exception {
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "running"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/intervene").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"text\": \"  \"}"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

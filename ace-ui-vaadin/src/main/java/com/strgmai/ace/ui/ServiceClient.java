@@ -192,6 +192,16 @@ public class ServiceClient implements Serializable {
                 });
     }
 
+    /** Sends an operator's own steering message for this task - queued, delivered at the agent's
+     *  own next turn boundary (see BenchController.intervene()/RunBench.buildJudgeCheckpoint()). */
+    public void sendIntervention(final String jobId, final String taskId, final String text) {
+        http.post().uri("/api/jobs/{id}/tasks/{taskId}/intervene", jobId, taskId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("text", text))
+                .retrieve()
+                .toBodilessEntity();
+    }
+
     /** #263: prepares a paused job to redo taskId (and every task after it) on its next resume -
      *  the caller still has to POST requeue() afterward, same split as pause()/requeue() already
      *  have server-side. */

@@ -97,6 +97,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     private final VerticalLayout liveSection = new VerticalLayout();
     private final Span plannedOrderLine = new Span();
     private final Span stepLine = new Span();
+    private final Span activeTimeLine = new Span();
     private final Span requestsLine = new Span();
     private final Div logTail = new Div();
     private final Span terminalNote = new Span("This job has finished; nothing more to stream.");
@@ -207,10 +208,11 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         liveSection.getStyle().set("margin-top", "16px");
         final var liveTitle = new H3("Live");
         liveTitle.getStyle().set("margin", "0 0 4px 0");
-        liveSection.add(liveTitle, plannedOrderLine, planGrid, stepLine, sessionsGrid, requestsLine, lostNotice, terminalNote,
-                requestsGrid, logTail);
+        liveSection.add(liveTitle, plannedOrderLine, planGrid, stepLine, activeTimeLine, sessionsGrid, requestsLine, lostNotice,
+                terminalNote, requestsGrid, logTail);
         plannedOrderLine.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.9em");
         stepLine.getStyle().set("font-weight", "600");
+        activeTimeLine.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.9em");
         lostNotice.getStyle().set("color", "var(--lumo-warning-text-color, orange)").set("font-size", "0.85em");
         terminalNote.getStyle().set("color", "var(--lumo-secondary-text-color)");
         logTail.getStyle().set("font-family", "ui-monospace, 'SF Mono', Menlo, monospace")
@@ -361,6 +363,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         terminalNote.setVisible(terminal);
         plannedOrderLine.setVisible(!terminal && !live.executionOrder().isEmpty());
         stepLine.setVisible(!terminal);
+        activeTimeLine.setVisible(!terminal);
         sessionsGrid.setVisible(!terminal);
         requestsLine.setVisible(!terminal);
 
@@ -380,6 +383,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             plannedOrderLine.setText("planned order: " + plannedOrderText(live.executionOrder()));
         }
         stepLine.setText("current step: " + (live.currentStep() == null ? "–" : live.currentStep()));
+        activeTimeLine.setText("active time (excludes paused/stopped periods): " + Fmt.daysHoursMinutes(live.totalActiveSeconds()));
         sessionsGrid.setItems(live.sessions());
         final var recent = live.recentRequests();
         // #109: recentRequests is capped (JobLiveState.MAX_RECENT_REQUESTS); say so once the total
@@ -645,8 +649,20 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         // growing from a background thread for as long as the dialog stays open, unlike every
         // other tab here which is just rebuilt wholesale on each poll tick).
         final var transcriptBody = new Div();
-        transcriptBody.getStyle().set("overflow", "auto");
+        // an explicit width, not just "auto": transcriptBody is a flex item of the content
+        // VerticalLayout below, which does not stretch its children to its own width by default -
+        // without this, a long unbroken line in the transcript (a file path, a JSON blob) has no
+        // definite containing width to wrap/scroll against, so it balloons transcriptBody AND the
+        // whole dialog outward instead of scrolling horizontally within its own box, same as a
+        // too-narrow interveneRow (below) would otherwise mis-size its own Send button row.
+        transcriptBody.getStyle().set("overflow", "auto").set("width", "100%").set("box-sizing", "border-box");
         transcriptBody.setVisible(false);
+        // a SIBLING of transcriptBody, never nested inside it - transcriptBody.removeAll() runs on
+        // every single incoming SSE line (see openTaskTranscriptTab()), which would wipe an input
+        // box (and any not-yet-sent, half-typed text) on every streaming update if it lived inside.
+        final var interveneRow = new Div();
+        interveneRow.getStyle().set("width", "100%").set("box-sizing", "border-box");
+        interveneRow.setVisible(false);
 
         final var promptTab = new com.vaadin.flow.component.tabs.Tab("Prompt");
         final var changesTab = new com.vaadin.flow.component.tabs.Tab("Changes");
@@ -662,9 +678,10 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             historyBody.setVisible(tabs.getSelectedTab() == historyTab);
             judgeBody.setVisible(tabs.getSelectedTab() == judgeTab);
             transcriptBody.setVisible(tabs.getSelectedTab() == transcriptTab);
+            interveneRow.setVisible(tabs.getSelectedTab() == transcriptTab);
         });
 
-        final var content = new VerticalLayout(tabs, promptBody, diffBody, restartBody, historyBody, judgeBody, transcriptBody);
+        final var content = new VerticalLayout(tabs, promptBody, diffBody, restartBody, historyBody, judgeBody, transcriptBody, interveneRow);
         content.setPadding(false);
         content.setSpacing(false);
         content.setSizeFull();
@@ -808,6 +825,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         });
         buildRestartTab(task, dialog, restartBody);
         openTaskTranscriptTab(task, dialog, transcriptBody);
+        buildInterveneRow(task, interveneRow);
         dialog.open();
         loadAll.run();
         getUI().ifPresent(ui -> pollReg[0] = ui.addPollListener(e -> loadAll.run()));
@@ -863,6 +881,44 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         // background thread, with no other synchronization between the two.
         final var detachReg = addDetachListener(e -> stopped.set(true));
         dialog.addOpenedChangeListener(e -> { if (!e.isOpened()) { stopped.set(true); detachReg.remove(); } });
+    }
+
+    /** The Live tab's own send box: lets an operator steer the task directly, through the exact
+     *  same per-turn mechanism the mid-task Judge already uses (ServiceClient.sendIntervention() -
+     *  BenchController.intervene() - RunBench.buildJudgeCheckpoint()'s own mailbox check), so it
+     *  reaches the agent at its own next turn boundary - whatever that message was, it's
+     *  delivered as a durable, timestamped entry in the task's own session transcript, visible
+     *  right here once it lands. A static form, built once - never rebuilt by this dialog's own
+     *  poll loop, same reasoning buildRestartTab()'s own javadoc gives for why ITS form is static
+     *  (rebuilding would wipe out whatever the operator is mid-typing). No check here that the
+     *  task is actually running: a message sent to one that isn't just sits unconsumed until
+     *  either it starts or this task's own next attempt clears it - a quiet no-op, not an error. */
+    private void buildInterveneRow(final Api.PlanTask task, final Div interveneRow) {
+        final var text = new com.vaadin.flow.component.textfield.TextArea();
+        text.setPlaceholder("Steer the agent directly - delivered as its next instruction and logged in its own session transcript.");
+        text.setMinHeight("70px");
+        final var send = new Button("Send", e -> {
+            final var value = text.getValue();
+            if (value == null || value.isBlank()) return;
+            try {
+                client.sendIntervention(jobId, task.id(), value);
+                text.clear();
+                Notification.show("Sent - delivered at the agent's next turn.", 4000, Notification.Position.BOTTOM_END);
+            } catch (final Exception ex) {
+                Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
+            }
+        });
+        final var row = new HorizontalLayout(text, send);
+        row.setWidthFull();
+        // flex-grow, not text.setWidthFull(): a plain width:100% on a flex item sets its flex-basis
+        // to 100% too, which fights the Send button for the same space and (depending on the
+        // layout's own cross-axis sizing) can leave text either too small or wide enough to force
+        // the whole row to overflow - flex-grow alone correctly claims exactly "the row's width
+        // minus the Send button's own natural width", with no fixed width to fight.
+        row.setFlexGrow(1, text);
+        row.getStyle().set("margin-top", "8px");
+        interveneRow.removeAll();
+        interveneRow.add(row);
     }
 
     /** #263: a static form (built ONCE, never rebuilt by the polling loop above - unlike

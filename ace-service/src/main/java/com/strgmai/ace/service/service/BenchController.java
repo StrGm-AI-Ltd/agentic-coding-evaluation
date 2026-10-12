@@ -8,6 +8,7 @@ import com.strgmai.ace.service.oracle.CheckId;
 import com.strgmai.ace.service.pack.Packs;
 import com.strgmai.ace.service.plan.PlanParser;
 import com.strgmai.ace.service.plan.PlanTask;
+import com.strgmai.ace.service.runner.Intervene;
 import org.jooq.DSLContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,12 +43,14 @@ public class BenchController {
 
     private final Preflight preflight;
     private final TreatmentPin pin;
+    private final Intervene intervene;
 
     public BenchController(DSLContext dsl, JobQueue queue, ImporterService importer, ExperimentsService experiments,
                            StatsService stats, WorkerService worker, BenchProperties props, Preflight preflight,
-                           TreatmentPin pin) {
+                           TreatmentPin pin, Intervene intervene) {
         this.dsl = dsl; this.queue = queue; this.importer = importer; this.experiments = experiments;
         this.stats = stats; this.worker = worker; this.props = props; this.preflight = preflight; this.pin = pin;
+        this.intervene = intervene;
     }
 
     @GetMapping("/api/preflight")
@@ -449,6 +452,20 @@ public class BenchController {
             out.sort(Comparator.comparingInt(m -> (Integer) m.get("turn")));
             return out;
         } catch (final Exception e) { return List.of(); }
+    }
+
+    /** An operator's own mid-task steering message - delivered through the exact same per-turn
+     *  hook Judge's own recommendations already use (see RunBench.buildJudgeCheckpoint()), just
+     *  operator-triggered instead of LLM-triggered, and independent of whether this task's own
+     *  judge is enabled. Queued, not applied synchronously: it reaches the agent at its own next
+     *  turn boundary, whenever that is - delivery (and the resulting durable log entry in the
+     *  task's own session) happens over there, not here. */
+    @PostMapping("/api/jobs/{id}/tasks/{taskId}/intervene")
+    public void intervene(@PathVariable UUID id, @PathVariable String taskId, @RequestBody Map<String, String> body) {
+        final Map<String, Object> job = queue.get(id);   // #296's own reasoning: a bad id must 404 before anything else
+        final String text = body.get("text");
+        if (text == null || text.isBlank()) throw new IllegalArgumentException("text must not be blank");
+        intervene.offer(String.valueOf(job.get("run_id")), taskId, text);
     }
 
     /** the task's prompt, progressively enriched. taskInstruction(id) is a fixed template (just a

@@ -4,6 +4,7 @@ import tools.jackson.databind.JsonNode;
 
 import java.io.Serializable;
 import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -323,6 +324,30 @@ public final class JobLiveState implements Serializable {
     /** A snapshot copy — never the live list. */
     public synchronized List<SessionRow> sessions() {
         return new ArrayList<>(sessions);
+    }
+
+    /** The run's total elapsed time EXCLUDING any period it spent paused/stopped - the sum of each
+     *  session's own wall-clock span (ended sessions via their recorded wallSec(); the one still
+     *  running, if any, via now-minus-its-own-start). Unlike "now minus the run's first session",
+     *  the gaps BETWEEN sessions (a pause+redeploy, or the harness process itself being down) are
+     *  never inside any session and so are never summed in - no separate pause/resume audit trail
+     *  exists to subtract explicitly (pause() never timestamps when it actually happened, only the
+     *  job's current started_at, which requeue() overwrites on every resume anyway). A session
+     *  abandoned mid-flight by an ungraceful stop (marked "interrupted", not a normal "end") never
+     *  got a wallSec recorded for it either - its own partial, truly-active time before the abort is
+     *  not counted, a known minor undercount for that rare path (an in-process pause() stops the
+     *  worker cleanly; this only bites the harness process itself dying outright). */
+    public synchronized double totalActiveSeconds() {
+        var total = 0.0;
+        for (final var s : sessions) {
+            if (s.endedStage() != null) {
+                if (s.wallSec() != null) total += s.wallSec();
+            } else {
+                final var start = Fmt.parseTime(s.ts());
+                if (start != null) total += Duration.between(start, OffsetDateTime.now()).getSeconds();
+            }
+        }
+        return total;
     }
 
     public synchronized long requestCount() {

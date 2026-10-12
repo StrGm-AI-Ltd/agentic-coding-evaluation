@@ -58,7 +58,7 @@ class RunBenchTest {
 
     private static RunBench runBench(BenchProperties props) {
         return new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class),
-                mock(RunOracle.class), mock(Reviews.class), mock(ContextProbe.class), mock(Judge.class));
+                mock(RunOracle.class), mock(Reviews.class), mock(ContextProbe.class), mock(Judge.class), new Intervene());
     }
 
     @Test
@@ -522,7 +522,7 @@ class RunBenchTest {
         final var props = mock(BenchProperties.class);
         final var probe = mockProbeAndProps(props);
         final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class));
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class), new Intervene());
         when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
 
         try (var dockerMock = mockStatic(DockerService.class)) {
@@ -547,7 +547,7 @@ class RunBenchTest {
         final var props = mock(BenchProperties.class);
         final var probe = mockProbeAndProps(props);
         final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class));
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class), new Intervene());
         when(oracle.score(any(), any(), any(), any())).thenThrow(new RuntimeException("docker-gated check crashed"));
 
         try (var dockerMock = mockStatic(DockerService.class)) {
@@ -568,7 +568,7 @@ class RunBenchTest {
         final var props = mock(BenchProperties.class);
         final var probe = mockProbeAndProps(props);
         final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class));
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class), new Intervene());
         when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
 
         try (var dockerMock = mockStatic(DockerService.class)) {
@@ -587,7 +587,7 @@ class RunBenchTest {
         final var props = mock(BenchProperties.class);
         final var probe = mock(ContextProbe.class);
         final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class));
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class), new Intervene());
         when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
 
         try (var dockerMock = mockStatic(DockerService.class)) {
@@ -604,7 +604,7 @@ class RunBenchTest {
         final var props = mock(BenchProperties.class);
         final var probe = mockProbeAndProps(props);
         final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class));
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class), new Intervene());
         when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
 
         try (var dockerMock = mockStatic(DockerService.class)) {
