@@ -22,6 +22,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.client.RestClientResponseException;
 
+import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -444,6 +446,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 .setComparator(REQUESTS_BY_TOKENS);
         requests.addColumn(r -> r.clientAborted() ? "yes" : "").setHeader("aborted").setAutoWidth(true);
         requests.addColumn(r -> r.abortReason() == null ? "" : r.abortReason()).setHeader("abort reason").setAutoWidth(true);
+        requests.getColumns().forEach(c -> c.setResizable(true));
         // #new bug: setAllRowsVisible(true) renders every row with no internal scrollbar, which is fine
         // for a handful of rows but silently gives no way to reach anything beyond the live state's own
         // cap once there are more - a fixed height switches the grid to Vaadin's normal virtual
@@ -492,6 +495,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         sessions.addColumn(r -> Fmt.count(r.totalTokens())).setHeader("total tokens")
                 .setTextAlign(ColumnTextAlign.END).setAutoWidth(true)
                 .setComparator(SESSIONS_BY_TOTAL_TOKENS);
+        sessions.getColumns().forEach(c -> c.setResizable(true));
         sessions.sort(List.of(new GridSortOrder<>(ts, SortDirection.ASCENDING)));
         // #264: setAllRowsVisible(true) - the same bug buildRequestsGrid()'s own comment describes
         // and was fixed for there - renders every row with no internal scrollbar. An orchestrated
@@ -529,6 +533,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 // #262: the status word alone doesn't say WHY a task didn't just succeed - hover
                 // for the agent's own self-reported detail (or the harness fallback's explanation).
                 .setTooltipGenerator(t -> taskStatusReason(live.sessions(), t));
+        grid.addColumn(t -> Fmt.daysHoursMinutes(taskStats(live.sessions(), t.id()).wallSec()))
+                .setHeader("time").setAutoWidth(true).setFlexGrow(0);
+        grid.addColumn(t -> Fmt.count(taskStats(live.sessions(), t.id()).completionTokens()))
+                .setHeader("generated").setAutoWidth(true).setFlexGrow(0);
+        grid.addColumn(t -> Fmt.count(taskStats(live.sessions(), t.id()).promptTokens()))
+                .setHeader("prefilled").setAutoWidth(true).setFlexGrow(0);
+        grid.getColumns().forEach(c -> c.setResizable(true));
         grid.addItemClickListener(e -> openTaskPromptDialog(e.getItem()));
         grid.getStyle().set("cursor", "pointer");
         // #264: same scroll-cap fix as sessionsGrid/requestsGrid, at a smaller scale (one row per
@@ -615,6 +626,35 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             if (d != null && (d.equals(prefix) || d.startsWith(prefix + " "))) last = s;
         }
         return last;
+    }
+
+    /** A task's own live time/token totals for the plan grid - unlike lastMatchingSession() (which
+     *  only needs the CURRENT state), this sums EVERY session matching the task's id: a task
+     *  retried or continued across multiple sessions has genuinely spent time/tokens in all of
+     *  them, not just its latest one, same reasoning JobLiveState.totalActiveSeconds() already
+     *  applies at the whole-run level. A still-open session (no endedStage yet) contributes its
+     *  own elapsed-so-far, so the figure ticks up live while a task is actually running. */
+    record TaskStats(double wallSec, long completionTokens, long promptTokens) {
+    }
+
+    static TaskStats taskStats(final List<JobLiveState.SessionRow> sessions, final String taskId) {
+        final var prefix = "Task " + taskId;
+        var wall = 0.0;
+        var completion = 0L;
+        var prompt = 0L;
+        for (final var s : sessions) {
+            final var d = s.description();
+            if (d == null || !(d.equals(prefix) || d.startsWith(prefix + " "))) continue;
+            if (s.endedStage() != null) {
+                if (s.wallSec() != null) wall += s.wallSec();
+            } else {
+                final var start = Fmt.parseTime(s.ts());
+                if (start != null) wall += Duration.between(start, OffsetDateTime.now()).getSeconds();
+            }
+            if (s.totalTokens() != null) completion += s.totalTokens();
+            if (s.promptTokens() != null) prompt += s.promptTokens();
+        }
+        return new TaskStats(wall, completion, prompt);
     }
 
     /** The task's prompt and its own git changes, on demand, as two tabs of one dialog. Polling

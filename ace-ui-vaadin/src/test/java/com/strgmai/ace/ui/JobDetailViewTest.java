@@ -77,9 +77,9 @@ class JobDetailViewTest {
     @Test
     void sessionRowComparators_sortNullFieldsWithoutThrowing() {
         final var rows = List.of(
-                new JobLiveState.SessionRow(null, null, null, null, null, null, null, null, null, null, null, null),
-                new JobLiveState.SessionRow("a", "T1", "task T1", "stop", 90.0, 20.0, 120.0, 500L, 30.0, 90.0, "2026-09-15T02:00:00Z", "T1"),
-                new JobLiveState.SessionRow("b", "T2", "task T2", null, null, null, null, null, null, null, "2026-09-14T23:00:00+01:00", "T2"));
+                new JobLiveState.SessionRow(null, null, null, null, null, null, null, null, null, null, null, null, null),
+                new JobLiveState.SessionRow("a", "T1", "task T1", "stop", 90.0, 20.0, 120.0, 500L, 30.0, 90.0, "2026-09-15T02:00:00Z", "T1", null),
+                new JobLiveState.SessionRow("b", "T2", "task T2", null, null, null, null, null, null, null, "2026-09-14T23:00:00+01:00", "T2", null));
         final java.util.function.Consumer<Comparator<JobLiveState.SessionRow>> sortAll =
                 by -> rows.stream().sorted(by).forEach(JobLiveState.SessionRow::id); // any terminal op forces the sort
         sortAll.accept(JobDetailView.SESSIONS_BY_LABEL);
@@ -159,7 +159,44 @@ class JobDetailViewTest {
     }
 
     private static JobLiveState.SessionRow sessionRow(final String description, final String endedStage) {
-        return new JobLiveState.SessionRow("sid", "sid", description, endedStage, null, null, null, null, null, null, null, null);
+        return new JobLiveState.SessionRow("sid", "sid", description, endedStage, null, null, null, null, null, null, null, null, null);
+    }
+
+    /** taskStats() sums EVERY session matching the task id, not just the latest one - a task
+     *  retried/continued across two sessions genuinely spent time/tokens in both. */
+    @Test
+    void taskStats_sumsWallTimeAndTokensAcrossEveryMatchingSession() {
+        final var sessions = List.of(
+                new JobLiveState.SessionRow("a", "a", "Task T5", "stop", null, null, 120.0, 100L, null, null, "2026-09-15T02:00:00Z", "T5", 2000L),
+                new JobLiveState.SessionRow("b", "b", "Task T5 (continue)", "stop", null, null, 60.0, 50L, null, null, "2026-09-15T03:00:00Z", "T5-continue", 1000L));
+        final var stats = JobDetailView.taskStats(sessions, "T5");
+        assertEquals(180.0, stats.wallSec());
+        assertEquals(150L, stats.completionTokens());
+        assertEquals(3000L, stats.promptTokens());
+    }
+
+    /** Same anchored-prefix guard taskStatus() already has: "T1" must never pick up a session
+     *  actually for "T10". */
+    @Test
+    void taskStats_doesNotFalseMatchATaskIdThatIsAPrefixOfAnothersId() {
+        final var sessions = List.of(
+                new JobLiveState.SessionRow("a", "a", "Task T10", "stop", null, null, 500.0, 999L, null, null, null, "T10", 9999L));
+        final var stats = JobDetailView.taskStats(sessions, "T1");
+        assertEquals(0.0, stats.wallSec());
+        assertEquals(0L, stats.completionTokens());
+        assertEquals(0L, stats.promptTokens());
+    }
+
+    /** A still-open session (no endedStage yet) contributes its own elapsed-so-far wall time, so
+     *  the figure ticks up live while the task is actually running - same reasoning
+     *  JobLiveState.totalActiveSeconds() already applies at the whole-run level. */
+    @Test
+    void taskStats_countsAStillRunningSessionFromItsOwnStart() {
+        final var start = java.time.OffsetDateTime.now().minusSeconds(30);
+        final var sessions = List.of(
+                new JobLiveState.SessionRow("a", "a", "Task T6", null, null, null, null, null, null, null, start.toString(), "T6", null));
+        final var stats = JobDetailView.taskStats(sessions, "T6");
+        assertTrue(stats.wallSec() >= 29 && stats.wallSec() < 60, "expected ~30s elapsed, got " + stats.wallSec());
     }
 
     private static Api.PlanTask planTask(final String id, final boolean implemented, final boolean handoffDone) {
