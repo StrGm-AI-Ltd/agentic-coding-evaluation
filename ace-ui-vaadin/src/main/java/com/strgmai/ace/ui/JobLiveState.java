@@ -46,7 +46,7 @@ public final class JobLiveState implements Serializable {
      *  truncated display form. */
     public record SessionRow(String id, String label, String description, String endedStage,
             Double avgPrefillTokPerSec, Double avgDecodeTokPerSec, Double wallSec, Long totalTokens,
-            Double prefillWallSec, Double decodeWallSec, String ts, String name) implements Serializable {
+            Double prefillWallSec, Double decodeWallSec, String ts, String name, Long promptTokens) implements Serializable {
     }
 
     private static final long serialVersionUID = 1L;
@@ -63,6 +63,7 @@ public final class JobLiveState implements Serializable {
     private final Map<String, double[]> speedSums = new LinkedHashMap<>();
     private final Map<String, String> sessionStartTs = new LinkedHashMap<>();
     private final Map<String, Long> tokenTotals = new LinkedHashMap<>();
+    private final Map<String, Long> promptTokenTotals = new LinkedHashMap<>();
     // session id -> [prefillWallSum, decodeWallSum], for the running totals in SessionRow
     private final Map<String, double[]> wallSums = new LinkedHashMap<>();
     // session id -> "path" ("sessions/<file>") of the attempt whose row is currently open/known for
@@ -102,7 +103,7 @@ public final class JobLiveState implements Serializable {
                     final var startTs = Fmt.textOr(data.path("ts"), null);
                     if (startTs != null) sessionStartTs.put(sessionId, startTs);
                     closeAbandonedAttempt(sessionId);
-                    sessions.add(new SessionRow(sessionId, sessionLabel(data), sessionDescription(data), null, null, null, null, null, null, null, startTs, Fmt.textOr(data.path("label"), null)));
+                    sessions.add(new SessionRow(sessionId, sessionLabel(data), sessionDescription(data), null, null, null, null, null, null, null, startTs, Fmt.textOr(data.path("label"), null), null));
                     lastSeenSessionPath.put(sessionId, path);
                 }
             }
@@ -213,7 +214,7 @@ public final class JobLiveState implements Serializable {
         final int i = currentRowIndex(sessionId);
         if (i < 0) return;
         final var s = sessions.get(i);
-        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), finish, s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), wallSec, s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts(), s.name()));
+        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), finish, s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), wallSec, s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts(), s.name(), s.promptTokens()));
     }
 
     /** null if either timestamp is missing/unparseable (a degenerate payload, or the session started
@@ -240,7 +241,7 @@ public final class JobLiveState implements Serializable {
         if (data.path("decode_tok_per_sec").isNumber()) { sums[2] += data.path("decode_tok_per_sec").asDouble(); sums[3]++; }
         final Double avgPrefill = sums[1] > 0 ? sums[0] / sums[1] : null;
         final Double avgDecode = sums[3] > 0 ? sums[2] / sums[3] : null;
-        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), avgPrefill, avgDecode, s.wallSec(), s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts(), s.name()));
+        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), avgPrefill, avgDecode, s.wallSec(), s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts(), s.name(), s.promptTokens()));
     }
 
     /** Sums a request's completion tokens (when present - not every request does, e.g. errors) into
@@ -257,13 +258,24 @@ public final class JobLiveState implements Serializable {
         if (sessionId == null || sessionId.isBlank()) return;
         final int i = currentRowIndex(sessionId);
         if (i < 0) return;
-        if (data.path("prompt_tokens").isNumber()) totalPromptTokens += data.path("prompt_tokens").asLong();
-        if (!data.path("completion_tokens").isNumber()) return;
         final var s = sessions.get(i);
-        final var tokens = data.path("completion_tokens").asLong();
-        final var total = tokenTotals.merge(sessionId, tokens, Long::sum);
-        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), total, s.prefillWallSec(), s.decodeWallSec(), s.ts(), s.name()));
-        totalCompletionTokens += tokens;
+        var completionTotal = s.totalTokens();
+        var promptTotal = s.promptTokens();
+        boolean changed = false;
+        if (data.path("prompt_tokens").isNumber()) {
+            final var p = data.path("prompt_tokens").asLong();
+            promptTotal = promptTokenTotals.merge(sessionId, p, Long::sum);
+            totalPromptTokens += p;
+            changed = true;
+        }
+        if (data.path("completion_tokens").isNumber()) {
+            final var c = data.path("completion_tokens").asLong();
+            completionTotal = tokenTotals.merge(sessionId, c, Long::sum);
+            totalCompletionTokens += c;
+            changed = true;
+        }
+        if (!changed) return;
+        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), completionTotal, s.prefillWallSec(), s.decodeWallSec(), s.ts(), s.name(), promptTotal));
     }
 
     /** ttft_sec IS the prefill wall time for a request (the elapsed time before the first token
@@ -282,7 +294,7 @@ public final class JobLiveState implements Serializable {
         final var ttft = data.path("ttft_sec").asDouble();
         sums[0] += ttft;
         sums[1] += data.path("latency_sec").asDouble() - ttft;
-        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), s.totalTokens(), sums[0], sums[1], s.ts(), s.name()));
+        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), s.totalTokens(), sums[0], sums[1], s.ts(), s.name(), s.promptTokens()));
     }
 
     /** the row a per-session event applies to: the MOST RECENTLY STARTED session with this id.
@@ -309,7 +321,7 @@ public final class JobLiveState implements Serializable {
         if (i < 0) return;
         final var s = sessions.get(i);
         if (s.endedStage() != null) return;   // already resolved - nothing to close
-        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), "interrupted", s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts(), s.name()));
+        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), "interrupted", s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts(), s.name(), s.promptTokens()));
     }
 
     /** A snapshot copy — never the live list. */

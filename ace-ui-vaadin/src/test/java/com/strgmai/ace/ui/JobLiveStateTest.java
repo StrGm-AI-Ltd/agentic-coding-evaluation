@@ -37,7 +37,7 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(new JobLiveState.SessionRow(
-                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc (high)", "", null, null, null, null, null, null, null, null, null)), state.sessions());
+                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc (high)", "", null, null, null, null, null, null, null, null, null, null)), state.sessions());
     }
 
     /** The sessions grid's new "ts" column (2026-09-25): the session's own start time, same field
@@ -157,7 +157,7 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(new JobLiveState.SessionRow(
-                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc", "", "tool_calls", null, null, null, null, null, null, null, null)), state.sessions());
+                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc", "", "tool_calls", null, null, null, null, null, null, null, null, null)), state.sessions());
     }
 
     /** The whole point of matching by real id: a run's sessions need not finish in the order they
@@ -179,8 +179,8 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(
-                new JobLiveState.SessionRow("aaaaaaaa-0000-0000-0000-000000000000", "aaaaaaaa", "", null, null, null, null, null, null, null, null, null),
-                new JobLiveState.SessionRow("bbbbbbbb-0000-0000-0000-000000000000", "bbbbbbbb", "", "stop", null, null, null, null, null, null, null, null)), state.sessions(),
+                new JobLiveState.SessionRow("aaaaaaaa-0000-0000-0000-000000000000", "aaaaaaaa", "", null, null, null, null, null, null, null, null, null, null),
+                new JobLiveState.SessionRow("bbbbbbbb-0000-0000-0000-000000000000", "bbbbbbbb", "", "stop", null, null, null, null, null, null, null, null, null)), state.sessions(),
                 "the second-started session is the one marked done; the first (still open) is unaffected");
     }
 
@@ -508,6 +508,28 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(460L, state.sessions().get(0).totalTokens());
+    }
+
+    /** promptTokens() on a SessionRow is the per-session counterpart to totalTokens() - summed
+     *  independently, same reasoning totalPromptTokens()/totalCompletionTokens() already apply at
+     *  the run-wide level. */
+    @Test
+    void requestsWithPromptTokensSumIntoTheSessionsOwnPromptTotal() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "prompt_tokens": 5000, "completion_tokens": 120}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "prompt_tokens": 9000, "completion_tokens": 340}
+
+                """).forEach(state::apply);
+        final var session = state.sessions().get(0);
+        assertEquals(14000L, session.promptTokens());
+        assertEquals(460L, session.totalTokens());
     }
 
     @Test
@@ -838,7 +860,7 @@ class JobLiveStateTest {
                 data: {"reasoning_effort": null}
 
                 """).forEach(state::apply);
-        assertEquals(List.of(new JobLiveState.SessionRow("", "?", "", null, null, null, null, null, null, null, null, null)), state.sessions(),
+        assertEquals(List.of(new JobLiveState.SessionRow("", "?", "", null, null, null, null, null, null, null, null, null, null)), state.sessions(),
                 "missing ids render as ? without throwing");
     }
 
