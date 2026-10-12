@@ -12,7 +12,17 @@ import java.util.regex.Pattern;
 public final class PlanParser {
     private PlanParser() {}
 
-    static final Pattern ID_RE = Pattern.compile("\\b(?:T|ST|S|Task|Subtask)[- ]?0*(\\d{1,3})\\b", Pattern.CASE_INSENSITIVE);
+    // #287, found live: the bare "S" alternative collided character-for-character with this
+    // project's OWN oracle check-id convention (S1-S9, plus P1-P3/M1-M4/B1-B3/C1-C2/F1-F9) - never
+    // documented anywhere as a supported task-id form (this class's own javadoc only mentions
+    // "T1 / ST-01 / Task 3"), yet agent-authored plans are EXPECTED to reference check ids verbatim
+    // in their own "Oracle:"/"Checks:" fields. A dependencies field written as "none (verified by
+    // S3)" matched this and recorded a phantom dependency on T3 despite explicitly saying "none";
+    // the same regex also drives splitBlocks()'s own heading detection, so a heading like
+    // "### S6 — notes" could be misdetected as introducing a new task T6. Dropped outright rather
+    // than narrowed (e.g. "S only for 3+ digit ids") - it was never a real, supported form to begin
+    // with, so there is nothing legitimate left to preserve.
+    static final Pattern ID_RE = Pattern.compile("\\b(?:T|ST|Task|Subtask)[- ]?0*(\\d{1,3})\\b", Pattern.CASE_INSENSITIVE);
     static final Pattern FIELD_HEADING = Pattern.compile("^\\s{0,3}#{2,6}\\s*(goal|objective|services?|components?|dependencies|depends on|after|requires|acceptance(?: criteri\\w+)?|criteri\\w+|verified by|verification|done when)\\s*$", Pattern.CASE_INSENSITIVE);
     static final Pattern CHECK_ID = Pattern.compile("\\b([SPMBCF]\\d{1,2})\\b");
     // #257, found live: "**Goal:** text" (the bold span wrapping the label AND its colon together,
@@ -29,6 +39,7 @@ public final class PlanParser {
             "checks", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(oracle|checks|scored by)\\s*\\*{0,3}\\s*[:—-]\\s*\\*{0,3}\\s*(.+)", Pattern.CASE_INSENSITIVE));
     static final Pattern SEGMENT = Pattern.compile("(?=\\b(?:Goal|Objective|Deliverable|Services?|Components?|Modules?|Dependencies|Depends on|Deps|After|Requires|Prereq\\w*|Blocked by|Acceptance(?: criteri\\w+)?|Criteri\\w+|Verified by|Verification|Done when|Oracle|Checks|Scored by)\\s*[:—-])", Pattern.CASE_INSENSITIVE);
     static final Pattern LIST_HEAD = Pattern.compile("^\\s*(?:[-*]|\\d+[.)])\\s+\\*{0,3}\\s*(?:T|ST|Task|Subtask)[- ]?\\d", Pattern.CASE_INSENSITIVE);
+    static final Pattern NEW_LIST_ITEM = Pattern.compile("^\\s*(?:[-*]|\\d+[.)])\\s+");
 
     public static String normId(String n) { return "T" + Integer.parseInt(n); }
 
@@ -67,6 +78,35 @@ public final class PlanParser {
                     for (int j = i + 1; j < lines.size() && !lines.get(j).matches("\\s{0,3}#{1,6}\\s.*"); j++)
                         val.append(lines.get(j).strip()).append(' ');
                     lines.set(i, fh.group(1) + ": " + val.toString().strip());
+                    continue;
+                }
+                // #265, found live: an inline labelled field ("- **Goal:** text...") that word-wraps
+                // across multiple physical markdown lines - the segment/FIELD_RE matching below only
+                // ever looks at ONE line at a time, so a goal this long was silently cut off right
+                // before "exactly per §4.1: NUMERIC(18,2) money, ..." - the one clause telling the
+                // agent exactly what to build, lost with no trace anywhere downstream. A continuation
+                // line is anything that isn't itself a new list item/heading/field label - merge it
+                // into this line before the matching below ever sees either one.
+                //
+                // Deliberately NOT applied to "deps"/"checks": found live on the real plan - T15's
+                // own Dependencies line wraps onto "...real wiring is integration-verified in
+                // T22/T23)." - a parenthetical ASIDE, not more dependencies. parseDeps()/the checks
+                // parser scan their whole value for ANY Txx/[SPMBCF]\d+-looking token, so merging
+                // prose like that in turns a mention into a phantom dependency - introduced a real
+                // cycle (T15->T22->T21->T19->T16->T15) that doesn't exist in the actual plan. A
+                // short, explicit id list is exactly the kind of field that is SAFE to leave as its
+                // first line only; goal/services/acceptance are free prose, where the opposite risk
+                // (silently losing the one sentence that matters) is the one that bit T6 for real.
+                final String line = lines.get(i);
+                final boolean isMergeableField = FIELD_RE.entrySet().stream()
+                        .filter(e -> !e.getKey().equals("deps") && !e.getKey().equals("checks"))
+                        .anyMatch(e -> e.getValue().matcher(line).find());
+                if (isMergeableField) {
+                    final var merged = new StringBuilder(line.strip());
+                    int j = i + 1;
+                    while (j < lines.size() && isFieldContinuation(lines.get(j))) { merged.append(' ').append(lines.get(j).strip()); j++; }
+                    for (int k = i + 1; k < j; k++) lines.set(k, "");
+                    if (j > i + 1) lines.set(i, merged.toString());
                 }
             }
             final List<String> segs = new ArrayList<>();
@@ -117,6 +157,17 @@ public final class PlanParser {
         String s = head.replaceFirst("^[\\s#*|\\-.\\d)]+", "").strip().replaceFirst("^\\|", "").strip();
         s = s.replaceFirst("^(?:T|ST|Task|Subtask)[- ]?\\d+\\s*[—:\\-–.]*\\s*", "").strip();
         return (s.isEmpty() ? tid : s).substring(0, Math.min(s.isEmpty() ? tid.length() : s.length(), 120));
+    }
+
+    /** a line is a CONTINUATION of the previous inline field (not a new one, and not the end of the
+     *  field) when it is non-blank and isn't itself a new list item, a heading, or a recognisable
+     *  field label of its own - guards against ever swallowing the NEXT field's own line, even one
+     *  written without a leading bullet marker. */
+    private static boolean isFieldContinuation(final String line) {
+        if (line.strip().isEmpty()) return false;
+        if (NEW_LIST_ITEM.matcher(line).find()) return false;
+        if (line.matches("\\s{0,3}#{1,6}\\s.*")) return false;
+        return FIELD_RE.values().stream().noneMatch(p -> p.matcher(line).find());
     }
 
     static List<String> parseDeps(final String s) {

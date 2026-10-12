@@ -55,7 +55,23 @@ public final class VerifyTask {
                     int rc;
                     String out;
                     try {
-                        Map<String, String> env = new java.util.LinkedHashMap<>(System.getenv());   // drained concurrently: a full test suite overflows the pipe
+                        // #293, found live: this used to start from System.getenv() - the REAL
+                        // operator environment of the ace-service JVM itself (provider API keys for
+                        // external reviewers, cloud credentials, an SSH agent socket, whatever the
+                        // shell/launchd job that started this service happens to have set) - not
+                        // even the run's own scrubbed env, let alone a credential-stripped one.
+                        // Every OTHER place this harness runs code it does not control (the agent's
+                        // bash tool, the agent's own sessions via RunBenchSupport.scrubbedEnv) goes
+                        // through that scrubbing; this was the one place that was missed, for a
+                        // gradle invocation that runs the agent's own generated test suite after
+                        // EVERY task. cfg's own "_agent_env" is the SAME scrubbed env the run's
+                        // sessions already use (null only in a bare unit-test context that never
+                        // went through RunBench.runOnce()'s own setup - falls back to an empty map,
+                        // matching ReferenceAgent.toolEnv()'s identical null-context convention,
+                        // never to the raw operator environment).
+                        Map<String, String> env = cfg.get("_agent_env") instanceof Map<?, ?> ae
+                                ? new java.util.LinkedHashMap<>((Map<String, String>) ae) : new java.util.LinkedHashMap<>();
+                        env.putIfAbsent("PATH", System.getenv().getOrDefault("PATH", "/usr/bin:/bin"));
                         env.put("CI", "1");
                         env.put("GRADLE_OPTS", "-Dorg.gradle.daemon=false");
                         if (cfg.get("java_home") != null) { env.put("JAVA_HOME", String.valueOf(cfg.get("java_home"))); env.put("PATH", cfg.get("java_home") + "/bin:" + env.getOrDefault("PATH", "")); }

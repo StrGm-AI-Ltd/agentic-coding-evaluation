@@ -25,7 +25,6 @@ ace:
   workspace-root: ${ACE_WORKSPACE_ROOT:${java.io.tmpdir}/ace-service-ws}
   poll-sec: 10
   max-error-rate: 0.2
-  reference-server-port: 0     # 0 = the reference trading server stays off (the oracle starts it on demand)
   java-home: ${ACE_JAVA_HOME:}
   omlx-server-log: ${ACE_OMLX_SERVER_LOG:}   # EMPTY = no capture; the model server's own log (path is operator/machine-specific)
   # per-phase operator-wide defaults, keyed by phase id (p0_definition/p1_plan/p2_implementation/

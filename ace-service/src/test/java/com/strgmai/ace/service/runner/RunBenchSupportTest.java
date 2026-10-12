@@ -173,4 +173,41 @@ class RunBenchSupportTest {
         for (int i = 0; i < 20 && !innerInterrupted.get(); i++) Thread.sleep(50);
         assertTrue(innerInterrupted.get(), "the inner task's own thread must be genuinely cancelled, not abandoned");
     }
+
+    /** #265: a stale "<taskId> | ..." line left behind by an attempt that was interrupted (not
+     *  cleanly restarted via the dedicated endpoint, which already reverts this through its own git
+     *  reset) must be gone before that task's next fresh attempt starts - see clearStaleProgressLine's
+     *  own javadoc for the failure this reproduces. */
+    @Test
+    void clearStaleProgressLineRemovesOnlyTheExactMatchingTaskLine() throws IOException {
+        final Path ws = track(Files.createTempDirectory("ws-progress"));
+        Files.createDirectories(ws.resolve("docs"));
+        Files.writeString(ws.resolve("docs/PROGRESS.md"),
+                "T1 | done | ok\nT4 | done | the real, final status\nT4 | partial | a stale leftover from an interrupted attempt\nT40 | done | a different task that must survive\n");
+
+        RunBenchSupport.clearStaleProgressLine(ws, "T4");
+
+        final String after = Files.readString(ws.resolve("docs/PROGRESS.md"));
+        assertFalse(after.contains("T4 |"), "every T4 line must be gone: " + after);
+        assertTrue(after.contains("T1 | done | ok"), "an unrelated task's line must survive: " + after);
+        assertTrue(after.contains("T40 | done | a different task that must survive"),
+                "a task id that merely starts with the same characters (T40 vs T4) must not be matched: " + after);
+    }
+
+    @Test
+    void clearStaleProgressLineIsANoOpWhenThereIsNothingToStrip() throws IOException {
+        final Path ws = track(Files.createTempDirectory("ws-progress-noop"));
+        Files.createDirectories(ws.resolve("docs"));
+        Files.writeString(ws.resolve("docs/PROGRESS.md"), "T1 | done | ok\n");
+
+        RunBenchSupport.clearStaleProgressLine(ws, "T4");   // T4 never ran here yet
+
+        assertEquals("T1 | done | ok\n", Files.readString(ws.resolve("docs/PROGRESS.md")));
+    }
+
+    @Test
+    void clearStaleProgressLineToleratesAMissingProgressFile() throws IOException {
+        final Path ws = track(Files.createTempDirectory("ws-progress-missing"));
+        assertDoesNotThrow(() -> RunBenchSupport.clearStaleProgressLine(ws, "T4"));
+    }
 }

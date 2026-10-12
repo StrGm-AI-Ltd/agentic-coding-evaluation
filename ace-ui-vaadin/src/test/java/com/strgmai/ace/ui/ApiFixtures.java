@@ -5,6 +5,7 @@ import org.springframework.web.client.RestClientResponseException;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 
 /** Shared test fixtures for the wire records and HTTP error wrappers. */
 final class ApiFixtures {
@@ -44,6 +45,6 @@ final class ApiFixtures {
     /** A full job row, minimal — for blocked-reason fetching and requeue tests. */
     static Api.Job job(final long id, final String status, final String blockedReason) {
         return new Api.Job(String.valueOf(id), null, null, null, "run", "r-" + id, List.of(), status, blockedReason,
-                0, null, null, false, false, null, null, null, null, null);
+                0, null, null, false, false, null, null, null, null, null, Map.of());
     }
 }

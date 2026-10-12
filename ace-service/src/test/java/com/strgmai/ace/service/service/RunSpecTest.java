@@ -16,7 +16,7 @@ class RunSpecTest {
     private static RunSpec walls(final Double temperature, final Double topP, final Integer topK,
                                   final Double repetitionPenalty, final Integer maxTokens, final String reasoningEffort,
                                   final Integer parallelPlanWall, final Integer handoffWall, final Integer wrapupWall) {
-        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", null, 3600, null, null, null, null, null, null, null, null, null, false, false, false, null, false, true, false, false, false, false, null, null, null, null, false, null, null, null, null, null, "r1", temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, null, null, null, null, null, null, null, null, false, null);
+        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", null, 3600, null, null, null, null, null, null, null, null, null, false, false, false, null, false, true, false, false, false, null, null, null, null, false, null, null, null, null, null, "r1", temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, null, null, null, null, null, null, null, null, false, null, false, null, null, null, null, false, null, null, null);
     }
 
     @Test
@@ -371,16 +371,15 @@ class RunSpecTest {
     }
 
     @Test
-    void argvIncludesKeepWorkspaceAndSkipDockerWhenSet() {
-        final var argv = RunSpec.builder().task("t").model("m").runId("r1").keepWorkspace(true).skipDocker(true).build().argv("r1");
-        assertTrue(argv.contains("--keep-workspace"));
+    void argvIncludesSkipDockerWhenSet() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").skipDocker(true).build().argv("r1");
         assertTrue(argv.contains("--skip-docker"));
     }
 
     @Test
-    void argvOmitsKeepWorkspaceAndSkipDockerWhenUnset() {
+    void argvOmitsSkipDockerWhenUnset() {
         final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.equals("--keep-workspace") || a.equals("--skip-docker")));
+        assertTrue(argv.stream().noneMatch(a -> a.equals("--skip-docker")));
     }
 
     @Test
@@ -439,7 +438,7 @@ class RunSpecTest {
         spec.put("trajectory_review", true); spec.put("reviewer_model", "reviewer-m");
         spec.put("handoff_notes", true); spec.put("manage_docker", false);
         spec.put("no_context_probe", true); spec.put("context_probe_fresh", true);
-        spec.put("keep_workspace", true); spec.put("skip_docker", true);
+        spec.put("skip_docker", true);
         spec.put("context_window", 555); spec.put("first_token_timeout", 666);
         spec.put("compaction_trigger", 777); spec.put("review_wall_sec", 888); spec.put("review_tokens", 8880);
         spec.put("review_blind", true); spec.put("trajectory_reviewer_model", "traj-reviewer-m");
@@ -480,7 +479,6 @@ class RunSpecTest {
         assertFalse(rs.manageDocker());
         assertTrue(rs.noContextProbe());
         assertTrue(rs.contextProbeFresh());
-        assertTrue(rs.keepWorkspace());
         assertTrue(rs.skipDocker());
         assertEquals(555, rs.contextWindow());
         assertEquals(666, rs.firstTokenTimeout());
@@ -527,7 +525,7 @@ class RunSpecTest {
     @Test
     void builderProducesTheSameRunSpecAsThePositionalConstructor() {
         final var viaBuilder = RunSpec.builder().task("t").model("m").runId("r1").temperature(0.5).build();
-        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, false, false, false, null, null, null, null, false, null, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, null);
+        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, false, false, null, null, null, null, false, null, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, null, false, null, null, null, null, false, null, null, null);
         assertEquals(viaConstructor, viaBuilder);
     }
 }

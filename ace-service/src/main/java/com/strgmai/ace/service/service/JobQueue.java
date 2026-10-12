@@ -33,7 +33,8 @@ public class JobQueue {
     public record Job(UUID id, UUID experimentId, String arm, Integer repeat, String kind, String runId,
                       List<String> argv, String status, String blockedReason, int priority, Integer pid,
                       Integer exitCode, boolean cancelRequested, boolean pauseRequested, String stdoutPath,
-                      String resultLine, String pinnedRunnerSha, String pinnedOracleSha) {}
+                      String resultLine, String pinnedRunnerSha, String pinnedOracleSha,
+                      Map<String, Object> taskOverrides) {}
 
     public Map<String, Object> enqueue(RunSpec spec, int priority, String resultsDir, String runnerSha, String oracleSha,
                                        UUID experimentId, String arm, Integer repeat) {
@@ -98,9 +99,20 @@ public class JobQueue {
                 .where(JOBS.ID.eq(jobId)).execute();
     }
 
+    /** #273: refuse to overwrite an already-terminal status - WorkerService's own cancel-watch
+     *  thread can flag cancelCurrent=true microseconds after the job's own try-block already called
+     *  this with "succeeded"/"failed" (Future.cancel(true) is best-effort and can simply be too
+     *  late). Without this guard, that SECOND call silently flipped a genuinely-finished job back
+     *  to "cancelled" over its own just-recorded terminal status - the same WHERE-clause guard
+     *  cancel()/pause() already use elsewhere in this class. Unlike those operator-facing
+     *  endpoints, a no-op here is expected and unremarkable (the race it closes is normal, not a
+     *  caller error), so it logs rather than throws. */
     public void finish(final UUID jobId, final String status, final Integer exitCode, final String resultLine) {
-        dsl.update(JOBS).set(JOBS.STATUS, status).set(JOBS.EXIT_CODE, exitCode).set(JOBS.RESULT_LINE, resultLine)
-                .set(JOBS.FINISHED_AT, now()).setNull(JOBS.PID).where(JOBS.ID.eq(jobId)).execute();
+        final int updated = dsl.update(JOBS).set(JOBS.STATUS, status).set(JOBS.EXIT_CODE, exitCode).set(JOBS.RESULT_LINE, resultLine)
+                .set(JOBS.FINISHED_AT, now()).setNull(JOBS.PID)
+                .where(JOBS.ID.eq(jobId).and(JOBS.STATUS.notIn("succeeded", "failed", "cancelled")))
+                .execute();
+        if (updated == 0) log.debug("finish({}, {}) was a no-op - job was already in a terminal state", jobId, status);
     }
 
     public void setPriority(final UUID jobId, final int priority) {
@@ -177,6 +189,24 @@ public class JobQueue {
                 .where(JOBS.ID.eq(jobId)).execute();
     }
 
+    /** #263: replaces taskId's own entry in this job's task_overrides JSON outright - a fresh
+     *  restart call for a task is authoritative, it does not merge field-by-field with whatever an
+     *  earlier restart of the same task may have set. Read-then-write, not a single atomic UPDATE:
+     *  acceptable here since this is an operator-triggered, low-contention action (nothing else
+     *  writes this column concurrently), unlike the claim()/cancel()/pause() paths above that do
+     *  guard against a racing worker. */
+    public Map<String, Object> setTaskOverride(final UUID jobId, final String taskId, final Map<String, Object> overrides) {
+        final JobsRecord rec = dsl.selectFrom(JOBS).where(JOBS.ID.eq(jobId)).fetchOne();
+        if (rec == null) throw new org.springframework.dao.EmptyResultDataAccessException("job " + jobId, 1);
+        Map<String, Object> all;
+        try { all = json.readValue(rec.getTaskOverrides(), json.getTypeFactory().constructMapType(LinkedHashMap.class, String.class, Object.class)); }
+        catch (Exception e) { all = new LinkedHashMap<>(); }
+        final var merged = new LinkedHashMap<>(all);
+        merged.put(taskId, overrides);
+        dsl.update(JOBS).set(JOBS.TASK_OVERRIDES, toJson(merged)).where(JOBS.ID.eq(jobId)).execute();
+        return get(jobId);
+    }
+
     public Map<String, Object> get(final UUID jobId) {
         final JobsRecord rec = dsl.selectFrom(JOBS).where(JOBS.ID.eq(jobId)).fetchOne();
         if (rec == null) throw new org.springframework.dao.EmptyResultDataAccessException("job " + jobId, 1);
@@ -199,7 +229,8 @@ public class JobQueue {
                 fromJson(r.getArgv()), r.getStatus(), r.getBlockedReason(),
                 r.getPriority() == null ? 0 : r.getPriority(), r.getPid(), r.getExitCode(),
                 Boolean.TRUE.equals(r.getCancelRequested()), Boolean.TRUE.equals(r.getPauseRequested()),
-                r.getStdoutPath(), r.getResultLine(), r.getPinnedRunnerSha(), r.getPinnedOracleSha());
+                r.getStdoutPath(), r.getResultLine(), r.getPinnedRunnerSha(), r.getPinnedOracleSha(),
+                fromJsonMap(r.getTaskOverrides()));
     }
 
     private static String now() { return Instant.now().toString(); }
@@ -211,6 +242,18 @@ public class JobQueue {
             // arguments at all - a real correctness problem, not just a display glitch
             log.warn("could not parse stored argv '{}', treating as empty: {}", s, e.toString());
             return List.of();
+        }
+    }
+
+    /** #263: task_overrides, parsed - {"T7": {"task_wall_sec": 40000}}. Empty map (not null) on a
+     *  blank/missing/unparseable column, same "never hand the caller a null to NPE on" shape as
+     *  fromJson() above for argv. */
+    Map<String, Object> fromJsonMap(final String s) {
+        if (s == null || s.isBlank()) return Map.of();
+        try { return json.readValue(s, json.getTypeFactory().constructMapType(LinkedHashMap.class, String.class, Object.class)); }
+        catch (Exception e) {
+            log.warn("could not parse stored task_overrides '{}', treating as empty: {}", s, e.toString());
+            return Map.of();
         }
     }
     String toJson(Object o) {

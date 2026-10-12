@@ -16,9 +16,9 @@ class ReviewsTest {
 
     private final Reviews reviews = new Reviews(
             new BenchProperties(null, "http://127.0.0.1:9191/v1", null, null, null, null, null, null, null, null,
-                    null, null, null, null, null, null, null, null, null),
+                    null, null, null, null, null, null, null),
             new ReferenceAgent(new BenchProperties(null, null, null, null, null, null, null, null, null, null,
-                    null, null, null, null, null, null, null, null, null)));
+                    null, null, null, null, null, null, null)));
 
     @Test
     void externalBaseResolvesEveryKnownProviderPrefix() {
@@ -32,6 +32,16 @@ class ReviewsTest {
     @Test
     void externalBaseFallsBackToTheConfiguredEndpointForAnUnknownProvider() {
         assertEquals("http://127.0.0.1:9191/v1", reviews.externalBase("localmodel/whatever", Map.of()));
+    }
+
+    /** #295, found live: a reviewer-model override with no "provider/" prefix at all (a plausible
+     *  mistake - the run's own --model flag is a bare name everywhere else) made indexOf('/')
+     *  return -1 and substring(0, -1) throw, with nothing in Reviews.java catching it - failing
+     *  the whole run over one optional, calibration-only review step. No "/" is just an
+     *  unrecognised provider, same as any other unknown one. */
+    @Test
+    void externalBaseDoesNotThrowOnAReviewerStringWithNoProviderPrefixAtAll() {
+        assertEquals("http://127.0.0.1:9191/v1", reviews.externalBase("bare-model-name-no-slash", Map.of()));
     }
 
     @Test

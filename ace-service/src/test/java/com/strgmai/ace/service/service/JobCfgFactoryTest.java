@@ -14,7 +14,7 @@ class JobCfgFactoryTest {
 
     private static BenchProperties props() {
         return new BenchProperties("default-model", "http://127.0.0.1:9191/v1", "", null, null, null, null, null,
-                null, null, "/results", "/workspace", null, null, null, null, null, null, null);
+                null, null, "/results", "/workspace", null, null, null, null, null);
     }
 
     @Test
@@ -65,11 +65,22 @@ class JobCfgFactoryTest {
         assertFalse(JobCfgFactory.build(List.of(), props()).containsKey("java_home"));
     }
 
+    /** #263: the 2-arg build() (every pre-existing caller) always gets an empty task_overrides,
+     *  never null - RunBench's own lookup assumes a present, if possibly empty, map. The 3-arg
+     *  overload (WorkerService's own call site) threads a job's actual task_overrides column
+     *  through unchanged. */
     @Test
-    void keepWorkspaceAndSkipDockerReflectTheFlagsPresence() {
-        assertEquals(true, JobCfgFactory.build(List.of("--keep-workspace", "--skip-docker"), props()).get("keep_workspace"));
-        assertEquals(true, JobCfgFactory.build(List.of("--keep-workspace", "--skip-docker"), props()).get("skip_docker"));
-        assertEquals(false, JobCfgFactory.build(List.of(), props()).get("keep_workspace"));
+    void taskOverridesDefaultsToEmptyAndThreadsThroughWhenGiven() {
+        assertEquals(Map.of(), JobCfgFactory.build(List.of(), props()).get("task_overrides"));
+        final var overrides = Map.<String, Object>of("T7", Map.of("task_wall_sec", 40000));
+        assertEquals(overrides, JobCfgFactory.build(List.of(), props(), overrides).get("task_overrides"));
+        assertEquals(Map.of(), JobCfgFactory.build(List.of(), props(), null).get("task_overrides"),
+                "a null column value (never actually happens - the DB column has a NOT NULL DEFAULT '{}') must still not NPE downstream");
+    }
+
+    @Test
+    void skipDockerReflectsTheFlagsPresence() {
+        assertEquals(true, JobCfgFactory.build(List.of("--skip-docker"), props()).get("skip_docker"));
         assertEquals(false, JobCfgFactory.build(List.of(), props()).get("skip_docker"));
     }
 

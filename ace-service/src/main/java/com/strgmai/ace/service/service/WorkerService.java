@@ -155,7 +155,7 @@ public class WorkerService {
             try {
                 queue.started(job.id(), (int) ProcessHandle.current().pid(), null);
                 log.info("job {}: started {} ({})", job.id(), job.runId(), job.argv());
-                final Map<String, Object> cfg = JobCfgFactory.build(job.argv(), props);
+                final Map<String, Object> cfg = JobCfgFactory.build(job.argv(), props, job.taskOverrides());
                 final String mode = flag(job.argv(), "--mode") != null ? flag(job.argv(), "--mode") : "monolithic";
                 final String planSource = flag(job.argv(), "--plan-source") != null ? flag(job.argv(), "--plan-source") : "agent";
                 runBench.runOnce(cfg, job.runId(), flag(job.argv(), "--task") == null ? "L7_full_platform" : flag(job.argv(), "--task"), mode, planSource);
@@ -163,12 +163,36 @@ public class WorkerService {
                 importer.importRun(Path.of(props.resultsDir(), job.runId()), job.kind().equals("run") ? job.id() : null);
                 if (job.experimentId() != null) experiments.finalizeIfDone(job.experimentId());   // the missing call site
             } catch (Exception e) {
-                log.error("job {} failed", job.id(), e);
-                queue.finish(job.id(), "failed", 1, e.toString());
-                if (job.experimentId() != null) experiments.finalizeIfDone(job.experimentId());   // a failed arm is still terminal
+                // #289/#273: Future.cancel(true) reliably makes the interrupted runOnce() throw,
+                // landing here even for a deliberate, operator-requested cancel/pause - previously
+                // logged at ERROR with a full stack trace indistinguishable from a real crash
+                // (the single most common way a run ends during interactive use), AND called
+                // finish(..., "failed", ...) unconditionally. That second part became an actual
+                // regression once JobQueue.finish() started refusing to overwrite an already-
+                // terminal status (#273): this write happens FIRST, wins the race, and then the
+                // finally block's own cancelled/paused handling below finds the job already
+                // terminal ("failed") and skips - a genuinely cancelled job got stuck on "failed"
+                // instead of "cancelled". The finally block (cancel) and queue.paused() (pause)
+                // are the ones that resolve the real terminal status for a deliberate stop; this
+                // catch block must stay out of their way entirely when that's what happened.
+                if (cancelCurrent || pauseCurrent) {
+                    log.info("job {} interrupted by a {} request", job.id(), cancelCurrent ? "cancel" : "pause");
+                } else {
+                    log.error("job {} failed", job.id(), e);
+                    queue.finish(job.id(), "failed", 1, e.toString());
+                    if (job.experimentId() != null) experiments.finalizeIfDone(job.experimentId());   // a failed arm is still terminal
+                }
             } finally {
                 busy.set(false);
-                if (cancelCurrent) {   // move_aside: an aborted run's files must never mix into a re-run
+                // #273: cancelCurrent is set by the separate cancel-watch thread the moment it OBSERVES
+                // cancel_requested, regardless of whether anything actually stopped - the try-block
+                // above may have already run to completion (queue.finish(..., "succeeded"/"failed", ...))
+                // microseconds earlier. Re-checking the job's own current status here is the only way
+                // to tell "genuinely cancelled mid-run" apart from "finished right as a now-moot cancel
+                // request arrived" - the latter must never have its results directory moved aside (the
+                // already-inserted RUNS.RESULTS_DIR would then point at a path that no longer exists).
+                final boolean genuinelyCancelled = cancelCurrent && !RunSpec.TERMINAL.contains(queue.get(job.id()).get("status"));
+                if (genuinelyCancelled) {   // move_aside: an aborted run's files must never mix into a re-run
                     final java.nio.file.Path runDir = java.nio.file.Path.of(props.resultsDir(), job.runId());
                     if (java.nio.file.Files.isDirectory(runDir) && !"score_only".equals(job.kind())) {
                         try {

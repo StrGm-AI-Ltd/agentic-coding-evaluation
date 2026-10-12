@@ -1,6 +1,7 @@
 package com.strgmai.ace.service.runner;
 
 import com.strgmai.ace.service.agent.ReferenceAgent;
+import com.strgmai.ace.service.docker.DockerService;
 
 import java.io.IOException;
 import java.nio.channels.FileChannel;
@@ -58,8 +59,22 @@ public final class RunBenchSupport {
         }
         env.put("PATH", Paths.get(home, "bin") + ":" + env.getOrDefault("PATH", ""));   // the docker shim first (R7)
         env.put("ACE_DOCKER_LOG", Paths.get(home, "docker-calls.log").toString());
+        // a daemon left running for the whole task session is a sustained, idle memory footprint
+        // competing with the model server on the same host (found live - it lined up with an
+        // empty-stream stutter #256 was filed for); VerifyTask/BuildChecks already disable it for
+        // their own gradle calls the same way, this just extends that to the agent's own bash tool
+        env.put("GRADLE_OPTS", "-Dorg.gradle.daemon=false");
         return env;
     }
+
+    /** Never the agent's own work - downloaded/generated tooling, not source. Shared between the
+     *  git exclude list below (so none of this ever enters a snapshot in the first place) and
+     *  BenchController.taskDiff()'s own display-time filter (for whatever slipped in on a
+     *  workspace initialised before a given entry was added here - #260, found live: a full
+     *  unpacked Eclipse Temurin JDK distribution landed at .toolchains/ straight in the project
+     *  root, committed whole because nothing excluded it). */
+    public static final List<String> VENDORED_PATHS = List.of(
+            "build/", ".gradle/", ".gradle-cache/", "target/", "node_modules/", "out/", "dist/", ".idea/", ".toolchains/");
 
     /** commit + tag; returns the commit SHA. Build outputs never enter a snapshot. */
     public static String snapshot(final Path ws, final String tag) throws IOException, InterruptedException {
@@ -68,14 +83,29 @@ public final class RunBenchSupport {
             runGit(ws, "config", "user.email", "bench@local");
             runGit(ws, "config", "user.name", "bench");
             Files.createDirectories(ws.resolve(".git/info"));
-            Files.writeString(ws.resolve(".git/info/exclude"),
-                    "build/\n.gradle/\n.gradle-cache/\ntarget/\nnode_modules/\nout/\ndist/\n.idea/\n");
+            Files.writeString(ws.resolve(".git/info/exclude"), String.join("\n", VENDORED_PATHS) + "\n");
             Files.writeString(ws.resolve(".git/info/attributes"), "docs/PROGRESS.md merge=union\nhandoff/*.md merge=union\n");
         }
         runGit(ws, "add", "-A");
         runGit(ws, "commit", "-q", "--allow-empty", "-m", tag);
         runGit(ws, "tag", "-f", tag);
         return gitOut(ws, "rev-parse", "HEAD");
+    }
+
+    /** #265, found live: a task interrupted by an external pause (not the dedicated restart-task
+     *  endpoint, which already reverts this via its own git reset) leaves whatever status line it
+     *  had already self-reported sitting in docs/PROGRESS.md. The next attempt is a FRESH session -
+     *  no memory of writing that line - so it never replaces it, only appends its own elsewhere in
+     *  the file (anchored on the PREVIOUS task's own line, not this task's stale one), leaving two
+     *  conflicting lines for the same task id with the newest not even necessarily landing last.
+     *  Called right before a task's own fresh (non-continuation) attempt begins; a no-op on a
+     *  genuinely first attempt, where there is nothing to strip. */
+    public static void clearStaleProgressLine(final Path ws, final String taskId) throws IOException {
+        final Path progress = ws.resolve("docs/PROGRESS.md");
+        if (!Files.isRegularFile(progress)) return;
+        final List<String> lines = Files.readAllLines(progress);
+        final List<String> kept = lines.stream().filter(l -> !l.startsWith(taskId + " | ")).toList();
+        if (kept.size() != lines.size()) Files.write(progress, kept);
     }
 
     /** does this phase tag already exist in ws's history? A tag is only ever written AFTER its
@@ -86,28 +116,49 @@ public final class RunBenchSupport {
      *  mid-run and the job gets requeued (R18). false, not an exception, on a genuinely fresh ws. */
     public static boolean tagExists(final Path ws, final String tag) {
         if (!Files.exists(ws.resolve(".git"))) return false;
-        try {
-            final Process p = git(ws, "rev-parse", "--verify", "--quiet", "refs/tags/" + tag);
-            return p.waitFor() == 0;
-        } catch (IOException | InterruptedException e) { return false; }
+        // #292: DockerService.sh/proc - not a bare ProcessBuilder.start()+waitFor() - drains both
+        // streams concurrently AND enforces a timeout; see this method's own class-level finding.
+        return DockerService.sh(20, "git", "-C", ws.toString(),
+                "rev-parse", "--verify", "--quiet", "refs/tags/" + tag).rc() == 0;
     }
 
+    /** the commit SHA of the nearest phase/* tag reachable from ref - the correct "state right
+     *  before this phase" boundary, NOT ref's immediate git-parent (#260: the agent's own session
+     *  can `git commit` its own work before snapshot() ever runs, so a plain git-parent walk can
+     *  land on the agent's own commit instead of the true phase boundary - `git describe` walks
+     *  past any such untagged commits to the nearest ACTUAL phase/* tag). Used by taskDiff()'s
+     *  before/after boundary and by the task-restart flow's own reset-to-before-this-task point. */
+    public static String nearestPhaseTagSha(final Path ws, final String ref) throws IOException, InterruptedException {
+        final String tag = gitOut(ws, "describe", "--tags", "--match", "phase/*", "--abbrev=0", ref);
+        return gitOut(ws, "rev-parse", tag);
+    }
+
+    /** #292, found live: this - and runGit() below - used to be a bare `new ProcessBuilder(cmd).start()`
+     *  with neither stream drained before waitFor(), unlike every OTHER subprocess invocation in
+     *  this codebase (AgentTools.bash(), DockerService.proc() itself, VerifyTask.verify() - all with
+     *  an explicit "drain concurrently or a read-after-wait deadlocks the pipe" comment). snapshot()
+     *  calls runGit() (via these methods) at EVERY phase/task boundary of EVERY run - `git add -A`
+     *  over an agent-controlled workspace can legitimately produce enough stdout (CRLF warnings
+     *  across many files, a stray large file before .gitignore catches it) to fill the OS pipe
+     *  buffer and block the child on write, hanging this thread forever with no timeout to recover.
+     *  Routed through DockerService.sh(), which already drains both streams concurrently and
+     *  enforces a bound, rather than maintaining a second, unguarded git-invocation path. */
     public static String gitOut(final Path ws, final String... args) throws IOException, InterruptedException {
-        final Process p = git(ws, args);
-        final var out = new String(p.getInputStream().readAllBytes()).strip();
-        if (p.waitFor() != 0) throw new IOException("git " + args[0] + " failed: " + new String(p.getErrorStream().readAllBytes()));   // like runGit, don't return partial output on failure
-        return out;
+        // proc(), not sh(): sh() merges stdout+stderr into one string, but callers of gitOut() rely
+        // on getting back ONLY stdout on success (e.g. a bare commit SHA) - git occasionally writes
+        // advisory text to stderr even on a successful (rc=0) call, which merging would corrupt.
+        final List<String> cmd = new ArrayList<>(List.of("git", "-C", ws.toString()));
+        cmd.addAll(List.of(args));
+        final var r = DockerService.proc(60, null, null, cmd.toArray(new String[0]));
+        if (r.rc() != 0) throw new IOException("git " + args[0] + " failed: " + r.err());   // like runGit, don't return partial output on failure
+        return r.out().strip();
     }
 
     static void runGit(final Path ws, final String... args) throws IOException, InterruptedException {
-        final Process p = git(ws, args);
-        if (p.waitFor() != 0) throw new IOException("git " + args[0] + " failed: " + new String(p.getErrorStream().readAllBytes()));
-    }
-
-    private static Process git(final Path ws, final String... args) throws IOException {
         final List<String> cmd = new ArrayList<>(List.of("git", "-C", ws.toString()));
         cmd.addAll(List.of(args));
-        return new ProcessBuilder(cmd).start();
+        final var r = DockerService.proc(60, null, null, cmd.toArray(new String[0]));
+        if (r.rc() != 0) throw new IOException("git " + args[0] + " failed: " + r.err());
     }
 
     public static Optional<String> javaHome() {

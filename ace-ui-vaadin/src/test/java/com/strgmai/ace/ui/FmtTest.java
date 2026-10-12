@@ -34,6 +34,18 @@ class FmtTest {
     }
 
     @Test
+    void daysHoursMinutes_omitsDaysWhenZero() {
+        assertEquals("0h 1m", Fmt.daysHoursMinutes(90.0));
+        assertEquals("5h 0m", Fmt.daysHoursMinutes(18000.0));
+    }
+
+    @Test
+    void daysHoursMinutes_includesDaysWhenNonZero() {
+        // 3d 22h 32m
+        assertEquals("3d 22h 32m", Fmt.daysHoursMinutes(3 * 86400 + 22 * 3600 + 32 * 60));
+    }
+
+    @Test
     void count_localeIndependentAndNull() {
         assertEquals("–", Fmt.count(null));
         assertEquals("1,234", Fmt.count(1234L));

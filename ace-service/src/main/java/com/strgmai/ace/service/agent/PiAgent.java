@@ -160,13 +160,27 @@ public class PiAgent {
         final Process process = pb.start();
         final long waitSec = wallSec > 0 ? wallSec : Long.MAX_VALUE;   // wallSec <= 0 means unlimited (the system-wide "0 = no budget" convention)
         int rc;
-        if (process.waitFor(waitSec, TimeUnit.SECONDS)) {
-            rc = process.exitValue();
-        } else {
-            log.warn("session {} exceeded its {}s wall budget - killing the pi process tree", name, wallSec);
+        try {
+            if (process.waitFor(waitSec, TimeUnit.SECONDS)) {
+                rc = process.exitValue();
+            } else {
+                log.warn("session {} exceeded its {}s wall budget - killing the pi process tree", name, wallSec);
+                process.toHandle().descendants().forEach(ProcessHandle::destroyForcibly);
+                process.destroyForcibly();
+                rc = 124;
+            }
+        } catch (final InterruptedException ie) {
+            // #272: an external interrupt (job cancellation, or RunBenchSupport.runBounded()'s own
+            // timeout cancelling the inner future) used to propagate straight out of waitFor() and
+            // past BOTH branches above - the process-tree kill only ever ran on the TIMEOUT path,
+            // never on an INTERRUPT. The real `pi` subprocess (and anything it spawned) kept
+            // running, unkilled, continuing to call the model server, exactly the class of bug
+            // already fixed for the reference-agent path (#151/#222/#99) but never brought here.
+            log.warn("session {} was interrupted - killing the pi process tree", name);
             process.toHandle().descendants().forEach(ProcessHandle::destroyForcibly);
             process.destroyForcibly();
-            rc = 124;
+            Thread.currentThread().interrupt();
+            throw ie;
         }
         // the journal lives at sessionDir's sibling (RunBench: sessionDir = rd.resolve("sessions"),
         // journal = rd.resolve("interactions.jsonl")) - derivable from the same arg ReferenceAgent's

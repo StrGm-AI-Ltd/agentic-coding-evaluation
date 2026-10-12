@@ -106,10 +106,10 @@ public final class ReferenceServer {
         return null;
     }
 
-    /** Instant.parse throws DateTimeParseException (a RuntimeException, NOT an IllegalArgumentException),
+    /** AsOf.parse() throws DateTimeParseException (a RuntimeException, NOT an IllegalArgumentException),
      *  which would bypass the 400 catch and leave the client with a connection reset. */
     private static Instant parseAsOf(final String s) {
-        try { return Instant.parse(s); }
+        try { return AsOf.parse(s); }
         catch (java.time.format.DateTimeParseException e) { throw new IllegalArgumentException("bad asOf: " + s); }
     }
 

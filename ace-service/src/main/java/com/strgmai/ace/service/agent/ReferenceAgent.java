@@ -90,8 +90,47 @@ public class ReferenceAgent {
         return oaiUsage.inputTokensDetails().cachedTokens();
     }
 
+    /** #256: a stream that completes (onCompleteResponse, not onError) with no text, no tool calls,
+     *  and no finish reason is a dead turn, not a legitimate content-free one - a real "model
+     *  stopped" always carries a finish reason from a stream that actually completed. Confirmed live
+     *  against a journaled proxy record ({"content":"","reasoning":"","finish_reason":null,
+     *  "tool_calls":[]}) during a host memory squeeze; requiring all three conditions keeps this from
+     *  ever matching a normal turn. */
+    static boolean isEmptyModelResponse(final ChatResponse resp) {
+        final AiMessage ai = resp.aiMessage();
+        final boolean noText = ai.text() == null || ai.text().isBlank();
+        final boolean noToolCalls = !ai.hasToolExecutionRequests();
+        final boolean noFinish = resp.metadata() == null || resp.metadata().finishReason() == null;
+        return noText && noToolCalls && noFinish;
+    }
+
     public record SessionResult(String id, int rc, double seconds, String finish, int turns, int toolErrors,
                                 int compactions, Path sessionFile, Instant start, Instant end) {}
+
+    /** a mid-task trajectory check, invoked every N turns from inside the loop below (turn count
+     *  is never observable from outside this method, so the hook has to live here). `trajectory`
+     *  is the SAME live `msgs` list the loop itself mutates - no disk re-read needed. Returning
+     *  null/blank means "no intervention"; otherwise the text is appended as the next turn's own
+     *  instruction. See Judge.checkpoint() for what actually builds that text. */
+    public interface JudgeCheckpoint {
+        String check(int turn, List<ChatMessage> trajectory);
+    }
+
+    /** #300: a one-shot hook that fires at most once per run() call, right at the moment the loop
+     *  would otherwise naturally stop (the model answered with no tool call) - BEFORE session.end()/
+     *  return. Returning null/blank means "nothing more to ask, stop here" (most calls never get a
+     *  real hook at all). A non-blank return is injected as one more live turn in the SAME
+     *  session/connection, letting the loop continue instead of ending - this is what lets a
+     *  trailing ask (e.g. "write a handoff note") reuse the model server's own prefix cache for
+     *  everything already in `trajectory`, instead of paying for a brand-new continueSession=true
+     *  run() call later that has to re-send the whole history cold over a fresh connection (see
+     *  RunBench's handoff fast path, issue #300). Once fired (with any result, blank or not), a
+     *  second natural stop in the same call always ends normally - `trajectory` is the SAME live
+     *  `msgs` list the loop itself mutates, so the hook sees the full, settled history as of right
+     *  now, same as JudgeCheckpoint above. */
+    public interface FinalTurn {
+        String ask(List<ChatMessage> trajectory);
+    }
 
     private final BenchProperties props;
 
@@ -160,18 +199,92 @@ public class ReferenceAgent {
     public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
                              Path sessionDir, String sessionId, boolean continueSession,
                              String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, int maxTurns, String model, Map<String, String> extraEnv) throws Exception {
+        return run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase, abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, null);
+    }
+
+    /** #265: full form with a mid-task judge checkpoint (see JudgeCheckpoint above) - every other
+     *  call site (reviews, parallel plan, p0/p1, wrap-up/continue/handoff) goes through the
+     *  convenience overload above with judge=null; only RunBench's own task-loop call sites build
+     *  a real one, since the judge is deliberately scoped to a task's own main implementation
+     *  session, not every session kind. */
+    public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
+                             Path sessionDir, String sessionId, boolean continueSession,
+                             String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, int maxTurns, String model, Map<String, String> extraEnv, JudgeCheckpoint judge) throws Exception {
+        return run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase, abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, null);
+    }
+
+    /** #300: adds a one-shot FinalTurn hook (see its own javadoc) on top of the judge-aware form
+     *  above - RunBench's task loop is the only caller that ever passes a real one (its handoff
+     *  fast path); every other call site goes through one of the convenience overloads above with
+     *  finalTurn=null. advisoryOnly defaults to false here since Judge's own session (the only
+     *  caller that needs advisoryOnly=true) has no use for a trailing handoff-style ask either. */
+    public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
+                             Path sessionDir, String sessionId, boolean continueSession,
+                             String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, int maxTurns, String model, Map<String, String> extraEnv, JudgeCheckpoint judge, FinalTurn finalTurn) throws Exception {
+        return run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase, abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, false, finalTurn);
+    }
+
+    /** #265: `advisoryOnly` is for the judge's OWN session specifically - it means two things at
+     *  once, not just one: (1) `appendSystem` is used VERBATIM as the whole system prompt (no file
+     *  read, no {cwd}/{date} substitution, none of this class's own implementer SYSTEM text mixed
+     *  in) - the judge must never see "you have four tools... bias toward action... once you can
+     *  write a file, write it", which is what it was silently getting before this parameter
+     *  existed (appendSystem=null just fell through to the implementer prompt alone); and (2) no
+     *  tool specs are offered at all, so the model structurally cannot call read/write/edit/bash
+     *  against `cwd` - which, for a judge, IS the main session's own live workspace. A system
+     *  prompt alone only asks nicely; an advisory session that still had tools available could
+     *  still decide to "just fix it" and mutate the task's real files mid-task, exactly what this
+     *  checkpoint must never do. With no tool specs offered, `calls` below is always empty, so the
+     *  loop always returns after turn 1 - JUDGE_MAX_TURNS stays only as a defensive cap. */
+    public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
+                             Path sessionDir, String sessionId, boolean continueSession,
+                             String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, int maxTurns, String model, Map<String, String> extraEnv, JudgeCheckpoint judge, boolean advisoryOnly) throws Exception {
+        return run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase, abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, advisoryOnly, null);
+    }
+
+    public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
+                             Path sessionDir, String sessionId, boolean continueSession,
+                             String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, int maxTurns, String model, Map<String, String> extraEnv, JudgeCheckpoint judge, boolean advisoryOnly, FinalTurn finalTurn) throws Exception {
+        return run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase, abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, advisoryOnly, finalTurn, null);
+    }
+
+    /** #307: `compactOnLoadKeepRecentTurns` is this issue's own original #300 fix, scoped to the ONE
+     *  caller that still genuinely needs a cold `continueSession=true` reconnect to a large history -
+     *  the budget-exhaustion rescue step. Unlike every other continuation (wrap-up, length-retry,
+     *  handoff's own cold fallback), which keep the raw convenience overloads above (null = do
+     *  nothing, today's existing behavior, unchanged), the rescue step deliberately wants the OLD
+     *  history compacted down to its most recent turns before ever being sent - cheap prefill (old
+     *  verbose tool outputs become one-line stubs) without losing what the session most recently
+     *  tried and why, which a trajectory-free fresh pack alone cannot carry. `null` disables this
+     *  (every existing call site) - deliberately NOT `0`, since `0` is itself a legitimate, maximally
+     *  aggressive compaction target (`AgentSession.compact()` already supports it, and `RunSpec`'s
+     *  own `rescueKeepRecentTurns` validation explicitly allows it) that must still fire, not be
+     *  mistaken for "feature off". Applied once, immediately after `loadMessages()`, before the turn
+     *  loop's own reactive `lastPrompt`-driven compaction ever gets a chance to run - which, for turn
+     *  1 of any continuation, it structurally never does (see #300's own diagnosis). */
+    public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
+                             Path sessionDir, String sessionId, boolean continueSession,
+                             String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, int maxTurns, String model, Map<String, String> extraEnv, JudgeCheckpoint judge, boolean advisoryOnly, FinalTurn finalTurn, Integer compactOnLoadKeepRecentTurns) throws Exception {
         final long t0 = System.nanoTime();
         final var start = Instant.now();
         final String reasoningEffort = DEFAULT_REASONING.getOrDefault(reasoningKind(name), "medium");
         final var session = new AgentSession(sessionDir, sessionId, continueSession);
         List<ChatMessage> msgs;
+        int preloadCompactions = 0;
         if (continueSession && session.exists()) {
             msgs = session.loadMessages();
+            if (compactOnLoadKeepRecentTurns != null) {
+                preloadCompactions = AgentSession.compact(msgs, compactOnLoadKeepRecentTurns);
+                // 0: compacted proactively on load, not reactively at an observed over-threshold
+                // prompt - there is no "prompt tokens before" yet, no request has been sent
+                if (preloadCompactions > 0) session.compaction(preloadCompactions, 0);
+            }
             msgs.add(UserMessage.from(instruction));
             session.user(instruction);
         } else {
-            String system = SYSTEM.replace("{cwd}", cwd).replace("{date}", start.toString().substring(0, 10))
-                    + (appendSystem == null ? "" : "\n\n" + java.nio.file.Files.readString(Path.of(appendSystem)));
+            String system = advisoryOnly ? appendSystem
+                    : SYSTEM.replace("{cwd}", cwd).replace("{date}", start.toString().substring(0, 10))
+                            + (appendSystem == null ? "" : "\n\n" + java.nio.file.Files.readString(Path.of(appendSystem)));
             msgs = new ArrayList<>(List.of(SystemMessage.from(system), UserMessage.from(instruction)));
             session.header(AGENT_VERSION, model == null ? props.model() : model, cwd, reasoningEffort, name);
             session.system(system);
@@ -219,13 +332,14 @@ public class ReferenceAgent {
                 // per-session prefill/decode speed averages
                 .customHeaders(Map.of(com.strgmai.ace.service.proxy.RecordingProxy.SESSION_HEADER, session.sessionId))
                 .build();
-        final List<ToolSpecification> specs = toolSpecs();
+        final List<ToolSpecification> specs = advisoryOnly ? List.of() : toolSpecs();
         // the run's SCRUBBED environment (fresh HOME, docker shim, pinned JAVA_HOME, AB_RUN_ID) is the
         // base for every tool call; extraEnv null = a bare unit-test context
         Map<String, String> env = toolEnv(extraEnv, cwd);
 
-        int turns = 0, toolErrors = 0, compactions = 0, lastPrompt = 0;
+        int turns = 0, toolErrors = 0, compactions = preloadCompactions, lastPrompt = 0;
         String finish = null; int rc = 0;
+        FinalTurn pendingFinalTurn = finalTurn;   // consumed (set null) the first time it fires - see FinalTurn's own javadoc
         // wallSec <= 0 means unlimited (the harness's own runBounded() is the real enforcement for
         // that - see its javadoc); deadline here only clamps chatWithRetry's exponential backoff
         // sleep, so it must stay far in the future rather than collapsing to "now" (which would
@@ -241,6 +355,10 @@ public class ReferenceAgent {
                 resp = chatWithRetry(chatModel, ChatRequest.builder().messages(msgs).toolSpecifications(specs).build(), deadline, abortProxy, firstTokenTimeoutMs);
             } catch (BudgetExhausted e) {
                 rc = 3; finish = "budget";
+                session.end(turns, toolErrors, compactions, finish);
+                return result(name, rc, t0, finish, turns, toolErrors, compactions, session, start);
+            } catch (ContextWindowExceeded e) {
+                rc = 4; finish = "context_window";
                 session.end(turns, toolErrors, compactions, finish);
                 return result(name, rc, t0, finish, turns, toolErrors, compactions, session, start);
             } catch (TransientError e) {
@@ -271,6 +389,27 @@ public class ReferenceAgent {
                     "output", completion == null ? 0 : completion, "cached", cachedTokens(resp)));
             msgs.add(ai);
             if (calls.isEmpty()) {
+                // #300/#302: the task is about to naturally stop - give the one-shot FinalTurn hook
+                // a chance to ask for one more live turn (e.g. a handoff note) before actually
+                // ending, while this connection's own accumulated prefix cache is still warm.
+                // Consumed unconditionally (pendingFinalTurn = null) whether or not it asks for
+                // anything, so a SECOND natural stop later in this same call always ends for real.
+                // Never offered on a `length` finish: calls is empty here because the response was
+                // CUT OFF, not because the model actually finished - RunBench's own length-retry
+                // mechanism (shouldRetryOnLengthFinish) needs this call's real `finish` value
+                // untouched to decide whether to continue it; firing the hook here would overwrite
+                // `finish` with whatever THIS turn's own response produces instead, silently
+                // skipping that retry and asking for a handoff on a task that may not have actually
+                // finished writing its real output yet.
+                if (pendingFinalTurn != null && !"length".equals(finish)) {
+                    final String ask = pendingFinalTurn.ask(msgs);
+                    pendingFinalTurn = null;
+                    if (ask != null && !ask.isBlank()) {
+                        msgs.add(UserMessage.from(ask));
+                        session.user(ask);
+                        continue;
+                    }
+                }
                 session.end(turns, toolErrors, compactions, finish);
                 return result(name, rc, t0, finish, turns, toolErrors, compactions, session, start);   // done: answered without a tool call
             }
@@ -287,6 +426,21 @@ public class ReferenceAgent {
                 if (out.isError()) toolErrors++;
                 msgs.add(ToolExecutionResultMessage.from(c, out.output()));
                 session.toolResult(c.id(), c.name(), out.output(), out.isError());
+            }
+            // #265: a mid-task judge checkpoint - this turn's own output/tool-results are already
+            // appended to msgs above, so the judge sees the full, settled trajectory through right
+            // now; its recommendation (if any) lands as the NEXT turn's own instruction, same as
+            // the length-continuation nudge already does elsewhere. The every-N-turns decision is
+            // deliberately NOT made here - this loop just calls the hook every turn and lets the
+            // caller's own closure (RunBench) decide whether turn N is actually due for a check,
+            // same "ReferenceAgent owns loop mechanics, RunBench owns policy" split abortProxy and
+            // every other callback parameter already follow.
+            if (judge != null) {
+                final String rec = judge.check(turns, msgs);
+                if (rec != null && !rec.isBlank()) {
+                    msgs.add(UserMessage.from(rec));
+                    session.user(rec);
+                }
             }
             // no wall-budget exit here anymore: the harness enforces task-wall preemptively, from
             // outside, even mid-request (RunBench.sessionWithPolicy) - a session that overruns it is
@@ -345,7 +499,23 @@ public class ReferenceAgent {
             final StreamCollector collector = new StreamCollector();
             try {
                 model.chat(req, collector);
-                return awaitStream(collector, firstTokenTimeoutMs);
+                final ChatResponse resp = awaitStream(collector, firstTokenTimeoutMs);
+                if (isEmptyModelResponse(resp)) {
+                    // the stream itself completed (onCompleteResponse fired, not onError) - nothing
+                    // is stuck on the proxy<->oMLX hop to abort here, unlike the RuntimeException/
+                    // interrupt paths below, so abortProxy is deliberately not called
+                    log.warn("chatWithRetry attempt {}/4 got an empty model response (no content, "
+                            + "no tool_calls, no finish_reason) - retrying as transient", attempt + 1);
+                    last = new RuntimeException("empty model response (no content, no tool_calls, no finish_reason)");
+                    try { Thread.sleep(Math.min(delay, Math.max(100, deadline - System.currentTimeMillis()))); }
+                    catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new TransientError(ie);
+                    }
+                    delay = (long) (delay * 2.5);
+                    continue;
+                }
+                return resp;
             }
             catch (InterruptedException ie) {
                 // a cancelled job interrupts this thread (WorkerService.Future.cancel(true)) - restoring
@@ -359,6 +529,7 @@ public class ReferenceAgent {
                 abortProxy.accept(e.getMessage() != null ? e.getMessage() : e.toString());
                 last = e;
                 if (isBudgetRefusal(e)) throw new BudgetExhausted(e);
+                if (isContextWindowRefusal(e)) throw new ContextWindowExceeded(e);
                 final Integer status = httpStatus(e);
                 boolean clientError = status != null ? status >= 400 && status < 500 && status != 429
                         : hasCause(e, dev.langchain4j.exception.NonRetriableException.class);
@@ -509,6 +680,19 @@ public class ReferenceAgent {
         return false;
     }
 
+    /** the recording proxy's own 400: it estimates the next request's prompt size BEFORE sending
+     *  it and refuses proactively rather than letting the model server fail on an overshoot however
+     *  it sees fit to (see RecordingProxy's own comment on that check) - same "our own proxy, so
+     *  the marker is its exact literal" reasoning isBudgetRefusal() above already applies, since a
+     *  plain 400 status alone means nothing on its own. */
+    static boolean isContextWindowRefusal(final Throwable e) {
+        final Integer status = httpStatus(e);
+        if (status != null && status != 400) return false;
+        for (Throwable t = e; t != null && t != t.getCause(); t = t.getCause())
+            if (t.getMessage() != null && t.getMessage().contains(com.strgmai.ace.service.proxy.RecordingProxy.CONTEXT_WINDOW_REFUSAL_MARKER)) return true;
+        return false;
+    }
+
     /** the HTTP status LangChain4j saw, when it kept one (HttpException anywhere in the cause chain) */
     static Integer httpStatus(final Throwable e) {
         for (Throwable t = e; t != null && t != t.getCause(); t = t.getCause())
@@ -532,5 +716,13 @@ public class ReferenceAgent {
     }
 
     static final class BudgetExhausted extends RuntimeException { BudgetExhausted(Throwable c) { super(c); } }
+    /** #299-adjacent: distinct from BudgetExhausted even though both are the harness's own proxy
+     *  proactively refusing a request rather than the model server failing - RunBench.shouldRescue()
+     *  treats both as rescue-eligible (a compacted reconnect fixes either: too much spent, or too
+     *  much accumulated history to fit), but they stay separate rc values/finish reasons so a
+     *  result still says WHICH one happened, same as this codebase's own convention of keeping
+     *  distinct failure reasons distinct everywhere else (rc=124 wall timeout vs rc=3 budget, "stop"
+     *  vs "tool_execution" finish reasons, ...). */
+    static final class ContextWindowExceeded extends RuntimeException { ContextWindowExceeded(Throwable c) { super(c); } }
     static final class TransientError extends RuntimeException { TransientError(Throwable c) { super(c); } }
 }

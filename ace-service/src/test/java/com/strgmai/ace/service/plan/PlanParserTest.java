@@ -112,6 +112,54 @@ class PlanParserTest {
         assertEquals("the criterion", tasks.get(0).acceptance);
     }
 
+    /** #265, found live: a goal this long word-wraps across several physical markdown lines - only
+     *  the FIRST line was ever looked at, silently dropping everything after it (here, the one
+     *  clause - "exactly per spec section 4.1: NUMERIC(18,2) money..." - that actually told the
+     *  agent what to build). The very next field's own bullet line must still end the merge, even
+     *  though it isn't itself wrapped. */
+    @Test
+    void goalWordWrappedAcrossMultiplePhysicalLinesIsCapturedInFull() {
+        final List<PlanTask> tasks = PlanParser.parse("""
+                ## T6
+                - **Goal:** Bootstrap `account-service` with Flyway migrations for
+                  `accounts` and the append-only `ledger` exactly per spec section 4.1:
+                  `NUMERIC(18,2)` money, and a unique constraint on `(accountId, orderRef)`.
+                - **Affected services:** `account-service`, `postgres`.
+                """);
+        assertEquals("Bootstrap `account-service` with Flyway migrations for `accounts` and the "
+                + "append-only `ledger` exactly per spec section 4.1: `NUMERIC(18,2)` money, and a "
+                + "unique constraint on `(accountId, orderRef)`", tasks.get(0).goal);
+        assertEquals("`account-service`, `postgres`", tasks.get(0).services);
+    }
+
+    /** #287, found live: a bare "S3" mention in a Dependencies field - an oracle check id, not a
+     *  task id - used to be misread as a reference to task T3, defeating the "none"/"no
+     *  dependencies" shortcut and recording a phantom dependency the author never wrote. */
+    @Test
+    void aCheckIdMentionedInDependenciesIsNeverMisreadAsATaskId() {
+        final List<PlanTask> tasks = PlanParser.parse("""
+                ## T3
+                - Goal: whatever
+                ## T6
+                - Goal: something else
+                - Dependencies: none (verified by S3)
+                """);
+        assertEquals(List.of(), tasks.get(1).deps, "a bare check-id mention must never manufacture a phantom task dependency");
+    }
+
+    /** same collision, in a markdown heading rather than a Dependencies field - splitBlocks() uses
+     *  the SAME ID_RE to decide whether a heading starts a new task block. */
+    @Test
+    void aHeadingNamingAStandaloneCheckIdDoesNotStartANewTaskBlock() {
+        final List<PlanTask> tasks = PlanParser.parse("""
+                ## T1
+                - Goal: the only real task
+                ### S6 — unrelated notes about a check, not a task
+                some prose that must stay inside T1's own block
+                """);
+        assertEquals(List.of("T1"), tasks.stream().map(t -> t.id).toList(), "a bare S-heading must never be read as introducing task T6");
+    }
+
     @Test
     void parallelPlanEvaluationValidDepthsAndErrors() {
         final List<PlanTask> tasks = PlanParser.parse("## T1\n- Goal: a\n## T2\n- Goal: b\n- Dependencies: T1\n");

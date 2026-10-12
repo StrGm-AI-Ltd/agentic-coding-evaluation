@@ -22,6 +22,10 @@ public final class StructureChecks {
 
     static final Set<String> SKIP_DIRS = Set.of("/build/", "/.gradle/", "/node_modules/", "/.git/", "/buildSrc/", "/dist/", "/target/", "/out/");
 
+    // package-private (not a local literal): tested directly (#276), same reasoning every other
+    // "widened for direct testability" constant/method in this codebase already follows
+    static final int MAX_GLOB_RESULTS = 4096;
+
     public static boolean skip(Path p) {
         final String s = p.toString() + "/";
         return SKIP_DIRS.stream().anyMatch(s::contains);
@@ -138,9 +142,25 @@ public final class StructureChecks {
         matchers.add(FileSystems.getDefault().getPathMatcher("glob:" + full));
         if (pattern.startsWith("**/"))
             matchers.add(FileSystems.getDefault().getPathMatcher("glob:" + root.resolve(pattern.substring(3)).toString().replace(root.getFileSystem().getSeparator(), "/")));
-        int max = 4096;   // a walked workspace is a small source tree; never loop a runaway node_modules
+        int max = MAX_GLOB_RESULTS;   // a walked workspace is a small source tree; never loop a runaway node_modules
+        // #276, found live: a broad pattern like "**/*" (several real callers use exactly this, then
+        // filter node_modules/build/etc. out AFTER glob() already returned - NOT filtered here in
+        // glob() itself: VerifyTask.verify()/BuildChecks's own mutation-testing step deliberately
+        // glob INSIDE build/ for their own real test-results XML, so excluding SKIP_DIRS globally
+        // here would silently break those legitimate callers instead) can hit this cap entirely on
+        // filesystem-traversal order - a modest React app's own node_modules commonly exceeds 4096
+        // files on its own, with no guarantee src/ is walked first. The caller-side filter then
+        // discards all 4096, leaving an EMPTY list with no sign anywhere that this happened, unlike
+        // every other size-limited output in this codebase. limit(max + 1), not max: lets this tell
+        // "exactly at the cap" apart from "truncated" without materializing/sorting an unbounded
+        // walk just to count it.
         try (Stream<Path> s = Files.walk(root)) {
-            return s.filter(Files::isRegularFile).filter(p -> matchers.stream().anyMatch(m -> m.matches(p))).limit(max).sorted().toList();
+            final List<Path> matched = s.filter(Files::isRegularFile).filter(p -> matchers.stream().anyMatch(m -> m.matches(p))).limit(max + 1).sorted().toList();
+            if (matched.size() > max) {
+                log.warn("glob({}) under {} matched more than {} files - truncating; a broad pattern that hit this cap may silently miss real files behind a large directory walked first (e.g. node_modules)", pattern, root, max);
+                return matched.subList(0, max);
+            }
+            return matched;
         } catch (IOException e) {
             // used by nearly every check - an empty result here can silently produce a false PASS
             // ("no violations found") when the real problem is "the workspace was unreadable"

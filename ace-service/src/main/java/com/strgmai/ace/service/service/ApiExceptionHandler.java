@@ -7,6 +7,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -42,6 +43,20 @@ public class ApiExceptionHandler {
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<Map<String, Object>> conflict(final IllegalStateException e) {
         return body(HttpStatus.CONFLICT, e);
+    }
+
+    /** Found live: a long-lived SSE stream (/events) whose underlying response dies mid-stream -
+     *  the client disconnected, or the whole service process was killed/restarted while the
+     *  connection was open - surfaces here as this exception, with the response already unusable.
+     *  Letting it fall through to serverError() below used to throw a SECOND exception: Spring has
+     *  no HttpMessageConverter for a Map body against a Content-Type already committed to
+     *  "text/event-stream", so the error handler itself failed (HttpMessageNotWritableException),
+     *  masking the real, benign cause in a WARN from Spring's own resolver. Nothing to recover or
+     *  report back over a connection that is already gone - just acknowledge at DEBUG and write no
+     *  body at all. */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void sseConnectionGone(final AsyncRequestNotUsableException e, final HttpServletRequest req) {
+        log.debug("SSE connection no longer usable on {} {}: {}", req.getMethod(), req.getRequestURI(), e.toString());
     }
 
     /** anything else: an unexpected server-side failure. Same {"detail": ...} shape as every other

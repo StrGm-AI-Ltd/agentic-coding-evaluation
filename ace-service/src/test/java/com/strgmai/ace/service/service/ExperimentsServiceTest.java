@@ -32,7 +32,7 @@ class ExperimentsServiceTest {
 
     private static BenchProperties props(final String endpoint) {
         return new BenchProperties(null, endpoint, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
     }
 
     private static ExperimentsService serviceWithUnreachableModelServer() {
@@ -320,6 +320,33 @@ class ExperimentsServiceTest {
         assertFalse(specs.isEmpty());
         assertTrue(specs.stream().allMatch(s -> Double.valueOf(0.2).equals(s.spec().parallelWeight())));
         assertTrue(specs.stream().allMatch(s -> Double.valueOf(0.3).equals(s.spec().efficiencyWeight())));
+    }
+
+    /** #259: the same bug class as the #236 audit just above, recurred for the judge feature -
+     *  judge_* exist on JobNewView/RunSpec/JobCfgFactory but were never read back out of an
+     *  experiment's own params, so the mid-task judge could never be enabled for an experiment
+     *  arm - only a single ad-hoc job could turn it on. Covers all three templates, matching the
+     *  issue's own claim that none of the three builder chains wired any of the five fields. */
+    @Test
+    void judgeFieldsFlowThroughToEveryArmsRunSpecAcrossAllThreeTemplates() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final Map<String, Object> judgeParams = Map.of("judge_enabled", true, "judge_every_n_turns", 7,
+                "judge_model", "openai/gpt-4", "judge_wall_sec", 120, "judge_tokens", 4000);
+
+        for (var e : Map.of(
+                "harness_effect", Map.<String, Object>of("model", "m"),
+                "model_ab", Map.<String, Object>of("model_a", "a", "model_b", "b"),
+                "agent_ab", Map.<String, Object>of("model", "m")).entrySet()) {
+            final Map<String, Object> params = new java.util.HashMap<>(e.getValue());
+            params.putAll(judgeParams);
+            final List<ExperimentsService.ArmSpec> specs = svc.plan(e.getKey(), params, 1);
+            assertFalse(specs.isEmpty(), e.getKey());
+            assertTrue(specs.stream().allMatch(s -> s.spec().judgeEnabled()), e.getKey() + ": judgeEnabled");
+            assertTrue(specs.stream().allMatch(s -> Integer.valueOf(7).equals(s.spec().judgeEveryNTurns())), e.getKey() + ": judgeEveryNTurns");
+            assertTrue(specs.stream().allMatch(s -> "openai/gpt-4".equals(s.spec().judgeModel())), e.getKey() + ": judgeModel");
+            assertTrue(specs.stream().allMatch(s -> Integer.valueOf(120).equals(s.spec().judgeWallSec())), e.getKey() + ": judgeWallSec");
+            assertTrue(specs.stream().allMatch(s -> Integer.valueOf(4000).equals(s.spec().judgeTokens())), e.getKey() + ": judgeTokens");
+        }
     }
 
     /** #95: MAX_TURNS was a ReferenceAgent-local hardcoded constant with no run-level override;

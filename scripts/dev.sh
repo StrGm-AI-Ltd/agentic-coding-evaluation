@@ -49,10 +49,15 @@ up() {
         echo "WARNING: OMLX_API_KEY is not set in this shell - ace-service will start without a" >&2
         echo "         model-server key (preflight/model calls will get a 401)." >&2
     fi
+    # a run's own git repo (workspace-root) is never deleted now, so it needs to live somewhere
+    # durable - java.io.tmpdir's default is NOT that (the OS can sweep it out from under a
+    # long-lived run; see RunBench.java's exportSource() comment for the incident this caused on
+    # 2026-09-28). Still overridable via this shell's own ACE_WORKSPACE_ROOT, same as OMLX_API_KEY above.
+    local workspace_root="${ACE_WORKSPACE_ROOT:-$ROOT/ace-service/workspaces}"
 
     echo "Starting $SERVICE_LABEL..."
     submit "$SERVICE_LABEL" "$ROOT/service.log" \
-        "cd '$ROOT' && exec env $key_env ./gradlew :ace-service:bootRun >> '$ROOT/service.log' 2>&1"
+        "cd '$ROOT' && exec env $key_env ACE_WORKSPACE_ROOT='$workspace_root' ./gradlew :ace-service:bootRun >> '$ROOT/service.log' 2>&1"
 
     echo "Starting $UI_LABEL..."
     submit "$UI_LABEL" "$ROOT/ui.log" \

@@ -103,6 +103,30 @@ class AgentSessionTest {
         assertEquals(List.of(), session.loadMessages());
     }
 
+    /** #305, found live: a task restarted under the SAME canonical session id (a paused/resumed
+     *  job, same as every other R18 restart) leaves its OLD, abandoned file sitting next to the new
+     *  one - both contain the id in their filename. Files.list() gives no ordering guarantee, so
+     *  continueSession=true (the length-retry continuation, wrap-up, and the handoff fast path's own
+     *  cold fallback all use it) must not just take whichever one a filesystem happens to list
+     *  first; it must resolve to the NEWEST attempt, never a stale, superseded one. */
+    @Test
+    void continueSessionResolvesToTheNewestFileWhenMultipleAttemptsShareTheSameId() throws IOException {
+        final var dir = Files.createTempDirectory("session");
+        final var abandoned = new AgentSession(dir, "shared-id", false);
+        abandoned.user("the first, abandoned attempt - interrupted almost immediately");
+        // a later attempt always gets a LATER timestamp prefix in its own filename - force that
+        // ordering explicitly rather than relying on two calls a millisecond apart
+        Files.move(abandoned.path(), dir.resolve("2020-01-01T00-00-00.000Z_shared-id.jsonl"));
+        final var real = new AgentSession(dir, "shared-id", false);
+        real.user("the real, final attempt - a hundred real turns of work");
+        Files.move(real.path(), dir.resolve("2030-01-01T00-00-00.000Z_shared-id.jsonl"));
+
+        final var continuation = new AgentSession(dir, "shared-id", true);
+        assertEquals("2030-01-01T00-00-00.000Z_shared-id.jsonl", continuation.path().getFileName().toString());
+        assertEquals(List.of("the real, final attempt - a hundred real turns of work"),
+                continuation.loadMessages().stream().map(m -> ((UserMessage) m).singleText()).toList());
+    }
+
     @Test
     void usageAggregatesAcrossAssistantRecordsOnly() throws IOException {
         final var dir = Files.createTempDirectory("session");

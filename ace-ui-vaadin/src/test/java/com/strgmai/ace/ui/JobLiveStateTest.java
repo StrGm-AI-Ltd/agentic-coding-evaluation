@@ -37,7 +37,7 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(new JobLiveState.SessionRow(
-                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc (high)", "", null, null, null, null, null, null, null, null)), state.sessions());
+                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc (high)", "", null, null, null, null, null, null, null, null, null)), state.sessions());
     }
 
     /** The sessions grid's new "ts" column (2026-09-25): the session's own start time, same field
@@ -157,7 +157,7 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(new JobLiveState.SessionRow(
-                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc", "", "tool_calls", null, null, null, null, null, null, null)), state.sessions());
+                "755478fc-f323-565e-92f8-1a5b10584e41", "755478fc", "", "tool_calls", null, null, null, null, null, null, null, null)), state.sessions());
     }
 
     /** The whole point of matching by real id: a run's sessions need not finish in the order they
@@ -179,8 +179,8 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(List.of(
-                new JobLiveState.SessionRow("aaaaaaaa-0000-0000-0000-000000000000", "aaaaaaaa", "", null, null, null, null, null, null, null, null),
-                new JobLiveState.SessionRow("bbbbbbbb-0000-0000-0000-000000000000", "bbbbbbbb", "", "stop", null, null, null, null, null, null, null)), state.sessions(),
+                new JobLiveState.SessionRow("aaaaaaaa-0000-0000-0000-000000000000", "aaaaaaaa", "", null, null, null, null, null, null, null, null, null),
+                new JobLiveState.SessionRow("bbbbbbbb-0000-0000-0000-000000000000", "bbbbbbbb", "", "stop", null, null, null, null, null, null, null, null)), state.sessions(),
                 "the second-started session is the one marked done; the first (still open) is unaffected");
     }
 
@@ -263,6 +263,73 @@ class JobLiveStateTest {
         assertNull(sessions.get(0).totalTokens(), "the abandoned attempt never saw this request");
         assertEquals("stop", sessions.get(1).endedStage(), "the retry is the one that actually finished");
         assertEquals(42L, sessions.get(1).totalTokens());
+    }
+
+    /** #301, found live: Tailer hands a fresh client a brand-new "session_started" for EVERY session
+     *  file it finds, on every connection ("stateless across connections", so a late-joining viewer
+     *  still gets full history) - including one that is genuinely still running with no "end" yet.
+     *  Before this fix, a replayed session_started for that still-open attempt was indistinguishable
+     *  from a real retry and got marked "interrupted" on every reconnect, even though nothing failed.
+     *  The same "path" (unique per physical session file, unlike session_id which is deliberately
+     *  shared across retries) arriving twice must be a no-op: one row, still open. */
+    @Test
+    void aReplayedSessionStartedWithTheSamePathIsANoOpNotARetry() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "2026-10-09T19:13:21Z", "path": "sessions/2026-10-09T19-13-21.463Z_aaaaaaaa.jsonl"}
+
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "2026-10-09T19:13:21Z", "path": "sessions/2026-10-09T19-13-21.463Z_aaaaaaaa.jsonl"}
+
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "2026-10-09T19:13:21Z", "path": "sessions/2026-10-09T19-13-21.463Z_aaaaaaaa.jsonl"}
+
+                """).forEach(state::apply);
+        final var sessions = state.sessions();
+        assertEquals(1, sessions.size(), "three replays of the SAME attempt must still be exactly one row");
+        assertNull(sessions.get(0).endedStage(), "still running - never marked interrupted by its own replay");
+    }
+
+    /** A session_started with a DIFFERENT path for the same id is still a genuine retry (a new
+     *  physical session file - AgentSession always mints a fresh timestamped filename, continuation
+     *  or not) and must still mark the abandoned attempt "interrupted", exactly as before #301. */
+    @Test
+    void aSessionStartedWithADifferentPathIsStillARealRetry() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "path": "sessions/2026-10-09T19-06-33.119Z_aaaaaaaa.jsonl"}
+
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "path": "sessions/2026-10-09T19-13-21.463Z_aaaaaaaa.jsonl"}
+
+                """).forEach(state::apply);
+        final var sessions = state.sessions();
+        assertEquals(2, sessions.size(), "a genuinely different path is a new attempt, not a replay");
+        assertEquals("interrupted", sessions.get(0).endedStage());
+        assertNull(sessions.get(1).endedStage());
+    }
+
+    /** A replay of an attempt that has ALREADY been resolved (its session_done already applied) must
+     *  also be a no-op on the resolved row - not just the still-running case above. */
+    @Test
+    void aReplayedSessionStartedForAnAlreadyDoneAttemptLeavesItResolved() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "path": "sessions/2026-10-09T19-06-33.119Z_aaaaaaaa.jsonl"}
+
+                event: session_done
+                data: {"type": "session_done", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "finish": "tool_execution"}
+
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "path": "sessions/2026-10-09T19-06-33.119Z_aaaaaaaa.jsonl"}
+
+                """).forEach(state::apply);
+        final var sessions = state.sessions();
+        assertEquals(1, sessions.size(), "the replay of the same path must not open a second row");
+        assertEquals("tool_execution", sessions.get(0).endedStage(), "still resolved, not reopened");
     }
 
     /** RecordingProxy tags every request with the session's full id (X-Ace-Session-Id, unambiguous
@@ -351,6 +418,65 @@ class JobLiveStateTest {
         assertNull(state.sessions().get(0).wallSec());
     }
 
+    /** The run-wide counterpart to a single session's wallSec() - sums only time actually spent
+     *  inside a session, so the gap BETWEEN two sessions (a pause+redeploy, or just the harness
+     *  process being down) is never included. */
+    @Test
+    void totalActiveSecondsSumsEndedSessionsExcludingTheGapBetweenThem() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "2026-09-25T00:00:00Z"}
+
+                event: session_done
+                data: {"type": "session_done", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "finish": "stop", "ts": "2026-09-25T00:10:00Z"}
+
+                event: session_started
+                data: {"session_id": "bbbbbbbb-0000-0000-0000-000000000000", "ts": "2026-09-26T12:00:00Z"}
+
+                event: session_done
+                data: {"type": "session_done", "session_id": "bbbbbbbb-0000-0000-0000-000000000000", "finish": "stop", "ts": "2026-09-26T12:05:00Z"}
+
+                """).forEach(state::apply);
+        // 10m + 5m = 900s - NOT the ~1.5-day span between the two sessions' timestamps
+        assertEquals(900.0, state.totalActiveSeconds());
+    }
+
+    @Test
+    void totalActiveSecondsCountsAStillRunningSessionFromItsOwnStart() {
+        final var state = new JobLiveState();
+        final var start = java.time.OffsetDateTime.now().minusSeconds(30);
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "%s"}
+
+                """.formatted(start)).forEach(state::apply);
+        final var total = state.totalActiveSeconds();
+        assertTrue(total >= 29 && total < 60, "expected ~30s elapsed, got " + total);
+    }
+
+    /** An abandoned attempt (marked "interrupted", never got a real session_done) contributes
+     *  nothing - a known, documented minor undercount for that rare ungraceful-stop path, versus
+     *  the still-open retry alongside it which DOES count from its own start. */
+    @Test
+    void totalActiveSecondsDoesNotCountAnInterruptedSessionsPartialTime() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "2026-09-28T00:00:00Z"}
+
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000", "ts": "2026-09-28T00:10:00Z"}
+
+                event: session_done
+                data: {"type": "session_done", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "finish": "stop", "ts": "2026-09-28T00:15:00Z"}
+
+                """).forEach(state::apply);
+        // only the retry's own 5m counts - the first (interrupted) row's 10m never happened per any
+        // recorded wallSec
+        assertEquals(300.0, state.totalActiveSeconds());
+    }
+
     @Test
     void wallTimeIsNullWhenEitherTimestampIsMissing() {
         final var state = new JobLiveState();
@@ -399,6 +525,73 @@ class JobLiveStateTest {
 
                 """).forEach(state::apply);
         assertEquals(120L, state.sessions().get(0).totalTokens());
+    }
+
+    /** totalCompletionTokens() is the run-wide counterpart to a single session's totalTokens() -
+     *  summed across every session seen so far, not just the one a given request belongs to. */
+    @Test
+    void totalCompletionTokensSumsAcrossEverySession() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "completion_tokens": 120}
+
+                event: session_started
+                data: {"session_id": "bbbbbbbb-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "bbbbbbbb-0000-0000-0000-000000000000", "completion_tokens": 340}
+
+                """).forEach(state::apply);
+        assertEquals(460L, state.totalCompletionTokens());
+    }
+
+    @Test
+    void aRequestWithNoSessionIdDoesNotCountTowardTheTotal() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: request
+                data: {"type": "request", "completion_tokens": 120}
+
+                """).forEach(state::apply);
+        assertEquals(0L, state.totalCompletionTokens());
+    }
+
+    /** totalPromptTokens() is accumulated independently of totalCompletionTokens() - a request
+     *  carries each field only when the underlying usage block actually has it. */
+    @Test
+    void totalPromptTokensSumsAcrossEverySession() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "prompt_tokens": 5000, "completion_tokens": 120}
+
+                event: session_started
+                data: {"session_id": "bbbbbbbb-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "bbbbbbbb-0000-0000-0000-000000000000", "prompt_tokens": 9000}
+
+                """).forEach(state::apply);
+        assertEquals(14000L, state.totalPromptTokens());
+        assertEquals(120L, state.totalCompletionTokens());
+    }
+
+    @Test
+    void aRequestWithNoSessionIdDoesNotCountTowardThePromptTotal() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: request
+                data: {"type": "request", "prompt_tokens": 5000}
+
+                """).forEach(state::apply);
+        assertEquals(0L, state.totalPromptTokens());
     }
 
     /** ttft_sec IS the prefill wall time for a request; latency_sec - ttft_sec is the decode wall time
@@ -645,7 +838,7 @@ class JobLiveStateTest {
                 data: {"reasoning_effort": null}
 
                 """).forEach(state::apply);
-        assertEquals(List.of(new JobLiveState.SessionRow("", "?", "", null, null, null, null, null, null, null, null)), state.sessions(),
+        assertEquals(List.of(new JobLiveState.SessionRow("", "?", "", null, null, null, null, null, null, null, null, null)), state.sessions(),
                 "missing ids render as ? without throwing");
     }
 

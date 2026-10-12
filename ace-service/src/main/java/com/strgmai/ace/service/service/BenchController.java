@@ -8,6 +8,7 @@ import com.strgmai.ace.service.oracle.CheckId;
 import com.strgmai.ace.service.pack.Packs;
 import com.strgmai.ace.service.plan.PlanParser;
 import com.strgmai.ace.service.plan.PlanTask;
+import com.strgmai.ace.service.runner.Intervene;
 import org.jooq.DSLContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,6 +18,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.nio.file.*;
 import java.util.*;
+import java.util.regex.Pattern;
 
 import static com.strgmai.ace.service.jooq.Tables.CHECK_RESULTS;
 import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
@@ -24,7 +26,10 @@ import static com.strgmai.ace.service.jooq.Tables.JOBS;
 import static com.strgmai.ace.service.jooq.Tables.RUNS;
 
 /** Security: files are confined to the run's own results directory (resolve + verified
- *  containment) and workspace/ — the agent's live tree the listing never shows — is never served. */
+ *  containment); workspace/ — the agent's live tree — is never served by raw path. taskDiff()
+ *  below is the one narrow exception: it only ever runs fixed git subcommands against a task's
+ *  own ref (or a path git itself already enumerated as untracked), never an arbitrary
+ *  caller-supplied filesystem path into workspace/. */
 @RestController
 public class BenchController {
     private static final Logger log = LoggerFactory.getLogger(BenchController.class);
@@ -38,12 +43,14 @@ public class BenchController {
 
     private final Preflight preflight;
     private final TreatmentPin pin;
+    private final Intervene intervene;
 
     public BenchController(DSLContext dsl, JobQueue queue, ImporterService importer, ExperimentsService experiments,
                            StatsService stats, WorkerService worker, BenchProperties props, Preflight preflight,
-                           TreatmentPin pin) {
+                           TreatmentPin pin, Intervene intervene) {
         this.dsl = dsl; this.queue = queue; this.importer = importer; this.experiments = experiments;
         this.stats = stats; this.worker = worker; this.props = props; this.preflight = preflight; this.pin = pin;
+        this.intervene = intervene;
     }
 
     @GetMapping("/api/preflight")
@@ -147,6 +154,46 @@ public class BenchController {
         return row;
     }
 
+    /** #270: the file LIST for a run - top-level files plus one level of subdirs, excluding
+     *  workspace/ (mirrors FilesBrowser's own previous listFiles()/sizeBytes(), which read the
+     *  filesystem directly from the ace-ui-vaadin process, assuming it is colocated with
+     *  ace-service on the same host/mount - not guaranteed, per this project's own README, which
+     *  explicitly describes a UI-only, non-colocated ace-service as a supported setup). Declared
+     *  before the file-serving {*path} mapping below so a bare .../files request (no path segment)
+     *  resolves here, not there. */
+    @GetMapping("/api/runs/{id}/files")
+    public ResponseEntity<?> files(final @PathVariable String id) {
+        final String resultsDir = dsl.select(RUNS.RESULTS_DIR).from(RUNS).where(RUNS.RUN_ID.eq(id)).fetchOne(RUNS.RESULTS_DIR);
+        if (resultsDir == null) return ResponseEntity.status(404).body(Map.of("detail", "run " + id + " is not imported"));
+        try {
+            final var base = Path.of(resultsDir).toRealPath();
+            final List<Map<String, Object>> out = new ArrayList<>();
+            try (var top = Files.list(base)) {
+                for (final var path : top.sorted().toList()) {
+                    final var name = path.getFileName().toString();
+                    if (Files.isRegularFile(path) && isContainedEvenViaSymlinks(base, path)) {
+                        out.add(fileEntry(name, path));
+                    } else if (Files.isDirectory(path) && !"workspace".equals(name)) {
+                        try (var inner = Files.list(path)) {
+                            for (final var child : inner.sorted().filter(Files::isRegularFile).toList())
+                                if (isContainedEvenViaSymlinks(base, child)) out.add(fileEntry(name + "/" + child.getFileName(), child));
+                        }
+                    }
+                }
+            }
+            return ResponseEntity.ok(out);
+        } catch (final Exception e) {
+            return ResponseEntity.status(404).body(Map.of("detail", "not found"));
+        }
+    }
+
+    private static Map<String, Object> fileEntry(final String relativePath, final Path absolute) {
+        long size;
+        try { size = Files.size(absolute); }
+        catch (final java.io.IOException e) { size = -1; }   // mirrors FilesBrowser's own "–" on a stat failure
+        return Map.of("path", relativePath, "size", size);
+    }
+
     /** files of a run, confined to its results dir; workspace/ is never listed nor served.
      *  {*path} (not {path}) so a nested path like packs/INTEGRATION.md or sessions/foo.jsonl
      *  matches too - a plain {path} only ever captures a single segment, up to the first "/". */
@@ -191,7 +238,13 @@ public class BenchController {
      *  event in THIS page's live view at all, so the UI's own session-derived status alone always
      *  read a genuinely-finished task as "not started". The git tags are the real, resume-independent
      *  source of truth for "is this task actually done" - the UI still prefers live session data when
-     *  it has it (for a real-time "running" state), falling back to these only when it doesn't. */
+     *  it has it (for a real-time "running" state), falling back to these only when it doesn't.
+     *
+     *  #261: "implemented"/"handoff_done" alone only say a task's SESSION ran to completion, not
+     *  whether it actually succeeded - a budget-exhausted session is just as "implemented" as a
+     *  genuinely finished one. reported_status carries the task's own self-reported outcome
+     *  (done/partial/blocked), or the harness's "unfinished" fallback when even its dedicated
+     *  wrap-up chance came back empty - null until the task's main session has actually ended. */
     @GetMapping("/api/jobs/{id}/plan")
     public Map<String, Object> plan(@PathVariable UUID id) {
         final Map<String, Object> job = queue.get(id);
@@ -207,12 +260,212 @@ public class BenchController {
         final List<Map<String, Object>> rows = new ArrayList<>();
         int order = 0;
         for (final List<PlanTask> wave : PlanParser.waves(tasks))
-            for (final PlanTask t : wave)
-                rows.add(Map.of("order", order++, "id", t.id, "title", t.title == null ? "" : t.title,
-                        "goal", t.goal == null ? "" : t.goal, "deps", t.deps == null ? List.of() : t.deps,
-                        "implemented", com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/" + t.id),
-                        "handoff_done", com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/" + t.id + "-handoff")));
+            for (final PlanTask t : wave) {
+                final Map<String, Object> row = new LinkedHashMap<>();
+                row.put("order", order++);
+                row.put("id", t.id);
+                row.put("title", t.title == null ? "" : t.title);
+                row.put("goal", t.goal == null ? "" : t.goal);
+                row.put("deps", t.deps == null ? List.of() : t.deps);
+                row.put("implemented", com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/" + t.id));
+                row.put("handoff_done", com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/" + t.id + "-handoff"));
+                // #261/#262: the agent's own self-reported outcome (done/partial/blocked) and WHY
+                // (how it was verified, what's missing, why it's blocked), or the harness's
+                // "unfinished" fallback (with its own fixed explanation) when even a dedicated
+                // wrap-up chance came back empty - both null until the task's main session
+                // actually ends. See RunBench.reportedStatus().
+                final var reported = com.strgmai.ace.service.runner.RunBench.reportedStatus(ws, t.id);
+                row.put("reported_status", reported == null ? null : reported.status());
+                row.put("reported_detail", reported == null ? null : reported.detail());
+                rows.add(row);
+            }
         return Map.of("tasks", rows);
+    }
+
+    /** the plan's task ids in execution (wave) order - same parse plan() above already does,
+     *  extracted so restartTask() can compute "every task at or after this one" the same way. */
+    private List<String> orderedTaskIds(final Path base) throws Exception {
+        final Path planFile = base.resolve("IMPLEMENTATION_PLAN.md");
+        if (!Files.isRegularFile(planFile) || !isContainedEvenViaSymlinks(base, planFile)) return List.of();
+        final List<String> ids = new ArrayList<>();
+        for (final List<PlanTask> wave : PlanParser.waves(PlanParser.parseFile(planFile)))
+            for (final PlanTask t : wave) ids.add(t.id);
+        return ids;
+    }
+
+    // #265: judge_* only ever takes effect for a TASK restart - RunBench.buildJudgeCheckpoint()
+    // reads them via taskOverride(cfg, t.id), which is only ever called keyed by a real task id,
+    // so they naturally no-op if ever sent on a phase-session restart (same "lookup is a no-op for
+    // a name that was never written" principle every other override field here already relies on).
+    // #307: budget_rescue_enabled is the rescue step's own equivalent - RunBench.rescueStep() reads
+    // it via effectiveRescueCfg(cfg, taskOverride(cfg, t.id)), same no-op-on-phase-restart reasoning.
+    private static final Set<String> RESTART_OVERRIDE_KEYS = Set.of(
+            "task_wall_sec", "task_tokens", "max_turns", "wrapup_wall_sec", "wrapup_tokens", "first_token_timeout_sec",
+            "judge_enabled", "judge_every_n_turns", "judge_model", "budget_rescue_enabled");
+
+    /** the three pre-task phases that can be inspected/restarted via /sessions/{name}/... - an
+     *  explicit, small map because the name-to-tag relationship is irregular (found live): p0/p1
+     *  truncate ("p0_definition"->"phase/p0"), PARALLEL_PLAN case-folds ("PARALLEL_PLAN"->
+     *  "phase/parallel_plan") - neither is a generic rule, unlike task ids/"-handoff" (identity). */
+    private static final Map<String, String> PHASE_TAGS = Map.of(
+            "p0_definition", "phase/p0", "p1_plan", "phase/p1", "PARALLEL_PLAN", "phase/parallel_plan");
+    private static final List<String> PHASE_ORDER = List.of("p0_definition", "p1_plan", "PARALLEL_PLAN");
+
+    /** #263: prepares a PAUSED job to redo taskId - and, since later tasks may depend on what it
+     *  was supposed to deliver, every task after it in plan order too - on its next resume. Does
+     *  NOT itself resume the job: the caller still POSTs /requeue afterward, same split as
+     *  pause()/requeue() already have. A backup tag is created before anything else is touched, so
+     *  the discarded state stays recoverable (git never garbage-collects a committed tree while a
+     *  tag still points at it) - the tag is never deleted by this flow and isn't surfaced in the
+     *  UI, but a plain `git tag -l 'backup/*'` in the workspace finds it. */
+    @PostMapping("/api/jobs/{id}/tasks/{taskId}/restart")
+    public Map<String, Object> restartTask(@PathVariable UUID id, @PathVariable String taskId,
+                                           @RequestBody(required = false) Map<String, Object> body) throws Exception {
+        final Map<String, Object> job = queue.get(id);
+        return doRestart(id, job, taskId, "phase/" + taskId, () -> {
+            try {
+                final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
+                final List<String> orderedIds = orderedTaskIds(base);
+                final int fromIndex = orderedIds.indexOf(taskId);
+                final List<String> cascadeIds = fromIndex < 0 ? List.of(taskId) : orderedIds.subList(fromIndex, orderedIds.size());
+                return cascadeIds.stream().flatMap(cid -> java.util.stream.Stream.of("phase/" + cid, "phase/" + cid + "-handoff")).toList();
+            } catch (final Exception e) { throw new RuntimeException(e); }
+        }, body);
+    }
+
+    /** #264: the phase-session counterpart of restartTask() - Definition/Plan/Parallel plan have
+     *  no task id, but the same backup/reset/cascade-delete flow applies, using PHASE_TAGS to
+     *  resolve the tag and PHASE_ORDER to know what's downstream. Restarting p0_definition
+     *  invalidates p1_plan, PARALLEL_PLAN, and every task; p1_plan invalidates PARALLEL_PLAN and
+     *  every task (keeps p0); PARALLEL_PLAN invalidates every task only (keeps p0 and p1) -
+     *  conservative on purpose, matching the task cascade's own "anything downstream is
+     *  invalidated" precedent rather than trying to partially invalidate. */
+    @PostMapping("/api/jobs/{id}/sessions/{name}/restart")
+    public Map<String, Object> restartSession(@PathVariable UUID id, @PathVariable String name,
+                                              @RequestBody(required = false) Map<String, Object> body) throws Exception {
+        if (!PHASE_TAGS.containsKey(name))
+            throw new IllegalArgumentException("not a restartable phase session: " + name + "; allowed: " + PHASE_TAGS.keySet());
+        final Map<String, Object> job = queue.get(id);
+        return doRestart(id, job, name, PHASE_TAGS.get(name), () -> {
+            try {
+                final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
+                final int idx = PHASE_ORDER.indexOf(name);
+                final List<String> tagsToDelete = new ArrayList<>();
+                for (final String laterPhase : PHASE_ORDER.subList(idx, PHASE_ORDER.size())) tagsToDelete.add(PHASE_TAGS.get(laterPhase));
+                for (final String taskId : orderedTaskIds(base))
+                    tagsToDelete.addAll(List.of("phase/" + taskId, "phase/" + taskId + "-handoff"));
+                return tagsToDelete;
+            } catch (final Exception e) { throw new RuntimeException(e); }
+        }, body);
+    }
+
+    private Map<String, Object> doRestart(final UUID id, final Map<String, Object> job, final String overrideKey,
+                                          final String ownTag, final java.util.function.Supplier<List<String>> tagsToDeleteSupplier,
+                                          final Map<String, Object> body) throws Exception {
+        if (!"paused".equals(job.get("status")))
+            throw new IllegalStateException("job " + id + " is " + job.get("status") + "; only a paused job can be restarted");
+        final Path ws = Path.of(props.workspaceRoot(), String.valueOf(job.get("run_id")), "workspace");
+        if (!com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, ownTag))
+            throw new IllegalStateException(overrideKey + " has no " + ownTag + " tag yet - nothing to restart");
+        final Object rawOverrides = body == null ? null : body.get("overrides");
+        final Map<String, Object> overrides = rawOverrides instanceof Map<?, ?> o ? (Map<String, Object>) o : Map.of();
+        final var unknown = overrides.keySet().stream().filter(k -> !RESTART_OVERRIDE_KEYS.contains(k)).toList();
+        if (!unknown.isEmpty()) throw new IllegalArgumentException("unknown override field(s): " + unknown + "; allowed: " + RESTART_OVERRIDE_KEYS);
+
+        com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "tag", "backup/" + overrideKey + "-" + (System.currentTimeMillis() / 1000), "HEAD");
+        final String before = com.strgmai.ace.service.runner.RunBenchSupport.nearestPhaseTagSha(ws, ownTag + "^");
+        com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "reset", "--hard", before);
+
+        for (final String tag : tagsToDeleteSupplier.get())
+            if (com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, tag))
+                com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "tag", "-d", tag);
+
+        return queue.setTaskOverride(id, overrideKey, overrides);
+    }
+
+    /** #263: this task's own attempt history (every run, not just a restarted/overridden one -
+     *  see RunBench.logTaskAttempt()), newest first - the params used and the outcome, so deciding
+     *  what to adjust before a restart doesn't need manual interactions.jsonl archaeology. */
+    @GetMapping("/api/jobs/{id}/tasks/{taskId}/attempts")
+    public List<Map<String, Object>> taskAttempts(@PathVariable UUID id, @PathVariable String taskId) {
+        final Map<String, Object> job = queue.get(id);
+        try {
+            final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
+            final Path file = base.resolve("task_attempts.jsonl");
+            if (!Files.isRegularFile(file) || !isContainedEvenViaSymlinks(base, file)) return List.of();
+            final var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            final List<Map<String, Object>> all = new ArrayList<>();
+            for (final String line : Files.readAllLines(file)) {
+                if (line.isBlank()) continue;
+                final Map<String, Object> entry = mapper.readValue(line, Map.class);
+                if (taskId.equals(entry.get("task_id"))) all.add(entry);
+            }
+            Collections.reverse(all);
+            return all;
+        } catch (final Exception e) { return List.of(); }
+    }
+
+    /** #265: this task's own mid-task judge checkpoints (see Judge.java) - one per turn the judge
+     *  fired, each file holding the exact prompt it saw and its recommendation. Turn order
+     *  (ascending), unlike attempts/history above: these read as a timeline of one task's own
+     *  progression, not a list of outcomes to compare. */
+    /** #307-adjacent, found live: judge/&lt;taskId&gt;[-&lt;attemptStamp&gt;]-turn&lt;N&gt;.md - the attempt
+     *  stamp (Judge.attemptStamp(), absent on files written before this fix existed) disambiguates
+     *  a restarted task's own checkpoints from an earlier, now-abandoned attempt's: the SAME turn
+     *  numbers would otherwise collide/coexist with no way to tell which attempt produced either
+     *  one, mixing stale and current comments on the same page with no visual distinction. Only
+     *  the LATEST attempt (by stamp - sorts correctly as a plain string, same convention #305
+     *  established) is ever shown; "" (the legacy, unstamped shape) sorts before any real
+     *  timestamp, so a task restarted after this fix shipped still correctly prefers its new,
+     *  stamped checkpoints over whatever pre-existing legacy ones happen to still be on disk. */
+    @GetMapping("/api/jobs/{id}/tasks/{taskId}/judge")
+    public List<Map<String, Object>> taskJudge(@PathVariable UUID id, @PathVariable String taskId) {
+        final Map<String, Object> job = queue.get(id);
+        try {
+            final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
+            final Path dir = base.resolve("judge");
+            if (!Files.isDirectory(dir) || !isContainedEvenViaSymlinks(base, dir)) return List.of();
+            final Pattern pattern = Pattern.compile(Pattern.quote(taskId) + "-(?:(.+)-)?turn(\\d+)\\.md");
+            final Map<String, List<Path>> byAttempt = new LinkedHashMap<>();
+            try (var stream = Files.list(dir)) {
+                for (final Path f : stream.toList()) {
+                    final var m = pattern.matcher(f.getFileName().toString());
+                    if (!m.matches()) continue;
+                    byAttempt.computeIfAbsent(m.group(1) == null ? "" : m.group(1), k -> new ArrayList<>()).add(f);
+                }
+            }
+            if (byAttempt.isEmpty()) return List.of();
+            final String latest = byAttempt.keySet().stream().max(Comparator.naturalOrder()).orElseThrow();
+            final List<Map<String, Object>> out = new ArrayList<>();
+            for (final Path f : byAttempt.get(latest)) {
+                final var m = pattern.matcher(f.getFileName().toString());
+                m.matches();
+                final int turn = Integer.parseInt(m.group(2));
+                final String content = Files.readString(f);
+                final int promptIdx = content.indexOf("## Prompt");
+                final int recIdx = content.indexOf("## Recommendation");
+                final String prompt = promptIdx >= 0 && recIdx > promptIdx
+                        ? content.substring(promptIdx + "## Prompt".length(), recIdx).strip() : "";
+                final String recommendation = recIdx >= 0 ? content.substring(recIdx + "## Recommendation".length()).strip() : content.strip();
+                out.add(Map.of("turn", turn, "prompt", prompt, "recommendation", recommendation));
+            }
+            out.sort(Comparator.comparingInt(m -> (Integer) m.get("turn")));
+            return out;
+        } catch (final Exception e) { return List.of(); }
+    }
+
+    /** An operator's own mid-task steering message - delivered through the exact same per-turn
+     *  hook Judge's own recommendations already use (see RunBench.buildJudgeCheckpoint()), just
+     *  operator-triggered instead of LLM-triggered, and independent of whether this task's own
+     *  judge is enabled. Queued, not applied synchronously: it reaches the agent at its own next
+     *  turn boundary, whenever that is - delivery (and the resulting durable log entry in the
+     *  task's own session) happens over there, not here. */
+    @PostMapping("/api/jobs/{id}/tasks/{taskId}/intervene")
+    public void intervene(@PathVariable UUID id, @PathVariable String taskId, @RequestBody Map<String, String> body) {
+        final Map<String, Object> job = queue.get(id);   // #296's own reasoning: a bad id must 404 before anything else
+        final String text = body.get("text");
+        if (text == null || text.isBlank()) throw new IllegalArgumentException("text must not be blank");
+        intervene.offer(String.valueOf(job.get("run_id")), taskId, text);
     }
 
     /** the task's prompt, progressively enriched. taskInstruction(id) is a fixed template (just a
@@ -234,6 +487,131 @@ public class BenchController {
         } catch (final Exception e) {
             return Map.of("started", false, "text", instruction);
         }
+    }
+
+    /** #259: the task's own net change in its workspace. "before" is NEVER just the task's own tag's
+     *  git-parent (<id>^) - found live on the very first real task of a real run: the agent's own
+     *  session had ALREADY run its own `git commit` before our own snapshot() ran, so phase/{id}'s
+     *  sole parent was the agent's OWN commit (already containing every file the task touched),
+     *  not the true pre-task state - <id>^..{id} came back a silent, empty diff. The actual
+     *  boundary is always the nearest ANCESTOR phase/* tag, however many un-tagged commits (ours or
+     *  the agent's own) sit in between - `git describe --tags --match phase/* --abbrev=0` finds
+     *  exactly that, walking past anything untagged. For a FINISHED task (its own phase/{id} tag
+     *  exists), before = the nearest phase/* tag reachable from phase/{id}'s parent, after =
+     *  phase/{id} itself. For one still IN PROGRESS (or paused mid-session) there is no tag yet -
+     *  before = the nearest phase/* tag reachable from HEAD, and the change so far is `git diff
+     *  <before>` (the single-ref form: before vs the live working tree, covering both any
+     *  untagged commits already made AND whatever is still uncommitted), plus the full content of
+     *  every file the task created that git doesn't know about at all yet (plain `git diff` never
+     *  shows those). */
+    @GetMapping("/api/jobs/{id}/tasks/{taskId}/diff")
+    public Map<String, Object> taskDiff(@PathVariable UUID id, @PathVariable String taskId) {
+        return diffAgainstTag(id, "phase/" + taskId);
+    }
+
+    /** the shared core of taskDiff() (above) and sessionDiff() (phase sessions: Definition/Plan/
+     *  Parallel plan) - identical boundary logic either way, just parameterized by which tag marks
+     *  "done" for the thing being diffed. See taskDiff's own javadoc for why "before" is always the
+     *  nearest ANCESTOR phase/* tag, never a literal ^-parent. */
+    private Map<String, Object> diffAgainstTag(final UUID id, final String tag) {
+        final Map<String, Object> job = queue.get(id);
+        final Path ws = Path.of(props.workspaceRoot(), String.valueOf(job.get("run_id")), "workspace");
+        if (!Files.exists(ws.resolve(".git")))
+            return Map.of("started", false, "finished", false, "diff", "", "new_files", List.of());
+        try {
+            final boolean finished = com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, tag);
+            final String before, after, diffText;
+            final List<Map<String, Object>> newFiles = new ArrayList<>();
+            boolean newFilesTruncated = false;
+            if (finished) {
+                after = com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "rev-parse", tag);
+                before = com.strgmai.ace.service.runner.RunBenchSupport.nearestPhaseTagSha(ws, tag + "^");
+                diffText = com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, diffArgs(before, after));
+            } else {
+                before = com.strgmai.ace.service.runner.RunBenchSupport.nearestPhaseTagSha(ws, "HEAD");
+                after = null;
+                diffText = com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, diffArgs(before, null));
+                final String untracked = com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "ls-files", "--others", "--exclude-standard");
+                for (final String rel : untracked.split("\n")) {
+                    if (rel.isBlank() || isVendored(rel)) continue;
+                    if (newFiles.size() >= 50) { newFilesTruncated = true; break; }
+                    final Path f = ws.resolve(rel);
+                    String content;
+                    try { content = Files.isRegularFile(f) ? Files.readString(f) : "(not a regular file)"; }
+                    catch (final Exception e) { content = "(could not read: " + e.getMessage() + ")"; }
+                    final boolean fileTruncated = content.length() > 50_000;
+                    newFiles.add(Map.of("path", rel, "content", fileTruncated ? content.substring(0, 50_000) : content, "truncated", fileTruncated));
+                }
+            }
+            final boolean diffTruncated = diffText.length() > 200_000;
+            final Map<String, Object> result = new LinkedHashMap<>();
+            result.put("started", true);
+            result.put("finished", finished);
+            result.put("before_sha", before);
+            result.put("after_sha", after == null ? "" : after);
+            result.put("diff", diffTruncated ? diffText.substring(0, 200_000) : diffText);
+            result.put("diff_truncated", diffTruncated);
+            result.put("new_files", newFiles);
+            result.put("new_files_truncated", newFilesTruncated);
+            return result;
+        } catch (final Exception e) {
+            return Map.of("started", true, "finished", false, "error", e.toString());
+        }
+    }
+
+    /** #264: the phase-session counterpart of taskPrompt() - Definition/Plan run plainPlan=true
+     *  with nothing dynamic beyond budget/docker boilerplate, so RunBench.PHASE_TEXT's fixed
+     *  string genuinely is the whole prompt; Parallel plan mirrors taskPrompt's own two-part
+     *  pattern exactly (a fixed instruction + the one real dynamic file written for it). Any other
+     *  name (a task id, INTEGRATION, a continuation) returns the graceful "nothing to show" shape -
+     *  this view is scoped to the three phases with no other way to be inspected. */
+    @GetMapping("/api/jobs/{id}/sessions/{name}/prompt")
+    public Map<String, Object> sessionPrompt(@PathVariable UUID id, @PathVariable String name) {
+        if (!PHASE_TAGS.containsKey(name)) return Map.of("started", false, "text", "");
+        if ("PARALLEL_PLAN".equals(name)) {
+            final Map<String, Object> job = queue.get(id);
+            try {
+                final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
+                final Path pack = base.resolve("packs").resolve("PARALLEL_PLAN.md");
+                if (!Files.isRegularFile(pack) || !isContainedEvenViaSymlinks(base, pack))
+                    return Map.of("started", false, "text", Packs.PARALLEL_PLAN_INSTRUCTION);
+                return Map.of("started", true, "text", Packs.PARALLEL_PLAN_INSTRUCTION + "\n\n" + Files.readString(pack));
+            } catch (final Exception e) {
+                return Map.of("started", false, "text", Packs.PARALLEL_PLAN_INSTRUCTION);
+            }
+        }
+        return Map.of("started", true, "text", com.strgmai.ace.service.runner.RunBench.PHASE_TEXT.get(name)[1]);
+    }
+
+    /** #264: the phase-session counterpart of taskDiff() - same diffAgainstTag() core, just keyed
+     *  by PHASE_TAGS instead of a task id. Graceful empty response for any name not in that map. */
+    @GetMapping("/api/jobs/{id}/sessions/{name}/diff")
+    public Map<String, Object> sessionDiff(@PathVariable UUID id, @PathVariable String name) {
+        if (!PHASE_TAGS.containsKey(name)) return Map.of("started", false, "finished", false, "diff", "", "new_files", List.of());
+        return diffAgainstTag(id, PHASE_TAGS.get(name));
+    }
+
+    private static boolean isVendored(final String relPath) {
+        return com.strgmai.ace.service.runner.RunBenchSupport.VENDORED_PATHS.stream().anyMatch(relPath::startsWith);
+    }
+
+    /** #260, found live: a workspace initialised before VENDORED_PATHS grew a given entry (here,
+     *  .toolchains/ - a full unpacked Eclipse Temurin JDK the agent's own build downloaded straight
+     *  into the project root) can still have it TRACKED from an earlier commit - the exclude list
+     *  only ever stops something from being newly git-add'd, never un-tracks what already is, and
+     *  `git diff` shows tracked paths regardless of what's excluded. Excluded here via git's own
+     *  pathspec magic (":!<prefix>**") rather than post-processing the diff TEXT: an earlier
+     *  attempt that stripped hunks by their "+++ b/"/"--- a/" line missed every one of these files,
+     *  because they're all binary - git emits "Binary files a/X and b/X differ" for those instead,
+     *  with no +++/--- line at all (same gap for a pure rename or a mode-only change). Pushing the
+     *  exclusion into the git invocation itself sidesteps every one of those formats at once. */
+    private static String[] diffArgs(final String... refs) {
+        final var args = new ArrayList<String>(List.of("diff"));
+        for (final String ref : refs) if (ref != null) args.add(ref);
+        args.add("--");
+        args.add(".");
+        for (final String vendored : com.strgmai.ace.service.runner.RunBenchSupport.VENDORED_PATHS) args.add(":!" + vendored + "**");
+        return args.toArray(new String[0]);
     }
 
     @PostMapping("/api/jobs")
@@ -415,6 +793,12 @@ public class BenchController {
     /** port of the jobs SSE endpoint: live progress from the files the run writes, plus job status */
     @GetMapping("/api/jobs/{id}/events")
     public SseEmitter events(final @PathVariable UUID id) {
+        // #296: validated synchronously, on THIS request thread, before the stream is ever opened -
+        // EmptyResultDataAccessException from here reaches ApiExceptionHandler's normal 404 mapping
+        // the same way every other /api/jobs/{id}/* endpoint's does. The loop below still re-fetches
+        // every 2s to notice the job's own status changing (that part is unaffected) - this is only
+        // about a BAD id never being allowed to commit an HTTP 200 text/event-stream response first.
+        queue.get(id);
         // 30-min idle timeout as a safety net; a healthy stream self-terminates on a terminal status
         final var emitter = new SseEmitter(30 * 60 * 1000L);
         final var tailer = new Tailer();
@@ -436,6 +820,47 @@ public class BenchController {
                 // stream end as "the job reached a terminal state" - silently calling complete()
                 // here on a genuine bug would make the UI think a still-running job had finished
                 log.warn("SSE stream for job {} failed unexpectedly", id, e);
+                emitter.completeWithError(e);
+            }
+        });
+        return emitter;
+    }
+
+    /** An operator-facing, plain-text peek into a task's own live coding session - see
+     *  TaskTranscript's own class javadoc for why this reads the session's raw JSONL directly
+     *  rather than reusing Judge's trajectory rendering (it would silently drop the model's own
+     *  thinking). Same SSE shape as events() above - a tail-capped catch-up batch on first
+     *  connecting (or whenever the task's own session file changes, e.g. a restart), small
+     *  incremental text after that - but scoped to one task's own session, not the whole job. */
+    private static final int TRANSCRIPT_TAIL_CAP_CHARS = 20_000;
+
+    @GetMapping("/api/jobs/{id}/tasks/{taskId}/transcript")
+    public SseEmitter taskTranscript(final @PathVariable UUID id, final @PathVariable String taskId) {
+        queue.get(id); // #296's own reasoning: a bad id must 404 before the stream ever opens
+        final var emitter = new SseEmitter(30 * 60 * 1000L);
+        final var transcript = new TaskTranscript();
+        SSE_EXECUTOR.submit(() -> {
+            try {
+                while (true) {
+                    final Map<String, Object> job = queue.get(id);
+                    final var sessionsDir = Path.of(props.resultsDir(), String.valueOf(job.get("run_id")), "sessions");
+                    final String block = transcript.poll(sessionsDir, taskId, TRANSCRIPT_TAIL_CAP_CHARS);
+                    // sent as a JSON object (never a raw multi-line String - every block here IS
+                    // multi-line) for the same reason every other event on this stream already is:
+                    // a raw string with embedded newlines breaks SSE's own line-oriented framing
+                    // (a spec-compliant multi-line "data:" payload needs one "data:" prefix PER
+                    // line, which this app's own SseParser does not reconstruct from a raw blob).
+                    // JSON-encoding sidesteps that entirely - a JSON string escapes \n, so the
+                    // whole object is always exactly one wire line.
+                    if (block != null) emitter.send(SseEmitter.event().name("line").data(Map.of("type", "line", "text", block)));
+                    emitter.send(SseEmitter.event().name("status").data(Map.of("status", job.get("status"))));
+                    if (RunSpec.TERMINAL.contains(job.get("status"))) { emitter.complete(); return; }
+                    Thread.sleep(2000);
+                }
+            } catch (java.io.IOException e) {
+                emitter.complete(); // a broken pipe from a closed dialog is normal, not a bug
+            } catch (Exception e) {
+                log.warn("task transcript SSE stream for job {} task {} failed unexpectedly", id, taskId, e);
                 emitter.completeWithError(e);
             }
         });

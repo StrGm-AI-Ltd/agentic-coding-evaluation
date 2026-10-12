@@ -235,6 +235,42 @@ public final class Packs {
         return last;
     }
 
+    /** #304, found live: `handoffs` accumulates in plan order, not in order of relevance to the
+     *  task being packed - taking however many whole notes fit a total cap starting from the front
+     *  of that list means an early, size-heavy, UNRELATED task's note can starve out the ones this
+     *  task actually depends on. When `deps` is non-empty, only those tasks' own notes are even
+     *  candidates; a task with no declared deps at all (e.g. the synthetic INTEGRATION task, which
+     *  has no single dependency to scope to) still sees whatever fits from the full list. */
+    static List<String[]> relevantHandoffs(final List<String[]> handoffs, final List<String> deps) {
+        return deps == null || deps.isEmpty() ? handoffs : handoffs.stream().filter(h -> deps.contains(h[0])).toList();
+    }
+
+    /** #304: relevantHandoffs() scopes this down to the task's own direct deps - typically a
+     *  handful of notes, not the whole run's worth - so the total cap below rarely bites in that
+     *  case. But relevantHandoffs() falls back to the FULL, unfiltered list for a task with no
+     *  declared deps at all (e.g. the synthetic INTEGRATION task) - found live (#309): with
+     *  handoff_total removed entirely, INTEGRATION (which runs last, after every other task has
+     *  already left a note) got every note ever recorded, each capped individually
+     *  (handoff_each) but with no bound on their sum. Same running-total/break-with-omitted-
+     *  marker shape dependencyInterfaces()'s own iface_total cap already uses. Extracted (package-
+     *  private, tested directly) rather than only reachable through the full taskPack() call,
+     *  same reasoning this file's other pure helpers already follow. */
+    static String handoffBlocks(final List<String[]> relevant) {
+        final var blocks = new StringBuilder();
+        int total = 0;
+        for (int i = 0; i < relevant.size(); i++) {
+            final String[] h = relevant.get(i);
+            final String block = "### Handoff from " + h[0] + "\n" + cap(h[1], CAPS.get("handoff_each")) + "\n";
+            if (total + block.length() > CAPS.get("handoff_total")) {
+                blocks.append("… [").append(relevant.size() - i).append(" more handoffs omitted by the handoff cap]");
+                break;
+            }
+            blocks.append(block);
+            total += block.length();
+        }
+        return blocks.toString();
+    }
+
     /** the per-task pack: entry, dependency interfaces, tree, parallel-with notes, merge conflicts,
      *  previous task's diffstat + harness verification + last test run, handoffs, PROGRESS.md tail. */
     public static String taskPack(Path ws, PlanTask t, List<PlanTask> tasks, Map<String, String[]> snapshots, Set<String> done,
@@ -266,15 +302,8 @@ public final class Packs {
             if (!lt[1].isBlank()) parts.add("## Last test/build run the agent made in " + prevTask + " (" + lt[0] + ")\n```\n" + lt[1] + "\n```");
         } else if (verified != null) parts.add("## Harness verification\n" + verified);
         if (handoffs != null && !handoffs.isEmpty()) {
-            final var blocks = new StringBuilder();
-            int total = 0;
-            for (String[] h : handoffs) {
-                final String b = "### Handoff from " + h[0] + "\n" + cap(h[1], CAPS.get("handoff_each"));
-                if (total + b.length() > CAPS.get("handoff_total")) break;
-                blocks.append(b).append('\n');
-                total += b.length();
-            }
-            parts.add("## Notes left by earlier tasks\n" + blocks);
+            final String blocks = handoffBlocks(relevantHandoffs(handoffs, t.deps));
+            if (!blocks.isBlank()) parts.add("## Notes left by earlier tasks\n" + blocks);
         }
         final Path pp = ws.resolve("docs/PROGRESS.md");
         if (Files.exists(pp)) { try { parts.add("## docs/PROGRESS.md\n" + capTail(Files.readString(pp), CAPS.get("progress"))); } catch (IOException e) { log.debug("could not read {} for the pack: {}", pp, e.toString()); } }
@@ -348,6 +377,22 @@ public final class Packs {
                 + "have everything you need from this task's own session - do not run tests, inspect git history, or re-read source "
                 + "files to double-check yourself; write directly from what you already know. At most 600 words, no code listings. "
                 + "Then stop.";
+    }
+    // #307: the budget-exhaustion rescue step's own ask - fired once, in a reconnect whose own
+    // loaded history was already compacted to its most recent turns (see ReferenceAgent's
+    // compactOnLoadKeepRecentTurns), with a fresh, separate budget for this session specifically.
+    // Names the CURRENT, concrete failure explicitly (the harness's own fresh verification run) -
+    // the model's own last tool call before running out of budget was almost certainly not "run the
+    // tests", so nothing in its own trajectory reliably surfaces this on its own - and tells it not
+    // to re-explore, mirroring handoffInstruction()'s own "you already have everything you need".
+    public static String rescueInstruction(final String id, final String reason, final String verificationSummary) {
+        return "Your previous session on " + id + " " + reason + " before finishing. You now have a new, separate "
+                + "budget for this session specifically to close the gap - do not re-read files you already know, do not re-derive "
+                + "context you already have, do not restart the approach from scratch.\n\n"
+                + "The harness just ran the test suite again. Current state:\n" + verificationSummary + "\n\n"
+                + "Fix exactly this - the smallest change that makes it pass - then stop. If you genuinely cannot finish, update the "
+                + "docs/PROGRESS.md status line honestly (`" + id + " | partial | <what remains and why>`) and stop; do not keep "
+                + "spending budget once you have made a real attempt.";
     }
     public static final String FIX_INSTRUCTION = """
             The harness merged the parallel tasks {tasks} into this repository and found the problems listed above. Fix them: resolve every

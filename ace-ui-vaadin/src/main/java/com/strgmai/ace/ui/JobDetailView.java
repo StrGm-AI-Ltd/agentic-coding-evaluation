@@ -6,7 +6,6 @@ import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.grid.GridSortOrder;
 import com.vaadin.flow.data.provider.SortDirection;
-import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.H3;
@@ -98,12 +97,21 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     private final VerticalLayout liveSection = new VerticalLayout();
     private final Span plannedOrderLine = new Span();
     private final Span stepLine = new Span();
+    private final Span activeTimeLine = new Span();
     private final Span requestsLine = new Span();
     private final Div logTail = new Div();
     private final Span terminalNote = new Span("This job has finished; nothing more to stream.");
     private final Span lostNotice = new Span("live connection lost — status still updates via polling");
     private final Span errorLine = new Span();
     private boolean chromeBuilt;
+    // #265: beforeEnter()'s catch branch used to set chromeBuilt=true even though buildChrome()
+    // was never actually called - a hack to stop its own re-entry guard from firing, but it also
+    // defeated refresh()'s "!chromeBuilt" early-exit, so a job id that failed to load even once
+    // kept polling client.job(jobId) (hitting the same failure) and holding an SSE connection open
+    // forever, for as long as the browser tab stayed open. A separate flag, checked by BOTH the
+    // attach listener (never arm polling/SSE for a view whose live UI was never built) and
+    // refresh() (never re-poll even if something else were to call it directly).
+    private boolean loadFailed;
     private String lastActionsSignature;
     private String lastBlockedReason;
 
@@ -117,6 +125,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 pollRegistration = null;
             }
             final var ui = event.getUI();
+            if (loadFailed) {
+                return;   // #265: the initial load already failed - never arm polling/SSE for this view
+            }
             pollRegistration = ui.addPollListener(e -> refresh());
             ui.setPollInterval(JobStatuses.isTerminal(status()) ? -1 : 2000);
             if (jobId != null && !JobStatuses.isTerminal(status())) {
@@ -153,7 +164,10 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         } catch (final Exception e) {
             log.warn("could not load job {}: {}", jobId, e.toString());
             add(new H3("Job #" + jobId), Panels.error(client.errorText(e)));
-            chromeBuilt = true;
+            // #265: NOT chromeBuilt=true - buildChrome() genuinely never ran, so none of the live
+            // components (liveSection, the grids, statusHolder) exist. loadFailed is the flag that
+            // actually matters here; see its own field comment.
+            loadFailed = true;
         }
     }
 
@@ -194,10 +208,11 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         liveSection.getStyle().set("margin-top", "16px");
         final var liveTitle = new H3("Live");
         liveTitle.getStyle().set("margin", "0 0 4px 0");
-        liveSection.add(liveTitle, plannedOrderLine, planGrid, stepLine, sessionsGrid, requestsLine, lostNotice, terminalNote,
-                requestsGrid, logTail);
+        liveSection.add(liveTitle, plannedOrderLine, planGrid, stepLine, activeTimeLine, sessionsGrid, requestsLine, lostNotice,
+                terminalNote, requestsGrid, logTail);
         plannedOrderLine.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.9em");
         stepLine.getStyle().set("font-weight", "600");
+        activeTimeLine.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.9em");
         lostNotice.getStyle().set("color", "var(--lumo-warning-text-color, orange)").set("font-size", "0.85em");
         terminalNote.getStyle().set("color", "var(--lumo-secondary-text-color)");
         logTail.getStyle().set("font-family", "ui-monospace, 'SF Mono', Menlo, monospace")
@@ -213,7 +228,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
     /** Poll cycle: fetch the job row and update fields in place. */
     private void refresh() {
-        if (jobId == null || !chromeBuilt) {
+        if (jobId == null || !chromeBuilt || loadFailed) {
             return;
         }
         try {
@@ -277,7 +292,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     /** Rebuilt only when the offered actions change — focus is preserved between cycles. */
     private void updateActions(final Api.Job job) {
         final var signature = job.status() + "|" + job.cancel_requested() + "|" + job.pause_requested() + "|" + runImported
-                + "|" + (job.stdout_path() != null) + "|" + (job.run_id() != null);
+                + "|" + (job.run_id() != null);
         if (signature.equals(lastActionsSignature)) {
             return;
         }
@@ -329,12 +344,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             hint.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em");
             actions.add(hint);
         }
-        if (job.stdout_path() != null) {
-            final var rawLog = new Anchor(client.baseUrl() + "/jobs/" + job.id() + "/log", "raw log");
-            rawLog.getElement().setAttribute("target", "_blank");
-            rawLog.getElement().setAttribute("rel", "noopener noreferrer");
-            actions.add(rawLog);
-        }
+        // #275: a "raw log" link used to render here whenever job.stdout_path() was set, pointing
+        // at <baseUrl>/jobs/{id}/log - missing the /api/ prefix every real route uses, AND there is
+        // no such route anywhere in BenchController to begin with (it would 404). Latent only
+        // because stdout_path is always null in practice: JobQueue.started() is always called with
+        // a literal null for it (WorkerService.poll()'s in-process worker never writes a separate
+        // stdout log file the way the old subprocess-based Python worker did) - removed rather than
+        // pointed at a real endpoint, since there is no actual log file for it to serve.
         actionsHolder.removeAll();
         actionsHolder.add(actions);
     }
@@ -347,6 +363,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         terminalNote.setVisible(terminal);
         plannedOrderLine.setVisible(!terminal && !live.executionOrder().isEmpty());
         stepLine.setVisible(!terminal);
+        activeTimeLine.setVisible(!terminal);
         sessionsGrid.setVisible(!terminal);
         requestsLine.setVisible(!terminal);
 
@@ -366,6 +383,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             plannedOrderLine.setText("planned order: " + plannedOrderText(live.executionOrder()));
         }
         stepLine.setText("current step: " + (live.currentStep() == null ? "–" : live.currentStep()));
+        activeTimeLine.setText("active time (excludes paused/stopped periods): " + Fmt.daysHoursMinutes(live.totalActiveSeconds()));
         sessionsGrid.setItems(live.sessions());
         final var recent = live.recentRequests();
         // #109: recentRequests is capped (JobLiveState.MAX_RECENT_REQUESTS); say so once the total
@@ -375,7 +393,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         ? "showing the most recent " + recent.size() + " of " + live.requestCount() + " requests"
                         : String.valueOf(live.requestCount());
         requestsLine.setText("requests: " + requestsSummary
-                + (live.lastTokens() == null ? "" : " · last completion tokens " + Fmt.count(live.lastTokens())));
+                + (live.lastTokens() == null ? "" : " · last completion tokens " + Fmt.count(live.lastTokens()))
+                + " · total tokens generated " + Fmt.count(live.totalCompletionTokens())
+                + " · total prompt tokens " + Fmt.count(live.totalPromptTokens()));
 
         requestsGrid.setVisible(!recent.isEmpty());
         requestsGrid.setItems(recent);
@@ -435,7 +455,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
     /** #47: the stage a session ended at, alongside its label - a session that outlives its own
      *  stage (still "running") shows that explicitly rather than leaving the reader to guess. */
-    private static Grid<JobLiveState.SessionRow> buildSessionsGrid() {
+    private Grid<JobLiveState.SessionRow> buildSessionsGrid() {
         final var sessions = new Grid<>(JobLiveState.SessionRow.class, false);
         final var ts = sessions.addColumn(r -> Fmt.when(r.ts())).setHeader("ts").setAutoWidth(true)
                 .setComparator(SESSIONS_BY_TS);
@@ -473,8 +493,21 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 .setTextAlign(ColumnTextAlign.END).setAutoWidth(true)
                 .setComparator(SESSIONS_BY_TOTAL_TOKENS);
         sessions.sort(List.of(new GridSortOrder<>(ts, SortDirection.ASCENDING)));
-        sessions.setAllRowsVisible(true);
+        // #264: setAllRowsVisible(true) - the same bug buildRequestsGrid()'s own comment describes
+        // and was fixed for there - renders every row with no internal scrollbar. An orchestrated
+        // run produces one row per phase/task/continuation/FIX-W*/INTEGRATION session - a dozen
+        // tasks easily means 30-50+ rows, growing this grid to fit all of them and pushing
+        // everything below it (including the live log tail) arbitrarily far down the page with no
+        // way to scroll just this table. A fixed height switches to Vaadin's normal virtual
+        // scrolling instead, same fix as requestsGrid's own.
+        sessions.setHeight("420px");
         sessions.setVisible(false);
+        // #264: a row click opens Prompt/Changes(/Restart for the three known phases) the same way
+        // planGrid's own row click already opens openTaskPromptDialog - this grid previously had no
+        // click handling at all, so "Definition"/"Plan"/"Parallel plan" (no other way to inspect
+        // them) just did nothing when clicked.
+        sessions.addItemClickListener(e -> openSessionDialog(e.getItem()));
+        sessions.getStyle().set("cursor", "pointer");
         return sessions;
     }
 
@@ -492,10 +525,15 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 .setHeader("description").setFlexGrow(1);
         grid.addColumn(t -> taskStatus(live.sessions(), t,
                         currentJob != null && JobStatuses.isTerminal(currentJob.status())))
-                .setHeader("status").setAutoWidth(true).setFlexGrow(0);
+                .setHeader("status").setAutoWidth(true).setFlexGrow(0)
+                // #262: the status word alone doesn't say WHY a task didn't just succeed - hover
+                // for the agent's own self-reported detail (or the harness fallback's explanation).
+                .setTooltipGenerator(t -> taskStatusReason(live.sessions(), t));
         grid.addItemClickListener(e -> openTaskPromptDialog(e.getItem()));
         grid.getStyle().set("cursor", "pointer");
-        grid.setAllRowsVisible(true);
+        // #264: same scroll-cap fix as sessionsGrid/requestsGrid, at a smaller scale (one row per
+        // plan task rather than per session).
+        grid.setHeight("420px");
         grid.setVisible(false);
         return grid;
     }
@@ -516,54 +554,140 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         planGrid.setVisible(!planTasks.isEmpty());
     }
 
-    /** A plan task's status, PREFERRING its matching live session (RunBench names every task
-     *  session "Task &lt;id&gt;[ suffix][ — title]" - JobLiveState.sessionDescription() - anchored
-     *  with a trailing space/exact match so "T1" never matches a session actually for "T10"/"T11";
-     *  the LAST matching session wins, since a resumed/retried task gets a fresh session sharing the
-     *  same description prefix and that's the one whose state is current) for a real-time "running"
-     *  signal, but falling back to the task's own implemented/handoff_done flags - the workspace's
-     *  R18 git tags (phase/{id}, phase/{id}-handoff), resume-independent - when there's no live
-     *  session at all.
+    /** A plan task's status. A genuinely LIVE session (RunBench names every task session
+     *  "Task &lt;id&gt;[ suffix][ — title]" - JobLiveState.sessionDescription() - anchored with a
+     *  trailing space/exact match so "T1" never matches a session actually for "T10"/"T11"; the
+     *  LAST matching session wins, since a resumed/retried task gets a fresh session sharing the
+     *  same description prefix and that's the one whose state is current) with no endedStage yet
+     *  always wins outright - nothing is more current than "it is running right now".
+     *
+     *  Once a task is actually implemented (its own R18 git tag, phase/{id} - resume-independent,
+     *  unlike live session data), its own reported_status (Api.PlanTask - the agent's self-reported
+     *  done/partial/blocked, or the harness's "unfinished" fallback) is what's shown, in preference
+     *  to a merely-ENDED live session row.
+     *
+     *  #261, found live: implemented/handoff_done alone only say the task's session ran to
+     *  completion, not whether it actually succeeded - and the live session's own endedStage can be
+     *  actively MISLEADING here: "tool_execution" (the model mid-tool-call when a budget-exhausted
+     *  session got cut off) read, at a glance, like the task was still doing something, for a task
+     *  that had in fact already finished (one way or another) hours earlier. reported_status is the
+     *  real, persistent verdict - it is read straight from the one place the harness guarantees a
+     *  line always lands once a task's main session ends, win or lose: docs/PROGRESS.md.
      *
      *  #254, found live: a task completed in a PRIOR attempt is resumed straight past (R18) and so
      *  never produces a session_started/session_done event in a FRESH page's live view - session
      *  data alone read a genuinely-finished task as "not started" every time. terminal is only the
-     *  very last resort, for a task neither signal has anything on at all (e.g. the plan file itself
-     *  couldn't be matched to a tag for some reason) - "not started" would be an outright wrong claim
-     *  on an already-finished job there. */
+     *  very last resort, for a task none of these signals has anything on at all (e.g. the plan file
+     *  itself couldn't be matched to a tag for some reason) - "not started" would be an outright
+     *  wrong claim on an already-finished job there. */
     static String taskStatus(final List<JobLiveState.SessionRow> sessions, final Api.PlanTask task, final boolean terminal) {
-        final var prefix = "Task " + task.id();
+        final var last = lastMatchingSession(sessions, task.id());
+        if (last != null && last.endedStage() == null) return "running";
+        if (task.implemented()) {
+            final var reported = task.reported_status();
+            final var suffix = task.handoff_done() ? "" : " (handoff pending)";
+            if (reported != null) return reported + suffix;
+            return task.handoff_done() ? "done" : "implemented (handoff pending)";
+        }
+        if (last != null) return last.endedStage();
+        return terminal ? "see Run detail" : "not started";
+    }
+
+    /** #262: the WHY behind taskStatus()'s own reported outcome - how it was verified (done),
+     *  what's missing (partial), why (blocked), or the harness fallback's own fixed explanation
+     *  (unfinished) - shown as a tooltip on the status cell. Mirrors taskStatus()'s own precedence
+     *  exactly: null whenever that method isn't actually showing a reported outcome (still running,
+     *  or not started at all), so hovering a transient state never surfaces stale detail text left
+     *  over from a past, unrelated attempt. */
+    static String taskStatusReason(final List<JobLiveState.SessionRow> sessions, final Api.PlanTask task) {
+        final var last = lastMatchingSession(sessions, task.id());
+        if (last != null && last.endedStage() == null) return null;
+        if (!task.implemented()) return null;
+        final var detail = task.reported_detail();
+        return detail == null || detail.isBlank() ? null : detail;
+    }
+
+    private static JobLiveState.SessionRow lastMatchingSession(final List<JobLiveState.SessionRow> sessions, final String taskId) {
+        final var prefix = "Task " + taskId;
         JobLiveState.SessionRow last = null;
         for (final var s : sessions) {
             final var d = s.description();
             if (d != null && (d.equals(prefix) || d.startsWith(prefix + " "))) last = s;
         }
-        if (last != null) return last.endedStage() == null ? "running" : last.endedStage();
-        if (task.handoff_done()) return "done";
-        if (task.implemented()) return "implemented (handoff pending)";
-        return terminal ? "see Run detail" : "not started";
+        return last;
     }
 
-    /** The entire task prompt, on demand - taskPrompt.started tells us whether what we're showing is
-     *  just the fixed instruction every task shares, or the real thing enriched with the dynamic part
-     *  the harness computed once this task's session actually began. */
+    /** The task's prompt and its own git changes, on demand, as two tabs of one dialog. Polling
+     *  (piggybacking the page's own 2s poll cycle - see update()'s setPollInterval) keeps BOTH tabs
+     *  fresh while either still has something left to learn, and stops once both have settled:
+     *  the prompt once its real, dynamic part has arrived (taskPrompt.started) or is confirmed
+     *  never coming (#258 - a task finished in an earlier, since-discarded attempt); the diff once
+     *  the task's own phase tag exists (taskDiff.finished) - until then the diff is the live,
+     *  uncommitted working tree, which keeps changing for as long as the task keeps running. */
     private void openTaskPromptDialog(final Api.PlanTask task) {
         final var dialog = new com.vaadin.flow.component.dialog.Dialog();
         dialog.setHeaderTitle(task.id() + (task.title() == null || task.title().isBlank() ? "" : " — " + task.title()));
-        dialog.setWidth("min(800px, 90vw)");
-        dialog.setHeight("min(600px, 80vh)");
-        final var body = new Div();
-        body.getStyle().set("overflow", "auto");
-        dialog.add(body);
+        dialog.setWidth("min(900px, 90vw)");
+        dialog.setHeight("min(650px, 85vh)");
+
+        final var promptBody = new Div();
+        promptBody.getStyle().set("overflow", "auto");
+        final var diffBody = new Div();
+        diffBody.getStyle().set("overflow", "auto");
+        diffBody.setVisible(false);
+        final var restartBody = new Div();
+        restartBody.getStyle().set("overflow", "auto");
+        restartBody.setVisible(false);
+        final var historyBody = new Div();
+        historyBody.getStyle().set("overflow", "auto");
+        historyBody.setVisible(false);
+        final var judgeBody = new Div();
+        judgeBody.getStyle().set("overflow", "auto");
+        judgeBody.setVisible(false);
+        // the operator-facing live transcript - see openTaskTranscriptTab() below for why this
+        // is its own method rather than inlined like the bodies above (its content keeps
+        // growing from a background thread for as long as the dialog stays open, unlike every
+        // other tab here which is just rebuilt wholesale on each poll tick).
+        final var transcriptBody = new Div();
+        // an explicit width, not just "auto": transcriptBody is a flex item of the content
+        // VerticalLayout below, which does not stretch its children to its own width by default -
+        // without this, a long unbroken line in the transcript (a file path, a JSON blob) has no
+        // definite containing width to wrap/scroll against, so it balloons transcriptBody AND the
+        // whole dialog outward instead of scrolling horizontally within its own box, same as a
+        // too-narrow interveneRow (below) would otherwise mis-size its own Send button row.
+        transcriptBody.getStyle().set("overflow", "auto").set("width", "100%").set("box-sizing", "border-box");
+        transcriptBody.setVisible(false);
+        // a SIBLING of transcriptBody, never nested inside it - transcriptBody.removeAll() runs on
+        // every single incoming SSE line (see openTaskTranscriptTab()), which would wipe an input
+        // box (and any not-yet-sent, half-typed text) on every streaming update if it lived inside.
+        final var interveneRow = new Div();
+        interveneRow.getStyle().set("width", "100%").set("box-sizing", "border-box");
+        interveneRow.setVisible(false);
+
+        final var promptTab = new com.vaadin.flow.component.tabs.Tab("Prompt");
+        final var changesTab = new com.vaadin.flow.component.tabs.Tab("Changes");
+        final var restartTab = new com.vaadin.flow.component.tabs.Tab("Restart");
+        final var historyTab = new com.vaadin.flow.component.tabs.Tab("History");
+        final var judgeTab = new com.vaadin.flow.component.tabs.Tab("Judge");
+        final var transcriptTab = new com.vaadin.flow.component.tabs.Tab("Live");
+        final var tabs = new com.vaadin.flow.component.tabs.Tabs(promptTab, changesTab, restartTab, historyTab, judgeTab, transcriptTab);
+        tabs.addSelectedChangeListener(e -> {
+            promptBody.setVisible(tabs.getSelectedTab() == promptTab);
+            diffBody.setVisible(tabs.getSelectedTab() == changesTab);
+            restartBody.setVisible(tabs.getSelectedTab() == restartTab);
+            historyBody.setVisible(tabs.getSelectedTab() == historyTab);
+            judgeBody.setVisible(tabs.getSelectedTab() == judgeTab);
+            transcriptBody.setVisible(tabs.getSelectedTab() == transcriptTab);
+            interveneRow.setVisible(tabs.getSelectedTab() == transcriptTab);
+        });
+
+        final var content = new VerticalLayout(tabs, promptBody, diffBody, restartBody, historyBody, judgeBody, transcriptBody, interveneRow);
+        content.setPadding(false);
+        content.setSpacing(false);
+        content.setSizeFull();
+        dialog.add(content);
         dialog.getFooter().add(new Button("Close", e -> dialog.close()));
 
-        // #255, found live: opened before the task's dynamic part exists (packs/{id}.md isn't
-        // written until the harness actually starts that session), this used to be stuck showing
-        // just the static instruction forever - taskPrompt only ever fetched once, at open time, and
-        // nothing made it look again once the real content landed. Piggybacks on the page's own poll
-        // cycle (already running every 2s for a non-terminal job - see update()'s setPollInterval)
-        // to keep re-fetching while still unstarted, and stops the moment the real, enriched prompt
-        // arrives: it's then stable for the rest of this attempt, so there's no point refetching.
         final Registration[] pollReg = new Registration[1];
         // #256, found live: Packs.taskPack() caps the whole id/title/goal/services/acceptance
         // summary block to a fixed prompt-budget size (a real, deliberate cost/context control on
@@ -573,29 +697,124 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         // full regardless, since there's no reason the ACE user watching this page should be bound
         // by the same budget the model's own prompt is deliberately held to.
         final boolean hasGoal = task.goal() != null && !task.goal().isBlank();
-        final Runnable load = () -> {
+        final boolean[] promptSettled = {false};
+        final boolean[] diffSettled = {false};
+
+        final Runnable loadPrompt = () -> {
             try {
                 final var prompt = client.taskPrompt(jobId, task.id());
-                body.removeAll();
+                promptBody.removeAll();
                 if (hasGoal) {
-                    body.add(new com.vaadin.flow.component.Html(
+                    promptBody.add(new com.vaadin.flow.component.Html(
                             "<div class=\"md-body\"><h3>Full task description</h3>" + Markdown.toHtml(task.goal()) + "</div>"));
                 }
+                // #258, found live: a task can be genuinely done (per its own R18 git tag) while its
+                // results dir never got packs/{id}.md - it finished during an earlier, since-discarded
+                // attempt (cancelled before the pause fix existed, or otherwise aborted) and R18 then
+                // skipped re-running it on resume, so the pack was never rewritten into the new attempt's
+                // results dir either. Without this check that read as "hasn't started yet", which is
+                // simply false and - worse - would poll forever, since the real prompt is never coming.
+                final boolean finishedElsewhere = task.implemented() || task.handoff_done();
                 if (!prompt.started()) {
-                    final var note = new Span("This task hasn't started yet - the prompt below is its fixed "
-                            + "instruction only; the rest depends on the workspace state at the moment it actually "
-                            + "begins. This updates automatically once it does.");
+                    final var note = new Span(finishedElsewhere
+                            ? "This task already finished in an earlier attempt whose results were discarded "
+                              + "before this one resumed, so the enriched prompt from that attempt no longer "
+                              + "exists - only its fixed instruction is shown below."
+                            : "This task hasn't started yet - the prompt below is its fixed "
+                              + "instruction only; the rest depends on the workspace state at the moment it actually "
+                              + "begins. This updates automatically once it does.");
                     note.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em")
                             .set("display", "block").set("margin-bottom", "8px");
-                    body.add(note);
-                } else if (pollReg[0] != null) {
-                    pollReg[0].remove();
-                    pollReg[0] = null;
+                    promptBody.add(note);
+                    promptSettled[0] = finishedElsewhere;
+                } else {
+                    promptSettled[0] = true;
                 }
-                body.add(new com.vaadin.flow.component.Html("<div class=\"md-body\">" + Markdown.toHtml(prompt.text()) + "</div>"));
+                promptBody.add(new com.vaadin.flow.component.Html("<div class=\"md-body\">" + Markdown.toHtml(prompt.text()) + "</div>"));
             } catch (final Exception ex) {
-                body.removeAll();
-                body.add(Panels.error(client.errorText(ex)));
+                promptBody.removeAll();
+                promptBody.add(Panels.error(client.errorText(ex)));
+                promptSettled[0] = true;
+            }
+        };
+        // #259: the task's own git diff - the previous state of the repo vs what it changed, or is
+        // still in the middle of changing. See BenchController.taskDiff() for before/after semantics.
+        final Runnable loadDiff = () -> {
+            try {
+                final var diff = client.taskDiff(jobId, task.id());
+                diffBody.removeAll();
+                diffBody.add(DiffView.render(diff));
+                diffSettled[0] = diff.finished();
+            } catch (final Exception ex) {
+                diffBody.removeAll();
+                diffBody.add(Panels.error(client.errorText(ex)));
+                diffSettled[0] = true;
+            }
+        };
+        // #263: every past attempt at this task's own main session, newest first - read-only, so
+        // (unlike the Restart tab's own form below) safe to rebuild on every poll tick the same way
+        // Prompt/Changes already are.
+        final Runnable loadHistory = () -> {
+            try {
+                final var attempts = client.taskAttempts(jobId, task.id());
+                historyBody.removeAll();
+                if (attempts.isEmpty()) {
+                    historyBody.add(Panels.mono("(no attempts recorded yet)"));
+                    return;
+                }
+                final int n = attempts.size();
+                for (int i = 0; i < n; i++) {
+                    final var a = attempts.get(i);
+                    final var header = new com.vaadin.flow.component.html.H4(
+                            "Attempt " + (n - i) + " — " + (a.attempt_started() == null ? "?" : a.attempt_started())
+                                    + " → " + (a.attempt_ended() == null ? "?" : a.attempt_ended()));
+                    header.getStyle().set("margin", "12px 0 4px 0").set("font-size", "0.95em");
+                    historyBody.add(header);
+                    final var text = new StringBuilder();
+                    text.append("params: ").append(a.params()).append(a.overridden() ? " (overridden)" : " (run default)").append('\n');
+                    text.append("rc: ").append(a.rc()).append("  seconds: ").append(a.seconds()).append('\n');
+                    text.append("outcome: ").append(a.reported_status() == null ? "(none yet)" : a.reported_status());
+                    if (a.reported_detail() != null && !a.reported_detail().isBlank()) text.append(" - ").append(a.reported_detail());
+                    historyBody.add(Panels.mono(text.toString()));
+                }
+            } catch (final Exception ex) {
+                historyBody.removeAll();
+                historyBody.add(Panels.error(client.errorText(ex)));
+            }
+        };
+        // #265: the mid-task judge's own checkpoints for this task, ascending by turn - a timeline
+        // of "is this still on track", not a list of outcomes to compare like History above. The
+        // recommendation is shown up front; the full prompt it was given is collapsed behind
+        // Details, same as CompareView already does for its own verbose, secondary output.
+        final Runnable loadJudge = () -> {
+            try {
+                final var checkpoints = client.taskJudge(jobId, task.id());
+                judgeBody.removeAll();
+                if (checkpoints.isEmpty()) {
+                    judgeBody.add(Panels.mono("(no judge checkpoints yet - either the judge isn't "
+                            + "enabled for this task, or it hasn't reached its first interval)"));
+                    return;
+                }
+                for (final var c : checkpoints) {
+                    final var header = new com.vaadin.flow.component.html.H4("Turn " + c.turn());
+                    header.getStyle().set("margin", "12px 0 4px 0").set("font-size", "0.95em");
+                    judgeBody.add(header);
+                    judgeBody.add(Panels.mono(c.recommendation()));
+                    judgeBody.add(new com.vaadin.flow.component.details.Details("Prompt the judge saw", Panels.mono(c.prompt())));
+                }
+            } catch (final Exception ex) {
+                judgeBody.removeAll();
+                judgeBody.add(Panels.error(client.errorText(ex)));
+            }
+        };
+        final Runnable loadAll = () -> {
+            loadPrompt.run();
+            loadDiff.run();
+            loadHistory.run();
+            loadJudge.run();
+            if (promptSettled[0] && diffSettled[0] && pollReg[0] != null) {
+                pollReg[0].remove();
+                pollReg[0] = null;
             }
         };
         dialog.addOpenedChangeListener(e -> {
@@ -604,9 +823,357 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 pollReg[0] = null;
             }
         });
+        buildRestartTab(task, dialog, restartBody);
+        openTaskTranscriptTab(task, dialog, transcriptBody);
+        buildInterveneRow(task, interveneRow);
         dialog.open();
-        load.run();
-        getUI().ifPresent(ui -> pollReg[0] = ui.addPollListener(e -> load.run()));
+        loadAll.run();
+        getUI().ifPresent(ui -> pollReg[0] = ui.addPollListener(e -> loadAll.run()));
+    }
+
+    /** The "Live" tab: a plain-text, operator-facing peek into the task's own coding session -
+     *  what it's thinking, saying, and calling tools to do - streamed from
+     *  /jobs/{id}/tasks/{taskId}/transcript (TaskTranscript on the server side). Unlike every
+     *  other tab in this dialog, its content arrives from a background SSE thread for as long as
+     *  the dialog stays open, not from the page's own 2s poll cycle - same push mechanism the
+     *  main page's own ensureSse()/JobEventLoop already use (this app runs with @Push enabled),
+     *  just scoped to one task's dialog instead of the whole page. Capped client-side too
+     *  (CLIENT_CAP_CHARS) - the server's own initial catch-up batch is already tail-capped, but a
+     *  dialog left open for hours would otherwise still grow its own buffer unboundedly. */
+    private static final int TRANSCRIPT_CLIENT_CAP_CHARS = 40_000;
+
+    private void openTaskTranscriptTab(final Api.PlanTask task, final com.vaadin.flow.component.dialog.Dialog dialog, final Div transcriptBody) {
+        final var buffer = new StringBuilder();
+        final var stopped = new java.util.concurrent.atomic.AtomicBoolean(false);
+        transcriptBody.removeAll();
+        transcriptBody.add(Panels.mono("(waiting for the task's own session to start...)"));
+
+        final java.util.function.Consumer<SseEvent> onEvent = event -> {
+            if (!"line".equals(event.payloadType())) return;
+            final String text = event.data().path("text").asText("");
+            if (text.isBlank()) return;
+            if (!buffer.isEmpty()) buffer.append("\n\n");
+            buffer.append(text);
+            if (buffer.length() > TRANSCRIPT_CLIENT_CAP_CHARS) buffer.delete(0, buffer.length() - TRANSCRIPT_CLIENT_CAP_CHARS);
+            transcriptBody.removeAll();
+            transcriptBody.add(Panels.mono(buffer.toString()));
+            transcriptBody.getElement().executeJs("this.scrollTop = this.scrollHeight");
+        };
+        final Runnable onLost = () -> transcriptBody.add(Panels.error("Live connection lost - reopen this dialog to retry."));
+
+        // #310: captured here, on the UI thread (this method only ever runs on it) - the loop's own
+        // callbacks run on its background thread, where a plain getUI() call would read Vaadin's
+        // internal attach state without the session lock
+        final var ui = getUI().orElse(null);
+        if (ui == null) return; // not attached - nothing to stream into
+        final var loop = new TaskTranscriptLoop(client, jobId, task.id(), stopped::get,
+                event -> ui.access(() -> onEvent.accept(event)),
+                () -> ui.access(onLost::run));
+        final var thread = new Thread(loop, "job-" + jobId + "-task-" + task.id() + "-transcript");
+        thread.setDaemon(true);
+        thread.start();
+        // #307: stopped on EITHER the dialog's own explicit close OR the whole view detaching
+        // (navigation away, session/UI teardown) - the opened-change listener alone missed the
+        // second case entirely, since a Dialog's overlay isn't torn down just because the view
+        // that opened it navigates away, same reasoning the view's own stopSse() already applies
+        // to the page-level SSE loop via addDetachListener. #311: an AtomicBoolean, not a plain
+        // boolean[] - this flag is written here on the UI thread and read on the loop's own
+        // background thread, with no other synchronization between the two.
+        final var detachReg = addDetachListener(e -> stopped.set(true));
+        dialog.addOpenedChangeListener(e -> { if (!e.isOpened()) { stopped.set(true); detachReg.remove(); } });
+    }
+
+    /** The Live tab's own send box: lets an operator steer the task directly, through the exact
+     *  same per-turn mechanism the mid-task Judge already uses (ServiceClient.sendIntervention() -
+     *  BenchController.intervene() - RunBench.buildJudgeCheckpoint()'s own mailbox check), so it
+     *  reaches the agent at its own next turn boundary - whatever that message was, it's
+     *  delivered as a durable, timestamped entry in the task's own session transcript, visible
+     *  right here once it lands. A static form, built once - never rebuilt by this dialog's own
+     *  poll loop, same reasoning buildRestartTab()'s own javadoc gives for why ITS form is static
+     *  (rebuilding would wipe out whatever the operator is mid-typing). No check here that the
+     *  task is actually running: a message sent to one that isn't just sits unconsumed until
+     *  either it starts or this task's own next attempt clears it - a quiet no-op, not an error. */
+    private void buildInterveneRow(final Api.PlanTask task, final Div interveneRow) {
+        final var text = new com.vaadin.flow.component.textfield.TextArea();
+        text.setPlaceholder("Steer the agent directly - delivered as its next instruction and logged in its own session transcript.");
+        text.setMinHeight("70px");
+        final var send = new Button("Send", e -> {
+            final var value = text.getValue();
+            if (value == null || value.isBlank()) return;
+            try {
+                client.sendIntervention(jobId, task.id(), value);
+                text.clear();
+                Notification.show("Sent - delivered at the agent's next turn.", 4000, Notification.Position.BOTTOM_END);
+            } catch (final Exception ex) {
+                Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
+            }
+        });
+        final var row = new HorizontalLayout(text, send);
+        row.setWidthFull();
+        // flex-grow, not text.setWidthFull(): a plain width:100% on a flex item sets its flex-basis
+        // to 100% too, which fights the Send button for the same space and (depending on the
+        // layout's own cross-axis sizing) can leave text either too small or wide enough to force
+        // the whole row to overflow - flex-grow alone correctly claims exactly "the row's width
+        // minus the Send button's own natural width", with no fixed width to fight.
+        row.setFlexGrow(1, text);
+        row.getStyle().set("margin-top", "8px");
+        interveneRow.removeAll();
+        interveneRow.add(row);
+    }
+
+    /** #263: a static form (built ONCE, never rebuilt by the polling loop above - unlike
+     *  Prompt/Changes/History, rebuilding this would wipe out whatever the operator is mid-typing
+     *  into the override fields). Gated on the job actually being paused and the task having
+     *  already run at least once - restarting a task that is still live, or has never run, makes
+     *  no sense (there is no phase/{id} tag yet for the backend to reset to). */
+    private void buildRestartTab(final Api.PlanTask task, final com.vaadin.flow.component.dialog.Dialog dialog, final Div restartBody) {
+        if (!task.implemented()) {
+            restartBody.add(Panels.mono("This task hasn't finished a session yet - nothing to restart."));
+            return;
+        }
+        if (currentJob == null || !"paused".equals(currentJob.status())) {
+            restartBody.add(Panels.mono("Pause the run first - a task can only be restarted while the job is paused."));
+            return;
+        }
+        final var warning = new Span("Restarts " + task.id() + " and every task after it in plan order - their "
+                + "current work is discarded (a backup git tag is made first in the workspace, but it is not "
+                + "exposed here - recoverable only via a plain `git tag -l 'backup/*'` on the host).");
+        warning.getStyle().set("color", "var(--lumo-error-text-color)").set("font-size", "0.85em").set("display", "block").set("margin-bottom", "8px");
+
+        final var taskWall = new com.vaadin.flow.component.textfield.IntegerField("Task wall (sec)");
+        final var taskTokens = new com.vaadin.flow.component.textfield.IntegerField("Task tokens");
+        final var maxTurns = new com.vaadin.flow.component.textfield.IntegerField("Max turns");
+        final var wrapupWall = new com.vaadin.flow.component.textfield.IntegerField("Wrap-up wall (sec)");
+        final var wrapupTokens = new com.vaadin.flow.component.textfield.IntegerField("Wrap-up tokens");
+        for (final var field : List.of(taskWall, taskTokens, maxTurns, wrapupWall, wrapupTokens)) {
+            field.setPlaceholder("run default");
+            field.setWidth("140px");
+        }
+        final var form = new HorizontalLayout(taskWall, taskTokens, maxTurns, wrapupWall, wrapupTokens);
+        form.getStyle().set("flex-wrap", "wrap");
+
+        // #265: the mid-task judge - every judgeEveryNTurns turns, a separate LLM checks whether
+        // this task is still on the most efficient path to its goal and will meet its deadline.
+        // Restart-tunable so a task already stuck/drifting (the whole reason this exists) can be
+        // caught on its very next attempt without waiting for a fresh run.
+        final var judgeEnabled = new com.vaadin.flow.component.checkbox.Checkbox("Mid-task judge");
+        final var judgeEveryNTurns = new com.vaadin.flow.component.textfield.IntegerField("Every N turns");
+        final var judgeModel = new com.vaadin.flow.component.textfield.TextField("Judge model");
+        judgeEveryNTurns.setPlaceholder("run default (10)");
+        judgeEveryNTurns.setWidth("140px");
+        judgeModel.setPlaceholder("run default (local)");
+        judgeModel.setWidth("200px");
+        final var judgeForm = new HorizontalLayout(judgeEnabled, judgeEveryNTurns, judgeModel);
+        judgeForm.getStyle().set("flex-wrap", "wrap").set("align-items", "center").set("margin-top", "4px");
+
+        // #307: the budget-exhaustion rescue step - one extra dedicated session, with the harness's
+        // own fresh verification output injected, before accepting a budget-exhausted (rc=3) task as
+        // final. Only the enabled toggle is restart-overridable (same reasoning as the judge's own
+        // wall/token fields staying run-level-only, see effectiveRescueCfg()'s own javadoc) - the
+        // rescue session's budget/compaction knobs are an operator choice, not exposed here.
+        final var rescueEnabled = new com.vaadin.flow.component.checkbox.Checkbox("Budget-exhaustion rescue");
+        final var rescueForm = new HorizontalLayout(rescueEnabled);
+        rescueForm.getStyle().set("flex-wrap", "wrap").set("align-items", "center").set("margin-top", "4px");
+
+        // #266: every field above used to always render with just a "run default" placeholder -
+        // no way anywhere in the UI to see what override values (if any) are already in effect for
+        // this task from a PREVIOUS restart (only a direct look at jobs.task_overrides in the raw
+        // DB could tell an operator that). Pre-fill from the job's own currently-active override.
+        final java.util.Map<String, Object> currentOverride = currentJob.task_overrides() != null
+                && currentJob.task_overrides().get(task.id()) instanceof java.util.Map<?, ?> m ? (java.util.Map<String, Object>) m : java.util.Map.of();
+        if (currentOverride.get("task_wall_sec") instanceof Number n) taskWall.setValue(n.intValue());
+        if (currentOverride.get("task_tokens") instanceof Number n) taskTokens.setValue(n.intValue());
+        if (currentOverride.get("max_turns") instanceof Number n) maxTurns.setValue(n.intValue());
+        if (currentOverride.get("wrapup_wall_sec") instanceof Number n) wrapupWall.setValue(n.intValue());
+        if (currentOverride.get("wrapup_tokens") instanceof Number n) wrapupTokens.setValue(n.intValue());
+        if (Boolean.TRUE.equals(currentOverride.get("judge_enabled"))) judgeEnabled.setValue(true);
+        if (currentOverride.get("judge_every_n_turns") instanceof Number n) judgeEveryNTurns.setValue(n.intValue());
+        if (currentOverride.get("judge_model") instanceof String s && !s.isBlank()) judgeModel.setValue(s);
+        if (Boolean.TRUE.equals(currentOverride.get("budget_rescue_enabled"))) rescueEnabled.setValue(true);
+
+        final var restartButton = new Button("Restart from " + task.id(), e -> {
+            final java.util.Map<String, Object> overrides = new java.util.LinkedHashMap<>();
+            if (taskWall.getValue() != null) overrides.put("task_wall_sec", taskWall.getValue());
+            if (taskTokens.getValue() != null) overrides.put("task_tokens", taskTokens.getValue());
+            if (maxTurns.getValue() != null) overrides.put("max_turns", maxTurns.getValue());
+            if (wrapupWall.getValue() != null) overrides.put("wrapup_wall_sec", wrapupWall.getValue());
+            if (wrapupTokens.getValue() != null) overrides.put("wrapup_tokens", wrapupTokens.getValue());
+            if (judgeEnabled.getValue()) overrides.put("judge_enabled", true);
+            if (judgeEveryNTurns.getValue() != null) overrides.put("judge_every_n_turns", judgeEveryNTurns.getValue());
+            if (judgeModel.getValue() != null && !judgeModel.getValue().isBlank()) overrides.put("judge_model", judgeModel.getValue());
+            if (rescueEnabled.getValue()) overrides.put("budget_rescue_enabled", true);
+            try {
+                client.restartTask(jobId, task.id(), overrides);
+                client.requeue(jobId);
+                refresh();
+                dialog.close();
+            } catch (final Exception ex) {
+                log.warn("could not restart task {} on job {}: {}", task.id(), jobId, ex.toString());
+                Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
+            }
+        });
+        restartButton.getStyle().set("margin-top", "8px");
+        restartBody.add(warning, form, judgeForm, rescueForm, restartButton);
+    }
+
+    /** #264: the sessionsGrid counterpart of openTaskPromptDialog() - scoped to the three pre-task
+     *  phases with no other way to be inspected (Definition/Plan/Parallel plan); any other row
+     *  (a task id, INTEGRATION, a continuation - already covered by planGrid, or simply not
+     *  restartable) still opens for Prompt/Changes, just with the backend's own graceful "nothing
+     *  to show" response and no Restart tab. Deliberately simpler than the task dialog: no History
+     *  (these phases are each one-shot per run - no multi-attempt comparison need). */
+    private void openSessionDialog(final JobLiveState.SessionRow row) {
+        final String name = row.name();
+        final var restartablePhases = java.util.Set.of("p0_definition", "p1_plan", "PARALLEL_PLAN");
+        final var dialog = new com.vaadin.flow.component.dialog.Dialog();
+        dialog.setHeaderTitle(row.description() == null || row.description().isBlank() ? "Session" : row.description());
+        dialog.setWidth("min(900px, 90vw)");
+        dialog.setHeight("min(650px, 85vh)");
+
+        final var promptBody = new Div();
+        promptBody.getStyle().set("overflow", "auto");
+        final var diffBody = new Div();
+        diffBody.getStyle().set("overflow", "auto");
+        diffBody.setVisible(false);
+        final var restartBody = new Div();
+        restartBody.getStyle().set("overflow", "auto");
+        restartBody.setVisible(false);
+
+        final var promptTab = new com.vaadin.flow.component.tabs.Tab("Prompt");
+        final var changesTab = new com.vaadin.flow.component.tabs.Tab("Changes");
+        final boolean showRestart = name != null && restartablePhases.contains(name);
+        final var restartTab = showRestart ? new com.vaadin.flow.component.tabs.Tab("Restart") : null;
+        final com.vaadin.flow.component.tabs.Tabs tabs = showRestart
+                ? new com.vaadin.flow.component.tabs.Tabs(promptTab, changesTab, restartTab)
+                : new com.vaadin.flow.component.tabs.Tabs(promptTab, changesTab);
+        tabs.addSelectedChangeListener(e -> {
+            promptBody.setVisible(tabs.getSelectedTab() == promptTab);
+            diffBody.setVisible(tabs.getSelectedTab() == changesTab);
+            restartBody.setVisible(restartTab != null && tabs.getSelectedTab() == restartTab);
+        });
+
+        final var content = new VerticalLayout(tabs, promptBody, diffBody, restartBody);
+        content.setPadding(false);
+        content.setSpacing(false);
+        content.setSizeFull();
+        dialog.add(content);
+        dialog.getFooter().add(new Button("Close", e -> dialog.close()));
+
+        final Registration[] pollReg = new Registration[1];
+        final boolean[] promptSettled = {false};
+        final boolean[] diffSettled = {false};
+
+        final Runnable loadPrompt = () -> {
+            try {
+                final var prompt = name == null ? new Api.TaskPrompt(false, "") : client.sessionPrompt(jobId, name);
+                promptBody.removeAll();
+                if (!prompt.started()) {
+                    final var note = new Span(name == null || !restartablePhases.contains(name)
+                            ? "There is no detail view for this session - only Definition, Plan, and Parallel "
+                              + "plan are inspectable here (a task's own row has the same information via the "
+                              + "plan table above instead)."
+                            : "This phase hasn't started yet - the fixed instruction below is all there is "
+                              + "until it does. This updates automatically once it does.");
+                    note.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em")
+                            .set("display", "block").set("margin-bottom", "8px");
+                    promptBody.add(note);
+                    promptSettled[0] = name == null || !restartablePhases.contains(name);
+                } else {
+                    promptSettled[0] = true;
+                }
+                if (!prompt.text().isBlank())
+                    promptBody.add(new com.vaadin.flow.component.Html("<div class=\"md-body\">" + Markdown.toHtml(prompt.text()) + "</div>"));
+            } catch (final Exception ex) {
+                promptBody.removeAll();
+                promptBody.add(Panels.error(client.errorText(ex)));
+                promptSettled[0] = true;
+            }
+        };
+        final Runnable loadDiff = () -> {
+            try {
+                final var diff = name == null ? new Api.TaskDiff(false, false, "", "", "", false, List.of(), false, null)
+                        : client.sessionDiff(jobId, name);
+                diffBody.removeAll();
+                diffBody.add(DiffView.render(diff));
+                diffSettled[0] = diff.finished();
+            } catch (final Exception ex) {
+                diffBody.removeAll();
+                diffBody.add(Panels.error(client.errorText(ex)));
+                diffSettled[0] = true;
+            }
+        };
+        final Runnable loadAll = () -> {
+            loadPrompt.run();
+            loadDiff.run();
+            if (promptSettled[0] && diffSettled[0] && pollReg[0] != null) {
+                pollReg[0].remove();
+                pollReg[0] = null;
+            }
+        };
+        dialog.addOpenedChangeListener(e -> {
+            if (!e.isOpened() && pollReg[0] != null) {
+                pollReg[0].remove();
+                pollReg[0] = null;
+            }
+        });
+        if (showRestart) buildSessionRestartTab(name, dialog, restartBody);
+        dialog.open();
+        loadAll.run();
+        getUI().ifPresent(ui -> pollReg[0] = ui.addPollListener(e -> loadAll.run()));
+    }
+
+    /** #264: the phase-session counterpart of buildRestartTab() - same static-form-built-once
+     *  rule (never rebuilt by the polling loop, so mid-typed override values survive), same
+     *  paused gate. No wrap-up fields: p0/p1/PARALLEL_PLAN have no wrap-up concept at all. */
+    private void buildSessionRestartTab(final String name, final com.vaadin.flow.component.dialog.Dialog dialog, final Div restartBody) {
+        if (currentJob == null || !"paused".equals(currentJob.status())) {
+            restartBody.add(Panels.mono("Pause the run first - a session can only be restarted while the job is paused."));
+            return;
+        }
+        final var warning = new Span("Restarts " + name + " and every later phase/task - their current work is "
+                + "discarded (a backup git tag is made first in the workspace, but it is not exposed here - "
+                + "recoverable only via a plain `git tag -l 'backup/*'` on the host).");
+        warning.getStyle().set("color", "var(--lumo-error-text-color)").set("font-size", "0.85em").set("display", "block").set("margin-bottom", "8px");
+
+        final var taskWall = new com.vaadin.flow.component.textfield.IntegerField("Task wall (sec)");
+        final var taskTokens = new com.vaadin.flow.component.textfield.IntegerField("Task tokens");
+        final var maxTurns = new com.vaadin.flow.component.textfield.IntegerField("Max turns");
+        final var firstTokenTimeout = new com.vaadin.flow.component.textfield.IntegerField("First-token timeout (sec)");
+        for (final var field : List.of(taskWall, taskTokens, maxTurns, firstTokenTimeout)) {
+            field.setPlaceholder("run default");
+            field.setWidth("160px");
+        }
+        final var form = new HorizontalLayout(taskWall, taskTokens, maxTurns, firstTokenTimeout);
+        form.getStyle().set("flex-wrap", "wrap");
+
+        // #266: same pre-fill as buildRestartTab() above - restartSession() stores this phase's
+        // own override in the SAME jobs.task_overrides map, just keyed by phase name instead of
+        // task id (see BenchController.restartSession()/doRestart()).
+        final java.util.Map<String, Object> currentOverride = currentJob.task_overrides() != null
+                && currentJob.task_overrides().get(name) instanceof java.util.Map<?, ?> m ? (java.util.Map<String, Object>) m : java.util.Map.of();
+        if (currentOverride.get("task_wall_sec") instanceof Number n) taskWall.setValue(n.intValue());
+        if (currentOverride.get("task_tokens") instanceof Number n) taskTokens.setValue(n.intValue());
+        if (currentOverride.get("max_turns") instanceof Number n) maxTurns.setValue(n.intValue());
+        if (currentOverride.get("first_token_timeout_sec") instanceof Number n) firstTokenTimeout.setValue(n.intValue());
+
+        final var restartButton = new Button("Restart from " + name, e -> {
+            final java.util.Map<String, Object> overrides = new java.util.LinkedHashMap<>();
+            if (taskWall.getValue() != null) overrides.put("task_wall_sec", taskWall.getValue());
+            if (taskTokens.getValue() != null) overrides.put("task_tokens", taskTokens.getValue());
+            if (maxTurns.getValue() != null) overrides.put("max_turns", maxTurns.getValue());
+            if (firstTokenTimeout.getValue() != null) overrides.put("first_token_timeout_sec", firstTokenTimeout.getValue());
+            try {
+                client.restartSession(jobId, name, overrides);
+                client.requeue(jobId);
+                refresh();
+                dialog.close();
+            } catch (final Exception ex) {
+                log.warn("could not restart session {} on job {}: {}", name, jobId, ex.toString());
+                Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
+            }
+        });
+        restartButton.getStyle().set("margin-top", "8px");
+        restartBody.add(warning, form, restartButton);
     }
 
     /**

@@ -5,6 +5,8 @@ import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.docker.DockerService;
 import com.strgmai.ace.service.oracle.RunOracle;
+import com.strgmai.ace.service.pack.Packs;
+import com.strgmai.ace.service.plan.PlanTask;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -56,7 +58,7 @@ class RunBenchTest {
 
     private static RunBench runBench(BenchProperties props) {
         return new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class),
-                mock(RunOracle.class), mock(Reviews.class), mock(ContextProbe.class));
+                mock(RunOracle.class), mock(Reviews.class), mock(ContextProbe.class), mock(Judge.class), new Intervene());
     }
 
     @Test
@@ -520,7 +522,7 @@ class RunBenchTest {
         final var props = mock(BenchProperties.class);
         final var probe = mockProbeAndProps(props);
         final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class), new Intervene());
         when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
 
         try (var dockerMock = mockStatic(DockerService.class)) {
@@ -545,7 +547,7 @@ class RunBenchTest {
         final var props = mock(BenchProperties.class);
         final var probe = mockProbeAndProps(props);
         final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class), new Intervene());
         when(oracle.score(any(), any(), any(), any())).thenThrow(new RuntimeException("docker-gated check crashed"));
 
         try (var dockerMock = mockStatic(DockerService.class)) {
@@ -566,7 +568,7 @@ class RunBenchTest {
         final var props = mock(BenchProperties.class);
         final var probe = mockProbeAndProps(props);
         final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class), new Intervene());
         when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
 
         try (var dockerMock = mockStatic(DockerService.class)) {
@@ -585,7 +587,7 @@ class RunBenchTest {
         final var props = mock(BenchProperties.class);
         final var probe = mock(ContextProbe.class);
         final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class), new Intervene());
         when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
 
         try (var dockerMock = mockStatic(DockerService.class)) {
@@ -602,7 +604,7 @@ class RunBenchTest {
         final var props = mock(BenchProperties.class);
         final var probe = mockProbeAndProps(props);
         final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe);
+        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class), new Intervene());
         when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
 
         try (var dockerMock = mockStatic(DockerService.class)) {
@@ -610,5 +612,256 @@ class RunBenchTest {
             rb.oracleWithDocker(Map.of("manage_docker", true, "docker_memory_mib", 8192), tmp, "task", tmp, Map.of());
             dockerMock.verify(() -> DockerService.dockerUp(360, 8192));
         }
+    }
+
+    /** #263: taskOverride() is Map.of() - never null, and never a false-positive match - for every
+     *  session name that isn't a real, overridden plan task id. */
+    @Test
+    void taskOverrideLooksUpOnlyTheExactTaskIdAndIsNeverNull() {
+        final var cfg = Map.<String, Object>of("task_overrides", Map.of("T7", Map.of("task_wall_sec", 40000)));
+        assertEquals(Map.of("task_wall_sec", 40000), RunBench.taskOverride(cfg, "T7"));
+        assertEquals(Map.of(), RunBench.taskOverride(cfg, "T8"), "a different task id must never match T7's own override");
+        assertEquals(Map.of(), RunBench.taskOverride(cfg, "INTEGRATION"), "a non-task session name must never match either");
+        assertEquals(Map.of(), RunBench.taskOverride(Map.of(), "T7"), "no task_overrides key at all - still never null");
+    }
+
+    @Test
+    void effectiveIntAndLongFallBackWhenNoOverrideIsPresent() {
+        final var override = Map.<String, Object>of("max_turns", 600);
+        assertEquals(600, RunBench.effectiveInt(override, "max_turns", 400));
+        assertEquals(400, RunBench.effectiveInt(override, "task_wall_sec", 400), "no entry for this key - the fallback, not 0");
+        assertEquals(400, RunBench.effectiveInt(Map.of(), "max_turns", 400));
+        assertEquals(40000L, RunBench.effectiveLong(Map.<String, Object>of("task_tokens", 40000), "task_tokens", 0L));
+    }
+
+    /** #258, found live: this predicate is no longer gated on session kind at all - the whole bug
+     *  was that p0_definition/p1_plan never reached this retry (the OLD signature took a plainPlan
+     *  flag that always short-circuited it to false for them) even though they hit the exact same
+     *  `length`-finish truncation a task session does. */
+    @Test
+    void shouldRetryOnLengthFinishIgnoresSessionKindEntirely() {
+        assertTrue(RunBench.shouldRetryOnLengthFinish("length", 0, 20000, 500), "a plain task-shaped call");
+        assertFalse(RunBench.shouldRetryOnLengthFinish("stop", 0, 20000, 500), "not a length finish at all");
+        assertFalse(RunBench.shouldRetryOnLengthFinish("length", 124, 20000, 500), "already wall-timed-out - nothing left to continue into");
+        assertFalse(RunBench.shouldRetryOnLengthFinish("length", 0, 20000, 19950), "under 120s remaining - not worth a whole extra call");
+        assertTrue(RunBench.shouldRetryOnLengthFinish("length", 0, 0, 999_999), "wall<=0 means unlimited - always enough remaining");
+    }
+
+    @Test
+    void dueForJudgeCheckFiresOnceTheIntervalHasElapsedSinceTheLastCheck() {
+        assertTrue(RunBench.dueForJudgeCheck(10, 0, 10), "exactly N turns since the last check (turn 0)");
+        assertFalse(RunBench.dueForJudgeCheck(9, 0, 10), "one turn short");
+        assertTrue(RunBench.dueForJudgeCheck(23, 13, 10), "N turns since the last check, not since turn 0 - #299's interval can shrink mid-task");
+        assertTrue(RunBench.dueForJudgeCheck(7, 0, 0), "a hand-crafted 0 (from a restart override) must never divide by zero - treated as every turn");
+        assertTrue(RunBench.dueForJudgeCheck(7, 0, -3), "a negative override is the same degenerate case as 0");
+    }
+
+    /** #299: the judge checks more often the longer a task stays off track, and recovers once it
+     *  reports on track again - symmetric (halve down / double up), not a hard snap back to
+     *  everyN on the first good verdict, to avoid flapping right at the boundary. */
+    @Test
+    void nextJudgeIntervalHalvesOnOffTrackAndDoublesBackOnTrackCappedAtEveryN() {
+        assertEquals(5, RunBench.nextJudgeInterval(10, 10, true));
+        assertEquals(2, RunBench.nextJudgeInterval(5, 10, true), "keeps halving while it stays off track");
+        assertEquals(1, RunBench.nextJudgeInterval(1, 10, true), "floors at 1 (every turn), never 0 or negative");
+        assertEquals(2, RunBench.nextJudgeInterval(1, 10, false), "doubles back up once on track again");
+        assertEquals(10, RunBench.nextJudgeInterval(8, 10, false), "capped at everyN - never looser than the operator's own configured cadence");
+        assertEquals(10, RunBench.nextJudgeInterval(10, 10, false), "already at everyN and on track - stays put");
+    }
+
+    /** #265: the run-level "judge" map, with a judge_enabled/judge_every_n_turns/judge_model
+     *  restart override replacing just the matching key - never merged wholesale, never dropping
+     *  the OTHER run-level keys the override didn't touch. */
+    @Test
+    void effectiveJudgeCfgAppliesOnlyTheOverriddenKeys() {
+        final var cfg = Map.<String, Object>of("judge", Map.of("enabled", false, "every_n_turns", 10, "wall_sec", 120));
+        assertEquals(Map.of("enabled", false, "every_n_turns", 10, "wall_sec", 120), RunBench.effectiveJudgeCfg(cfg, Map.of()),
+                "no override at all - the run-level map passes through unchanged");
+        assertEquals(Map.of("enabled", true, "every_n_turns", 10, "wall_sec", 120),
+                RunBench.effectiveJudgeCfg(cfg, Map.of("judge_enabled", true)), "only enabled flips; wall_sec/every_n_turns survive");
+        assertEquals(Map.of("enabled", false, "every_n_turns", 5, "wall_sec", 120),
+                RunBench.effectiveJudgeCfg(cfg, Map.of("judge_every_n_turns", 5)));
+        assertEquals("gpt-5", RunBench.effectiveJudgeCfg(cfg, Map.of("judge_model", "gpt-5")).get("model"));
+        assertEquals(Map.of(), RunBench.effectiveJudgeCfg(Map.of(), Map.of()), "no judge cfg at all on the run - never null, never throws");
+    }
+
+    /** #262, found live: rc==2 (chatWithRetry's own retries-exhausted TransientError - the exact
+     *  shape an infra rejection takes, confirmed live as an oMLX memory-guard rejection) and
+     *  rc==124 (runBounded's own task-wall timeout) each get a specific, different tail; anything
+     *  else (a session that returned normally but produced no further output - T7's own actual
+     *  case) gets a generic-but-still-specific one naming the turn count, never the bare "" this
+     *  replaced. */
+    @Test
+    void fallbackTailNamesTheRealCauseInsteadOfBeingBlank() {
+        assertTrue(RunBench.fallbackTail(2, 20000, 46, "2026-10-06T05:43:31Z").contains("service log"));
+        assertEquals(" (task-wall budget of 20000s exceeded)", RunBench.fallbackTail(124, 20000, 46, "2026-10-06T05:43:31Z"));
+        final var plain = RunBench.fallbackTail(0, 20000, 46, "2026-10-06T05:43:31Z");
+        assertTrue(plain.contains("46 turns") && plain.contains("interactions.jsonl"));
+    }
+
+    /** #300: the in-session handoff fast path's own gating - mirrors #249's own lesson (the old
+     *  cold-session handoffStep() once had NO tagExists guard at all, unconditionally re-running a
+     *  handoff already committed by a prior attempt) by pinning the SAME guard on this new entry
+     *  point too, plus the "feature off" case the cold path never needed a hook for at all. */
+    @Test
+    void buildHandoffFinalTurnIsNullWhenOffOrAlreadyDone(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
+        final Path ws = track(Files.createDirectory(tmp.resolve("ws")));
+        git(ws, "init", "-q");
+        git(ws, "config", "user.email", "bench@local");
+        git(ws, "config", "user.name", "bench");
+        Files.writeString(ws.resolve(".git/info/exclude"), "build/\n");
+        Files.writeString(ws.resolve("README.md"), "x\n");
+        git(ws, "add", "-A");
+        git(ws, "commit", "-q", "-m", "init");
+
+        assertNull(runBench().buildHandoffFinalTurn(null, ws, "T3"), "handoff_notes off for this run - no hook at all");
+
+        final var handoffs = new java.util.ArrayList<String[]>();
+        assertNotNull(runBench().buildHandoffFinalTurn(handoffs, ws, "T3"), "enabled and not yet done - a real hook");
+
+        RunBenchSupport.snapshot(ws, "phase/T3-handoff");   // a prior attempt already finished T3's handoff
+        assertNull(runBench().buildHandoffFinalTurn(handoffs, ws, "T3"), "already tagged done - never ask again");
+        assertNotNull(runBench().buildHandoffFinalTurn(handoffs, ws, "T4"), "a DIFFERENT task's own tag must never match T3's");
+    }
+
+    /** #302: before the task's own status is on disk, the hook defers (returns null) rather than
+     *  asking - handoff still logically comes after status, never before it, even though the hook
+     *  is now offered on the main call itself, not just a dedicated wrap-up call. Once status
+     *  IS there, the ask is exactly Packs.handoffInstruction() - the same text the cold fallback
+     *  path already sends, so the ask is identical regardless of which path actually answers it. */
+    @Test
+    void buildHandoffFinalTurnDefersUntilStatusIsWrittenThenAsksForTheSameInstructionTheColdPathSends(
+            @org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
+        final Path ws = track(Files.createDirectory(tmp.resolve("ws")));
+        git(ws, "init", "-q");
+        git(ws, "config", "user.email", "bench@local");
+        git(ws, "config", "user.name", "bench");
+
+        final var hook = runBench().buildHandoffFinalTurn(new java.util.ArrayList<String[]>(), ws, "T3");
+        assertNull(hook.ask(List.of()), "no docs/PROGRESS.md at all yet - status isn't written, so don't ask yet");
+
+        Files.createDirectories(ws.resolve("docs"));
+        Files.writeString(ws.resolve("docs/PROGRESS.md"), "T3 | done | all green\n");
+        assertEquals(Packs.handoffInstruction("T3"), hook.ask(List.of()), "status is now on disk - ask");
+    }
+
+    /** #302: the same closure is now threaded into every one of a task's own session calls (main,
+     *  its length-retry continuation, its wrap-up - see sessionWithPolicy), so it must fire AT MOST
+     *  ONCE across however many of those actually happen, not once per call - otherwise a task
+     *  whose main call already got the handoff written would get asked AGAIN in a later wrap-up
+     *  call sharing the same closure. */
+    @Test
+    void buildHandoffFinalTurnFiresAtMostOnceAcrossRepeatedCallsOnceStatusIsWritten(
+            @org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
+        final Path ws = track(Files.createDirectory(tmp.resolve("ws")));
+        git(ws, "init", "-q");
+        git(ws, "config", "user.email", "bench@local");
+        git(ws, "config", "user.name", "bench");
+        Files.createDirectories(ws.resolve("docs"));
+        Files.writeString(ws.resolve("docs/PROGRESS.md"), "T3 | done | all green\n");
+
+        final var hook = runBench().buildHandoffFinalTurn(new java.util.ArrayList<String[]>(), ws, "T3");
+        assertEquals(Packs.handoffInstruction("T3"), hook.ask(List.of()), "first call - status already there, ask");
+        assertNull(hook.ask(List.of()), "second call on the SAME hook (e.g. a later wrap-up call) - already asked");
+        assertNull(hook.ask(List.of()), "and every call after that");
+    }
+
+    /** #303, found live: Packs.taskPack()'s own "Notes left by earlier tasks" section never fired
+     *  for ANY task, in any run, because handoffStep() populated manifestHandoffs(manifest) while
+     *  every taskPack() call read from a totally different, permanently-empty list. The fix is to
+     *  make loadHandoffs() return manifestHandoffs(manifest) itself - this pins that the two are now
+     *  the SAME list object, not merely equal-looking copies, since a copy would silently reintroduce
+     *  the original bug the moment handoffStep() adds to it later in the run. */
+    @Test
+    void loadHandoffsReturnsTheExactSameListObjectManifestHandoffsIsBackedBy() {
+        final Map<String, Object> manifest = new java.util.LinkedHashMap<>();
+        final var handoffs = RunBench.loadHandoffs(java.nio.file.Path.of("/nonexistent"), List.of(), manifest);
+        assertSame(manifestHandoffsFor(manifest), handoffs);
+    }
+
+    private static List<String[]> manifestHandoffsFor(final Map<String, Object> manifest) {
+        return RunBench.manifestHandoffs(manifest);
+    }
+
+    /** #303: a RESUMED run's in-memory manifest starts fresh (rebuilt each orchestratedPhase() call,
+     *  same as every other R18 resume case), but the tags/files on disk are the real record - a task
+     *  already tagged phase/{id}-handoff must have its note backfilled into the list before the task
+     *  loop starts, exactly as if handoffStep() had just written it this run. */
+    @Test
+    void loadHandoffsBackfillsFromDiskForEveryAlreadyTaggedTask(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
+        final Path ws = track(Files.createDirectory(tmp.resolve("ws")));
+        git(ws, "init", "-q");
+        git(ws, "config", "user.email", "bench@local");
+        git(ws, "config", "user.name", "bench");
+        Files.createDirectories(ws.resolve("handoff"));
+        Files.writeString(ws.resolve("handoff/T5.md"), "T5's own handoff note");
+        Files.writeString(ws.resolve("handoff/T8.md"), "T8's own handoff note");
+        git(ws, "add", "-A");
+        git(ws, "commit", "-q", "-m", "handoffs");
+        RunBenchSupport.snapshot(ws, "phase/T5-handoff");
+        RunBenchSupport.snapshot(ws, "phase/T8-handoff");
+        // T12 is in the plan but was never actually completed/tagged - must not appear at all
+        final var tasks = List.of(new PlanTask("T5", "market data"), new PlanTask("T8", "apply trade"), new PlanTask("T12", "order state machine"));
+
+        final var handoffs = RunBench.loadHandoffs(ws, tasks, new java.util.LinkedHashMap<>());
+
+        assertEquals(2, handoffs.size(), "only the two actually-tagged tasks are backfilled");
+        assertEquals(Set.of("T5", "T8"), handoffs.stream().map(h -> h[0]).collect(java.util.stream.Collectors.toSet()));
+        final var byId = handoffs.stream().collect(java.util.stream.Collectors.toMap(h -> h[0], h -> h[1]));
+        assertEquals("T5's own handoff note", byId.get("T5"));
+        assertEquals("T8's own handoff note", byId.get("T8"));
+    }
+
+    /** A brand new run (nothing tagged yet) must start with an empty, not-null list - the "feature
+     *  on, nothing written yet" case handoffStep()'s own callers already rely on elsewhere. */
+    @Test
+    void loadHandoffsIsEmptyWhenNothingIsTaggedYet(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
+        final Path ws = track(Files.createDirectory(tmp.resolve("ws")));
+        git(ws, "init", "-q");
+        git(ws, "config", "user.email", "bench@local");
+        git(ws, "config", "user.name", "bench");
+        Files.writeString(ws.resolve("README.md"), "x\n");
+        git(ws, "add", "-A");
+        git(ws, "commit", "-q", "-m", "init");
+
+        final var handoffs = RunBench.loadHandoffs(ws, List.of(new PlanTask("T1", "setup")), new java.util.LinkedHashMap<>());
+        assertTrue(handoffs.isEmpty());
+    }
+
+    /** #307: the run-level "budget_rescue" map, with a budget_rescue_enabled restart override
+     *  replacing just that key - wall_sec/tokens/keep_recent_turns are never task-overridable
+     *  (same reasoning as judge_wall_sec/judge_tokens), so they must survive untouched either way. */
+    @Test
+    void effectiveRescueCfgAppliesOnlyTheOverriddenKey() {
+        final var cfg = Map.<String, Object>of("budget_rescue", Map.of("enabled", false, "wall_sec", 300, "tokens", 50_000));
+        assertEquals(Map.of("enabled", false, "wall_sec", 300, "tokens", 50_000), RunBench.effectiveRescueCfg(cfg, Map.of()),
+                "no override at all - the run-level map passes through unchanged");
+        assertEquals(Map.of("enabled", true, "wall_sec", 300, "tokens", 50_000),
+                RunBench.effectiveRescueCfg(cfg, Map.of("budget_rescue_enabled", true)), "only enabled flips; wall_sec/tokens survive");
+        assertEquals(Map.of(), RunBench.effectiveRescueCfg(Map.of(), Map.of()), "no budget_rescue cfg at all on the run - never null, never throws");
+    }
+
+    /** #307: the budget-exhaustion rescue step's own gating - found live on task T13 (budget
+     *  exhausted, rc=3, 12/13 tests green, one assertion away) as the motivating case; must never
+     *  fire for a wall timeout (124, nothing left to spend anyway), must stay off unless the run
+     *  explicitly opted in, and must never apply to the `pi` harness (no in-process loop to compact/
+     *  reconnect, same reason Judge/FinalTurn are no-ops there). #299-adjacent: rc=4
+     *  (ContextWindowExceeded) is rescue-eligible too - same "the harness's own proxy proactively
+     *  refused to continue" shape as rc=3, fixed by the same compacted reconnect. */
+    @Test
+    void shouldRescueFiresForBudgetExhaustionOrContextWindowOverflowWhenEnabledOnTheRefHarness() {
+        final var enabled = Map.<String, Object>of("enabled", true);
+        assertTrue(RunBench.shouldRescue(enabled, Map.of("rc", 3), "ref"), "budget exhausted, feature on, ref harness");
+        assertTrue(RunBench.shouldRescue(enabled, Map.of("rc", 4), "ref"), "context window exceeded - same rescue-eligible shape as budget exhaustion");
+        assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 124), "ref"), "a wall timeout - nothing left to spend on a rescue");
+        assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 0), "ref"), "already succeeded - nothing to rescue");
+        assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 2), "ref"), "a transient infra failure, not a budget exhaustion");
+
+        final var disabled = Map.<String, Object>of("enabled", false);
+        assertFalse(RunBench.shouldRescue(disabled, Map.of("rc", 3), "ref"), "budget exhausted but the run never opted in");
+        assertFalse(RunBench.shouldRescue(Map.of(), Map.of("rc", 3), "ref"), "no budget_rescue cfg at all - never null, never throws, never fires");
+
+        assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 3), "pi"), "the pi harness has no in-process loop to compact/reconnect");
+        assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 4), "pi"), "same, for the context-window rc");
     }
 }

@@ -38,7 +38,12 @@ public class TradingService {
     /** money(): scale-2 quantize; HALF_EVEN by contract, HALF_UP under the `halfup` bug; `float` returns the raw float path.
      *  BigDecimal with explicit scale + RoundingMode, compared with compareTo — never equals (the scale trap, M3). */
     BigDecimal money(BigDecimal x) {
-        if (bug("float")) return x.setScale(MONEY_SCALE, RoundingMode.HALF_UP);
+        // #285: this used to just switch the rounding MODE to HALF_UP - identical to the separate
+        // `halfup` bug, so `float` never actually exercised float-precision loss here (only
+        // deposit()'s own inline double-arithmetic branch did). Routing the VALUE through
+        // doubleValue() first is what the class's own javadoc promises ("float returns the raw
+        // float path").
+        if (bug("float")) return BigDecimal.valueOf(x.doubleValue()).setScale(MONEY_SCALE, RoundingMode.HALF_UP);
         return new BigDecimal(x.toString()).setScale(MONEY_SCALE, bug("halfup") ? RoundingMode.HALF_UP : RoundingMode.HALF_EVEN);
     }
 
@@ -61,20 +66,17 @@ public class TradingService {
     /** deposits: positivity on the RAW amount, then the bespoke rounding. The `float` bug does the
      *  arithmetic in double space (0.1 + 0.2 = 0.30000000000000004) exactly like the Python twin. */
     public Map<String, Object> deposit(final String accountId, final String amount) {
-        final Account a = accounts.get(accountId);
-        if (a == null) return null;
+        if (accounts.get(accountId) == null) return null;
         final var raw = new BigDecimal(amount == null || amount.isBlank() ? "0" : amount);
         if (raw.compareTo(BigDecimal.ZERO) <= 0) return Map.of("error", "non-positive");
-        if (bug("float")) {
-            final double bal = a.balance().doubleValue() + raw.doubleValue();
-            final var updated = new Account(a.id(), a.currency(), BigDecimal.valueOf(bal));
-            accounts.put(a.id(), updated);
-            return accountView(updated);
-        }
-        final BigDecimal amt = money(raw);
-        final var updated = new Account(a.id(), a.currency(), a.balance().add(amt));
-        accounts.put(a.id(), updated);
-        return accountView(updated);
+        // #261: get()-then-put() let two concurrent deposits (or a deposit racing an order) both
+        // read the same starting balance and both write their own update from that stale snapshot -
+        // the second write silently lost the first's credit. computeIfPresent holds this key's own
+        // lock for the whole read-modify-write, making it atomic per account.
+        final Account updated = accounts.computeIfPresent(accountId, (id, a) -> bug("float")
+                ? new Account(a.id(), a.currency(), BigDecimal.valueOf(a.balance().doubleValue() + raw.doubleValue()))
+                : new Account(a.id(), a.currency(), a.balance().add(money(raw))));
+        return updated == null ? null : accountView(updated);
     }
 
     /** orders: BUY needs funds (422), SELL needs holdings (422); both write the ledger and fill at the limit price */
@@ -83,12 +85,20 @@ public class TradingService {
             final Idem hit = idem.get(idempotencyKey);
             if (hit != null && hit.expires().isAfter(now())) return new OrderOutcome(200, orderView(orders.get(hit.orderId())), null);
         }
-        final Account a = accounts.get(accountId);
+        // #283: accountId reaches here straight from a JSON body field (TradingController.order()),
+        // which is null when the field is simply absent - accounts.get(null) throws NPE on a
+        // ConcurrentHashMap instead of the same graceful 400 a merely-unknown id already gets.
+        final Account a = accountId == null ? null : accounts.get(accountId);
         if (a == null) return new OrderOutcome(400, Map.of("error", "bad account"), null);
         final String sym = symbol == null ? "" : symbol.toUpperCase();
         final var qty = new BigDecimal(quantity == null || quantity.isBlank() ? "0" : quantity);
         final BigDecimal px = money(new BigDecimal(limitPrice == null || limitPrice.isBlank() ? "0" : limitPrice));
-        if (!PRICES.containsKey(sym) || side == null || !(side.equals("BUY") || side.equals("SELL")) || qty.compareTo(BigDecimal.ZERO) <= 0)
+        // #284: a non-positive limitPrice was never rejected - a BUY's cost is qty*price, so
+        // price <= 0 makes cost <= 0, the "insufficient funds" guard (cost > balance) can never
+        // trip, and balance.subtract(a non-positive cost) INCREASES the balance - a client could
+        // mint funds with one negative-price "buy" order.
+        if (!PRICES.containsKey(sym) || side == null || !(side.equals("BUY") || side.equals("SELL"))
+                || qty.compareTo(BigDecimal.ZERO) <= 0 || px.compareTo(BigDecimal.ZERO) <= 0)
             return new OrderOutcome(400, Map.of("error", "invalid"), null);
         final BigDecimal cost = money(qty.multiply(px));
 
@@ -100,19 +110,27 @@ public class TradingService {
             if (idempotencyKey != null) idem.put(idempotencyKey, new Idem(o.orderId(), now().plusSeconds(60)));
             return new OrderOutcome(201, orderView(o), null);
         }
-        Account updated;
+        // #261: the funds check and the balance update must happen as ONE atomic step against
+        // the CURRENT balance - a plain `cost.compareTo(a.balance())` check against the stale `a`
+        // snapshot, followed by a separate put(), let two concurrent BUYs (or a BUY racing a
+        // deposit) both pass the check against the same starting balance and the second write
+        // silently overwrite the first (a lost-update/double-spend bug). compute() holds this
+        // key's own lock for the whole read-check-write.
         if ("BUY".equals(side)) {
-            if (cost.compareTo(a.balance()) > 0 && !bug("no422")) return new OrderOutcome(422, Map.of("error", "insufficient funds"), null);
-            updated = new Account(a.id(), a.currency(), a.balance().subtract(cost));
+            final boolean[] insufficient = {false};
+            accounts.compute(accountId, (id, cur) -> {
+                if (cost.compareTo(cur.balance()) > 0 && !bug("no422")) { insufficient[0] = true; return cur; }
+                return new Account(cur.id(), cur.currency(), cur.balance().subtract(cost));
+            });
+            if (insufficient[0]) return new OrderOutcome(422, Map.of("error", "insufficient funds"), null);
         } else {
-            final BigDecimal held = held(a.id(), sym);
+            final BigDecimal held = held(accountId, sym);
             if (qty.compareTo(held) > 0 && !bug("no422")) return new OrderOutcome(422, Map.of("error", "insufficient holdings"), null);
             final BigDecimal credit = bug("asym") ? money(cost.multiply(new BigDecimal("0.99"))) : cost;
-            updated = new Account(a.id(), a.currency(), a.balance().add(credit));
+            accounts.compute(accountId, (id, cur) -> new Account(cur.id(), cur.currency(), cur.balance().add(credit)));
         }
-        accounts.put(a.id(), updated);
         final Instant ts = now();
-        synchronized (ledger) { ledger.add(new LedgerEntry(ts, a.id(), sym, side, qty)); }
+        synchronized (ledger) { ledger.add(new LedgerEntry(ts, accountId, sym, side, qty)); }
         final var o = new Order(UUID.randomUUID().toString(), "FILLED", side, sym, qty, px, ts);
         orders.put(o.orderId(), o);
         if (idempotencyKey != null) idem.put(idempotencyKey, new Idem(o.orderId(), now().plusSeconds(60)));

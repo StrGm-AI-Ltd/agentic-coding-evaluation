@@ -38,8 +38,8 @@ public class ImporterService {
                 ? json.readValue(runDir.resolve("metrics.json").toFile(), Map.class) : new LinkedHashMap<>();
         final Map<String, Object> prov = (Map<String, Object>) manifest.getOrDefault("provenance", Map.of());
         final Map<String, Object> validity = (Map<String, Object>) manifest.getOrDefault("validity", Map.of());
-        boolean poolable = Objects.equals(oracle.get("schema_version"), com.strgmai.ace.service.config.BenchProperties.RESULT_SCHEMA)
-                && oracle.get("weighted_score_pct") != null;
+        boolean poolable = com.strgmai.ace.service.config.BenchProperties.poolable(
+                oracle.get("schema_version"), oracle.get("weighted_score_pct") != null);
         final Map<String, Object> contention = manifest.get("contention") instanceof Map<?, ?> cm ? (Map<String, Object>) cm : Map.of();
         final Map<String, Object> leaderboard = metrics.get("leaderboard") instanceof Map<?, ?> lb ? (Map<String, Object>) lb : Map.of();
         final String runId = runDir.getFileName().toString();
@@ -121,8 +121,18 @@ public class ImporterService {
             for (Path p : s) {
                 if (!Files.isDirectory(p) || p.getFileName().toString().startsWith("_")) continue;
                 final String runId = p.getFileName().toString();
-                if (Files.isRegularFile(p.resolve("oracle.json"))) { importRun(p, null); imported.add(runId); }
-                else skipped.add(runId);
+                if (Files.isRegularFile(p.resolve("oracle.json"))) {
+                    // #288: importRun() can genuinely throw (e.g. CheckId.valueOf() on an
+                    // unrecognized check id from an older oracle schema - deliberately NOT caught
+                    // inside importRun() itself, so ITS OWN transaction rolls back cleanly). Used
+                    // to propagate straight out of this loop, aborting importAll() entirely: every
+                    // directory enumerated after the bad one (filesystem order, not sorted) was
+                    // never even attempted, and "Import All" could be permanently blocked by one
+                    // old/incompatible run anywhere in results/. Isolated per-directory now, same
+                    // "imported"/"skipped" contract the UI already expects (no new key).
+                    try { importRun(p, null); imported.add(runId); }
+                    catch (Exception e) { log.warn("could not import {}, skipping it: {}", runId, e.toString()); skipped.add(runId); }
+                } else skipped.add(runId);
             }
         }
         return Map.of("imported", imported, "skipped", skipped);

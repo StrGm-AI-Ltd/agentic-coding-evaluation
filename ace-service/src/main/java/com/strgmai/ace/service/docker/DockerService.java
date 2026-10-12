@@ -251,7 +251,7 @@ public final class DockerService {
                         if (parts.length > 2 && parts[2].startsWith("#start")) { starts++; continue; }
                         if (parts.length > 2 && parts[2].startsWith("#ready")) continue;
                         calls++;
-                        last = ts.toEpochSecond() + ts.getNano() / 1_000_000_000L;
+                        last = ts.toEpochSecond();   // #262: "+ ts.getNano() / 1_000_000_000L" was always 0 (getNano() is in [0, 999_999_999]) - dead, removed
                     } catch (Exception e) { log.debug("could not parse shim log line '{}': {}", line, e.toString()); }
                 }
             } catch (IOException e) { log.warn("could not read docker shim log {}: {}", logPath, e.toString()); }
@@ -290,13 +290,15 @@ public final class DockerService {
      *  on >64KB: the pipe fills, the child blocks on write, waitFor never returns) */
     public record Proc(int rc, String out, String err) {}
     public static Proc proc(final int timeoutSec, final Path cwd, final Map<String, String> env, final String... cmd) {
+        Process p = null;
+        Thread t1 = null, t2 = null;
         try {
             final var pb = new ProcessBuilder(cmd);
             if (cwd != null) pb.directory(cwd.toFile());
             if (env != null) { pb.environment().clear(); pb.environment().putAll(env); }
-            final Process p = pb.start();
+            p = pb.start();
             final StringBuilder out = new StringBuilder(), err = new StringBuilder();
-            final Thread t1 = drain(p.getInputStream(), out), t2 = drain(p.getErrorStream(), err);
+            t1 = drain(p.getInputStream(), out); t2 = drain(p.getErrorStream(), err);
             if (!p.waitFor(timeoutSec, TimeUnit.SECONDS)) {
                 p.destroyForcibly();
                 t1.join(1000); t2.join(1000);
@@ -304,6 +306,20 @@ public final class DockerService {
             }
             t1.join(5000); t2.join(5000);
             return new Proc(p.exitValue(), out.toString(), err.toString());
+        } catch (InterruptedException ie) {
+            // #271: waitFor()/join() throw this on an external interrupt (job cancellation, the
+            // harness's own task-wall preemption) - the generic catch below used to swallow it
+            // silently: the real OS subprocess (and anything IT spawned, e.g. a gradle/docker-compose
+            // child) was simply abandoned, still running, AND the interrupted status was consumed
+            // with nothing left to notice the cancellation ever happened. Killing the process here
+            // and restoring the interrupted flag match the timeout branch above and this codebase's
+            // "an external interrupt must reach whatever is actually blocking" discipline elsewhere
+            // (ReferenceAgent.chatWithRetry, RecordingProxy.abortInflight). 130 (128+SIGINT, the
+            // shell convention) keeps this distinguishable from a genuine 1 "went wrong" exit.
+            if (p != null) p.destroyForcibly();
+            try { if (t1 != null) t1.join(1000); if (t2 != null) t2.join(1000); } catch (InterruptedException ignore) { /* already interrupted; restored below regardless */ }
+            Thread.currentThread().interrupt();
+            return new Proc(130, "", "interrupted");
         } catch (Exception e) { return new Proc(1, "", String.valueOf(e)); }
     }
 

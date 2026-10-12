@@ -21,8 +21,13 @@ public final class JsonColumns {
 
     private static final Logger log = LoggerFactory.getLogger(JsonColumns.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    // #286: "detail" removed - CheckResult.detail is free-text, human-readable (no JSON default in
+    // the schema, unlike argv/manifest/params/etc. which all default to '{}'/'[]') - parsing it as
+    // JSON threw-and-logged a WARN for most non-trivial detail strings, and silently retyped a
+    // detail that happened to parse as valid JSON (a bare "404", "true", "null") into a number/
+    // boolean/null instead of staying a string.
     private static final Set<String> KEYS = Set.of(
-            "argv", "params", "comparison", "manifest", "oracle", "metrics", "validity_reasons", "detail");
+            "argv", "params", "comparison", "manifest", "oracle", "metrics", "validity_reasons", "task_overrides");
 
     public static Map<String, Object> parse(final Map<String, Object> row) {
         final Map<String, Object> out = new LinkedHashMap<>(row);

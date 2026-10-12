@@ -89,6 +89,9 @@ public class RecordingProxy {
     }
     private volatile boolean stopping;
     private final Set<HttpResponse<InputStream>> inflight = ConcurrentHashMap.newKeySet();
+
+    // package-private: tested directly (#260), same reasoning upstreamTimeoutSec() above already applies
+    int inflightSize() { return inflight.size(); }
     // set by whoever decides to give up on the current attempt (ReferenceAgent.chatWithRetry, or
     // the harness's own task-wall timeout in RunBenchSupport.runBounded) just before/as it calls
     // abortInflight(reason); read and cleared by streamSse() below for the journal's abort_reason.
@@ -110,6 +113,11 @@ public class RecordingProxy {
      *  is the only signal). Referenced directly from ReferenceAgent instead of being re-declared
      *  there as its own separate literal, so a future wording edit can't silently desync the two. */
     public static final String BUDGET_REFUSAL_MARKER = "ace-service: phase output-token budget exhausted";
+    /** #299-adjacent: the prefix ReferenceAgent.isContextWindowRefusal() matches on to recognize
+     *  THIS proxy's own 400 context-window refusal below (a 400 can otherwise mean anything, same
+     *  "the message body is the only signal" reasoning BUDGET_REFUSAL_MARKER already states) -
+     *  same reason to reference it directly rather than re-declare the literal there. */
+    public static final String CONTEXT_WINDOW_REFUSAL_MARKER = "ace-service: context window would be exceeded";
 
     public RecordingProxy(BenchProperties props) { this.props = props; }
 
@@ -234,8 +242,8 @@ public class RecordingProxy {
                 final long promptEstimate = promptTokensEstimate(r);
                 if (promptEstimate + maxTokens > overrides.contextWindow()) {
                     final byte[] out = json.writeValueAsBytes(json.createObjectNode().set("error",
-                            json.createObjectNode().put("message", "ace-service: max_tokens (" + maxTokens + ") + estimated prompt ("
-                                    + promptEstimate + ") would exceed the run's context window (" + overrides.contextWindow() + ")")
+                            json.createObjectNode().put("message", CONTEXT_WINDOW_REFUSAL_MARKER + " (max_tokens " + maxTokens
+                                    + " + estimated prompt " + promptEstimate + " > context window " + overrides.contextWindow() + ")")
                                     .put("type", "context_window_exceeded")));
                     reply(x, 400, out);
                     journalRecord(rec.put("status", 400).put("context_window_exceeded", true)
@@ -278,21 +286,30 @@ public class RecordingProxy {
         try {
             final HttpResponse<InputStream> up = http.send(ub.build(), HttpResponse.BodyHandlers.ofInputStream());
             inflight.add(up);
-            final String ctype = up.headers().firstValue("Content-Type").orElse("");
-            if (ctype.contains("text/event-stream")) {
-                streamSse(x, up, rec, req, isChat, t0);
-            } else {
-                final byte[] out = up.body().readAllBytes();
-                reply(x, up.statusCode(), out);
-                JsonNode resp = null;
-                // an unparseable upstream response loses the response data for this turn in the
-                // journal, which is the run's ground truth for metrics - worth knowing about
-                try { if (isChat) resp = json.readTree(out); }
-                catch (Exception e) { log.warn("could not parse upstream response as JSON for {}: {}", path, e.toString()); }
-                journalRecord(rec.put("status", up.statusCode()).put("streamed", false)
-                        .put("latency_sec", elapsed(t0)), req, resp);
+            // #260: used to be a plain statement after the if/else below, not a finally - an
+            // exception anywhere in either branch (up.body().readAllBytes() mid-read, or
+            // SseAssembler.parse()/journalRecord() inside streamSse() before ITS OWN final line)
+            // jumped straight to the outer catch below, skipping this remove and leaking the entry.
+            // stop()/abortInflight() iterate `inflight` to close every genuinely in-flight upstream
+            // response (R12) - a leaked entry breaks that invariant for the life of this proxy.
+            try {
+                final String ctype = up.headers().firstValue("Content-Type").orElse("");
+                if (ctype.contains("text/event-stream")) {
+                    streamSse(x, up, rec, req, isChat, t0);
+                } else {
+                    final byte[] out = up.body().readAllBytes();
+                    reply(x, up.statusCode(), out);
+                    JsonNode resp = null;
+                    // an unparseable upstream response loses the response data for this turn in the
+                    // journal, which is the run's ground truth for metrics - worth knowing about
+                    try { if (isChat) resp = json.readTree(out); }
+                    catch (Exception e) { log.warn("could not parse upstream response as JSON for {}: {}", path, e.toString()); }
+                    journalRecord(rec.put("status", up.statusCode()).put("streamed", false)
+                            .put("latency_sec", elapsed(t0)), req, resp);
+                }
+            } finally {
+                inflight.remove(up);
             }
-            inflight.remove(up);
         } catch (Exception e) {
             journalRecord(rec.put("status", 502).put("upstream_error", true)
                     .put("error", e.toString()).put("latency_sec", elapsed(t0)), req, null);
@@ -368,7 +385,9 @@ public class RecordingProxy {
         }
         if (drainAborted) rec.put("drain_aborted", true);
         journalRecord(rec, req, resp);
-        inflight.remove(up);
+        // #260: forward()'s own finally now owns inflight.remove(up) uniformly for both the SSE
+        // and non-SSE branches (it covers an exception thrown from inside THIS method too) - a
+        // second remove() call here would just be a harmless but redundant no-op.
     }
 
     /** Best-effort prompt size in tokens, same chars-per-token estimate as estimatedUsage() below -

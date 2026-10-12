@@ -9,14 +9,16 @@ public record RunSpec(String task, String model, String harness, String mode, St
                       Integer implWall, Integer implTokens, Integer planWall, Integer planTokens, Integer wallBudget, String parallel, String parallelPlan, Double parallelWeight,
                       boolean systemRules, boolean selfReview,
                       boolean trajectoryReview, String reviewerModel, boolean handoffNotes, boolean manageDocker,
-                      boolean noContextProbe, boolean contextProbeFresh, boolean keepWorkspace, boolean skipDocker,
+                      boolean noContextProbe, boolean contextProbeFresh, boolean skipDocker,
                       Integer contextWindow, Integer firstTokenTimeout, Integer compactionTrigger, Integer reviewWallSec,
                       boolean reviewBlind, String trajectoryReviewerModel, Double reviewWeight, Double trajectoryWeight,
                       String trajectoryUse, String javaHome, String runId,
                       Double temperature, Double topP, Integer topK, Double repetitionPenalty, Integer maxTokens, String reasoningEffort,
                       Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns, Integer reviewTokens,
                       Integer fixWall, Integer fixTokens, Integer parallelPlanTokens, Integer handoffTokens, Integer wrapupTokens,
-                      Integer dockerMemoryMib, boolean dockerKeepWarm, Double efficiencyWeight) {
+                      Integer dockerMemoryMib, boolean dockerKeepWarm, Double efficiencyWeight,
+                      boolean judgeEnabled, Integer judgeEveryNTurns, String judgeModel, Integer judgeWallSec, Integer judgeTokens,
+                      boolean budgetRescueEnabled, Integer rescueWallSec, Integer rescueTokens, Integer rescueKeepRecentTurns) {
 
     public static final String RUN_ID = "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$";
     public static final List<String> REASONING_EFFORTS = List.of("none", "low", "medium", "high");
@@ -63,6 +65,14 @@ public record RunSpec(String task, String model, String harness, String mode, St
         // ReferenceAgent-local constant (400) with no run-level override at all. Turn count, not a
         // token/time budget - 0 turns is meaningless, so this still requires a positive value.
         maxTurns = positive(maxTurns);
+        // #265: same reasoning as maxTurns above - "check every 0 turns" is meaningless, not "never"
+        judgeEveryNTurns = positive(judgeEveryNTurns);
+        judgeWallSec = nonNegative(judgeWallSec); judgeTokens = nonNegative(judgeTokens);
+        // #307: the budget-exhaustion rescue step - same "0 = unlimited/do nothing special" convention
+        // as every other wall/token/turn-count knob above; 0 recent turns is a legitimate (if
+        // aggressive) compaction value, not an error - AgentSession.compact() already supports it
+        rescueWallSec = nonNegative(rescueWallSec); rescueTokens = nonNegative(rescueTokens);
+        rescueKeepRecentTurns = nonNegative(rescueKeepRecentTurns);
         // 0 is a legitimate value here (disables compaction) - unlike the budgets above, only reject negative
         if (compactionTrigger != null && compactionTrigger < 0) throw new IllegalArgumentException("compactionTrigger must be >= 0 (0 disables compaction): " + compactionTrigger);
         if (reviewWeight != null && (reviewWeight < 0 || reviewWeight > 1)) throw new IllegalArgumentException("reviewWeight must be within 0..1: " + reviewWeight);
@@ -134,7 +144,6 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (manageDocker) args.add("--manage-docker");
         if (noContextProbe) args.add("--no-context-probe");
         if (contextProbeFresh) args.add("--context-probe-fresh");
-        if (keepWorkspace) args.add("--keep-workspace");
         if (skipDocker) args.add("--skip-docker");
         // a pinned window: the run uses it as-is and skips step 0 (the probe exists to MEASURE one)
         if (contextWindow != null) args.add("--context-window=" + contextWindow);
@@ -166,6 +175,15 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (dockerMemoryMib != null) args.add("--docker-memory-mib=" + dockerMemoryMib);
         if (dockerKeepWarm) args.add("--docker-keep-warm");
         if (efficiencyWeight != null) args.add("--efficiency-weight=" + efficiencyWeight);
+        if (judgeEnabled) args.add("--judge");
+        if (judgeEveryNTurns != null) args.add("--judge-every-n-turns=" + judgeEveryNTurns);
+        if (judgeModel != null) args.add("--judge-model=" + judgeModel);
+        if (judgeWallSec != null) args.add("--judge-wall-sec=" + judgeWallSec);
+        if (judgeTokens != null) args.add("--judge-tokens=" + judgeTokens);
+        if (budgetRescueEnabled) args.add("--budget-rescue");
+        if (rescueWallSec != null) args.add("--rescue-wall-sec=" + rescueWallSec);
+        if (rescueTokens != null) args.add("--rescue-tokens=" + rescueTokens);
+        if (rescueKeepRecentTurns != null) args.add("--rescue-keep-recent-turns=" + rescueKeepRecentTurns);
         return args;
     }
 
@@ -183,12 +201,13 @@ public record RunSpec(String task, String model, String harness, String mode, St
      *  sync. */
     public static final class Builder {
         private String task, model, harness, mode, planSource, phases, parallel, parallelPlan, reviewerModel,
-                trajectoryReviewerModel, trajectoryUse, javaHome, runId, reasoningEffort;
+                trajectoryReviewerModel, trajectoryUse, javaHome, runId, reasoningEffort, judgeModel;
         private Integer taskWall, taskTokens, implWall, implTokens, planWall, planTokens, wallBudget, contextWindow, firstTokenTimeout,
                 compactionTrigger, reviewWallSec, topK, maxTokens, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
-                fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, dockerMemoryMib;
+                fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, dockerMemoryMib, judgeEveryNTurns, judgeWallSec, judgeTokens,
+                rescueWallSec, rescueTokens, rescueKeepRecentTurns;
         private boolean systemRules, selfReview, trajectoryReview, handoffNotes, manageDocker,
-                noContextProbe, contextProbeFresh, keepWorkspace, skipDocker, reviewBlind, dockerKeepWarm;
+                noContextProbe, contextProbeFresh, skipDocker, reviewBlind, dockerKeepWarm, judgeEnabled, budgetRescueEnabled;
         private Double reviewWeight, trajectoryWeight, parallelWeight, efficiencyWeight, temperature, topP, repetitionPenalty;
 
         public Builder task(final String v) { task = v; return this; }
@@ -215,7 +234,6 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public Builder manageDocker(final boolean v) { manageDocker = v; return this; }
         public Builder noContextProbe(final boolean v) { noContextProbe = v; return this; }
         public Builder contextProbeFresh(final boolean v) { contextProbeFresh = v; return this; }
-        public Builder keepWorkspace(final boolean v) { keepWorkspace = v; return this; }
         public Builder skipDocker(final boolean v) { skipDocker = v; return this; }
         public Builder contextWindow(final Integer v) { contextWindow = v; return this; }
         public Builder firstTokenTimeout(final Integer v) { firstTokenTimeout = v; return this; }
@@ -247,14 +265,25 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public Builder dockerMemoryMib(final Integer v) { dockerMemoryMib = v; return this; }
         public Builder dockerKeepWarm(final boolean v) { dockerKeepWarm = v; return this; }
         public Builder efficiencyWeight(final Double v) { efficiencyWeight = v; return this; }
+        public Builder judgeEnabled(final boolean v) { judgeEnabled = v; return this; }
+        public Builder judgeEveryNTurns(final Integer v) { judgeEveryNTurns = v; return this; }
+        public Builder judgeModel(final String v) { judgeModel = v; return this; }
+        public Builder judgeWallSec(final Integer v) { judgeWallSec = v; return this; }
+        public Builder judgeTokens(final Integer v) { judgeTokens = v; return this; }
+        public Builder budgetRescueEnabled(final boolean v) { budgetRescueEnabled = v; return this; }
+        public Builder rescueWallSec(final Integer v) { rescueWallSec = v; return this; }
+        public Builder rescueTokens(final Integer v) { rescueTokens = v; return this; }
+        public Builder rescueKeepRecentTurns(final Integer v) { rescueKeepRecentTurns = v; return this; }
 
         public RunSpec build() {
             return new RunSpec(task, model, harness, mode, planSource, phases, taskWall, taskTokens, implWall, implTokens,
                     planWall, planTokens, wallBudget, parallel, parallelPlan, parallelWeight, systemRules, selfReview, trajectoryReview, reviewerModel, handoffNotes, manageDocker,
-                    noContextProbe, contextProbeFresh, keepWorkspace, skipDocker, contextWindow, firstTokenTimeout, compactionTrigger, reviewWallSec,
+                    noContextProbe, contextProbeFresh, skipDocker, contextWindow, firstTokenTimeout, compactionTrigger, reviewWallSec,
                     reviewBlind, trajectoryReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse, javaHome, runId,
                     temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
-                    fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, dockerMemoryMib, dockerKeepWarm, efficiencyWeight);
+                    fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, dockerMemoryMib, dockerKeepWarm, efficiencyWeight,
+                    judgeEnabled, judgeEveryNTurns, judgeModel, judgeWallSec, judgeTokens,
+                    budgetRescueEnabled, rescueWallSec, rescueTokens, rescueKeepRecentTurns);
         }
     }
 
@@ -274,7 +303,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 .trajectoryReview(bool(spec, "trajectory_review", false)).reviewerModel(str(spec, "reviewer_model"))
                 .handoffNotes(bool(spec, "handoff_notes", false)).manageDocker(bool(spec, "manage_docker", true))
                 .noContextProbe(bool(spec, "no_context_probe", false)).contextProbeFresh(bool(spec, "context_probe_fresh", false))
-                .keepWorkspace(bool(spec, "keep_workspace", false)).skipDocker(bool(spec, "skip_docker", false))
+                .skipDocker(bool(spec, "skip_docker", false))
                 .contextWindow(intOf(spec, "context_window")).firstTokenTimeout(intOf(spec, "first_token_timeout"))
                 .compactionTrigger(intOf(spec, "compaction_trigger")).reviewWallSec(intOf(spec, "review_wall_sec"))
                 .reviewTokens(intOf(spec, "review_tokens"))
@@ -291,6 +320,10 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 .wrapupTokens(intOf(spec, "wrapup_tokens"))
                 .dockerMemoryMib(intOf(spec, "docker_memory_mib")).dockerKeepWarm(bool(spec, "docker_keep_warm", false))
                 .efficiencyWeight(doubleOf(spec, "efficiency_weight"))
+                .judgeEnabled(bool(spec, "judge_enabled", false)).judgeEveryNTurns(intOf(spec, "judge_every_n_turns"))
+                .judgeModel(str(spec, "judge_model")).judgeWallSec(intOf(spec, "judge_wall_sec")).judgeTokens(intOf(spec, "judge_tokens"))
+                .budgetRescueEnabled(bool(spec, "budget_rescue_enabled", false)).rescueWallSec(intOf(spec, "rescue_wall_sec"))
+                .rescueTokens(intOf(spec, "rescue_tokens")).rescueKeepRecentTurns(intOf(spec, "rescue_keep_recent_turns"))
                 .build();
     }
 

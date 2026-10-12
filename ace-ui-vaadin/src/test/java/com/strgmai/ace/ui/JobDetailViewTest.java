@@ -9,6 +9,7 @@ import java.util.Objects;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -76,9 +77,9 @@ class JobDetailViewTest {
     @Test
     void sessionRowComparators_sortNullFieldsWithoutThrowing() {
         final var rows = List.of(
-                new JobLiveState.SessionRow(null, null, null, null, null, null, null, null, null, null, null),
-                new JobLiveState.SessionRow("a", "T1", "task T1", "stop", 90.0, 20.0, 120.0, 500L, 30.0, 90.0, "2026-09-15T02:00:00Z"),
-                new JobLiveState.SessionRow("b", "T2", "task T2", null, null, null, null, null, null, null, "2026-09-14T23:00:00+01:00"));
+                new JobLiveState.SessionRow(null, null, null, null, null, null, null, null, null, null, null, null),
+                new JobLiveState.SessionRow("a", "T1", "task T1", "stop", 90.0, 20.0, 120.0, 500L, 30.0, 90.0, "2026-09-15T02:00:00Z", "T1"),
+                new JobLiveState.SessionRow("b", "T2", "task T2", null, null, null, null, null, null, null, "2026-09-14T23:00:00+01:00", "T2"));
         final java.util.function.Consumer<Comparator<JobLiveState.SessionRow>> sortAll =
                 by -> rows.stream().sorted(by).forEach(JobLiveState.SessionRow::id); // any terminal op forces the sort
         sortAll.accept(JobDetailView.SESSIONS_BY_LABEL);
@@ -158,11 +159,20 @@ class JobDetailViewTest {
     }
 
     private static JobLiveState.SessionRow sessionRow(final String description, final String endedStage) {
-        return new JobLiveState.SessionRow("sid", "sid", description, endedStage, null, null, null, null, null, null, null);
+        return new JobLiveState.SessionRow("sid", "sid", description, endedStage, null, null, null, null, null, null, null, null);
     }
 
     private static Api.PlanTask planTask(final String id, final boolean implemented, final boolean handoffDone) {
-        return new Api.PlanTask(0, id, "", "", List.of(), implemented, handoffDone);
+        return planTask(id, implemented, handoffDone, null);
+    }
+
+    private static Api.PlanTask planTask(final String id, final boolean implemented, final boolean handoffDone, final String reportedStatus) {
+        return planTask(id, implemented, handoffDone, reportedStatus, null);
+    }
+
+    private static Api.PlanTask planTask(final String id, final boolean implemented, final boolean handoffDone,
+                                         final String reportedStatus, final String reportedDetail) {
+        return new Api.PlanTask(0, id, "", "", List.of(), implemented, handoffDone, reportedStatus, reportedDetail);
     }
 
     @Test
@@ -210,12 +220,57 @@ class JobDetailViewTest {
         assertEquals("not started", JobDetailView.taskStatus(List.of(), planTask("T1", false, false), false));
     }
 
-    /** a live session, even a long-abandoned/interrupted one, still outranks the tag fallback - the
-     *  tags are only consulted when there is NO live session data for this task at all. */
+    /** A genuinely LIVE session (no endedStage yet) outranks the tag fallback unconditionally -
+     *  nothing is more current than "it is running right now", even if the tags also say done
+     *  (R18 guarantees this never actually happens together in practice, but the precedence itself
+     *  must hold regardless). */
     @Test
-    void taskStatus_aLiveSessionOutranksTheTagFallback() {
+    void taskStatus_aLiveRunningSessionOutranksTheTagFallback() {
         final var sessions = List.of(sessionRow("Task T2", null));
         assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T2", true, true), false),
                 "a currently-running session must win even if the tags also say done");
+    }
+
+    /** #261, found live: implemented/handoff_done alone only say the task's own session ran to
+     *  completion, not whether it actually succeeded - reported_status (the agent's own self-report,
+     *  or the harness's "unfinished" fallback) is the real verdict and must be shown once a task is
+     *  implemented, in preference to a flat "done". */
+    @Test
+    void taskStatus_showsTheReportedOutcomeOnceImplemented() {
+        assertEquals("partial", JobDetailView.taskStatus(List.of(), planTask("T1", true, true, "partial"), false));
+        assertEquals("blocked", JobDetailView.taskStatus(List.of(), planTask("T1", true, true, "blocked"), false));
+        assertEquals("unfinished", JobDetailView.taskStatus(List.of(), planTask("T1", true, true, "unfinished"), false));
+        assertEquals("partial (handoff pending)",
+                JobDetailView.taskStatus(List.of(), planTask("T1", true, false, "partial"), false),
+                "handoff pending is still worth flagging alongside the real self-reported outcome");
+    }
+
+    /** #261 regression, found live: T7's own session ran out of budget mid-tool-call, so the live
+     *  session's last known endedStage was "tool_execution" - a snapshot of what the model was
+     *  doing in that instant, not a verdict. The task had in fact already finished (its own tags
+     *  say so) hours earlier; the UI must show its real reported outcome, not replay a stale,
+     *  misleading "tool_execution" from a long-ended session row. */
+    @Test
+    void taskStatus_reportedOutcomeOutranksAStaleEndedSessionOnceImplemented() {
+        final var sessions = List.of(sessionRow("Task T7", "tool_execution"));
+        assertEquals("unfinished", JobDetailView.taskStatus(sessions, planTask("T7", true, true, "unfinished"), false),
+                "the task's own real, persistent verdict must win over a stale ended-session row");
+    }
+
+    /** #262: the status word alone doesn't say WHY - taskStatusReason() is the tooltip half,
+     *  mirroring taskStatus()'s own precedence exactly so it never shows detail left over from an
+     *  unrelated state (still running, or not started at all). */
+    @Test
+    void taskStatusReason_mirrorsTaskStatussOwnPrecedence() {
+        assertEquals("budget exhausted before a status was written",
+                JobDetailView.taskStatusReason(List.of(), planTask("T7", true, true, "unfinished", "budget exhausted before a status was written")));
+        assertNull(JobDetailView.taskStatusReason(List.of(), planTask("T1", false, false)),
+                "nothing to explain yet for a task that hasn't even started");
+        assertNull(JobDetailView.taskStatusReason(List.of(), planTask("T1", true, true, "done", null)),
+                "no detail was ever written - nothing to show, not an empty tooltip");
+
+        final var running = List.of(sessionRow("Task T7", null));
+        assertNull(JobDetailView.taskStatusReason(running, planTask("T7", true, true, "unfinished", "stale - from a prior attempt")),
+                "a genuinely running session must suppress a tooltip left over from a past attempt");
     }
 }

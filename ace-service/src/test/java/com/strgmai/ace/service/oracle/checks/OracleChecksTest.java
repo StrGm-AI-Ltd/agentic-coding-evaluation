@@ -185,4 +185,28 @@ class OracleChecksTest {
         }
         assertEquals(CheckStatus.FAIL, runStructure(ws).get(CheckId.S5).status());
     }
+
+    /** #276, found live: glob("**\/*")'s own file cap used to truncate SILENTLY - several real
+     *  callers (MoneySafetyChecks.sources(), RunOracle.p3Scan(), BlackboxScenarios's own-spec
+     *  search) filter node_modules/build/etc. out only AFTER glob() already returned, so a
+     *  node_modules large enough to fill the cap on its own (any modest React app's, easily) could
+     *  leave the real src/ tree never reached, with no sign anywhere that this happened.
+     *
+     *  NOT fixed by excluding SKIP_DIRS inside glob() itself, even though that was this class's own
+     *  first attempt: VerifyTask.verify() and BuildChecks's own mutation-testing step deliberately
+     *  glob INSIDE build/ for their own real test-results XML (**\/build/test-results/**\/*.xml) -
+     *  excluding "/build/" globally here broke both of those (caught by VerifyTaskTest going from
+     *  green to "could not run" with zero tests ever found). Fixed by capping and logging instead,
+     *  leaving glob()'s actual file set unchanged for every existing caller. */
+    @Test
+    void globCapsAtMaxResultsAndStaysWellUnderItWhenThereIsNothingToTruncate() throws Exception {
+        final var small = Files.createTempDirectory("ws-small");
+        Files.writeString(small.resolve("App.java"), "class App {}");
+        assertEquals(1, StructureChecks.glob(small, "**/*.java").size());
+
+        final var big = Files.createTempDirectory("ws-big");
+        for (int i = 0; i < StructureChecks.MAX_GLOB_RESULTS + 5; i++) Files.createFile(big.resolve("f" + i + ".txt"));
+        final List<Path> found = StructureChecks.glob(big, "**/*");
+        assertEquals(StructureChecks.MAX_GLOB_RESULTS, found.size(), "must cap at MAX_GLOB_RESULTS, not silently return fewer or more");
+    }
 }

@@ -165,7 +165,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         addSpeedByContextChart(run.metrics());
         addProvenance(run);
 
-        add(new FilesBrowser(client, runId, run.results_dir()));
+        add(new FilesBrowser(client, runId));
     }
 
     /** A 404 on the run id — the job has not produced a scored, imported result yet. */

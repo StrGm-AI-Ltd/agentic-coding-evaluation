@@ -107,6 +107,13 @@ public class ServiceClient implements Serializable {
         return http.get().uri("/api/runs/{id}", runId).retrieve().body(Api.Run.class);
     }
 
+    /** #270: the run's own file list, served through the API instead of FilesBrowser reading the
+     *  filesystem directly (which assumed ace-ui-vaadin is colocated with ace-service). */
+    public List<Api.RunFile> runFiles(final String runId) {
+        return http.get().uri("/api/runs/{id}/files", runId).retrieve().body(new ParameterizedTypeReference<List<Api.RunFile>>() {
+        });
+    }
+
     /** Whatever the model server currently serves, per GET /api/models — an empty list (not an
      *  error) when the model server is unreachable, the same fallback the endpoint itself uses. */
     public List<String> models() {
@@ -167,6 +174,62 @@ public class ServiceClient implements Serializable {
 
     public Api.TaskPrompt taskPrompt(final String jobId, final String taskId) {
         return http.get().uri("/api/jobs/{id}/tasks/{taskId}/prompt", jobId, taskId).retrieve().body(Api.TaskPrompt.class);
+    }
+
+    public Api.TaskDiff taskDiff(final String jobId, final String taskId) {
+        return http.get().uri("/api/jobs/{id}/tasks/{taskId}/diff", jobId, taskId).retrieve().body(Api.TaskDiff.class);
+    }
+
+    public List<Api.TaskAttempt> taskAttempts(final String jobId, final String taskId) {
+        return http.get().uri("/api/jobs/{id}/tasks/{taskId}/attempts", jobId, taskId)
+                .retrieve().body(new ParameterizedTypeReference<List<Api.TaskAttempt>>() {
+                });
+    }
+
+    public List<Api.JudgeCheckpoint> taskJudge(final String jobId, final String taskId) {
+        return http.get().uri("/api/jobs/{id}/tasks/{taskId}/judge", jobId, taskId)
+                .retrieve().body(new ParameterizedTypeReference<List<Api.JudgeCheckpoint>>() {
+                });
+    }
+
+    /** Sends an operator's own steering message for this task - queued, delivered at the agent's
+     *  own next turn boundary (see BenchController.intervene()/RunBench.buildJudgeCheckpoint()). */
+    public void sendIntervention(final String jobId, final String taskId, final String text) {
+        http.post().uri("/api/jobs/{id}/tasks/{taskId}/intervene", jobId, taskId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("text", text))
+                .retrieve()
+                .toBodilessEntity();
+    }
+
+    /** #263: prepares a paused job to redo taskId (and every task after it) on its next resume -
+     *  the caller still has to POST requeue() afterward, same split as pause()/requeue() already
+     *  have server-side. */
+    public Api.Job restartTask(final String jobId, final String taskId, final Map<String, Object> overrides) {
+        return http.post().uri("/api/jobs/{id}/tasks/{taskId}/restart", jobId, taskId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("overrides", overrides))
+                .retrieve()
+                .body(Api.Job.class);
+    }
+
+    /** #264: the phase-session counterpart of taskPrompt()/taskDiff()/restartTask() - Definition/
+     *  Plan/Parallel plan have no task id, scoped to the Live sessions table's own click-through
+     *  dialog instead of the plan table's. */
+    public Api.TaskPrompt sessionPrompt(final String jobId, final String name) {
+        return http.get().uri("/api/jobs/{id}/sessions/{name}/prompt", jobId, name).retrieve().body(Api.TaskPrompt.class);
+    }
+
+    public Api.TaskDiff sessionDiff(final String jobId, final String name) {
+        return http.get().uri("/api/jobs/{id}/sessions/{name}/diff", jobId, name).retrieve().body(Api.TaskDiff.class);
+    }
+
+    public Api.Job restartSession(final String jobId, final String name, final Map<String, Object> overrides) {
+        return http.post().uri("/api/jobs/{id}/sessions/{name}/restart", jobId, name)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("overrides", overrides))
+                .retrieve()
+                .body(Api.Job.class);
     }
 
     /** POST /api/jobs — enqueue a run; spec maps 1:1 onto the service's RunSpec (snake_case flags). */
@@ -260,8 +323,21 @@ public class ServiceClient implements Serializable {
      * aborts the connection — that is the page's detach path.
      */
     public void streamJobEvents(final String jobId, final Consumer<SseEvent> onEvent) throws IOException, InterruptedException {
+        streamSse(baseUrl + "/api/jobs/" + jobId + "/events", onEvent);
+    }
+
+    /**
+     * Blocking consumption of a task's own live transcript stream
+     * (/api/jobs/{id}/tasks/{taskId}/transcript) - the operator-facing "Live" tab's data
+     * source. Same shape/semantics as {@link #streamJobEvents}, just scoped to one task.
+     */
+    public void streamTaskTranscript(final String jobId, final String taskId, final Consumer<SseEvent> onEvent) throws IOException, InterruptedException {
+        streamSse(baseUrl + "/api/jobs/" + jobId + "/tasks/" + encodeSegment(taskId) + "/transcript", onEvent);
+    }
+
+    private void streamSse(final String url, final Consumer<SseEvent> onEvent) throws IOException, InterruptedException {
         final var request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/api/jobs/" + jobId + "/events"))
+                .uri(URI.create(url))
                 .header("Accept", "text/event-stream")
                 .GET()
                 .build();

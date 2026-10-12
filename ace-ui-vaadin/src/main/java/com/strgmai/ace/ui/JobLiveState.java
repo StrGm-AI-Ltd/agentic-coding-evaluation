@@ -4,6 +4,7 @@ import tools.jackson.databind.JsonNode;
 
 import java.io.Serializable;
 import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -45,7 +46,7 @@ public final class JobLiveState implements Serializable {
      *  truncated display form. */
     public record SessionRow(String id, String label, String description, String endedStage,
             Double avgPrefillTokPerSec, Double avgDecodeTokPerSec, Double wallSec, Long totalTokens,
-            Double prefillWallSec, Double decodeWallSec, String ts) implements Serializable {
+            Double prefillWallSec, Double decodeWallSec, String ts, String name) implements Serializable {
     }
 
     private static final long serialVersionUID = 1L;
@@ -64,9 +65,20 @@ public final class JobLiveState implements Serializable {
     private final Map<String, Long> tokenTotals = new LinkedHashMap<>();
     // session id -> [prefillWallSum, decodeWallSum], for the running totals in SessionRow
     private final Map<String, double[]> wallSums = new LinkedHashMap<>();
+    // session id -> "path" ("sessions/<file>") of the attempt whose row is currently open/known for
+    // that id - #301: Tailer is deliberately "stateless across connections" (every SSE reconnect
+    // gets a fresh one that replays every session_started it finds, from the start of the run's own
+    // session files, so a late-joining viewer still gets full history). Without this, a REPLAYED
+    // session_started for a session that is genuinely still running (no "end" yet) looks identical
+    // to a brand new retry, and closeAbandonedAttempt() stamps the previous sighting "interrupted"
+    // even though nothing failed - found live when restarting ace-service/ace-ui-vaadin while a job
+    // was running forced exactly this kind of reconnect.
+    private final Map<String, String> lastSeenSessionPath = new LinkedHashMap<>();
     private final Deque<RequestRow> recentRequests = new ArrayDeque<>();
     private long requestCount;
     private Long lastTokens;
+    private long totalCompletionTokens;
+    private long totalPromptTokens;
     private String logTail;
     // the run's declared task waves (RunBench writes execution_order.json before any task session
     // starts) - one entry per wave, each a list of task ids; empty until that one-shot event lands
@@ -84,10 +96,15 @@ public final class JobLiveState implements Serializable {
             }
             case "session_started" -> {
                 final var sessionId = Fmt.textOr(data.path("session_id"), "");
-                final var startTs = Fmt.textOr(data.path("ts"), null);
-                if (startTs != null) sessionStartTs.put(sessionId, startTs);
-                closeAbandonedAttempt(sessionId);
-                sessions.add(new SessionRow(sessionId, sessionLabel(data), sessionDescription(data), null, null, null, null, null, null, null, startTs));
+                final var path = Fmt.textOr(data.path("path"), null);
+                // #301: a replayed delivery of an attempt already known (same path) - not a new one
+                if (path == null || !path.equals(lastSeenSessionPath.get(sessionId))) {
+                    final var startTs = Fmt.textOr(data.path("ts"), null);
+                    if (startTs != null) sessionStartTs.put(sessionId, startTs);
+                    closeAbandonedAttempt(sessionId);
+                    sessions.add(new SessionRow(sessionId, sessionLabel(data), sessionDescription(data), null, null, null, null, null, null, null, startTs, Fmt.textOr(data.path("label"), null)));
+                    lastSeenSessionPath.put(sessionId, path);
+                }
             }
             case "session_done" -> markSessionDone(data);
             case "execution_order" -> executionOrder = parseExecutionOrder(data);
@@ -196,7 +213,7 @@ public final class JobLiveState implements Serializable {
         final int i = currentRowIndex(sessionId);
         if (i < 0) return;
         final var s = sessions.get(i);
-        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), finish, s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), wallSec, s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts()));
+        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), finish, s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), wallSec, s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts(), s.name()));
     }
 
     /** null if either timestamp is missing/unparseable (a degenerate payload, or the session started
@@ -223,20 +240,30 @@ public final class JobLiveState implements Serializable {
         if (data.path("decode_tok_per_sec").isNumber()) { sums[2] += data.path("decode_tok_per_sec").asDouble(); sums[3]++; }
         final Double avgPrefill = sums[1] > 0 ? sums[0] / sums[1] : null;
         final Double avgDecode = sums[3] > 0 ? sums[2] / sums[3] : null;
-        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), avgPrefill, avgDecode, s.wallSec(), s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts()));
+        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), avgPrefill, avgDecode, s.wallSec(), s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts(), s.name()));
     }
 
     /** Sums a request's completion tokens (when present - not every request does, e.g. errors) into
      *  its session's running total. Visible live, unlike wall time - a session's token spend is known
-     *  request by request, not just at the end. */
+     *  request by request, not just at the end. Also folds into totalCompletionTokens and
+     *  totalPromptTokens, the run-wide totals across every session seen so far - unlike
+     *  recentRequests/the sessions grid, neither of which is a reliable source for this (requests
+     *  are capped at MAX_RECENT_REQUESTS, and a session row only reflects requests attributed to it,
+     *  which this same guard clause below also requires). The two fields are accumulated
+     *  independently - completion_tokens and prompt_tokens come from the same usage block in
+     *  practice, but neither implies the other is present, so each is only added when it actually is. */
     private void accumulateTokens(final JsonNode data) {
         final var sessionId = Fmt.textOr(data.path("session_id"), null);
-        if (sessionId == null || sessionId.isBlank() || !data.path("completion_tokens").isNumber()) return;
+        if (sessionId == null || sessionId.isBlank()) return;
         final int i = currentRowIndex(sessionId);
         if (i < 0) return;
+        if (data.path("prompt_tokens").isNumber()) totalPromptTokens += data.path("prompt_tokens").asLong();
+        if (!data.path("completion_tokens").isNumber()) return;
         final var s = sessions.get(i);
-        final var total = tokenTotals.merge(sessionId, data.path("completion_tokens").asLong(), Long::sum);
-        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), total, s.prefillWallSec(), s.decodeWallSec(), s.ts()));
+        final var tokens = data.path("completion_tokens").asLong();
+        final var total = tokenTotals.merge(sessionId, tokens, Long::sum);
+        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), total, s.prefillWallSec(), s.decodeWallSec(), s.ts(), s.name()));
+        totalCompletionTokens += tokens;
     }
 
     /** ttft_sec IS the prefill wall time for a request (the elapsed time before the first token
@@ -255,7 +282,7 @@ public final class JobLiveState implements Serializable {
         final var ttft = data.path("ttft_sec").asDouble();
         sums[0] += ttft;
         sums[1] += data.path("latency_sec").asDouble() - ttft;
-        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), s.totalTokens(), sums[0], sums[1], s.ts()));
+        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), s.endedStage(), s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), s.totalTokens(), sums[0], sums[1], s.ts(), s.name()));
     }
 
     /** the row a per-session event applies to: the MOST RECENTLY STARTED session with this id.
@@ -282,7 +309,7 @@ public final class JobLiveState implements Serializable {
         if (i < 0) return;
         final var s = sessions.get(i);
         if (s.endedStage() != null) return;   // already resolved - nothing to close
-        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), "interrupted", s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts()));
+        sessions.set(i, new SessionRow(s.id(), s.label(), s.description(), "interrupted", s.avgPrefillTokPerSec(), s.avgDecodeTokPerSec(), s.wallSec(), s.totalTokens(), s.prefillWallSec(), s.decodeWallSec(), s.ts(), s.name()));
     }
 
     /** A snapshot copy — never the live list. */
@@ -299,12 +326,51 @@ public final class JobLiveState implements Serializable {
         return new ArrayList<>(sessions);
     }
 
+    /** The run's total elapsed time EXCLUDING any period it spent paused/stopped - the sum of each
+     *  session's own wall-clock span (ended sessions via their recorded wallSec(); the one still
+     *  running, if any, via now-minus-its-own-start). Unlike "now minus the run's first session",
+     *  the gaps BETWEEN sessions (a pause+redeploy, or the harness process itself being down) are
+     *  never inside any session and so are never summed in - no separate pause/resume audit trail
+     *  exists to subtract explicitly (pause() never timestamps when it actually happened, only the
+     *  job's current started_at, which requeue() overwrites on every resume anyway). A session
+     *  abandoned mid-flight by an ungraceful stop (marked "interrupted", not a normal "end") never
+     *  got a wallSec recorded for it either - its own partial, truly-active time before the abort is
+     *  not counted, a known minor undercount for that rare path (an in-process pause() stops the
+     *  worker cleanly; this only bites the harness process itself dying outright). */
+    public synchronized double totalActiveSeconds() {
+        var total = 0.0;
+        for (final var s : sessions) {
+            if (s.endedStage() != null) {
+                if (s.wallSec() != null) total += s.wallSec();
+            } else {
+                final var start = Fmt.parseTime(s.ts());
+                if (start != null) total += Duration.between(start, OffsetDateTime.now()).getSeconds();
+            }
+        }
+        return total;
+    }
+
     public synchronized long requestCount() {
         return requestCount;
     }
 
     public synchronized Long lastTokens() {
         return lastTokens;
+    }
+
+    /** The run-wide total of generated (completion) tokens across every session seen so far - not
+     *  capped the way recentRequests/MAX_RECENT_REQUESTS is, so this stays accurate for the whole
+     *  life of the run, not just its most recent window. */
+    public synchronized long totalCompletionTokens() {
+        return totalCompletionTokens;
+    }
+
+    /** The run-wide total of prompt (prefill) tokens across every session seen so far - the
+     *  counterpart to totalCompletionTokens(). Typically dwarfs it: an uncompacted session resends
+     *  its whole growing context as the prompt on every turn, so this is dominated by re-sent
+     *  context, not new text the model actually read once. */
+    public synchronized long totalPromptTokens() {
+        return totalPromptTokens;
     }
 
     /** A snapshot copy — never the live deque. */
