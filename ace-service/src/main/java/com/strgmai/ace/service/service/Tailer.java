@@ -23,7 +23,6 @@ public final class Tailer {
     private final Map<String, Long> offsets = new HashMap<>();
     private final Set<String> sessionIds = new HashSet<>();
     private final Map<String, String> sessionIdByFile = new HashMap<>();
-    private final Set<String> doneSessionFiles = new HashSet<>();
     private boolean executionOrderReported;
 
     // mirrors JobLiveState.LABEL_SUFFIXES (ace-ui-vaadin) - a continuation/wrapup/handoff/fix
@@ -123,7 +122,7 @@ public final class Tailer {
                     continue;
                 }
             }
-            if (!doneSessionFiles.contains(key)) sessionEnd(p, key, events);
+            sessionEnd(p, key, events);
         }
     }
 
@@ -158,19 +157,28 @@ public final class Tailer {
      *  runner ever writes; that mechanism never fired, so a session that finished stayed "running" in
      *  the live view for the rest of the job. Matched by the session's real id (from its header), not
      *  guessed as "the oldest still-open session" — correct under concurrent (parallel-wave) sessions
-     *  too, not just ones that happen to finish in start order. */
+     *  too, not just ones that happen to finish in start order.
+     *
+     *  Found live (#322): a length-retry/re-engage continuation appends a SECOND "end" line to this
+     *  SAME file (same session id, same path) once it finishes for real - returning on the first
+     *  "end" line found (and never looking at this file again) meant the live view got stuck forever
+     *  on the truncated call's own "length"/"stop"-with-no-status outcome, even once the
+     *  continuation actually finished the work. tailLines() is already byte-offset incremental, so
+     *  re-scanning on every poll costs nothing once a file has no new lines; this now takes the LAST
+     *  "end" line seen in each poll's new lines, so a later, truer outcome always wins. */
     private void sessionEnd(final Path p, final String key, final List<Map<String, Object>> events) {
+        JsonNode last = null;
         for (String line : tailLines(p)) {
             if (line.isBlank()) continue;
             try {
                 final JsonNode r = JSON.readTree(line);
-                if (!"end".equals(r.path("type").asText())) continue;
-                doneSessionFiles.add(key);
-                events.add(Map.of("type", "session_done", "session_id", sessionIdByFile.getOrDefault(key, ""),
-                        "finish", r.path("finish").isTextual() ? r.path("finish").asText() : "?",
-                        "ts", r.path("ts").isTextual() ? r.path("ts").asText() : ""));
-                return;
+                if ("end".equals(r.path("type").asText())) last = r;
             } catch (Exception e) { log.debug("could not parse a session line for end-detection, skipping it: {}", e.toString()); }
+        }
+        if (last != null) {
+            events.add(Map.of("type", "session_done", "session_id", sessionIdByFile.getOrDefault(key, ""),
+                    "finish", last.path("finish").isTextual() ? last.path("finish").asText() : "?",
+                    "ts", last.path("ts").isTextual() ? last.path("ts").asText() : ""));
         }
     }
 
