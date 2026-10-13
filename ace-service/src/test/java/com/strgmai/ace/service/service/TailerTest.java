@@ -351,6 +351,25 @@ class TailerTest {
         assertEquals("length", done.get("finish"));
     }
 
+    /** #322, found live: a length-retry/re-engage continuation reuses the SAME session file (same
+     *  id, same path) and appends its OWN "end" line once it finishes for real. The old detection
+     *  stopped looking at a file forever after its first "end" line, so the live view stayed stuck on
+     *  "length" even once the continuation actually finished with "stop" - this is the regression
+     *  test for that exact sequence. */
+    @Test
+    void aLaterEndLineOnTheSameFileReplacesAnEarlierOne() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("sessions"));
+        final var f = runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl");
+        Files.writeString(f, SESSION_HEADER + "{\"type\": \"end\", \"finish\": \"length\", \"turns\": 4}\n");
+        final var tailer = new Tailer();
+        final var firstDone = tailer.poll(runDir).stream().filter(e -> "session_done".equals(e.get("type"))).findFirst().orElseThrow();
+        assertEquals("length", firstDone.get("finish"), "the truncated call's own outcome, reported first");
+        Files.writeString(f, "{\"type\": \"end\", \"finish\": \"stop\", \"turns\": 10}\n", java.nio.file.StandardOpenOption.APPEND);
+        final var secondDone = tailer.poll(runDir).stream().filter(e -> "session_done".equals(e.get("type"))).findFirst().orElseThrow();
+        assertEquals("stop", secondDone.get("finish"), "the continuation's real outcome must supersede the truncated one");
+    }
+
     /** RunBench writes execution_order.json (the real planned task waves) before any task session
      *  starts - the live view needs this to explain a numerically-later task's session starting
      *  before an earlier one in the same wave (e.g. T4 before T3, when T3 only depends on T2). */

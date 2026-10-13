@@ -16,7 +16,12 @@ class RunSpecTest {
     private static RunSpec walls(final Double temperature, final Double topP, final Integer topK,
                                   final Double repetitionPenalty, final Integer maxTokens, final String reasoningEffort,
                                   final Integer parallelPlanWall, final Integer handoffWall, final Integer wrapupWall) {
-        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", null, 3600, null, null, null, null, null, null, null, null, null, false, false, false, null, false, true, false, false, false, null, null, null, null, false, null, null, null, null, null, "r1", temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, null, null, null, null, null, null, null, null, false, null, false, null, null, null, null, false, null, null, null);
+        return RunSpec.builder().task("L3p_point_in_time").model("m").mode("monolithic").planSource("agent")
+                .taskWall(3600).runId("r1")
+                .temperature(temperature).topP(topP).topK(topK).repetitionPenalty(repetitionPenalty)
+                .maxTokens(maxTokens).reasoningEffort(reasoningEffort)
+                .parallelPlanWall(parallelPlanWall).handoffWall(handoffWall).wrapupWall(wrapupWall)
+                .build();
     }
 
     @Test
@@ -255,26 +260,6 @@ class RunSpecTest {
         assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").implTokens(0).build());
         assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").contextWindow(0).build());
         assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").maxTokens(0).build());
-        // dockerMemoryMib is a capacity too - a 0-MiB VM is just as meaningless
-        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").dockerMemoryMib(0).build());
-        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").dockerMemoryMib(-1).build());
-    }
-
-    /** Found live 2026-09-28: capping Docker Desktop's VM memory (its VM competing with the model
-     *  for memory at the worst possible moment is the actual root cause behind "Docker Desktop
-     *  unreliable during the benchmark window") and keeping it warm for the whole run (skipping the
-     *  idle monitor's mid-run stop/restart cycling) had no run-level control at all. */
-    @Test
-    void argvIncludesDockerMemoryCapAndKeepWarmWhenSet() {
-        final var argv = RunSpec.builder().task("t").model("m").runId("r1").dockerMemoryMib(4096).dockerKeepWarm(true).build().argv("r1");
-        assertTrue(argv.contains("--docker-memory-mib=4096"));
-        assertTrue(argv.contains("--docker-keep-warm"));
-    }
-
-    @Test
-    void argvOmitsDockerMemoryCapAndKeepWarmWhenUnset() {
-        final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--docker-memory-mib") || a.equals("--docker-keep-warm")));
     }
 
     /** Found live 2026-10-03 (#228): 8 more queue.py RunSpec fields had no Java field at all, the
@@ -371,18 +356,6 @@ class RunSpecTest {
     }
 
     @Test
-    void argvIncludesSkipDockerWhenSet() {
-        final var argv = RunSpec.builder().task("t").model("m").runId("r1").skipDocker(true).build().argv("r1");
-        assertTrue(argv.contains("--skip-docker"));
-    }
-
-    @Test
-    void argvOmitsSkipDockerWhenUnset() {
-        final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.equals("--skip-docker")));
-    }
-
-    @Test
     void argvIncludesJavaHomeWhenSet() {
         final var argv = RunSpec.builder().task("t").model("m").runId("r1").javaHome("/opt/homebrew/opt/openjdk@21").build().argv("r1");
         assertTrue(argv.contains("--java-home=/opt/homebrew/opt/openjdk@21"));
@@ -436,9 +409,8 @@ class RunSpecTest {
         spec.put("parallel", "3"); spec.put("parallel_plan", "off"); spec.put("parallel_weight", 0.15);
         spec.put("system_rules", true); spec.put("self_review", true);
         spec.put("trajectory_review", true); spec.put("reviewer_model", "reviewer-m");
-        spec.put("handoff_notes", true); spec.put("manage_docker", false);
+        spec.put("handoff_notes", true);
         spec.put("no_context_probe", true); spec.put("context_probe_fresh", true);
-        spec.put("skip_docker", true);
         spec.put("context_window", 555); spec.put("first_token_timeout", 666);
         spec.put("compaction_trigger", 777); spec.put("review_wall_sec", 888); spec.put("review_tokens", 8880);
         spec.put("review_blind", true); spec.put("trajectory_reviewer_model", "traj-reviewer-m");
@@ -450,7 +422,6 @@ class RunSpecTest {
         spec.put("parallel_plan_wall", 100); spec.put("handoff_wall", 200); spec.put("wrapup_wall", 300);
         spec.put("fix_wall", 1200); spec.put("fix_tokens", 30000);
         spec.put("parallel_plan_tokens", 9000); spec.put("handoff_tokens", 4000); spec.put("wrapup_tokens", 2500);
-        spec.put("docker_memory_mib", 6144); spec.put("docker_keep_warm", true);
         spec.put("efficiency_weight", 0.17);
 
         final var rs = RunSpec.from(spec);
@@ -476,10 +447,8 @@ class RunSpecTest {
         assertTrue(rs.trajectoryReview());
         assertEquals("reviewer-m", rs.reviewerModel());
         assertTrue(rs.handoffNotes());
-        assertFalse(rs.manageDocker());
         assertTrue(rs.noContextProbe());
         assertTrue(rs.contextProbeFresh());
-        assertTrue(rs.skipDocker());
         assertEquals(555, rs.contextWindow());
         assertEquals(666, rs.firstTokenTimeout());
         assertEquals(777, rs.compactionTrigger());
@@ -506,8 +475,6 @@ class RunSpecTest {
         assertEquals(9000, rs.parallelPlanTokens());
         assertEquals(4000, rs.handoffTokens());
         assertEquals(2500, rs.wrapupTokens());
-        assertEquals(6144, rs.dockerMemoryMib());
-        assertTrue(rs.dockerKeepWarm());
         assertEquals(0.17, rs.efficiencyWeight());
     }
 
@@ -515,7 +482,6 @@ class RunSpecTest {
     void fromMapAppliesTheSameDefaultsBenchControllerUsedToApplyInline() {
         final var spec = java.util.Map.<String, Object>of("task", "L3p_point_in_time");
         final var rs = RunSpec.from(spec);
-        assertTrue(rs.manageDocker(), "manage_docker defaults to true, same as the old inline extraction");
         assertFalse(rs.systemRules());
         assertFalse(rs.selfReview());
         assertNull(rs.model());
@@ -525,7 +491,7 @@ class RunSpecTest {
     @Test
     void builderProducesTheSameRunSpecAsThePositionalConstructor() {
         final var viaBuilder = RunSpec.builder().task("t").model("m").runId("r1").temperature(0.5).build();
-        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, false, false, null, null, null, null, false, null, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, null, false, null, null, null, null, false, null, null, null);
+        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, null, null, null, null, false, null, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, null, null, null, null, false, null, null, null);
         assertEquals(viaConstructor, viaBuilder);
     }
 }

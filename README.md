@@ -20,9 +20,6 @@ Running an actual benchmark (the worker executing a queued job) currently only w
 
 - `Preflight`'s JDK auto-discovery falls back to `/usr/libexec/java_home -v 21`, a macOS-only tool.
   Set `ace.java-home` (or `$ACE_JAVA_HOME`) to sidestep this on any platform.
-- `DockerService` manages Docker Desktop's on-demand lifecycle via `open -a Docker`, `osascript`,
-  and matching the `com.docker.backend` process name — none of which exist on Linux or Windows, and
-  there is currently no non-macOS equivalent.
 
 The Vaadin UI (`ace-ui-vaadin`) and an `ace-service` instance used only to browse, import, or compare
 already-produced results have no such constraint.

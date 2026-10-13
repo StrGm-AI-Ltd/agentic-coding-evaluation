@@ -3,7 +3,6 @@ package com.strgmai.ace.service.runner;
 import com.strgmai.ace.service.agent.PiAgent;
 import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.config.BenchProperties;
-import com.strgmai.ace.service.docker.DockerService;
 import com.strgmai.ace.service.oracle.RunOracle;
 import com.strgmai.ace.service.pack.Packs;
 import com.strgmai.ace.service.plan.PlanTask;
@@ -411,60 +410,6 @@ class RunBenchTest {
         assertFalse(RunBench.matchesOwnership("account-service", "other-service/Foo.java"));
     }
 
-    /** Found live 2026-09-28: DockerWindowMonitor.poll() used to read ACE_DOCKER_LOG via
-     *  System.getenv() - the ace-service JVM's OWN environment, where that variable is never
-     *  actually set (it only ever exists inside the Map built for the AGENT's child process, see
-     *  RunBenchSupport.scrubbedEnv). dockerCalls() therefore always saw "/dev/null" and returned all
-     *  zeros, silently turning "idle since the agent's last real docker call" into "idle since the
-     *  window opened" for every run. The constructor now takes THIS session's own path explicitly. */
-    @Test
-    void dockerWindowMonitorUsesTheGivenDockerLogPathNotTheJvmsOwnEnvironment() {
-        final RunBench rb = runBench();
-        final var dw = rb.new DockerWindowMonitor("/custom/per-session/docker-calls.log");
-        assertEquals(Path.of("/custom/per-session/docker-calls.log"), dw.dockerLog);
-    }
-
-    @Test
-    void dockerWindowMonitorDefaultsToDevNullWhenNoDockerLogPathIsGiven() {
-        final RunBench rb = runBench();
-        assertEquals(Path.of("/dev/null"), rb.new DockerWindowMonitor(null).dockerLog);
-    }
-
-    /** Found live 2026-09-28: interrupt() alone only sets a flag the monitor loop checks BETWEEN
-     *  poll() calls - a caller proceeding right after interrupt() has no guarantee the monitor has
-     *  actually stopped. stopMonitor() gives it a bounded chance to actually finish first. */
-    @Test
-    void stopMonitorWaitsForTheThreadToActuallyStopWhenItRespondsPromptly() throws Exception {
-        final Thread t = new Thread(() -> {
-            try { Thread.sleep(60_000); } catch (InterruptedException ignored) { /* responds immediately */ }
-        });
-        t.start();
-        Thread.sleep(50);   // let it actually reach the sleep before stopping it
-
-        RunBench.stopMonitor(t);
-
-        assertFalse(t.isAlive(), "a thread that responds promptly to interrupt() must be stopped by the time stopMonitor() returns");
-    }
-
-    @Test
-    void stopMonitorGivesUpAfterItsOwnBoundRatherThanHangOnAThreadThatIgnoresInterrupt() throws Exception {
-        final var started = new java.util.concurrent.CountDownLatch(1);
-        final Thread t = new Thread(() -> {
-            started.countDown();
-            final long deadline = System.currentTimeMillis() + 10_000;
-            while (System.currentTimeMillis() < deadline) { /* deliberately ignores its own interrupted flag */ }
-        });
-        t.start();
-        started.await();
-
-        final long t0 = System.currentTimeMillis();
-        RunBench.stopMonitor(t);
-        final long elapsedMs = System.currentTimeMillis() - t0;
-
-        assertTrue(elapsedMs < 5_000, "stopMonitor() must give up around its own bound, not wait out a thread that ignores interrupt: " + elapsedMs + "ms");
-        t.join(15_000);   // let the real background thread actually finish so it doesn't leak past this test
-    }
-
     /** Found live 2026-09-28: a run's generated code lived ONLY in ws, a scratch dir under $TMPDIR
      *  that survives only until the OS decides to reclaim it - a run from days earlier had already
      *  lost its working tree AND part of its own git object store by the time anyone went looking,
@@ -506,114 +451,6 @@ class RunBenchTest {
         assertFalse(RunBench.exportSource(ws, rd));
     }
 
-    // ---- oracleWithDocker(): found live 2026-09-29, Docker Desktop's own backend crashed under RAM
-    // pressure from a co-resident model server (#165 fixed this by unloading the model before Docker
-    // comes up and reloading it after) - these pin the sequencing/exception-safety that fix depends on.
-
-    private ContextProbe mockProbeAndProps(final BenchProperties props) {
-        when(props.endpoint()).thenReturn("http://127.0.0.1:9191/v1");
-        when(props.apiKey()).thenReturn("key");
-        when(props.model()).thenReturn("m");
-        return mock(ContextProbe.class);
-    }
-
-    @Test
-    void oracleWithDockerUnloadsBeforeDockerUpBeforeScoringBeforeDockerDownBeforeReload(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
-        final var props = mock(BenchProperties.class);
-        final var probe = mockProbeAndProps(props);
-        final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class), new Intervene());
-        when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
-
-        try (var dockerMock = mockStatic(DockerService.class)) {
-            dockerMock.when(() -> DockerService.dockerUp(anyInt(), anyInt())).thenReturn(true);
-
-            rb.oracleWithDocker(Map.of("manage_docker", true), tmp, "task", tmp, Map.of());
-
-            final var inOrder = inOrder(probe, oracle);
-            inOrder.verify(probe).unloadModel("http://127.0.0.1:9191/v1", "key", "m");
-            dockerMock.verify(() -> DockerService.dockerUp(360, DockerService.DEFAULT_MEMORY_MIB));
-            inOrder.verify(oracle).score(any(), any(), any(), any());
-            dockerMock.verify(() -> DockerService.dockerDown(30));
-            inOrder.verify(probe).loadModel("http://127.0.0.1:9191/v1", "key", "m");
-        }
-    }
-
-    /** the #165 guarantee: a Docker-gated check crashing (or any other failure mid-scoring) must
-     *  never leave the model permanently unloaded / Docker Desktop's VM permanently up - the finally
-     *  block is what this test pins down. */
-    @Test
-    void oracleWithDockerStillReloadsTheModelWhenScoringThrows(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
-        final var props = mock(BenchProperties.class);
-        final var probe = mockProbeAndProps(props);
-        final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class), new Intervene());
-        when(oracle.score(any(), any(), any(), any())).thenThrow(new RuntimeException("docker-gated check crashed"));
-
-        try (var dockerMock = mockStatic(DockerService.class)) {
-            dockerMock.when(() -> DockerService.dockerUp(anyInt(), anyInt())).thenReturn(true);
-
-            assertThrows(RuntimeException.class, () -> rb.oracleWithDocker(Map.of("manage_docker", true), tmp, "task", tmp, Map.of()));
-
-            dockerMock.verify(() -> DockerService.dockerDown(30));
-            verify(probe).loadModel("http://127.0.0.1:9191/v1", "key", "m");
-        }
-    }
-
-    /** emulates the real incident: Docker Desktop's backend crashed/never came back up. dockerUp()
-     *  giving up (returning false) must not skip scoring (RunOracle's own "docker info" check is
-     *  what actually gates individual checks) or skip the reload. */
-    @Test
-    void oracleWithDockerStillScoresAndReloadsWhenDockerNeverComesUp(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
-        final var props = mock(BenchProperties.class);
-        final var probe = mockProbeAndProps(props);
-        final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class), new Intervene());
-        when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
-
-        try (var dockerMock = mockStatic(DockerService.class)) {
-            dockerMock.when(() -> DockerService.dockerUp(anyInt(), anyInt())).thenReturn(false);   // gave up
-
-            rb.oracleWithDocker(Map.of("manage_docker", true), tmp, "task", tmp, Map.of());
-
-            verify(oracle).score(any(), any(), any(), any());
-            dockerMock.verify(() -> DockerService.dockerDown(30));
-            verify(probe).loadModel("http://127.0.0.1:9191/v1", "key", "m");
-        }
-    }
-
-    @Test
-    void oracleWithDockerDoesNothingDockerRelatedWhenManageDockerIsOff(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
-        final var props = mock(BenchProperties.class);
-        final var probe = mock(ContextProbe.class);
-        final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class), new Intervene());
-        when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
-
-        try (var dockerMock = mockStatic(DockerService.class)) {
-            rb.oracleWithDocker(Map.of("manage_docker", false), tmp, "task", tmp, Map.of());
-
-            verifyNoInteractions(probe);
-            dockerMock.verifyNoInteractions();
-            verify(oracle).score(any(), any(), any(), any());
-        }
-    }
-
-    @Test
-    void oracleWithDockerThreadsTheConfiguredMemoryMibThroughToDockerUp(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
-        final var props = mock(BenchProperties.class);
-        final var probe = mockProbeAndProps(props);
-        final var oracle = mock(RunOracle.class);
-        final var rb = new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class), oracle, mock(Reviews.class), probe, mock(Judge.class), new Intervene());
-        when(oracle.score(any(), any(), any(), any())).thenReturn(Map.of("ok", true));
-
-        try (var dockerMock = mockStatic(DockerService.class)) {
-            dockerMock.when(() -> DockerService.dockerUp(anyInt(), anyInt())).thenReturn(true);
-            rb.oracleWithDocker(Map.of("manage_docker", true, "docker_memory_mib", 8192), tmp, "task", tmp, Map.of());
-            dockerMock.verify(() -> DockerService.dockerUp(360, 8192));
-        }
-    }
-
     /** #263: taskOverride() is Map.of() - never null, and never a false-positive match - for every
      *  session name that isn't a real, overridden plan task id. */
     @Test
@@ -645,6 +482,23 @@ class RunBenchTest {
         assertFalse(RunBench.shouldRetryOnLengthFinish("length", 124, 20000, 500), "already wall-timed-out - nothing left to continue into");
         assertFalse(RunBench.shouldRetryOnLengthFinish("length", 0, 20000, 19950), "under 120s remaining - not worth a whole extra call");
         assertTrue(RunBench.shouldRetryOnLengthFinish("length", 0, 0, 999_999), "wall<=0 means unlimited - always enough remaining");
+    }
+
+    /** Found live: T11 stopped after one ~25k-token turn that trailed off mid-sentence with 75% of
+     *  its token budget and 88% of its wall-clock still unspent - a "stop" finish with no tool call
+     *  and no status, while plenty of both budgets remained. Re-engaging only makes sense when
+     *  there is real room left on BOTH axes; a near-exhausted task should fall through to the
+     *  existing wrap-up instead. */
+    @Test
+    void shouldReEngageOnEmptyStopRequiresAStopFinishWithRealBudgetLeftOnBothAxes() {
+        assertTrue(RunBench.shouldReEngageOnEmptyStop("stop", 0, 14400, 1668, 65000, 25435), "T11's own numbers: 88% wall, 61% tokens left");
+        assertFalse(RunBench.shouldReEngageOnEmptyStop("tool_calls", 0, 14400, 1668, 65000, 25435), "ended via a tool call, not an empty stop");
+        assertFalse(RunBench.shouldReEngageOnEmptyStop("length", 0, 14400, 1668, 65000, 25435), "a length finish is shouldRetryOnLengthFinish's job, not this one's");
+        assertFalse(RunBench.shouldReEngageOnEmptyStop("stop", 124, 14400, 1668, 65000, 25435), "already wall-timed-out - nothing left to continue into");
+        assertFalse(RunBench.shouldReEngageOnEmptyStop("stop", 0, 14400, 12000, 65000, 25435), "under a fifth of the wall remaining");
+        assertFalse(RunBench.shouldReEngageOnEmptyStop("stop", 0, 14400, 1668, 65000, 60000), "under a fifth of the tokens remaining");
+        assertTrue(RunBench.shouldReEngageOnEmptyStop("stop", 0, 0, 999_999, 65000, 25435), "wall<=0 means unlimited - always enough remaining");
+        assertTrue(RunBench.shouldReEngageOnEmptyStop("stop", 0, 14400, 1668, 0, 999_999), "tokens<=0 means unlimited - always enough remaining");
     }
 
     @Test

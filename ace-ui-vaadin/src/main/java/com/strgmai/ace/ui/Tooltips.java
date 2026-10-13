@@ -164,14 +164,6 @@ final class Tooltips {
     static final String WRAPUP_TOKENS = "Completion-token budget for a session's wrap-up pass (see "
             + "wrapup_wall for its wall-clock budget). Blank = unlimited.";
 
-    static final String DOCKER_MEMORY_MIB = "Caps Docker Desktop's VM memory (MiB) so it competes less "
-            + "with a co-resident model server for RAM - only applies when manage_docker is checked. "
-            + "Blank = 4096 MiB.";
-
-    static final String DOCKER_KEEP_WARM = "When checked, Docker Desktop stays running for the whole run "
-            + "instead of being stopped/restarted by the idle monitor mid-run - only relevant when "
-            + "manage_docker is checked.";
-
     static final String PRIORITY = "Queue priority for this job - higher values claim a worker before "
             + "lower ones; ties break by enqueue order. 0 is the default for an ordinary run.";
 
@@ -246,16 +238,6 @@ final class Tooltips {
 
     static final String CONTEXT_PROBE_FRESH = "Forces a fresh step-0 context-probe measurement instead "
             + "of reusing a cached one from an earlier run against the same setup.";
-
-    static final String MANAGE_DOCKER = "When checked, the harness starts Docker Desktop itself before "
-            + "the run needs it (capped at a configured memory limit) and quits it afterward, rather than "
-            + "assuming it's already running.";
-
-    static final String SKIP_DOCKER = "Skips Docker entirely for the oracle's scoring phase: no "
-            + "provenance probing, and manage_docker's own start/stop around scoring is suppressed. The "
-            + "oracle already auto-detects when Docker is unreachable and gracefully skips Docker-gated "
-            + "checks either way - this just avoids the wasted start/stop cycle when you already know you "
-            + "don't want it.";
 
     static final String JAVA_HOME = "Pins which JDK the workspace's build/test commands run under (sets "
             + "JAVA_HOME and prepends its bin/ to PATH for the agent's spawned processes). Blank = the "

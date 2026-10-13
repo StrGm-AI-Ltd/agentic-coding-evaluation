@@ -164,6 +164,7 @@ class JobQueueIT {
     }
 
     private static RunSpec spec(final String runId) {
-        return new RunSpec("L3p_point_in_time", "m", null, "monolithic", "agent", null, 3600, null, null, null, null, null, null, null, null, null, false, false, false, null, false, true, false, false, false, null, null, null, null, false, null, null, null, null, null, runId, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, null, false, null, null, null, null, false, null, null, null);
+        return RunSpec.builder().task("L3p_point_in_time").model("m").mode("monolithic").planSource("agent")
+                .taskWall(3600).runId(runId).build();
     }
 }

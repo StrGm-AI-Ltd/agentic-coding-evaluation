@@ -73,8 +73,6 @@ public class ExperimentNewView extends VerticalLayout {
     private final IntegerField maxTurns = new IntegerField("Max turns");
     private final IntegerField fixWall = new IntegerField("Fix-up wall-clock budget");
     private final IntegerField fixTokens = new IntegerField("Fix-up token budget");
-    private final IntegerField dockerMemoryMib = new IntegerField("Docker memory cap (MiB)");
-    private final Checkbox dockerKeepWarm = new Checkbox("Keep Docker warm");
     // #307: the budget-exhaustion rescue step - same run-level-baseline reasoning as JobNewView's own
     private final Checkbox budgetRescueEnabled = new Checkbox("Budget-exhaustion rescue");
     private final IntegerField rescueWallSec = new IntegerField("Rescue wall-clock budget");
@@ -233,10 +231,6 @@ public class ExperimentNewView extends VerticalLayout {
         fixTokens.setMin(0);
         fixTokens.setHelperText("blank = unlimited");
         fixTokens.setTooltipText(Tooltips.FIX_TOKENS);
-        dockerMemoryMib.setMin(1);
-        dockerMemoryMib.setPlaceholder("blank = default (4096 MiB)");
-        dockerMemoryMib.setTooltipText(Tooltips.DOCKER_MEMORY_MIB);
-        dockerKeepWarm.setTooltipText(Tooltips.DOCKER_KEEP_WARM);
         budgetRescueEnabled.setTooltipText(Tooltips.BUDGET_RESCUE_ENABLED);
         rescueWallSec.setMin(1);
         rescueWallSec.setPlaceholder("blank = unlimited");
@@ -264,7 +258,6 @@ public class ExperimentNewView extends VerticalLayout {
                 Forms.row(parallelPlanWall, handoffWall, wrapupWall),
                 Forms.row(parallelPlanTokens, handoffTokens, wrapupTokens),
                 Forms.row(fixWall, fixTokens),
-                Forms.row(dockerMemoryMib, dockerKeepWarm),
                 Forms.row(budgetRescueEnabled, rescueWallSec, rescueTokens, rescueKeepRecentTurns)));
 
         // NB: Vaadin components have exactly ONE parent — a shared field must live in
@@ -415,8 +408,6 @@ public class ExperimentNewView extends VerticalLayout {
         raw.put("max_turns", maxTurns.getValue());
         raw.put("fix_wall", fixWall.getValue());
         raw.put("fix_tokens", fixTokens.getValue());
-        raw.put("docker_memory_mib", dockerMemoryMib.getValue());
-        raw.put("docker_keep_warm", dockerKeepWarm.getValue());
         raw.put("budget_rescue_enabled", budgetRescueEnabled.getValue());
         raw.put("rescue_wall_sec", rescueWallSec.getValue());
         raw.put("rescue_tokens", rescueTokens.getValue());
@@ -465,7 +456,6 @@ public class ExperimentNewView extends VerticalLayout {
                 Map.entry("parallel_plan_tokens", parallelPlanTokens), Map.entry("handoff_tokens", handoffTokens),
                 Map.entry("wrapup_tokens", wrapupTokens), Map.entry("max_turns", maxTurns),
                 Map.entry("fix_wall", fixWall), Map.entry("fix_tokens", fixTokens),
-                Map.entry("docker_memory_mib", dockerMemoryMib),
                 Map.entry("rescue_wall_sec", rescueWallSec), Map.entry("rescue_tokens", rescueTokens),
                 Map.entry("rescue_keep_recent_turns", rescueKeepRecentTurns),
                 Map.entry("model", model), Map.entry("model_a", modelA),

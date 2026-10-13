@@ -210,4 +210,51 @@ class RunBenchSupportTest {
         final Path ws = track(Files.createTempDirectory("ws-progress-missing"));
         assertDoesNotThrow(() -> RunBenchSupport.clearStaleProgressLine(ws, "T4"));
     }
+
+    /** Found live: the Definition task's own Changes tab threw a raw "git describe failed: fatal:
+     *  No tags can describe ...; Try --always, or create some tags." for every run - p0_definition
+     *  is the FIRST phase, so the only tag reachable that early is run/start, deliberately named
+     *  OUTSIDE the phase/* namespace (see snapshot()'s own comment) so a real phase boundary can
+     *  never collide with it - which is exactly why `git describe --match phase/*` legitimately
+     *  finds nothing there. nearestPhaseTagSha() must fall back to run/start itself instead of
+     *  letting that surface as an uncaught IOException. */
+    @Test
+    void nearestPhaseTagSha_fallsBackToRunStartWhenNoEarlierPhaseTagExists() throws Exception {
+        final Path ws = track(Files.createTempDirectory("ws-no-phase-tag"));
+        final String startSha = RunBenchSupport.snapshot(ws, "run/start");
+
+        final String before = RunBenchSupport.nearestPhaseTagSha(ws, "HEAD");
+
+        assertEquals(startSha, before, "with no phase/* tag anywhere yet, the boundary must be run/start itself");
+    }
+
+    /** The exact wording actually seen live: once a LATER phase/* tag exists somewhere else in the
+     *  repo, `git describe` reports "No tags can describe '&lt;sha&gt;'" instead of "No names found" -
+     *  a different message for the same "no ancestor phase/* tag" condition, found by diffing the
+     *  Definition task (ref = phase/p0^, the commit right before Definition's own tag) once the run
+     *  had already moved on to a later phase. Must fall back exactly the same way. */
+    @Test
+    void nearestPhaseTagSha_fallsBackToRunStartWhenALaterPhaseTagExistsButIsntAnAncestor() throws Exception {
+        final Path ws = track(Files.createTempDirectory("ws-later-phase-tag"));
+        final String startSha = RunBenchSupport.snapshot(ws, "run/start");
+        RunBenchSupport.snapshot(ws, "phase/p0");   // a later phase tag exists in the repo overall...
+
+        final String before = RunBenchSupport.nearestPhaseTagSha(ws, "phase/p0^");   // ...but not as phase/p0's own ancestor
+
+        assertEquals(startSha, before, "phase/p0 is the run's first phase - its own parent has no earlier phase/* tag to find");
+    }
+
+    @Test
+    void nearestPhaseTagSha_stillFindsARealPhaseTagWhenOneExists() throws Exception {
+        final Path ws = track(Files.createTempDirectory("ws-with-phase-tag"));
+        RunBenchSupport.snapshot(ws, "run/start");
+        Files.writeString(ws.resolve("App.java"), "class App {}");
+        final String phaseT1Sha = RunBenchSupport.snapshot(ws, "phase/T1");
+        Files.writeString(ws.resolve("App.java"), "class App { int x = 1; }");
+        RunBenchSupport.snapshot(ws, "run/does-not-match-the-glob");
+
+        final String before = RunBenchSupport.nearestPhaseTagSha(ws, "HEAD");
+
+        assertEquals(phaseT1Sha, before, "a real, nearer phase/* tag must still win over the run/start fallback");
+    }
 }

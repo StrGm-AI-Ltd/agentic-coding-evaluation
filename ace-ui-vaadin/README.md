@@ -55,7 +55,7 @@ Port layout (collisions matter on the benchmark machine): `8800` UI · `8765` se
 | `/groups` | leaderboard: ranked (k ≥ 5) and indicative cards, mean ± 90 % CI, pass-k chips | `GET /api/groups` |
 | `/compare` | A/B group picker, metric + pooling options, stats.py output | `POST /api/compare` |
 | `/jobs` | queue table (blocked jobs actionable: cancel/requeue, blocked reason tooltip), raise priority | `GET /api/jobs`, `POST /api/jobs/{id}/…`, `PATCH /api/jobs/{id}` |
-| `/jobs/new` | new job form: every RunSpec flag (task, model picker, harness, mode, budgets, parallel, reviewers, docker flags) + priority | `POST /api/jobs` |
+| `/jobs/new` | new job form: every RunSpec flag (task, model picker, harness, mode, budgets, parallel, reviewers) + priority | `POST /api/jobs` |
 | `/jobs/:id` | job detail with a live panel — current step, sessions, request stats (latency/TTFT/tokens), log tail — fed by the same SSE stream the service UI uses, plus 2 s status polling | `GET /api/jobs/{id}`, `GET /jobs/{id}/events` (SSE) |
 | `/experiments`, `/experiments/:id` | experiments and their arm × repeat jobs | `GET /api/experiments[/{id}]` |
 | `/experiments/new` | new experiment form: harness_effect / model_ab / agent_ab templates with per-template params, reviewer pickers | `POST /api/experiments` |

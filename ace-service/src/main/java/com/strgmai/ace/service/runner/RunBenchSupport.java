@@ -57,8 +57,6 @@ public final class RunBenchSupport {
             env.put("JAVA_HOME", javaHome);
             env.put("PATH", Paths.get(javaHome).resolve("bin") + ":" + env.getOrDefault("PATH", ""));
         }
-        env.put("PATH", Paths.get(home, "bin") + ":" + env.getOrDefault("PATH", ""));   // the docker shim first (R7)
-        env.put("ACE_DOCKER_LOG", Paths.get(home, "docker-calls.log").toString());
         // a daemon left running for the whole task session is a sustained, idle memory footprint
         // competing with the model server on the same host (found live - it lined up with an
         // empty-stream stutter #256 was filed for); VerifyTask/BuildChecks already disable it for
@@ -127,10 +125,26 @@ public final class RunBenchSupport {
      *  can `git commit` its own work before snapshot() ever runs, so a plain git-parent walk can
      *  land on the agent's own commit instead of the true phase boundary - `git describe` walks
      *  past any such untagged commits to the nearest ACTUAL phase/* tag). Used by taskDiff()'s
-     *  before/after boundary and by the task-restart flow's own reset-to-before-this-task point. */
+     *  before/after boundary and by the task-restart flow's own reset-to-before-this-task point.
+     *
+     *  The run's very first phase has no EARLIER phase/* tag to find - the only tag that early is
+     *  run/start, deliberately named outside the phase/* namespace (see snapshot()'s own comment)
+     *  so it can never be mistaken for a real phase boundary elsewhere. `git describe` legitimately
+     *  finds nothing in that case - fall back to run/start itself instead of letting that surface
+     *  as a raw failure on the Definition task's own Changes tab. Found live with two different
+     *  git error wordings for the same underlying condition: "No names found, cannot describe
+     *  anything" when NO phase/* tag exists anywhere yet (ref is mid-Definition, still running),
+     *  and "No tags can describe '<sha>'. Try --always, ..." once a LATER phase/* tag exists
+     *  elsewhere in the repo but isn't an ancestor of this particular ref (ref is phase/p0^ itself,
+     *  the commit right before Definition's own tag - the scenario actually seen live). */
     public static String nearestPhaseTagSha(final Path ws, final String ref) throws IOException, InterruptedException {
-        final String tag = gitOut(ws, "describe", "--tags", "--match", "phase/*", "--abbrev=0", ref);
-        return gitOut(ws, "rev-parse", tag);
+        final var cmd = new ArrayList<>(List.of("git", "-C", ws.toString(), "describe", "--tags", "--match", "phase/*", "--abbrev=0", ref));
+        final var r = DockerService.proc(60, null, null, cmd.toArray(new String[0]));
+        if (r.rc() != 0) {
+            if (r.err().contains("No tags can describe") || r.err().contains("No names found")) return gitOut(ws, "rev-parse", "run/start");
+            throw new IOException("git describe failed: " + r.err());
+        }
+        return gitOut(ws, "rev-parse", r.out().strip());
     }
 
     /** #292, found live: this - and runGit() below - used to be a bare `new ProcessBuilder(cmd).start()`

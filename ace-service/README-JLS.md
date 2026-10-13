@@ -68,11 +68,11 @@ server: any OpenAI-compatible endpoint (`ACE_ENDPOINT`, default oMLX on :9191).
   provider/model, blind variants, the trajectory renderer (per-turn trace, thrash/ping-pong
   analysis, the harness-computed objective index the reviewer is calibrated against), code
   freeze and restore of whatever the reviewer touched.
-- **Docker lifecycle** (R7): Docker Desktop is DOWN while the agent works, comes up through the
-  shim installed as `docker` on the agent's PATH (every call logged), is stopped after idle and
-  at session end; the compose runtime checks sweep stale stacks, build from a SOURCE-ONLY copy
-  (host-built artefacts and absolute compose paths are caught), separate build/health budgets,
-  C1/C2 semantics with db rows never "bad", and the black-box F suite against the live stack.
+- **Docker**: ACE does not start or stop Docker Desktop itself - the operator owns that entirely;
+  the harness only probes whether it happens to be running. The compose runtime checks sweep stale
+  stacks, build from a SOURCE-ONLY copy (host-built artefacts and absolute compose paths are
+  caught), separate build/health budgets, C1/C2 semantics with db rows never "bad", and the
+  black-box F suite against the live stack.
 - **Container-pinned builds**: B1/B2 run `gradle assemble/test` in the pinned
   `gradle:8.14-jdk21` image (digest in the oracle provenance) with a real PostgreSQL sidecar on
   a private network, recreated per run; B3 seeds a mutation of the sell-side arithmetic (nearest
@@ -94,9 +94,9 @@ Still not ported (documented, not silent):
 com.strgmai.ace.service
 ├── agent/     ReferenceAgent (LangChain4j), AgentTools, AgentSession (+ compaction)
 ├── proxy/     RecordingProxy (JDK HttpServer), SseAssembler
-├── runner/    RunBench (probe, waves, docker windows, reviews), ContextProbe, Reviews,
+├── runner/    RunBench (probe, waves, reviews), ContextProbe, Reviews,
 │              VerifyTask (three-valued), JournalFacts (cached), Validity, RunBenchSupport
-├── docker/    DockerService (up/down/shim/tools/windows) + the docker_shim.sh resource
+├── docker/    DockerService (passive running-probe + CLI-plugin mirroring into a fresh HOME)
 ├── pack/      Packs (stable/task/review/trajectory/fix packs, HYGIENE, tolerant parsers)
 ├── oracle/    CheckId registry, Scorer, RunOracle + checks (structure, money, blackbox)
 ├── reference/ TradingService + TradingController + ReferenceServer (BigDecimal, HALF_EVEN)

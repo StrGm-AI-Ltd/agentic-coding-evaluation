@@ -333,6 +333,16 @@ public final class Packs {
                 + "docs/PROGRESS.md: `" + id + " | done | <how verified>` if the acceptance criterion holds, otherwise "
                 + "`" + id + " | partial | <what works, what remains, last test result>` or `" + id + " | blocked | <why>`. Then stop.";
     }
+    /** Unlike wrapupInstruction above, this fires while real budget still remains - the previous
+     *  turn ended with no tool call and no status, which could mean the task is genuinely done and
+     *  the agent simply forgot the status line, or that it lost the thread mid-reasoning. Deliberately
+     *  does NOT ban further tool use: there is room left to actually finish, not just report. */
+    public static String reEngageInstruction(final String id) {
+        return "Your last turn for " + id + " ended with no tool call and no docs/PROGRESS.md status line - you may be "
+                + "genuinely done, or you may have lost the thread. You still have budget left: if the acceptance "
+                + "criterion already holds, verify it and append the status line now (`" + id + " | done | <how verified>`); "
+                + "if it does not, continue the task - use a tool for your very next step.";
+    }
     public static String fallbackStatus(final String id, final String tail) {
         return id + " | unfinished | budget exhausted before a status was written" + (tail == null || tail.isBlank() ? "" : tail);
     }
@@ -341,11 +351,9 @@ public final class Packs {
     public static final String MONO_WRAPUP_INSTRUCTION = "Time is up. Do NOT write or edit any more code and do not run builds or tests. Append a final section `## Status` to "
             + "docs/PROGRESS.md with one line per plan subtask: `<id> | done | <how verified>`, `<id> | partial | <what works, what "
             + "remains, last test result>` or `<id> | blocked | <why>`. Then stop.";
-    public static final String DOCKER_NOTE = "## Docker\n- Docker Desktop is available ON DEMAND: it is down until your first `docker` command, which starts it and waits "
-            + "for the daemon (up to 2 minutes; `docker compose` works). It is stopped again after 10 minutes without a docker command and "
-            + "when this session ends, so do the container work (`docker compose build`, `docker compose up`, a smoke request, `docker compose down`) "
-            + "in one stretch, and do not leave containers running.\n"
-            + "- If a `docker` command does not succeed within ~60s the daemon is unavailable on this host (it competes with the model for "
+    public static final String DOCKER_NOTE = "## Docker\n- Docker's availability depends entirely on whatever the operator already has running on "
+            + "this host - the harness does not start or stop Docker Desktop for you. Check once (e.g. `docker info`) before relying on it.\n"
+            + "- If `docker` does not succeed within ~60s the daemon is unavailable on this host (it competes with the model for "
             + "memory): do NOT keep retrying, run `open -a Docker`, or spawn your own backend - write the Dockerfile/compose.yml from your "
             + "own knowledge, verify behaviour against the provided SPRING_DATASOURCE_*/H2 datasource, and rely on the grader (it builds "
             + "and runs the containers on a clean checkout after your session).";
@@ -361,7 +369,7 @@ public final class Packs {
     }
     public static final String INTEGRATION_INSTRUCTION = "Run the complete test suite of every service from the repository root and fix every failure. Check that "
             + "docker-compose.yml, the Dockerfiles and the healthchecks are consistent with the code and that `docker compose build` "
-            + "and `docker compose up` work when Docker is available (it starts on demand but may not boot on this host - see the Docker "
+            + "and `docker compose up` work when Docker is available (it may not be available on this host at all - see the Docker "
             + "section's ~60s fallback and do not get stuck retrying; the grader will run `docker compose build` on a clean "
             + "checkout WITHOUT build outputs, so every image must build the application inside the image - a Dockerfile that COPYs a "
             + "host-built jar fails). Stop when everything is green OR when your budget is nearly spent (see the Budget section; "

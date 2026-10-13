@@ -8,15 +8,15 @@ import java.util.*;
 public record RunSpec(String task, String model, String harness, String mode, String planSource, String phases, Integer taskWall, Integer taskTokens,
                       Integer implWall, Integer implTokens, Integer planWall, Integer planTokens, Integer wallBudget, String parallel, String parallelPlan, Double parallelWeight,
                       boolean systemRules, boolean selfReview,
-                      boolean trajectoryReview, String reviewerModel, boolean handoffNotes, boolean manageDocker,
-                      boolean noContextProbe, boolean contextProbeFresh, boolean skipDocker,
+                      boolean trajectoryReview, String reviewerModel, boolean handoffNotes,
+                      boolean noContextProbe, boolean contextProbeFresh,
                       Integer contextWindow, Integer firstTokenTimeout, Integer compactionTrigger, Integer reviewWallSec,
                       boolean reviewBlind, String trajectoryReviewerModel, Double reviewWeight, Double trajectoryWeight,
                       String trajectoryUse, String javaHome, String runId,
                       Double temperature, Double topP, Integer topK, Double repetitionPenalty, Integer maxTokens, String reasoningEffort,
                       Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns, Integer reviewTokens,
                       Integer fixWall, Integer fixTokens, Integer parallelPlanTokens, Integer handoffTokens, Integer wrapupTokens,
-                      Integer dockerMemoryMib, boolean dockerKeepWarm, Double efficiencyWeight,
+                      Double efficiencyWeight,
                       boolean judgeEnabled, Integer judgeEveryNTurns, String judgeModel, Integer judgeWallSec, Integer judgeTokens,
                       boolean budgetRescueEnabled, Integer rescueWallSec, Integer rescueTokens, Integer rescueKeepRecentTurns) {
 
@@ -39,8 +39,6 @@ public record RunSpec(String task, String model, String harness, String mode, St
         implWall = positive(implWall); implTokens = positive(implTokens);
         contextWindow = positive(contextWindow); maxTokens = positive(maxTokens);
         planTokens = positive(planTokens); wallBudget = positive(wallBudget);
-        // a 0 or negative memory cap is just as meaningless as a 0-wide context window
-        dockerMemoryMib = positive(dockerMemoryMib);
         // every other wall/token budget: 0 means unlimited (the system-wide "0 = no budget"
         // convention) rather than an error - was rejected outright before this, the same class of
         // bug as #90's ExperimentsService.taskCount() silent-fallback, just enforced as a hard 400
@@ -141,10 +139,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (trajectoryReview) args.add("--trajectory-review");
         if (reviewerModel != null) args.add("--reviewer-model=" + reviewerModel);
         if (handoffNotes) args.add("--handoff-notes");
-        if (manageDocker) args.add("--manage-docker");
         if (noContextProbe) args.add("--no-context-probe");
         if (contextProbeFresh) args.add("--context-probe-fresh");
-        if (skipDocker) args.add("--skip-docker");
         // a pinned window: the run uses it as-is and skips step 0 (the probe exists to MEASURE one)
         if (contextWindow != null) args.add("--context-window=" + contextWindow);
         if (firstTokenTimeout != null) args.add("--first-token-timeout=" + firstTokenTimeout);
@@ -172,8 +168,6 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (parallelPlanTokens != null) args.add("--parallel-plan-tokens=" + parallelPlanTokens);
         if (handoffTokens != null) args.add("--handoff-tokens=" + handoffTokens);
         if (wrapupTokens != null) args.add("--wrapup-tokens=" + wrapupTokens);
-        if (dockerMemoryMib != null) args.add("--docker-memory-mib=" + dockerMemoryMib);
-        if (dockerKeepWarm) args.add("--docker-keep-warm");
         if (efficiencyWeight != null) args.add("--efficiency-weight=" + efficiencyWeight);
         if (judgeEnabled) args.add("--judge");
         if (judgeEveryNTurns != null) args.add("--judge-every-n-turns=" + judgeEveryNTurns);
@@ -204,10 +198,10 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 trajectoryReviewerModel, trajectoryUse, javaHome, runId, reasoningEffort, judgeModel;
         private Integer taskWall, taskTokens, implWall, implTokens, planWall, planTokens, wallBudget, contextWindow, firstTokenTimeout,
                 compactionTrigger, reviewWallSec, topK, maxTokens, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
-                fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, dockerMemoryMib, judgeEveryNTurns, judgeWallSec, judgeTokens,
+                fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, judgeEveryNTurns, judgeWallSec, judgeTokens,
                 rescueWallSec, rescueTokens, rescueKeepRecentTurns;
-        private boolean systemRules, selfReview, trajectoryReview, handoffNotes, manageDocker,
-                noContextProbe, contextProbeFresh, skipDocker, reviewBlind, dockerKeepWarm, judgeEnabled, budgetRescueEnabled;
+        private boolean systemRules, selfReview, trajectoryReview, handoffNotes,
+                noContextProbe, contextProbeFresh, reviewBlind, judgeEnabled, budgetRescueEnabled;
         private Double reviewWeight, trajectoryWeight, parallelWeight, efficiencyWeight, temperature, topP, repetitionPenalty;
 
         public Builder task(final String v) { task = v; return this; }
@@ -231,10 +225,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public Builder trajectoryReview(final boolean v) { trajectoryReview = v; return this; }
         public Builder reviewerModel(final String v) { reviewerModel = v; return this; }
         public Builder handoffNotes(final boolean v) { handoffNotes = v; return this; }
-        public Builder manageDocker(final boolean v) { manageDocker = v; return this; }
         public Builder noContextProbe(final boolean v) { noContextProbe = v; return this; }
         public Builder contextProbeFresh(final boolean v) { contextProbeFresh = v; return this; }
-        public Builder skipDocker(final boolean v) { skipDocker = v; return this; }
         public Builder contextWindow(final Integer v) { contextWindow = v; return this; }
         public Builder firstTokenTimeout(final Integer v) { firstTokenTimeout = v; return this; }
         public Builder compactionTrigger(final Integer v) { compactionTrigger = v; return this; }
@@ -262,8 +254,6 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public Builder parallelPlanTokens(final Integer v) { parallelPlanTokens = v; return this; }
         public Builder handoffTokens(final Integer v) { handoffTokens = v; return this; }
         public Builder wrapupTokens(final Integer v) { wrapupTokens = v; return this; }
-        public Builder dockerMemoryMib(final Integer v) { dockerMemoryMib = v; return this; }
-        public Builder dockerKeepWarm(final boolean v) { dockerKeepWarm = v; return this; }
         public Builder efficiencyWeight(final Double v) { efficiencyWeight = v; return this; }
         public Builder judgeEnabled(final boolean v) { judgeEnabled = v; return this; }
         public Builder judgeEveryNTurns(final Integer v) { judgeEveryNTurns = v; return this; }
@@ -277,11 +267,11 @@ public record RunSpec(String task, String model, String harness, String mode, St
 
         public RunSpec build() {
             return new RunSpec(task, model, harness, mode, planSource, phases, taskWall, taskTokens, implWall, implTokens,
-                    planWall, planTokens, wallBudget, parallel, parallelPlan, parallelWeight, systemRules, selfReview, trajectoryReview, reviewerModel, handoffNotes, manageDocker,
-                    noContextProbe, contextProbeFresh, skipDocker, contextWindow, firstTokenTimeout, compactionTrigger, reviewWallSec,
+                    planWall, planTokens, wallBudget, parallel, parallelPlan, parallelWeight, systemRules, selfReview, trajectoryReview, reviewerModel, handoffNotes,
+                    noContextProbe, contextProbeFresh, contextWindow, firstTokenTimeout, compactionTrigger, reviewWallSec,
                     reviewBlind, trajectoryReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse, javaHome, runId,
                     temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
-                    fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, dockerMemoryMib, dockerKeepWarm, efficiencyWeight,
+                    fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, efficiencyWeight,
                     judgeEnabled, judgeEveryNTurns, judgeModel, judgeWallSec, judgeTokens,
                     budgetRescueEnabled, rescueWallSec, rescueTokens, rescueKeepRecentTurns);
         }
@@ -301,9 +291,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 .parallel(str(spec, "parallel")).parallelPlan(str(spec, "parallel_plan")).parallelWeight(doubleOf(spec, "parallel_weight"))
                 .systemRules(bool(spec, "system_rules", false)).selfReview(bool(spec, "self_review", false))
                 .trajectoryReview(bool(spec, "trajectory_review", false)).reviewerModel(str(spec, "reviewer_model"))
-                .handoffNotes(bool(spec, "handoff_notes", false)).manageDocker(bool(spec, "manage_docker", true))
+                .handoffNotes(bool(spec, "handoff_notes", false))
                 .noContextProbe(bool(spec, "no_context_probe", false)).contextProbeFresh(bool(spec, "context_probe_fresh", false))
-                .skipDocker(bool(spec, "skip_docker", false))
                 .contextWindow(intOf(spec, "context_window")).firstTokenTimeout(intOf(spec, "first_token_timeout"))
                 .compactionTrigger(intOf(spec, "compaction_trigger")).reviewWallSec(intOf(spec, "review_wall_sec"))
                 .reviewTokens(intOf(spec, "review_tokens"))
@@ -318,7 +307,6 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 .fixWall(intOf(spec, "fix_wall")).fixTokens(intOf(spec, "fix_tokens"))
                 .parallelPlanTokens(intOf(spec, "parallel_plan_tokens")).handoffTokens(intOf(spec, "handoff_tokens"))
                 .wrapupTokens(intOf(spec, "wrapup_tokens"))
-                .dockerMemoryMib(intOf(spec, "docker_memory_mib")).dockerKeepWarm(bool(spec, "docker_keep_warm", false))
                 .efficiencyWeight(doubleOf(spec, "efficiency_weight"))
                 .judgeEnabled(bool(spec, "judge_enabled", false)).judgeEveryNTurns(intOf(spec, "judge_every_n_turns"))
                 .judgeModel(str(spec, "judge_model")).judgeWallSec(intOf(spec, "judge_wall_sec")).judgeTokens(intOf(spec, "judge_tokens"))
