@@ -333,6 +333,16 @@ public final class Packs {
                 + "docs/PROGRESS.md: `" + id + " | done | <how verified>` if the acceptance criterion holds, otherwise "
                 + "`" + id + " | partial | <what works, what remains, last test result>` or `" + id + " | blocked | <why>`. Then stop.";
     }
+    /** Unlike wrapupInstruction above, this fires while real budget still remains - the previous
+     *  turn ended with no tool call and no status, which could mean the task is genuinely done and
+     *  the agent simply forgot the status line, or that it lost the thread mid-reasoning. Deliberately
+     *  does NOT ban further tool use: there is room left to actually finish, not just report. */
+    public static String reEngageInstruction(final String id) {
+        return "Your last turn for " + id + " ended with no tool call and no docs/PROGRESS.md status line - you may be "
+                + "genuinely done, or you may have lost the thread. You still have budget left: if the acceptance "
+                + "criterion already holds, verify it and append the status line now (`" + id + " | done | <how verified>`); "
+                + "if it does not, continue the task - use a tool for your very next step.";
+    }
     public static String fallbackStatus(final String id, final String tail) {
         return id + " | unfinished | budget exhausted before a status was written" + (tail == null || tail.isBlank() ? "" : tail);
     }

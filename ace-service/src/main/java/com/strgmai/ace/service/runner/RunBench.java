@@ -188,6 +188,22 @@ public class RunBench {
         return "length".equals(finish) && rc != 124 && (wall <= 0 || wall - elapsedSec > 120);
     }
 
+    /** Found live: a session that stops with no tool call ("stop" finish) and never reports a
+     *  status either genuinely finished without writing the line, or lost the thread mid-reasoning
+     *  (a single ~25k-token turn trailed off mid-sentence with 75% of its token budget and 88% of
+     *  its wall still unspent). The wrap-up below tells the agent to STOP and just report - exactly
+     *  wrong when real budget remains, since it throws away the room to actually finish. Re-engage
+     *  instead, gated on at least a fifth of BOTH budgets still being left - not worth a whole extra
+     *  call otherwise, same reasoning as shouldRetryOnLengthFinish's own 120s floor. rc==124 (already
+     *  wall-timed-out) is excluded the same way: nothing left to continue into. */
+    static boolean shouldReEngageOnEmptyStop(final String finish, final int rc, final long wall, final long elapsedSec,
+                                             final long tokens, final long spent) {
+        if (!"stop".equals(finish) || rc == 124) return false;
+        final boolean wallOk = wall <= 0 || wall - elapsedSec > wall * 0.2;
+        final boolean tokensOk = tokens <= 0 || tokens - spent > tokens * 0.2;
+        return wallOk && tokensOk;
+    }
+
     /** #265: the run-level "judge" cfg map, with any judge_enabled/judge_every_n_turns/judge_model
      *  restart override (RESTART_OVERRIDE_KEYS' own flat names) replacing the corresponding nested
      *  key. judge_wall_sec/judge_tokens are deliberately NOT task-overridable - the judge's own
@@ -928,6 +944,20 @@ public class RunBench {
         String reported = plainPlan
                 ? (Files.isRegularFile(ws.resolve(name.startsWith("p0") ? "docs/TASK_DEFINITION.md" : "docs/IMPLEMENTATION_PLAN.md")) ? "done" : null)
                 : progressStatus(ws, name);
+        if (!plainPlan && reported == null) {
+            final long spentSoFar = ((Number) JournalFacts.facts(journal.toString(), rec.start().toString(), nowIso(), null, null, null).getOrDefault("completion_tokens", 0L)).longValue();
+            if (shouldReEngageOnEmptyStop(rec.finish(), rec.rc(), wall, (System.currentTimeMillis() - t0) / 1000, tokens, spentSoFar)) {
+                final long remaining = tokens <= 0 ? 0 : Math.max(1000, tokens - spentSoFar);
+                final var reengageProxy = proxies.start(journal, remaining, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+                try {
+                    final long reengageWall = wall <= 0 ? 0 : wall - (System.currentTimeMillis() - t0) / 1000;
+                    rec = RunBenchSupport.runBounded(reengageWall, name + "-reengage", rd.resolve("sessions"), sid, reengageProxy.abort(), () -> runAgentSession(cfg, name + "-reengage",
+                            Packs.reEngageInstruction(name), reengageWall, remaining, rd.resolve("sessions"), sid, true, appendSystem, ws.toString(), reengageProxy.base(), reengageProxy.abort(),
+                            firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, finalTurn));
+                } finally { reengageProxy.stop(); }
+                reported = progressStatus(ws, name);
+            }
+        }
         if (!plainPlan && reported == null && rec.rc() == 2) {
             // TransientError: the model call itself never got a response (retries already exhausted
             // in chatWithRetry) - the session ended in ~seconds, nowhere near its wall budget, so this

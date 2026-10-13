@@ -484,6 +484,23 @@ class RunBenchTest {
         assertTrue(RunBench.shouldRetryOnLengthFinish("length", 0, 0, 999_999), "wall<=0 means unlimited - always enough remaining");
     }
 
+    /** Found live: T11 stopped after one ~25k-token turn that trailed off mid-sentence with 75% of
+     *  its token budget and 88% of its wall-clock still unspent - a "stop" finish with no tool call
+     *  and no status, while plenty of both budgets remained. Re-engaging only makes sense when
+     *  there is real room left on BOTH axes; a near-exhausted task should fall through to the
+     *  existing wrap-up instead. */
+    @Test
+    void shouldReEngageOnEmptyStopRequiresAStopFinishWithRealBudgetLeftOnBothAxes() {
+        assertTrue(RunBench.shouldReEngageOnEmptyStop("stop", 0, 14400, 1668, 65000, 25435), "T11's own numbers: 88% wall, 61% tokens left");
+        assertFalse(RunBench.shouldReEngageOnEmptyStop("tool_calls", 0, 14400, 1668, 65000, 25435), "ended via a tool call, not an empty stop");
+        assertFalse(RunBench.shouldReEngageOnEmptyStop("length", 0, 14400, 1668, 65000, 25435), "a length finish is shouldRetryOnLengthFinish's job, not this one's");
+        assertFalse(RunBench.shouldReEngageOnEmptyStop("stop", 124, 14400, 1668, 65000, 25435), "already wall-timed-out - nothing left to continue into");
+        assertFalse(RunBench.shouldReEngageOnEmptyStop("stop", 0, 14400, 12000, 65000, 25435), "under a fifth of the wall remaining");
+        assertFalse(RunBench.shouldReEngageOnEmptyStop("stop", 0, 14400, 1668, 65000, 60000), "under a fifth of the tokens remaining");
+        assertTrue(RunBench.shouldReEngageOnEmptyStop("stop", 0, 0, 999_999, 65000, 25435), "wall<=0 means unlimited - always enough remaining");
+        assertTrue(RunBench.shouldReEngageOnEmptyStop("stop", 0, 14400, 1668, 0, 999_999), "tokens<=0 means unlimited - always enough remaining");
+    }
+
     @Test
     void dueForJudgeCheckFiresOnceTheIntervalHasElapsedSinceTheLastCheck() {
         assertTrue(RunBench.dueForJudgeCheck(10, 0, 10), "exactly N turns since the last check (turn 0)");
