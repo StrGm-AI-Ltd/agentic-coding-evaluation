@@ -333,51 +333,6 @@ public class RunBench {
         } catch (Exception e) { log.warn("could not log task attempt for {}: {}", taskId, e.toString()); }
     }
 
-    //todo should be in a separate file
-    /** port of the Docker window monitor (R7): during an implementation-kind session Docker may
-     *  come up (the shim on the first `docker` call); the harness records the window and stops
-     *  Docker after idle_sec without a call and at the session's end.
-     *
-     *  dockerLog is THIS session's own ACE_DOCKER_LOG path (its scrubbed env's shim-log file) -
-     *  found live 2026-09-28: this used to read System.getenv("ACE_DOCKER_LOG"), the ace-service
-     *  JVM's OWN environment, where that variable is never actually set (it only ever exists inside
-     *  the Map built for the AGENT's child process, see RunBenchSupport.scrubbedEnv). dockerCalls()
-     *  therefore always saw "/dev/null" and returned all zeros, so idle time was silently computed
-     *  as time-since-window-opened instead of time-since-the-agent's-last-real-docker-call - Docker
-     *  got torn down at a fixed idleSec mark regardless of ongoing activity. */
-    class DockerWindowMonitor {
-        final List<Map<String, Object>> windows = new ArrayList<>();
-        final Path dockerLog;
-        Map<String, Object> cur;
-        int callsBefore;
-        DockerWindowMonitor(final String dockerLog) { this.dockerLog = Path.of(dockerLog == null ? "/dev/null" : dockerLog); }
-        void poll(int idleSec) {
-            final boolean up = DockerService.dockerRunning();
-            final int[] c = DockerService.dockerCalls(dockerLog, new int[3]);
-            if (up && cur == null) {
-                cur = new LinkedHashMap<>(Map.of("start_iso", nowIso(), "started_by", "agent-direct", "calls_before", callsBefore, "start_epoch", System.currentTimeMillis() / 1000.0));
-                DockerService.windowOpened();
-            }
-            if (cur != null) {
-                final double idle = System.currentTimeMillis() / 1000.0 - Math.max(c[1] == 0 ? ((Number) cur.get("start_epoch")).doubleValue() : c[1], ((Number) cur.get("start_epoch")).doubleValue());
-                if (DockerService.shouldCloseWindow(up, idle, idleSec, DockerService.dockerCliBusy())) {
-                    // defers the actual teardown to whether any OTHER session's window is still
-                    // open (found live 2026-09-28: PARALLEL_PLAN's concurrent wave tasks each ran
-                    // their own independent monitor with no coordination, so one task's idle window
-                    // could kill Docker Desktop mid-operation for a sibling task)
-                    DockerService.windowClosed(up, 30);
-                    final Map<String, Object> w = new LinkedHashMap<>(cur);
-                    w.put("end_iso", nowIso());
-                    w.put("seconds", Math.round((System.currentTimeMillis() / 1000.0 - ((Number) cur.get("start_epoch")).doubleValue()) * 10) / 10.0);
-                    w.put("calls", c[0] - callsBefore);
-                    windows.add(w);
-                    cur = null;
-                }
-            }
-        }
-        List<Map<String, Object>> finish() { if (cur != null) poll(0); return windows; }
-    }
-
     /** the task's own prompt (tasks/&lt;task&gt;/PROMPT.md, vendored as a resource) when it exists,
      *  else the generic default (tasks/PROMPT.md, the port of the Python original's top-level
      *  task/PROMPT.md) - port of run_bench.py's own tp-then-fallback lookup. */
@@ -413,13 +368,6 @@ public class RunBench {
         if (!(cfg.get("java_home") instanceof String jh) || jh.isBlank())
             cfg.put("java_home", props.javaHome() == null || props.javaHome().isBlank()
                     ? DockerService.sh(20, "/usr/libexec/java_home", "-v", String.valueOf(cfg.getOrDefault("java_major", 21))).out().strip() : props.javaHome());
-        // capped as early as possible, before the agent's own shim (a separate launch path this class
-        // doesn't otherwise control) gets a chance to start Docker Desktop uncapped during task work -
-        // its VM competing with the model for memory at the worst possible moment is the actual root
-        // cause behind "Docker Desktop unreliable during the benchmark window" (found live 2026-09-28)
-        if (Boolean.TRUE.equals(cfg.get("manage_docker")))
-            DockerService.applyMemoryCap(cfg.get("docker_memory_mib") instanceof Number dm ? dm.intValue() : DockerService.DEFAULT_MEMORY_MIB);
-
         // ---- step 0: probe the window this setup offers, derive every knob (ports apply_context) ----
         Map<String, Object> probeRec = null, derived = Map.of();
         Map<String, Object> probeSansCurve;
@@ -518,7 +466,6 @@ public class RunBench {
         manifest.put("tasks", new ArrayList<Map<String, Object>>());
         manifest.put("waves", new ArrayList<Map<String, Object>>());
         manifest.put("docker_windows", new ArrayList<Map<String, Object>>());
-        manifest.put("contention_events", new ArrayList<Map<String, Object>>());
         manifest.put("provenance", Map.of("model", cfg.getOrDefault("model", props.model()), "harness", cfg.getOrDefault("harness", "ref"),
                 "harness_version", BenchProperties.HARNESS_VERSION, "java_home", cfg.get("java_home"),
                 "runner", System.getProperty("ace.build", "ace-service")));
@@ -540,9 +487,7 @@ public class RunBench {
         ((Map<String, String>) manifest.get("snapshots")).put("start", RunBenchSupport.snapshot(ws, "run/start"));
         Path journal = rd.resolve("interactions.jsonl");
 
-        final List<Map<String, Object>> contentions = (List<Map<String, Object>>) manifest.get("contention_events");
-        if (Boolean.TRUE.equals(cfg.get("manage_docker")) && DockerService.dockerRunning()) contentions.add(Map.of("docker_up", true, "ts", nowIso()));
-        DockerService.dockerTools(home.toString());   // the shim + CLI plugins (R7), before the HOME is copied for parallel tasks
+        DockerService.dockerTools(home.toString());   // CLI plugins (R7), before the HOME is copied for parallel tasks
         cfg.put("_agent_env", RunBenchSupport.scrubbedEnv(home.toString(), runId, (String) cfg.get("java_home")));   // isolation reaches the agent
 
         if ("orchestrated".equals(mode)) orchestratedPhase(cfg, runId, rd, ws, home, journal, manifest, planSource, promptText, taskWall, taskTokens, task);
@@ -594,7 +539,7 @@ public class RunBench {
         manifest.put("journal_facts", facts);
         manifest.put("validity", Validity.validity(manifest, facts, props.maxErrorRate()));
         writeManifest(rd, manifest);
-        final Map<String, Object> oracleReport = oracleWithDocker(cfg, ws, task, rd, manifest);
+        final Map<String, Object> oracleReport = oracle.score(ws, task, (String) cfg.get("system_base_url"), manifest);
         Files.writeString(rd.resolve("oracle.json"), json.writerWithDefaultPrettyPrinter().writeValueAsString(oracleReport));
         // --efficiency-weight: unlike review/trajectory/parallel-plan's weight, this isn't tied to a
         // feature that conditionally ran - it's measurable on every run, so it's recorded here rather
@@ -749,31 +694,6 @@ public class RunBench {
 
     private void writeManifest(final Path rd, final Map<String, Object> manifest) throws Exception {
         Files.writeString(rd.resolve("manifest.json"), json.writerWithDefaultPrettyPrinter().writeValueAsString(manifest));
-    }
-
-    // package-private (not private): the unload-before/reload-after sequencing around Docker-gated
-    // scoring is tested directly here, rather than only indirectly via runOnce()'s much larger surface
-    Map<String, Object> oracleWithDocker(final Map<String, Object> cfg, final Path ws, String task, final Path rd, final Map<String, Object> manifest) throws Exception {
-        // #228: --skip-docker (cfg's "skip_docker") - RunOracle.score() already auto-detects Docker
-        // availability and gracefully skips its own Docker-gated checks when unreachable, so the only
-        // remaining gap is suppressing manage_docker's start/stop dance specifically for this phase
-        final boolean manageDocker = Boolean.TRUE.equals(cfg.get("manage_docker")) && !Boolean.TRUE.equals(cfg.get("skip_docker"));
-        // frees the run's own weights before Docker comes up, so its VM has real headroom on a
-        // memory-constrained host instead of competing with the model server for the same RAM
-        // (found live 2026-09-29: Docker Desktop's backend crashed under exactly this contention)
-        if (manageDocker) probe.unloadModel(props.endpoint(), props.apiKey(), props.model());
-        // the cap was already applied early in runOnce(); dockerUp() re-applying the same value here
-        // is a cheap no-op (ensureMemoryCap short-circuits when it already matches) and keeps this
-        // call correct standalone, for any other caller that skips runOnce()'s early cap
-        if (manageDocker) DockerService.dockerUp(360, cfg.get("docker_memory_mib") instanceof Number dm ? dm.intValue() : DockerService.DEFAULT_MEMORY_MIB);
-        try {
-            return oracle.score(ws, task, (String) cfg.get("system_base_url"), manifest);
-        } finally {
-            if (manageDocker) {
-                DockerService.dockerDown(30);
-                probe.loadModel(props.endpoint(), props.apiKey(), props.model());
-            }
-        }
     }
 
     // ---------------- monolithic mode: one growing session per phase; the rung picks the phases
@@ -952,7 +872,6 @@ public class RunBench {
                                                   Map<String, String> envOverride, boolean plainPlan, ReferenceAgent.JudgeCheckpoint judge,
                                                   ReferenceAgent.FinalTurn finalTurn) throws Exception {
         final Map<String, String> env = envOverride != null ? envOverride : (Map<String, String>) cfg.get("_agent_env");
-        final var dw = new DockerWindowMonitor(env == null ? null : env.get("ACE_DOCKER_LOG"));
         // the run's OWN requested model (--model=): a single worker JVM handles every queued job in
         // turn, so the operator-wide default (props.model()) is not per-run - passing null here would
         // silently run every task against whatever model happens to be configured process-wide instead
@@ -981,19 +900,9 @@ public class RunBench {
                 + "\n\n" + Packs.DOCKER_NOTE;
         final String canonicalSessionId = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + name).getBytes()).toString();
         final String sid = sessionId == null ? canonicalSessionId : sessionId;
-        // --docker-keep-warm: skip the idle-based teardown for the whole run - the frequent
-        // start/stop cycling this monitor otherwise does is a real contributor to Docker Desktop's
-        // VM wedging (found live 2026-09-27). A crashed backend (!up) still closes the window
-        // regardless (DockerService.shouldCloseWindow) - there's nothing left to keep warm.
-        final boolean dockerKeepWarm = Boolean.TRUE.equals(cfg.get("docker_keep_warm"));
-        final Thread monitor = plainPlan ? null : monitorThread(dw, dockerKeepWarm ? Integer.MAX_VALUE : 600);
-        ReferenceAgent.SessionResult rec;
-        try {
-            rec = RunBenchSupport.runBounded(wall, name, rd.resolve("sessions"), sid, proxy.abort(), () -> runAgentSession(cfg, name, full, wall, tokens,
-                    rd.resolve("sessions"), sid, false, appendSystem, ws.toString(), proxy.base(), proxy.abort(),
-                    firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, judge, finalTurn));
-        } finally { if (monitor != null) stopMonitor(monitor); }
-        if (!plainPlan) appendWindows(manifestOf(cfg), dw, name);
+        ReferenceAgent.SessionResult rec = RunBenchSupport.runBounded(wall, name, rd.resolve("sessions"), sid, proxy.abort(), () -> runAgentSession(cfg, name, full, wall, tokens,
+                rd.resolve("sessions"), sid, false, appendSystem, ws.toString(), proxy.base(), proxy.abort(),
+                firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, judge, finalTurn));
         // P-1: a session that died on a `length` finish gets one continuation with what is LEFT (R4
         // C-7). wall/tokens <= 0 means unlimited (the system-wide "0 = no budget" convention): there
         // is always "enough" remaining wall-clock, and what's LEFT of an unlimited token budget is
@@ -1096,38 +1005,6 @@ public class RunBench {
     }
 
     private Map<String, Object> manifestOf(Map<String, Object> cfg) { return (Map<String, Object>) cfg.get("_manifest"); }
-
-    private Thread monitorThread(final DockerWindowMonitor dw, final int idleSec) {
-        Thread t = new Thread(() -> {
-            while (!Thread.currentThread().isInterrupted()) {
-                dw.poll(idleSec);
-                try { Thread.sleep(10_000); } catch (InterruptedException e) { return; }
-            }
-        }, "docker-window-monitor");
-        t.setDaemon(true);
-        t.start();
-        return t;
-    }
-
-    /** interrupt() alone only sets a flag the loop checks BETWEEN poll() calls - found live
-     *  2026-09-28: if interrupt() lands while poll() is mid dockerDown() (itself several seconds:
-     *  a graceful-quit attempt, a poll loop, then a hard kill), the caller has no guarantee the
-     *  monitor has actually stopped before it proceeds with its own Docker calls right after this
-     *  returns. A short bounded join gives it a fair chance to actually finish first - not a hard
-     *  guarantee (poll()'s own blocking calls aren't interruptible either), but windowClosed()'s
-     *  reference count (see DockerService) means even a monitor that outlives this join can no
-     *  longer tear Docker down out from under a still-active sibling session regardless. */
-    static void stopMonitor(final Thread monitor) {
-        monitor.interrupt();
-        try { monitor.join(2_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-    }
-
-    private void appendWindows(final Map<String, Object> manifest, final DockerWindowMonitor dw, final String session) {
-        for (Map<String, Object> w : dw.finish()) {
-            w.put("session", session);
-            ((List<Map<String, Object>>) manifest.get("docker_windows")).add(w);
-        }
-    }
 
     // ---------------- orchestrated mode: stable pack, task packs, parallel waves, merge, FIX, integration
     private void orchestratedPhase(Map<String, Object> cfg, String runId, Path rd, Path ws, Path home, Path journal,
@@ -1836,10 +1713,6 @@ public class RunBench {
         }
         final String merged = DockerService.sh(20, "git", "-C", ws.toString(), "rev-parse", "HEAD").out().strip();
         ((Map<String, String>) manifest.get("snapshots")).put("wave-" + String.join("-", waveIds), merged);
-        // --docker-keep-warm: skip this wave-boundary teardown too - it's the same mid-run
-        // stop/restart cycling the idle monitor's keep-warm skip targets, just at a different trigger
-        if (Boolean.TRUE.equals(cfg.get("manage_docker")) && !Boolean.TRUE.equals(cfg.get("docker_keep_warm")) && DockerService.dockerRunning())
-            DockerService.dockerDown(30);
         final Map<String, Object> wv = VerifyTask.verify(ws, cfg, rd.resolve("verify/wave-" + String.join("-", waveIds) + ".log"));
         // problems caused by the parallelisation: what the merge broke, and who edited what they should not have
         final Map<String, List<String>> changed = new LinkedHashMap<>();

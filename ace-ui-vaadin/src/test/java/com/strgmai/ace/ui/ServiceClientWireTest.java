@@ -276,13 +276,13 @@ class ServiceClientWireTest {
 
     @Test
     void enqueueJob_bodyShapeMatchesJobRequest() {
-        Api.Job job = client.enqueueJob(Map.of("task", "L1", "manage_docker", true, "model", "qwen"), 2);
+        Api.Job job = client.enqueueJob(Map.of("task", "L1", "handoff_notes", true, "model", "qwen"), 2);
         assertEquals("POST", last().method());
         assertEquals("/api/jobs", last().uri());
         JsonNode body = Json.MAPPER.readTree(last().body());
         assertEquals("L1", body.path("spec").path("task").asText());
         assertEquals("qwen", body.path("spec").path("model").asText());
-        assertTrue(body.path("spec").path("manage_docker").asBoolean());
+        assertTrue(body.path("spec").path("handoff_notes").asBoolean());
         assertEquals(2, body.path("priority").asInt());
         assertEquals(3, body.path("spec").size(), "only the keys we sent travel the wire");
         assertEquals("5", job.id());

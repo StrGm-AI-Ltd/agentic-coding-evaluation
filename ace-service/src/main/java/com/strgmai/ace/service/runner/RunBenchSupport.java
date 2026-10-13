@@ -57,8 +57,6 @@ public final class RunBenchSupport {
             env.put("JAVA_HOME", javaHome);
             env.put("PATH", Paths.get(javaHome).resolve("bin") + ":" + env.getOrDefault("PATH", ""));
         }
-        env.put("PATH", Paths.get(home, "bin") + ":" + env.getOrDefault("PATH", ""));   // the docker shim first (R7)
-        env.put("ACE_DOCKER_LOG", Paths.get(home, "docker-calls.log").toString());
         // a daemon left running for the whole task session is a sustained, idle memory footprint
         // competing with the model server on the same host (found live - it lined up with an
         // empty-stream stutter #256 was filed for); VerifyTask/BuildChecks already disable it for

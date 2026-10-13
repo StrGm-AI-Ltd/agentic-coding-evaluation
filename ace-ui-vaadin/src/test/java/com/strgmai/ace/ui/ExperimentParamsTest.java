@@ -129,8 +129,6 @@ class ExperimentParamsTest {
         raw.put("parallel_plan_tokens", 9000);
         raw.put("handoff_tokens", 4000);
         raw.put("wrapup_tokens", 2500);
-        raw.put("docker_memory_mib", 6144);
-        raw.put("docker_keep_warm", true);
         final var params = ExperimentParams.build("harness_effect", raw);
         assertEquals(5000, params.get("review_tokens"));
         assertEquals(50, params.get("max_turns"));
@@ -139,8 +137,6 @@ class ExperimentParamsTest {
         assertEquals(9000, params.get("parallel_plan_tokens"));
         assertEquals(4000, params.get("handoff_tokens"));
         assertEquals(2500, params.get("wrapup_tokens"));
-        assertEquals(6144, params.get("docker_memory_mib"));
-        assertEquals(true, params.get("docker_keep_warm"));
     }
 
     @Test
@@ -151,7 +147,7 @@ class ExperimentParamsTest {
         raw.put("parallel", null);
         final var params = ExperimentParams.build("harness_effect", raw);
         for (final var key : List.of("review_tokens", "max_turns", "fix_wall", "fix_tokens",
-                "parallel_plan_tokens", "handoff_tokens", "wrapup_tokens", "docker_memory_mib", "docker_keep_warm")) {
+                "parallel_plan_tokens", "handoff_tokens", "wrapup_tokens")) {
             assertFalse(params.containsKey(key), key + " must be omitted, not sent as null");
         }
     }

@@ -71,7 +71,6 @@ public class ExperimentsService {
                                 Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns,
                                 Integer reviewTokens, Integer fixWall, Integer fixTokens,
                                 Integer parallelPlanTokens, Integer handoffTokens, Integer wrapupTokens,
-                                Integer dockerMemoryMib, boolean dockerKeepWarm,
                                 Double parallelWeight, Double efficiencyWeight,
                                 boolean judgeEnabled, Integer judgeEveryNTurns, String judgeModel, Integer judgeWallSec, Integer judgeTokens,
                                 boolean budgetRescueEnabled, Integer rescueWallSec, Integer rescueTokens, Integer rescueKeepRecentTurns) {}
@@ -87,7 +86,6 @@ public class ExperimentsService {
                 parallelPlanWall(params), handoffWall(params), wrapupWall(params), maxTurns(params),
                 reviewTokens(params), fixWall(params), fixTokens(params),
                 parallelPlanTokens(params), handoffTokens(params), wrapupTokens(params),
-                dockerMemoryMib(params), dockerKeepWarm(params),
                 parallelWeight(params), efficiencyWeight(params),
                 judgeEnabled(params), judgeEveryNTurns(params), judgeModel(params), judgeWallSec(params), judgeTokens(params),
                 budgetRescueEnabled(params), rescueWallSec(params), rescueTokens(params), rescueKeepRecentTurns(params));
@@ -122,7 +120,7 @@ public class ExperimentsService {
                                 .implTokens(arm.contains("mono") && tokens > 0 ? tokens * n : null)
                                 .parallel("par".equals(arm) ? parallel : null).systemRules("mono+rules".equals(arm))
                                 .selfReview(review).trajectoryReview(review).reviewerModel(cp.reviewerModel())
-                                .manageDocker(true).noContextProbe(cp.noProbe())
+                                .noContextProbe(cp.noProbe())
                                 .contextWindow(window).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec()).reviewTokens(cp.reviewTokens())
                                 .reviewBlind(cp.blind()).trajectoryReviewerModel(cp.trajReviewerModel()).reviewWeight(cp.reviewWeight()).trajectoryWeight(cp.trajectoryWeight())
                                 .trajectoryUse(cp.trajectoryUse())
@@ -130,7 +128,7 @@ public class ExperimentsService {
                                 .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                                 .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                                 .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
-                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight()).judgeEnabled(cp.judgeEnabled()).judgeEveryNTurns(cp.judgeEveryNTurns()).judgeModel(cp.judgeModel()).judgeWallSec(cp.judgeWallSec()).judgeTokens(cp.judgeTokens()).budgetRescueEnabled(cp.budgetRescueEnabled()).rescueWallSec(cp.rescueWallSec()).rescueTokens(cp.rescueTokens()).rescueKeepRecentTurns(cp.rescueKeepRecentTurns())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight()).judgeEnabled(cp.judgeEnabled()).judgeEveryNTurns(cp.judgeEveryNTurns()).judgeModel(cp.judgeModel()).judgeWallSec(cp.judgeWallSec()).judgeTokens(cp.judgeTokens()).budgetRescueEnabled(cp.budgetRescueEnabled()).rescueWallSec(cp.rescueWallSec()).rescueTokens(cp.rescueTokens()).rescueKeepRecentTurns(cp.rescueKeepRecentTurns())
                                 .build()));
             }
             case "model_ab" -> {
@@ -144,7 +142,7 @@ public class ExperimentsService {
                     specs.add(new ArmSpec("A", i, RunSpec.builder()
                             .task(task).model(a).mode("orchestrated").planSource("reference").taskWall(wall)
                             .selfReview(true).trajectoryReview(true).reviewerModel(cp.reviewerModel())
-                            .manageDocker(true).noContextProbe(cp.noProbe())
+                            .noContextProbe(cp.noProbe())
                             .contextWindow(windowA).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec()).reviewTokens(cp.reviewTokens())
                             .reviewBlind(cp.blind()).trajectoryReviewerModel(cp.trajReviewerModel()).reviewWeight(cp.reviewWeight()).trajectoryWeight(cp.trajectoryWeight())
                             .trajectoryUse(cp.trajectoryUse())
@@ -152,12 +150,12 @@ public class ExperimentsService {
                             .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                             .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                             .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
-                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight()).judgeEnabled(cp.judgeEnabled()).judgeEveryNTurns(cp.judgeEveryNTurns()).judgeModel(cp.judgeModel()).judgeWallSec(cp.judgeWallSec()).judgeTokens(cp.judgeTokens()).budgetRescueEnabled(cp.budgetRescueEnabled()).rescueWallSec(cp.rescueWallSec()).rescueTokens(cp.rescueTokens()).rescueKeepRecentTurns(cp.rescueKeepRecentTurns())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight()).judgeEnabled(cp.judgeEnabled()).judgeEveryNTurns(cp.judgeEveryNTurns()).judgeModel(cp.judgeModel()).judgeWallSec(cp.judgeWallSec()).judgeTokens(cp.judgeTokens()).budgetRescueEnabled(cp.budgetRescueEnabled()).rescueWallSec(cp.rescueWallSec()).rescueTokens(cp.rescueTokens()).rescueKeepRecentTurns(cp.rescueKeepRecentTurns())
                             .build()));
                     specs.add(new ArmSpec("B", i, RunSpec.builder()
                             .task(task).model(b).mode("orchestrated").planSource("reference").taskWall(wall)
                             .selfReview(true).trajectoryReview(true).reviewerModel(cp.reviewerModel())
-                            .manageDocker(true).noContextProbe(cp.noProbe())
+                            .noContextProbe(cp.noProbe())
                             .contextWindow(windowB).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec()).reviewTokens(cp.reviewTokens())
                             .reviewBlind(cp.blind()).trajectoryReviewerModel(cp.trajReviewerModel()).reviewWeight(cp.reviewWeight()).trajectoryWeight(cp.trajectoryWeight())
                             .trajectoryUse(cp.trajectoryUse())
@@ -165,7 +163,7 @@ public class ExperimentsService {
                             .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                             .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                             .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
-                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight()).judgeEnabled(cp.judgeEnabled()).judgeEveryNTurns(cp.judgeEveryNTurns()).judgeModel(cp.judgeModel()).judgeWallSec(cp.judgeWallSec()).judgeTokens(cp.judgeTokens()).budgetRescueEnabled(cp.budgetRescueEnabled()).rescueWallSec(cp.rescueWallSec()).rescueTokens(cp.rescueTokens()).rescueKeepRecentTurns(cp.rescueKeepRecentTurns())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight()).judgeEnabled(cp.judgeEnabled()).judgeEveryNTurns(cp.judgeEveryNTurns()).judgeModel(cp.judgeModel()).judgeWallSec(cp.judgeWallSec()).judgeTokens(cp.judgeTokens()).budgetRescueEnabled(cp.budgetRescueEnabled()).rescueWallSec(cp.rescueWallSec()).rescueTokens(cp.rescueTokens()).rescueKeepRecentTurns(cp.rescueKeepRecentTurns())
                             .build()));
                 }
             }
@@ -190,7 +188,7 @@ public class ExperimentsService {
                                 .implWall("monolithic".equals(mode) && wall > 0 ? wall * taskCount(params) : null)
                                 .implTokens(null)
                                 .selfReview(review).trajectoryReview(review).reviewerModel(cp.reviewerModel())
-                                .manageDocker(true).noContextProbe(cp.noProbe())
+                                .noContextProbe(cp.noProbe())
                                 .contextWindow(window).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec()).reviewTokens(cp.reviewTokens())
                                 .reviewBlind(cp.blind()).trajectoryReviewerModel(cp.trajReviewerModel()).reviewWeight(cp.reviewWeight()).trajectoryWeight(cp.trajectoryWeight())
                                 .trajectoryUse(cp.trajectoryUse())
@@ -198,7 +196,7 @@ public class ExperimentsService {
                                 .temperature(cp.temperature()).topP(cp.topP()).topK(cp.topK()).repetitionPenalty(cp.repetitionPenalty()).maxTokens(cp.maxTokens()).reasoningEffort(cp.reasoningEffort())
                                 .parallelPlanWall(cp.parallelPlanWall()).handoffWall(cp.handoffWall()).wrapupWall(cp.wrapupWall())
                                 .maxTurns(cp.maxTurns()).fixWall(cp.fixWall()).fixTokens(cp.fixTokens())
-                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).dockerMemoryMib(cp.dockerMemoryMib()).dockerKeepWarm(cp.dockerKeepWarm()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight()).judgeEnabled(cp.judgeEnabled()).judgeEveryNTurns(cp.judgeEveryNTurns()).judgeModel(cp.judgeModel()).judgeWallSec(cp.judgeWallSec()).judgeTokens(cp.judgeTokens()).budgetRescueEnabled(cp.budgetRescueEnabled()).rescueWallSec(cp.rescueWallSec()).rescueTokens(cp.rescueTokens()).rescueKeepRecentTurns(cp.rescueKeepRecentTurns())
+                            .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight()).judgeEnabled(cp.judgeEnabled()).judgeEveryNTurns(cp.judgeEveryNTurns()).judgeModel(cp.judgeModel()).judgeWallSec(cp.judgeWallSec()).judgeTokens(cp.judgeTokens()).budgetRescueEnabled(cp.budgetRescueEnabled()).rescueWallSec(cp.rescueWallSec()).rescueTokens(cp.rescueTokens()).rescueKeepRecentTurns(cp.rescueKeepRecentTurns())
                                 .build()));
             }
             default -> throw new IllegalArgumentException("unknown template " + template + "; known: harness_effect, model_ab, agent_ab");
@@ -337,16 +335,6 @@ public class ExperimentsService {
 
     Integer wrapupTokens(Map<String, Object> params) {
         return params.get("wrapup_tokens") == null ? null : num(params.get("wrapup_tokens"));
-    }
-
-    // caps Docker Desktop's VM memory so it doesn't compete as hard with a co-resident model server;
-    // explicit params.* wins, unset leaves RunBench on its own DockerService.DEFAULT_MEMORY_MIB default
-    Integer dockerMemoryMib(Map<String, Object> params) {
-        return params.get("docker_memory_mib") == null ? null : num(params.get("docker_memory_mib"));
-    }
-
-    static boolean dockerKeepWarm(Map<String, Object> params) {
-        return Boolean.TRUE.equals(params.get("docker_keep_warm"));
     }
 
     // found in the #236 audit: JobNewView already has both fields (a single ad-hoc job can set

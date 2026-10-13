@@ -297,18 +297,6 @@ class ExperimentsServiceTest {
         assertTrue(specs.stream().allMatch(s -> Integer.valueOf(2500).equals(s.spec().wrapupTokens())));
     }
 
-    /** Found live 2026-09-28: capping Docker Desktop's VM memory and keeping it warm for the whole
-     *  run had no run-level control at all; experiments must be able to pin them per-arm too. */
-    @Test
-    void dockerMemoryCapAndKeepWarmFlowThroughToEveryArmsRunSpec() {
-        final ExperimentsService svc = serviceWithUnreachableModelServer();
-        final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab",
-                Map.<String, Object>of("model_a", "a", "model_b", "b", "docker_memory_mib", 6144, "docker_keep_warm", true), 1);
-        assertFalse(specs.isEmpty());
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(6144).equals(s.spec().dockerMemoryMib())));
-        assertTrue(specs.stream().allMatch(s -> s.spec().dockerKeepWarm()));
-    }
-
     /** Found in the #236 audit: parallel_weight/efficiency_weight exist on JobNewView (a single ad-
      *  hoc job can set them) but were never read back out of an experiment's own params - every
      *  multi-arm experiment silently ran with RunSpec's own defaults regardless of what was configured. */

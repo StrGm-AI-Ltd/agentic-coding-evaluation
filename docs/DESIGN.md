@@ -30,7 +30,7 @@ ace-service/
     AceServiceApplication.java       Spring Boot entry point (Vaadin-less REST + scheduled worker)
     agent/       ReferenceAgent (the harness's own coding agent, on LangChain4j), AgentTools, AgentSession
     config/      BenchProperties (@ConfigurationProperties(prefix="ace")), PGobjectJsonSerializer
-    docker/      DockerService — start/stop Docker Desktop, docker-calls log, port/CLI-busy probes
+    docker/      DockerService — passive Docker-running probe, CLI-plugin mirroring into a fresh HOME
     metrics/     Collect, Trajectory, StatsService — cost, trajectory analysis, k-run statistics
     oracle/      CheckId (the 30-check registry), CheckStatus, CheckResult, Scorer, RunOracle
     oracle/checks/  StructureChecks, MoneySafetyChecks, BuildChecks, ComposeChecks, BlackboxScenarios
@@ -43,7 +43,7 @@ ace-service/
     service/     JobQueue, WorkerService, ExperimentsService, ImporterService, BenchController,
                  Preflight, RunSpec, Tailer, TreatmentPin, ApiExceptionHandler
   src/main/resources/
-    application.yml, schema.sql, docker_shim.sh
+    application.yml, schema.sql
     task/PROMPT.md, tasks/PROMPT.md, tasks/ladder.json, tasks/L1..L7_*/PROMPT.md   the frozen task specs
     contract/openapi.yaml            machine-readable twin of the frozen HTTP contract
   review.txt, review_fixes.txt       this port's own adversarial code review (66 findings, all fixed)
@@ -156,11 +156,11 @@ code:
 - **Both harness modes exist**: `monolithicPhases()` (one growing session, structural compaction at a
   configured trigger) and `orchestratedPhase()` (stable pack + per-task packs), selected by the
   `mode` config value.
-- **Docker lifecycle**: `docker/DockerService.java` provides `dockerUp`/`dockerDown`/`dockerTools`/
-  `dockerCliBusy`/`dockerCalls`, and `RunBench` calls `dockerUp`/`dockerDown` around the oracle phase
-  when `manage_docker` is set — matching the "Docker down during agent phases" design, though the
-  exact timing constants (e.g. the original's "30s hard-kill after a busy quit") were not re-verified
-  against this Java implementation line-by-line.
+- **Docker lifecycle**: ACE does not start or stop Docker Desktop itself — the operator owns that
+  entirely. `docker/DockerService.java` only probes whether it happens to be running
+  (`dockerRunning()`) and mirrors the agent's Docker CLI plugins into its fresh HOME (`dockerTools()`);
+  Docker-gated oracle checks (`RunOracle`, `BuildChecks`, `ComposeChecks`) already auto-detect
+  unavailability and skip gracefully, independent of this.
 - **A fixed integration task** exists at the end of orchestrated runs (`Packs.INTEGRATION_INSTRUCTION`
   + a dedicated `INTEGRATION` task pack), matching the original's design.
 - **Validity** (`runner/Validity.java`) is a close, verified port: a run is invalid (recorded, never

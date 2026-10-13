@@ -44,7 +44,6 @@ final class JobCfgFactory {
         if (WorkerService.flag(argv, "--plan-tokens") != null) cfg.put("plan_tokens", Long.parseLong(WorkerService.flag(argv, "--plan-tokens")));
         if (WorkerService.flag(argv, "--wall-budget") != null) cfg.put("wall_budget_override", Integer.parseInt(WorkerService.flag(argv, "--wall-budget")));
         if (WorkerService.flag(argv, "--java-home") != null) cfg.put("java_home", WorkerService.flag(argv, "--java-home"));
-        cfg.put("skip_docker", argv.contains("--skip-docker"));
         if (WorkerService.flag(argv, "--parallel-plan") != null)
             cfg.put("parallel_plan_enabled", "on".equals(WorkerService.flag(argv, "--parallel-plan")));
         if (WorkerService.flag(argv, "--parallel-weight") != null) {
@@ -99,11 +98,6 @@ final class JobCfgFactory {
             if ("auto".equals(WorkerService.flag(argv, "--parallel"))) cfg.put("parallel_auto", true);
             else cfg.put("parallel", Integer.parseInt(WorkerService.flag(argv, "--parallel")));
         }
-        cfg.put("manage_docker", argv.contains("--manage-docker"));
-        // caps Docker Desktop's VM memory so it doesn't compete as hard with a co-resident model
-        // server; --docker-keep-warm skips the idle monitor's mid-run stop/restart cycling
-        if (WorkerService.flag(argv, "--docker-memory-mib") != null) cfg.put("docker_memory_mib", Integer.parseInt(WorkerService.flag(argv, "--docker-memory-mib")));
-        cfg.put("docker_keep_warm", argv.contains("--docker-keep-warm"));
         // opt-in control over how much budget efficiency counts toward agent_result_pct (Collect.java)
         if (WorkerService.flag(argv, "--efficiency-weight") != null) cfg.put("efficiency_weight", Double.parseDouble(WorkerService.flag(argv, "--efficiency-weight")));
         // Map.of() rejects a null value outright - "model" IS null whenever review is enabled

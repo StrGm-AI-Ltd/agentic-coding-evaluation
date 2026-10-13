@@ -68,8 +68,6 @@ public final class ExperimentParams {
         putIfPresent(params, raw, "parallel_plan_tokens", Integer.class);
         putIfPresent(params, raw, "handoff_tokens", Integer.class);
         putIfPresent(params, raw, "wrapup_tokens", Integer.class);
-        putIfPresent(params, raw, "docker_memory_mib", Integer.class);
-        putIfPresent(params, raw, "docker_keep_warm", Boolean.class);
 
         switch (template) {
             case "harness_effect" -> {

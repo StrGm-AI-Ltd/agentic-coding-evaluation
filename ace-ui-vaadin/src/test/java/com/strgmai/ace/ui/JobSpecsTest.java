@@ -44,16 +44,16 @@ class JobSpecsTest {
     @Test
     void booleanFlagsAlwaysPresent() {
         final var raw = new LinkedHashMap<String, Object>();
-        raw.put("manage_docker", true);
-        raw.put("skip_docker", false);
+        raw.put("handoff_notes", true);
+        raw.put("system_rules", false);
         raw.put("self_review", null); // a null boolean still yields an explicit false, like the service form
-        raw.put("docker_keep_warm", true);
+        raw.put("review_blind", true);
         raw.put("judge_enabled", false);
         final var spec = JobSpecs.build("L1", raw);
-        assertEquals(Boolean.TRUE, spec.get("manage_docker"));
-        assertEquals(Boolean.FALSE, spec.get("skip_docker"));
+        assertEquals(Boolean.TRUE, spec.get("handoff_notes"));
+        assertEquals(Boolean.FALSE, spec.get("system_rules"));
         assertEquals(Boolean.FALSE, spec.get("self_review"));
-        assertEquals(Boolean.TRUE, spec.get("docker_keep_warm"));
+        assertEquals(Boolean.TRUE, spec.get("review_blind"));
         assertEquals(Boolean.FALSE, spec.get("judge_enabled"));
     }
 

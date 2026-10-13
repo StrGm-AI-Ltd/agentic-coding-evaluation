@@ -63,7 +63,6 @@ public class JobNewView extends VerticalLayout {
     private final IntegerField parallelPlanTokens = new IntegerField("Parallel-plan token budget");
     private final IntegerField handoffTokens = new IntegerField("Handoff token budget");
     private final IntegerField wrapupTokens = new IntegerField("Wrap-up token budget");
-    private final IntegerField dockerMemoryMib = new IntegerField("Docker memory cap (MiB)");
     private final IntegerField wallBudget = new IntegerField("Wall budget override (all phases)");
     private final IntegerField priority = new IntegerField("Priority");
     private final NumberField parallelWeight = new NumberField("Parallelization weight");
@@ -85,9 +84,6 @@ public class JobNewView extends VerticalLayout {
     private final Checkbox trajectoryReview = new Checkbox("Trajectory review");
     private final Checkbox noContextProbe = new Checkbox("Skip context probe");
     private final Checkbox contextProbeFresh = new Checkbox("Fresh context probe");
-    private final Checkbox manageDocker = new Checkbox("Manage Docker");
-    private final Checkbox skipDocker = new Checkbox("Skip Docker");
-    private final Checkbox dockerKeepWarm = new Checkbox("Keep Docker warm");
     // #269: run-level judge baseline - see Tooltips.JUDGE_ENABLED for why this must exist here,
     // not only on the per-task Restart tab (JobDetailView.buildRestartTab()).
     private final Checkbox judgeEnabled = new Checkbox("Mid-task judge");
@@ -157,7 +153,6 @@ public class JobNewView extends VerticalLayout {
         phases.setTooltipText(Tooltips.PHASES);
         parallel.setPlaceholder("auto, or 1–99");
         parallel.setTooltipText(Tooltips.PARALLEL);
-        manageDocker.setValue(true);
         priority.setValue(0);
         priority.setTooltipText(Tooltips.PRIORITY);
         taskWall.setMin(1);
@@ -210,10 +205,6 @@ public class JobNewView extends VerticalLayout {
         wrapupTokens.setMin(0);
         wrapupTokens.setPlaceholder("blank = unlimited");
         wrapupTokens.setTooltipText(Tooltips.WRAPUP_TOKENS);
-        dockerMemoryMib.setMin(1);
-        dockerMemoryMib.setPlaceholder("blank = default (4096 MiB)");
-        dockerMemoryMib.setTooltipText(Tooltips.DOCKER_MEMORY_MIB);
-        dockerKeepWarm.setTooltipText(Tooltips.DOCKER_KEEP_WARM);
         wallBudget.setMin(1);
         wallBudget.setPlaceholder("blank = not used (normal budget applies)");
         wallBudget.setTooltipText(Tooltips.WALL_BUDGET);
@@ -267,8 +258,6 @@ public class JobNewView extends VerticalLayout {
         trajectoryReview.setTooltipText(Tooltips.TRAJECTORY_REVIEW);
         noContextProbe.setTooltipText(Tooltips.NO_CONTEXT_PROBE);
         contextProbeFresh.setTooltipText(Tooltips.CONTEXT_PROBE_FRESH);
-        manageDocker.setTooltipText(Tooltips.MANAGE_DOCKER);
-        skipDocker.setTooltipText(Tooltips.SKIP_DOCKER);
         judgeEnabled.setTooltipText(Tooltips.JUDGE_ENABLED);
         judgeEveryNTurns.setMin(1);
         judgeEveryNTurns.setPlaceholder("blank = default (10)");
@@ -323,7 +312,7 @@ public class JobNewView extends VerticalLayout {
         add(Forms.section("Model & flags",
                 Forms.row(model, handoffNotes, systemRules, selfReview),
                 Forms.row(javaHome, noContextProbe, contextProbeFresh),
-                Forms.row(manageDocker, skipDocker, dockerMemoryMib, dockerKeepWarm, priority)));
+                Forms.row(priority)));
 
         final var submit = new Button("Enqueue job", e -> submit());
         submit.getStyle().set("margin-top", "12px");
@@ -416,8 +405,6 @@ public class JobNewView extends VerticalLayout {
         raw.put("max_turns", maxTurns.getValue());
         raw.put("fix_wall", fixWall.getValue());
         raw.put("fix_tokens", fixTokens.getValue());
-        raw.put("docker_memory_mib", dockerMemoryMib.getValue());
-        raw.put("docker_keep_warm", dockerKeepWarm.getValue());
         raw.put("task_wall", taskWall.getValue());
         raw.put("task_tokens", taskTokens.getValue());
         raw.put("impl_wall", implWall.getValue());
@@ -448,8 +435,6 @@ public class JobNewView extends VerticalLayout {
         raw.put("trajectory_review", trajectoryReview.getValue());
         raw.put("no_context_probe", noContextProbe.getValue());
         raw.put("context_probe_fresh", contextProbeFresh.getValue());
-        raw.put("manage_docker", manageDocker.getValue());
-        raw.put("skip_docker", skipDocker.getValue());
         raw.put("judge_enabled", judgeEnabled.getValue());
         raw.put("judge_every_n_turns", judgeEveryNTurns.getValue());
         raw.put("judge_model", judgeModel.getValue());
