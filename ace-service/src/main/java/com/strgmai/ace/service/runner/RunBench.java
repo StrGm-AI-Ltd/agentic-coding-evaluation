@@ -1307,10 +1307,13 @@ public class RunBench {
         // just stopping, because nothing here told it the handoff was already done.
         if (RunBenchSupport.tagExists(ws, "phase/" + t.id + "-handoff")) {
             log.info("run {}: phase/{}-handoff already completed in a prior attempt, resuming past it", runId, t.id);
+            // loadHandoffs() already backfilled this task's note into the manifest's handoffs list
+            // before the task loop started (this branch is only ever reached for a task whose
+            // -handoff tag already existed at invocation start, which loadHandoffs() scans for) -
+            // adding it here too would duplicate the same "### Handoff from {id}" block in every
+            // later task's pack (found live: T11's pack carried T1's note twice after a restart).
             if (Files.isRegularFile(hp)) {
-                final String txt = Files.readString(hp);
-                manifestHandoffs(manifest).add(new String[]{t.id, txt});
-                rec.put("handoff_chars", txt.length());
+                rec.put("handoff_chars", Files.readString(hp).length());
             }
             rec.put("handoff_seconds", 0.0);
             rec.put("handoff_rc", 0);
