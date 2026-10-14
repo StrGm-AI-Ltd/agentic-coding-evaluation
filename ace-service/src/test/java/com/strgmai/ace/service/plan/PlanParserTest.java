@@ -160,6 +160,45 @@ class PlanParserTest {
         assertEquals(List.of("T1"), tasks.stream().map(t -> t.id).toList(), "a bare S-heading must never be read as introducing task T6");
     }
 
+    /** #322, found live on a real agent-generated plan: T21's own Acceptance criterion read
+     *  "...passes after — this closes the definition of done." - the bare "after" in that prose,
+     *  followed by an em-dash, matches the SAME "deps" field pattern as a real Dependencies line.
+     *  The parser used to assign deps unconditionally on every match, so this second, bogus,
+     *  empty-deps match silently clobbered the correctly-parsed T17/T18/T19/T20 dependency list,
+     *  scheduling T21 as if it had none. */
+    @Test
+    void aLaterAfterInAcceptanceProseNeverOverwritesAnAlreadyParsedDependenciesField() {
+        final List<PlanTask> tasks = PlanParser.parse("""
+                ## T17
+                - Goal: a
+                ## T18
+                - Goal: b
+                ## T19
+                - Goal: c
+                ## T20
+                - Goal: d
+                ## T21
+                - Goal: the full-system gate
+                - Dependencies: T20, T19, T17, T18
+                - Acceptance criterion: fails before the whole system is wired, passes after — this closes the definition of done.
+                """);
+        final PlanTask t21 = tasks.stream().filter(t -> t.id.equals("T21")).findFirst().orElseThrow();
+        assertEquals(List.of("T17", "T18", "T19", "T20"), t21.deps);
+    }
+
+    /** same unconditional-overwrite flaw, for "checks": a later "Scored by:"-less mention must
+     *  never erase an already-resolved, non-empty check-id list. */
+    @Test
+    void aLaterEmptyChecksMatchNeverOverwritesAnAlreadyParsedChecksField() {
+        final List<PlanTask> tasks = PlanParser.parse("""
+                ## T1
+                - Goal: whatever
+                - Oracle: S1, S2
+                - Checks: nothing further to add here
+                """);
+        assertEquals(List.of("S1", "S2"), tasks.get(0).checks);
+    }
+
     @Test
     void parallelPlanEvaluationValidDepthsAndErrors() {
         final List<PlanTask> tasks = PlanParser.parse("## T1\n- Goal: a\n## T2\n- Goal: b\n- Dependencies: T1\n");

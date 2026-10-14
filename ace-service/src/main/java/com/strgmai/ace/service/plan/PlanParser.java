@@ -119,10 +119,22 @@ public final class PlanParser {
                         if (val.endsWith(".")) val = val.substring(0, val.length() - 1);
                         val = val.strip();
                         switch (e.getKey()) {
-                            case "deps" -> t.deps = parseDeps(val);
-                            case "checks" -> { var ids = new TreeSet<>(Comparator.<String>comparingInt(c -> Integer.parseInt(c.substring(1))));
+                            // #322 live: a task's own free-prose Acceptance criterion can contain
+                            // "...passes after — ...", which this same deps pattern's bare "after"
+                            // alternative also matches as a SECOND "deps" segment - previously
+                            // assigned unconditionally, so that bogus later match (parsing to no
+                            // ids) silently overwrote an already-correct, fully-populated
+                            // Dependencies field with an empty list. deps/checks now follow the
+                            // same first-match-wins guard goal/services/acceptance already use
+                            // below - once legitimately resolved (possibly to an intentional empty
+                            // list, hence the null check rather than isBlank/isEmpty), a later
+                            // coincidental match is ignored instead of clobbering it.
+                            case "deps" -> { if (t.deps == null) t.deps = parseDeps(val); }
+                            case "checks" -> { if (t.checks == null) {
+                                var ids = new TreeSet<>(Comparator.<String>comparingInt(c -> Integer.parseInt(c.substring(1))));
                                 for (var cm : CHECK_ID.matcher(val.toUpperCase()).results().toList()) ids.add(cm.group(1));
-                                t.checks = ids.isEmpty() ? null : List.copyOf(ids); }
+                                t.checks = ids.isEmpty() ? null : List.copyOf(ids);
+                            } }
                             case "goal" -> { if (t.goal == null || t.goal.isBlank()) t.goal = val; }
                             case "services" -> { if (t.services == null || t.services.isBlank()) t.services = val; }
                             case "acceptance" -> { if (t.acceptance == null || t.acceptance.isBlank()) t.acceptance = val; }
