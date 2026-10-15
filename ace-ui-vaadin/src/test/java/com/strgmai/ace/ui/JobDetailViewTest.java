@@ -169,7 +169,7 @@ class JobDetailViewTest {
         final var sessions = List.of(
                 new JobLiveState.SessionRow("a", "a", "Task T5", "stop", null, null, 120.0, 100L, null, null, "2026-09-15T02:00:00Z", "T5", 2000L),
                 new JobLiveState.SessionRow("b", "b", "Task T5 (continue)", "stop", null, null, 60.0, 50L, null, null, "2026-09-15T03:00:00Z", "T5-continue", 1000L));
-        final var stats = JobDetailView.taskStats(sessions, "T5");
+        final var stats = JobDetailView.taskStats(sessions, "T5", null);
         assertEquals(180.0, stats.wallSec());
         assertEquals(150L, stats.completionTokens());
         assertEquals(3000L, stats.promptTokens());
@@ -181,22 +181,54 @@ class JobDetailViewTest {
     void taskStats_doesNotFalseMatchATaskIdThatIsAPrefixOfAnothersId() {
         final var sessions = List.of(
                 new JobLiveState.SessionRow("a", "a", "Task T10", "stop", null, null, 500.0, 999L, null, null, null, "T10", 9999L));
-        final var stats = JobDetailView.taskStats(sessions, "T1");
+        final var stats = JobDetailView.taskStats(sessions, "T1", null);
         assertEquals(0.0, stats.wallSec());
         assertEquals(0L, stats.completionTokens());
         assertEquals(0L, stats.promptTokens());
     }
 
-    /** A still-open session (no endedStage yet) contributes its own elapsed-so-far wall time, so
-     *  the figure ticks up live while the task is actually running - same reasoning
-     *  JobLiveState.totalActiveSeconds() already applies at the whole-run level. */
+    /** A still-open session for the task that's actually the CURRENT step contributes its own
+     *  elapsed-so-far wall time, so the figure ticks up live while the task is actually running -
+     *  same reasoning JobLiveState.totalActiveSeconds() already applies at the whole-run level. */
     @Test
     void taskStats_countsAStillRunningSessionFromItsOwnStart() {
         final var start = java.time.OffsetDateTime.now().minusSeconds(30);
         final var sessions = List.of(
                 new JobLiveState.SessionRow("a", "a", "Task T6", null, null, null, null, null, null, null, start.toString(), "T6", null));
-        final var stats = JobDetailView.taskStats(sessions, "T6");
+        final var stats = JobDetailView.taskStats(sessions, "T6", "T6");
         assertTrue(stats.wallSec() >= 29 && stats.wallSec() < 60, "expected ~30s elapsed, got " + stats.wallSec());
+    }
+
+    /** #335, found live: T21's session was abandoned by a pause+reorder, never produced a
+     *  session_done, and nothing retried T21 since - left alone, "now minus start" would grow its
+     *  elapsed time forever even though it stopped running ~10 minutes in. Frozen instead at the
+     *  moment T11's own session started - the next DIFFERENT task, proving T21 was no longer live
+     *  by then. */
+    @Test
+    void taskStats_freezesAnAbandonedSessionsElapsedTimeAtTheNextOtherTasksStart() {
+        final var t21Start = java.time.OffsetDateTime.now().minusHours(2);
+        final var t11Start = t21Start.plusMinutes(10);
+        final var sessions = List.of(
+                new JobLiveState.SessionRow("a", "a", "Task T21", null, null, null, null, null, null, null, t21Start.toString(), "T21", null),
+                new JobLiveState.SessionRow("b", "b", "Task T11", null, null, null, null, null, null, null, t11Start.toString(), "T11", null));
+        final var stats = JobDetailView.taskStats(sessions, "T21", "T11");
+        assertEquals(600.0, stats.wallSec(), 1.0, "frozen at ~10 minutes, not the ~2 hours since elapsed");
+    }
+
+    /** Same scenario, but T21 also has its own judge sub-session in between - that's still T21
+     *  running, not evidence something else superseded it, so it must not be picked as the freeze
+     *  point ahead of the genuinely different T11. */
+    @Test
+    void taskStats_ignoresTheTasksOwnSubSessionsWhenLookingForWhatSupersededIt() {
+        final var t21Start = java.time.OffsetDateTime.now().minusHours(2);
+        final var t21JudgeStart = t21Start.plusMinutes(3);
+        final var t11Start = t21Start.plusMinutes(10);
+        final var sessions = List.of(
+                new JobLiveState.SessionRow("a", "a", "Task T21", null, null, null, null, null, null, null, t21Start.toString(), "T21", null),
+                new JobLiveState.SessionRow("j", "j", "Task T21-judge-turn10", "stop", null, null, 1.0, null, null, null, t21JudgeStart.toString(), "T21-judge-turn10", null),
+                new JobLiveState.SessionRow("b", "b", "Task T11", null, null, null, null, null, null, null, t11Start.toString(), "T11", null));
+        final var stats = JobDetailView.taskStats(sessions, "T21", "T11");
+        assertEquals(600.0, stats.wallSec(), 1.0, "T21's own judge turn must not be mistaken for the thing that superseded it");
     }
 
     private static Api.PlanTask planTask(final String id, final boolean implemented, final boolean handoffDone) {
@@ -214,21 +246,30 @@ class JobDetailViewTest {
 
     @Test
     void taskStatus_noMatchingSessionIsNotStartedUnlessTerminal() {
-        assertEquals("not started", JobDetailView.taskStatus(List.of(), planTask("T2", false, false), false));
-        assertEquals("see Run detail", JobDetailView.taskStatus(List.of(), planTask("T2", false, false), true),
+        assertEquals("not started", JobDetailView.taskStatus(List.of(), planTask("T2", false, false), false, null));
+        assertEquals("see Run detail", JobDetailView.taskStatus(List.of(), planTask("T2", false, false), true, null),
                 "a terminal job with no live session for this task must not claim it was never started");
     }
 
     @Test
-    void taskStatus_runningWhileItsSessionHasNoEndedStageYet() {
+    void taskStatus_runningWhileItsSessionHasNoEndedStageYetAndItIsTheCurrentStep() {
         final var sessions = List.of(sessionRow("Task T2", null));
-        assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T2", false, false), false));
+        assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T2", false, false), false, "T2"));
+    }
+
+    /** #335, found live: an unclosed session for a task that is NOT the current step was
+     *  abandoned (a pause+reorder, or any interruption that never produced a session_done) - it
+     *  must not claim "running" once something else is demonstrably the live task instead. */
+    @Test
+    void taskStatus_anUnclosedSessionForANonCurrentTaskIsInterruptedNotRunning() {
+        final var sessions = List.of(sessionRow("Task T21", null));
+        assertEquals("interrupted", JobDetailView.taskStatus(sessions, planTask("T21", false, false), false, "T11"));
     }
 
     @Test
     void taskStatus_reportsTheSessionsOwnFinishReasonOnceEnded() {
         final var sessions = List.of(sessionRow("Task T2 — implement the API", "stop"));
-        assertEquals("stop", JobDetailView.taskStatus(sessions, planTask("T2", false, false), false));
+        assertEquals("stop", JobDetailView.taskStatus(sessions, planTask("T2", false, false), false, null));
     }
 
     /** "T1" must never match a session actually for "T10"/"T11" - both share "Task T1" as a string
@@ -236,7 +277,7 @@ class JobDetailViewTest {
     @Test
     void taskStatus_doesNotFalseMatchATaskIdThatIsAPrefixOfAnothersId() {
         final var sessions = List.of(sessionRow("Task T10 (handoff)", "stop"));
-        assertEquals("not started", JobDetailView.taskStatus(sessions, planTask("T1", false, false), false));
+        assertEquals("not started", JobDetailView.taskStatus(sessions, planTask("T1", false, false), false, null));
     }
 
     /** a resumed/retried task gets a fresh session sharing the same description prefix - the LAST
@@ -244,7 +285,7 @@ class JobDetailViewTest {
     @Test
     void taskStatus_theLastMatchingSessionWinsOverAnEarlierAbandonedAttempt() {
         final var sessions = List.of(sessionRow("Task T3 (handoff)", "interrupted"), sessionRow("Task T3 (handoff)", null));
-        assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T3", false, false), false));
+        assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T3", false, false), false, "T3"));
     }
 
     /** #254, found live: a task finished in a PRIOR attempt is resumed straight past (R18) and so
@@ -252,19 +293,19 @@ class JobDetailViewTest {
      *  genuinely-finished task as "not started". Falls back to the workspace's own git tags. */
     @Test
     void taskStatus_fallsBackToTheWorkspacesOwnTagsWhenThereIsNoLiveSessionAtAll() {
-        assertEquals("done", JobDetailView.taskStatus(List.of(), planTask("T1", true, true), false));
-        assertEquals("implemented (handoff pending)", JobDetailView.taskStatus(List.of(), planTask("T1", true, false), false));
-        assertEquals("not started", JobDetailView.taskStatus(List.of(), planTask("T1", false, false), false));
+        assertEquals("done", JobDetailView.taskStatus(List.of(), planTask("T1", true, true), false, null));
+        assertEquals("implemented (handoff pending)", JobDetailView.taskStatus(List.of(), planTask("T1", true, false), false, null));
+        assertEquals("not started", JobDetailView.taskStatus(List.of(), planTask("T1", false, false), false, null));
     }
 
-    /** A genuinely LIVE session (no endedStage yet) outranks the tag fallback unconditionally -
-     *  nothing is more current than "it is running right now", even if the tags also say done
-     *  (R18 guarantees this never actually happens together in practice, but the precedence itself
-     *  must hold regardless). */
+    /** A genuinely LIVE session (no endedStage yet) for the CURRENT step outranks the tag fallback
+     *  unconditionally - nothing is more current than "it is running right now", even if the tags
+     *  also say done (R18 guarantees this never actually happens together in practice, but the
+     *  precedence itself must hold regardless). */
     @Test
     void taskStatus_aLiveRunningSessionOutranksTheTagFallback() {
         final var sessions = List.of(sessionRow("Task T2", null));
-        assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T2", true, true), false),
+        assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T2", true, true), false, "T2"),
                 "a currently-running session must win even if the tags also say done");
     }
 
@@ -274,11 +315,11 @@ class JobDetailViewTest {
      *  implemented, in preference to a flat "done". */
     @Test
     void taskStatus_showsTheReportedOutcomeOnceImplemented() {
-        assertEquals("partial", JobDetailView.taskStatus(List.of(), planTask("T1", true, true, "partial"), false));
-        assertEquals("blocked", JobDetailView.taskStatus(List.of(), planTask("T1", true, true, "blocked"), false));
-        assertEquals("unfinished", JobDetailView.taskStatus(List.of(), planTask("T1", true, true, "unfinished"), false));
+        assertEquals("partial", JobDetailView.taskStatus(List.of(), planTask("T1", true, true, "partial"), false, null));
+        assertEquals("blocked", JobDetailView.taskStatus(List.of(), planTask("T1", true, true, "blocked"), false, null));
+        assertEquals("unfinished", JobDetailView.taskStatus(List.of(), planTask("T1", true, true, "unfinished"), false, null));
         assertEquals("partial (handoff pending)",
-                JobDetailView.taskStatus(List.of(), planTask("T1", true, false, "partial"), false),
+                JobDetailView.taskStatus(List.of(), planTask("T1", true, false, "partial"), false, null),
                 "handoff pending is still worth flagging alongside the real self-reported outcome");
     }
 
@@ -290,7 +331,7 @@ class JobDetailViewTest {
     @Test
     void taskStatus_reportedOutcomeOutranksAStaleEndedSessionOnceImplemented() {
         final var sessions = List.of(sessionRow("Task T7", "tool_execution"));
-        assertEquals("unfinished", JobDetailView.taskStatus(sessions, planTask("T7", true, true, "unfinished"), false),
+        assertEquals("unfinished", JobDetailView.taskStatus(sessions, planTask("T7", true, true, "unfinished"), false, null),
                 "the task's own real, persistent verdict must win over a stale ended-session row");
     }
 
