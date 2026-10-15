@@ -299,9 +299,23 @@ public class BenchController {
     // a name that was never written" principle every other override field here already relies on).
     // #307: budget_rescue_enabled is the rescue step's own equivalent - RunBench.rescueStep() reads
     // it via effectiveRescueCfg(cfg, taskOverride(cfg, t.id)), same no-op-on-phase-restart reasoning.
+    // #322: compaction_trigger/max_tokens/temperature/top_p/top_k/repetition_penalty/
+    // reasoning_effort are the per-call session-shaping knobs - RunBench.effectiveCompactionTrigger()/
+    // effectiveSamplerOverrides() read them the same way, at every call site for this task's own
+    // session (main, its continuations, its handoff, its rescue). rescue_wall_sec/rescue_tokens/
+    // rescue_keep_recent_turns were deliberately operator-wide-only before (RunBench.
+    // effectiveRescueCfg()'s own history) - lifted for the same reason budget_rescue_enabled itself
+    // is overridable: a task that already needed rescuing once should be able to get a bigger
+    // rescue attempt next time, not just a bigger main-session budget. Deliberately NOT here:
+    // model/harness/mode/plan_source/parallel*/context_window/java_home/run_id/phases and the
+    // self-review/trajectory-review family - these are run-wide identity/infrastructure/lifecycle
+    // choices with no per-task session to attach to; nothing reads a task_override for them, so
+    // allowing them here would silently no-op rather than do anything.
     private static final Set<String> RESTART_OVERRIDE_KEYS = Set.of(
             "task_wall_sec", "task_tokens", "max_turns", "wrapup_wall_sec", "wrapup_tokens", "first_token_timeout_sec",
-            "judge_enabled", "judge_every_n_turns", "judge_model", "budget_rescue_enabled");
+            "judge_enabled", "judge_every_n_turns", "judge_model", "budget_rescue_enabled",
+            "compaction_trigger", "max_tokens", "temperature", "top_p", "top_k", "repetition_penalty", "reasoning_effort",
+            "rescue_wall_sec", "rescue_tokens", "rescue_keep_recent_turns");
 
     /** the three pre-task phases that can be inspected/restarted via /sessions/{name}/... - an
      *  explicit, small map because the name-to-tag relationship is irregular (found live): p0/p1
@@ -381,6 +395,34 @@ public class BenchController {
                 com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "tag", "-d", tag);
 
         return queue.setTaskOverride(id, overrideKey, overrides);
+    }
+
+    /** #321: unlike restartTask() above, this is for a task that has NOT run yet - no phase/{id}
+     *  tag exists to reset to, and there is nothing to discard, so none of doRestart()'s git
+     *  machinery (backup tag, reset, cascade tag deletion) applies. Kept as its own endpoint rather
+     *  than a loosened precondition on /restart: that flow's tag-existence check is load-bearing
+     *  for its reset logic, not incidental, so the two stay non-overlapping - an already-run task
+     *  is told to use /restart instead. Still requires a paused job for the same reason /restart
+     *  does: WorkerService.java builds `cfg` (and so `task_overrides`) once when a job is claimed,
+     *  so a write made while the job is actively running would not take effect until the NEXT
+     *  invocation anyway - requiring "paused" avoids an operator believing it applied immediately. */
+    @PostMapping("/api/jobs/{id}/tasks/{taskId}/override")
+    public Map<String, Object> setPendingTaskOverride(@PathVariable UUID id, @PathVariable String taskId,
+                                                       @RequestBody(required = false) Map<String, Object> body) throws Exception {
+        final Map<String, Object> job = queue.get(id);
+        if (!"paused".equals(job.get("status")))
+            throw new IllegalStateException("job " + id + " is " + job.get("status") + "; only a paused job can have a pending task override set");
+        final Path ws = Path.of(props.workspaceRoot(), String.valueOf(job.get("run_id")), "workspace");
+        if (com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/" + taskId))
+            throw new IllegalStateException(taskId + " has already run - use /restart instead to redo it with new settings");
+        final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
+        if (!orderedTaskIds(base).contains(taskId))
+            throw new IllegalArgumentException("unknown task id: " + taskId);
+        final Object rawOverrides = body == null ? null : body.get("overrides");
+        final Map<String, Object> overrides = rawOverrides instanceof Map<?, ?> o ? (Map<String, Object>) o : Map.of();
+        final var unknown = overrides.keySet().stream().filter(k -> !RESTART_OVERRIDE_KEYS.contains(k)).toList();
+        if (!unknown.isEmpty()) throw new IllegalArgumentException("unknown override field(s): " + unknown + "; allowed: " + RESTART_OVERRIDE_KEYS);
+        return queue.setTaskOverride(id, taskId, overrides);
     }
 
     /** #263: this task's own attempt history (every run, not just a restarted/overridden one -

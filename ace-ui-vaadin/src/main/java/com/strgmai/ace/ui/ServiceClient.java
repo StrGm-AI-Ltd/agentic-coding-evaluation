@@ -213,6 +213,17 @@ public class ServiceClient implements Serializable {
                 .body(Api.Job.class);
     }
 
+    /** #321: the pre-run counterpart of restartTask() - for a task that hasn't started yet, so
+     *  there is nothing to discard and no requeue() needed to make it "take" on this same attempt
+     *  (it already hasn't run). */
+    public Api.Job setPendingTaskOverride(final String jobId, final String taskId, final Map<String, Object> overrides) {
+        return http.post().uri("/api/jobs/{id}/tasks/{taskId}/override", jobId, taskId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("overrides", overrides))
+                .retrieve()
+                .body(Api.Job.class);
+    }
+
     /** #264: the phase-session counterpart of taskPrompt()/taskDiff()/restartTask() - Definition/
      *  Plan/Parallel plan have no task id, scoped to the Live sessions table's own click-through
      *  dialog instead of the plan table's. */

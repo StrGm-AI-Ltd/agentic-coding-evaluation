@@ -177,6 +177,38 @@ public class RunBench {
         return override.get(key) instanceof Number n ? n.longValue() : fallback;
     }
 
+    /** #322: compaction_trigger is the same class of per-task-session knob as the wall/token
+     *  budgets above (same "a task_override wins over the run-level default" rule), but it has no
+     *  single run-level home the way task_wall_sec/task_tokens do - every call site that needs it
+     *  (sessionWithPolicy, handoffStep, rescueStep, parallelPlanStep) falls back to its own
+     *  cfg.get("compaction_trigger")/props.compactionTrigger() independently, so this takes that
+     *  already-resolved run-level value as the fallback rather than re-deriving it. */
+    static int effectiveCompactionTrigger(final Map<String, Object> override, final int runLevel) {
+        return effectiveInt(override, "compaction_trigger", runLevel);
+    }
+
+    /** #322: temperature/top_p/top_k/repetition_penalty/max_tokens/reasoning_effort are per-call
+     *  sampler knobs, pinned run-wide once as cfg's "_sampler_overrides" (RecordingProxy.
+     *  SamplerOverrides) and reused at every proxies.start(...) call site. A task_override for any
+     *  of them replaces just that field for this one task's own calls (main session, its
+     *  continuations, its handoff, its rescue) - firstTokenTimeoutSec/contextWindow are left as
+     *  the run-level value in both cases, neither is task-overridable (the former has its own,
+     *  separate agent-loop-side override already; the latter is a fact about the model server's
+     *  own capacity, not a per-task choice). */
+    static RecordingProxy.SamplerOverrides effectiveSamplerOverrides(final Map<String, Object> cfg, final Map<String, Object> override) {
+        final RecordingProxy.SamplerOverrides base = cfg.get("_sampler_overrides") instanceof RecordingProxy.SamplerOverrides so
+                ? so : RecordingProxy.SamplerOverrides.NONE;
+        if (override.isEmpty()) return base;
+        return new RecordingProxy.SamplerOverrides(
+                override.get("temperature") instanceof Number t ? t.doubleValue() : base.temperature(),
+                override.get("top_p") instanceof Number tp ? tp.doubleValue() : base.topP(),
+                override.get("top_k") instanceof Number tk ? tk.intValue() : base.topK(),
+                override.get("repetition_penalty") instanceof Number rp ? rp.doubleValue() : base.repetitionPenalty(),
+                override.get("max_tokens") instanceof Number mt ? mt.intValue() : base.maxOutputTokens(),
+                override.get("reasoning_effort") instanceof String re && !re.isBlank() ? re : base.reasoningEffort(),
+                base.firstTokenTimeoutSec(), base.contextWindow());
+    }
+
     /** #258: a session that died on a `length` finish gets one continuation with what is LEFT of
      *  its budget - rc==124 (already wall-timed-out) is excluded since there is nothing left to
      *  continue INTO, and wall<=0 means unlimited (the system-wide "0 = no budget" convention, so
@@ -900,7 +932,8 @@ public class RunBench {
         // 0 means unlimited (the system-wide "0 = no budget" convention)
         final long firstTokenTimeoutMs = override.get("first_token_timeout_sec") instanceof Number sec ? sec.longValue() * 1000L
                 : cfg.get("first_token_timeout_ms") instanceof Number ftt ? ftt.longValue() : 0L;
-        final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
+        final int compactionTrigger = effectiveCompactionTrigger(override,
+                cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger());
         // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded
         // ReferenceAgent-local constant with no run-level override at all
         final int maxTurns = effectiveInt(override, "max_turns",
@@ -931,7 +964,7 @@ public class RunBench {
         if (shouldRetryOnLengthFinish(rec.finish(), rec.rc(), wall, (System.currentTimeMillis() - t0) / 1000)) {
             final long spent = ((Number) JournalFacts.facts(journal.toString(), rec.start().toString(), nowIso(), null, null, null).getOrDefault("completion_tokens", 0L)).longValue();
             long remaining = tokens <= 0 ? 0 : Math.max(1000, tokens - spent);   // what is LEFT, not a fresh budget (R4 C-7); a fresh proxy enforces it
-            final var contProxy = proxies.start(journal, remaining, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+            final var contProxy = proxies.start(journal, remaining, null, effectiveSamplerOverrides(cfg, override));
             try {
                 final long contWall = wall <= 0 ? 0 : wall - (System.currentTimeMillis() - t0) / 1000;
                 rec = RunBenchSupport.runBounded(contWall, name + "-continue", rd.resolve("sessions"), sid, contProxy.abort(), () -> runAgentSession(cfg, name + "-continue",
@@ -948,7 +981,7 @@ public class RunBench {
             final long spentSoFar = ((Number) JournalFacts.facts(journal.toString(), rec.start().toString(), nowIso(), null, null, null).getOrDefault("completion_tokens", 0L)).longValue();
             if (shouldReEngageOnEmptyStop(rec.finish(), rec.rc(), wall, (System.currentTimeMillis() - t0) / 1000, tokens, spentSoFar)) {
                 final long remaining = tokens <= 0 ? 0 : Math.max(1000, tokens - spentSoFar);
-                final var reengageProxy = proxies.start(journal, remaining, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+                final var reengageProxy = proxies.start(journal, remaining, null, effectiveSamplerOverrides(cfg, override));
                 try {
                     final long reengageWall = wall <= 0 ? 0 : wall - (System.currentTimeMillis() - t0) / 1000;
                     rec = RunBenchSupport.runBounded(reengageWall, name + "-reengage", rd.resolve("sessions"), sid, reengageProxy.abort(), () -> runAgentSession(cfg, name + "-reengage",
@@ -974,7 +1007,7 @@ public class RunBench {
             // the wrap-up is a continuation on top of the task budget: its own proxy with its own token
             // budget (run_bench run_task) - 0 means unlimited (the system-wide "0 = no budget" convention)
             final long wrapupTokens = effectiveLong(override, "wrapup_tokens", cfg.get("wrapup_tokens") instanceof Number wt ? wt.longValue() : 0L);
-            final var wrapProxy = proxies.start(journal, wrapupTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+            final var wrapProxy = proxies.start(journal, wrapupTokens, null, effectiveSamplerOverrides(cfg, override));
             // 0 means unlimited (the system-wide "0 = no budget" convention)
             final int wrapupBase = effectiveInt(override, "wrapup_wall_sec", cfg.get("wrapup_wall_sec") instanceof Number wb ? wb.intValue() : 0);
             final long wrapWall = (long) (wrapupBase * scale);
@@ -1218,7 +1251,7 @@ public class RunBench {
                         final var taskOverride = taskOverride(cfg, t.id);
                         final int effTaskWall = effectiveInt(taskOverride, "task_wall_sec", taskWall);
                         final long effTaskTokens = effectiveLong(taskOverride, "task_tokens", taskTokens);
-                        final var proxy = proxies.start(journal, effTaskTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+                        final var proxy = proxies.start(journal, effTaskTokens, null, effectiveSamplerOverrides(cfg, taskOverride));
                         final var judgeCheckpoint = buildJudgeCheckpoint(cfg, runId, ws, rd, t.id, t.goal, effTaskWall, effTaskTokens, taskOverride);
                         final var handoffFinalTurn = buildHandoffFinalTurn(handoffs, ws, t.id);
                         try {
@@ -1331,11 +1364,15 @@ public class RunBench {
             RunBenchSupport.snapshot(ws, "phase/" + t.id + "-handoff");   // so a future resume can skip this (see tagExists check above)
             return;
         }
+        // #322: same task_override lookup sessionWithPolicy/rescueStep already do for this same
+        // task id - handoffStep never received it before since nothing here needed it until now.
+        final var override = taskOverride(cfg, t.id);
         // 0 means unlimited (the system-wide "0 = no budget" convention)
         final long handoffTokens = cfg.get("handoff_tokens") instanceof Number ht ? ht.longValue() : 0L;
-        final var proxy = proxies.start(journal, handoffTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+        final var proxy = proxies.start(journal, handoffTokens, null, effectiveSamplerOverrides(cfg, override));
         final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 0L;   // 0 = unlimited
-        final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
+        final int compactionTrigger = effectiveCompactionTrigger(override,
+                cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger());
         final int maxTurns = cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS;
         try {
             final String handoffSid = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + t.id).getBytes()).toString();
@@ -1381,6 +1418,14 @@ public class RunBench {
         final Map<String, Object> runLevel = cfg.get("budget_rescue") instanceof Map<?, ?> r ? (Map<String, Object>) r : Map.of();
         final Map<String, Object> out = new LinkedHashMap<>(runLevel);
         if (taskOverride.get("budget_rescue_enabled") instanceof Boolean b) out.put("enabled", b);
+        // #322: previously only "enabled" was task-overridable here - the rescue session's own
+        // wall/token/keep-recent-turns knobs were deliberately operator-wide-only. Lifted: a task
+        // that's already shown it needs more room (this is read right after that same task's own
+        // main session just exhausted its budget) should be able to get a correspondingly larger
+        // rescue attempt too, not just a bigger main-session budget next time.
+        if (taskOverride.get("rescue_wall_sec") instanceof Number w) out.put("wall_sec", w.intValue());
+        if (taskOverride.get("rescue_tokens") instanceof Number t) out.put("tokens", t.longValue());
+        if (taskOverride.get("rescue_keep_recent_turns") instanceof Number k) out.put("keep_recent_turns", k.intValue());
         return out;
     }
 
@@ -1445,9 +1490,10 @@ public class RunBench {
         final String verificationSummary = VerifyTask.verifyText((Map<String, Object>) rec.get("verification"));
         // 0 means unlimited (the system-wide "0 = no budget" convention)
         final long rescueTokens = rescueCfg.get("tokens") instanceof Number n ? n.longValue() : 0L;
-        final var proxy = proxies.start(journal, rescueTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+        final var proxy = proxies.start(journal, rescueTokens, null, effectiveSamplerOverrides(cfg, taskOverride));
         final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 0L;
-        final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
+        final int compactionTrigger = effectiveCompactionTrigger(taskOverride,
+                cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger());
         final int maxTurns = cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS;
         final int keepRecentTurns = rescueCfg.get("keep_recent_turns") instanceof Number krt ? krt.intValue() : props.keepRecentTurns();
         try {
@@ -1638,7 +1684,7 @@ public class RunBench {
                         final var taskOverride = taskOverride(cfg, t.id);
                         final int effTaskWall = effectiveInt(taskOverride, "task_wall_sec", taskWall);
                         final long effTaskTokens = effectiveLong(taskOverride, "task_tokens", taskTokens);
-                        final var proxy = proxies.start(taskJournals.get(t.id), effTaskTokens, t.id, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+                        final var proxy = proxies.start(taskJournals.get(t.id), effTaskTokens, t.id, effectiveSamplerOverrides(cfg, taskOverride));
                         Map<String, String> envT = RunBenchSupport.scrubbedEnv(Path.of(home + "-home-" + t.id).toString(), runId + "/" + t.id, (String) cfg.get("java_home"));   // the task's own HOME copy (R6)
                         final Path wsT = Path.of(ws + "-" + t.id);
                         final var judgeCheckpoint = buildJudgeCheckpoint(cfg, runId, wsT, rd, t.id, t.goal, effTaskWall, effTaskTokens, taskOverride);

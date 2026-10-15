@@ -187,6 +187,7 @@ class ServiceClientWireTest {
                     + "\"params\":{\"task_wall_sec\":20000,\"task_tokens\":0,\"max_turns\":400},\"overridden\":false,"
                     + "\"rc\":0,\"seconds\":4904.3,\"reported_status\":\"unfinished\",\"reported_detail\":\"budget exhausted\"}]";
         if ("POST /api/jobs/5/tasks/T1/restart".equals(method + " " + uri)) return JOB_JSON.replace("queued", "paused");
+        if ("POST /api/jobs/5/tasks/T9/override".equals(method + " " + uri)) return JOB_JSON.replace("queued", "paused");
         if ("GET /api/jobs/5/sessions/p1_plan/prompt".equals(method + " " + uri))
             return "{\"started\":true,\"text\":\"Read task/PROMPT.md and docs/TASK_DEFINITION.md.\"}";
         if ("GET /api/jobs/5/sessions/p1_plan/diff".equals(method + " " + uri))
@@ -383,6 +384,15 @@ class ServiceClientWireTest {
         final var job = client.restartTask("5", "T1", Map.of("task_wall_sec", 40000));
         assertEquals("POST /api/jobs/5/tasks/T1/restart", last().method() + " " + last().uri());
         assertEquals(40000, Json.MAPPER.readTree(last().body()).path("overrides").path("task_wall_sec").asInt());
+        assertEquals("paused", job.status());
+    }
+
+    @Test
+    void setPendingTaskOverride_postsOverridesToTheOverridePathNotRestart() {
+        final var job = client.setPendingTaskOverride("5", "T9", Map.of("judge_enabled", true, "budget_rescue_enabled", true));
+        assertEquals("POST /api/jobs/5/tasks/T9/override", last().method() + " " + last().uri());
+        assertTrue(Json.MAPPER.readTree(last().body()).path("overrides").path("judge_enabled").asBoolean());
+        assertTrue(Json.MAPPER.readTree(last().body()).path("overrides").path("budget_rescue_enabled").asBoolean());
         assertEquals("paused", job.status());
     }
 
