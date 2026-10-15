@@ -117,6 +117,18 @@ public final class Api {
     public record CompareResponse(JsonNode result, String printed, String refused) {
     }
 
+    /** POST /api/runs/{a}/compare/{b}/match-tasks — reviewer_model null means the run's own local
+     *  model (the same "omlx/model" default Judge/Reviews use). */
+    public record MatchTasksRequest(String reviewer_model) {
+    }
+
+    /** One task-to-task pairing TaskMatcher judged - bId/bTitle null means no match found. */
+    public record TaskMatch(String aId, String aTitle, String bId, String bTitle) {
+    }
+
+    public record MatchTasksResponse(List<TaskMatch> matches) {
+    }
+
     /** POST /api/import — run-id lists, not counts (importer.import_all returns lists). */
     public record ImportResult(List<String> imported, List<String> skipped) {
     }

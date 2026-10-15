@@ -2,10 +2,13 @@ package com.strgmai.ace.ui;
 
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.checkbox.Checkbox;
+import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.combobox.MultiSelectComboBox;
 import com.vaadin.flow.component.details.Details;
+import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.H2;
+import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
@@ -34,6 +37,16 @@ public class CompareView extends VerticalLayout {
     private final Checkbox allowBudgetMismatch = new Checkbox("Allow budget mismatch");
     private final VerticalLayout result = new VerticalLayout();
     private final Div noPoolableRuns = Panels.warn("no poolable runs yet - run something first");
+
+    // #339: a standalone, post-hoc "match tasks between these two completed runs" tool - a
+    // genuinely different interaction from the group-vs-group stats comparator above (pick
+    // exactly one run per side, not a group), so it gets its own single-run pickers rather than
+    // reusing groupA/groupB. Not restricted to poolable runs - matching tasks by content needs
+    // nothing from stats.py's own pooling rules.
+    private final ComboBox<String> matchRunA = new ComboBox<>("Run A");
+    private final ComboBox<String> matchRunB = new ComboBox<>("Run B");
+    private final Grid<Api.TaskMatch> matchGrid = new Grid<>(Api.TaskMatch.class, false);
+    private final VerticalLayout matchResult = new VerticalLayout();
 
     public CompareView(final ServiceClient client) {
         this.client = client;
@@ -67,6 +80,20 @@ public class CompareView extends VerticalLayout {
         noPoolableRuns.setVisible(false);
         add(row1, noPoolableRuns, options, run, result);
 
+        matchRunA.setPlaceholder("pick a run");
+        matchRunB.setPlaceholder("pick a run");
+        matchGrid.addColumn(Api.TaskMatch::aId).setHeader("A task").setAutoWidth(true).setFlexGrow(0);
+        matchGrid.addColumn(Api.TaskMatch::aTitle).setHeader("A description").setFlexGrow(1);
+        matchGrid.addColumn(m -> m.bId() == null ? "no match" : m.bId()).setHeader("B task").setAutoWidth(true).setFlexGrow(0);
+        matchGrid.addColumn(m -> m.bTitle() == null ? "" : m.bTitle()).setHeader("B description").setFlexGrow(1);
+        matchGrid.setVisible(false);
+        matchGrid.setHeight("320px");
+        final var matchButton = new Button("Match tasks", e -> matchTasks());
+        final var matchRow = new HorizontalLayout(matchRunA, matchRunB, matchButton);
+        matchRow.getStyle().set("flex-wrap", "wrap");
+        matchResult.setPadding(false);
+        add(new H3("Match tasks between two completed runs"), matchRow, matchResult);
+
         addAttachListener(e -> loadRunIds());
     }
 
@@ -77,10 +104,35 @@ public class CompareView extends VerticalLayout {
             groupA.setItems(ids);
             groupB.setItems(ids);
             noPoolableRuns.setVisible(ids.isEmpty());
+            // #339: every imported run, not just poolable ones - matching by content isn't a
+            // statistical operation, so stats.py's own pooling rules don't apply here.
+            final var allIds = runs.stream().map(Api.Run::run_id).sorted().distinct().toList();
+            matchRunA.setItems(allIds);
+            matchRunB.setItems(allIds);
         } catch (final Exception e) {
             log.warn("could not load run ids for compare: {}", e.toString());
             result.removeAll();
             result.add(Panels.error(client.errorText(e)));
+        }
+    }
+
+    private void matchTasks() {
+        matchResult.removeAll();
+        final var a = matchRunA.getValue();
+        final var b = matchRunB.getValue();
+        if (a == null || b == null) {
+            Notification.show("Pick a run for both A and B.", 3000, Notification.Position.BOTTOM_END);
+            return;
+        }
+        try {
+            final var response = client.matchTasks(a, b, new Api.MatchTasksRequest(null));
+            matchGrid.setItems(response.matches());
+            matchGrid.setVisible(!response.matches().isEmpty());
+            if (response.matches().isEmpty()) matchResult.add(Panels.warn("no tasks found on one or both sides"));
+            else matchResult.add(matchGrid);
+        } catch (final Exception e) {
+            log.warn("match-tasks request failed: {}", e.toString());
+            matchResult.add(Panels.error(client.errorText(e)));
         }
     }
 

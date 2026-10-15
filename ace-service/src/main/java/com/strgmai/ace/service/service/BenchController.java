@@ -9,6 +9,7 @@ import com.strgmai.ace.service.pack.Packs;
 import com.strgmai.ace.service.plan.PlanParser;
 import com.strgmai.ace.service.plan.PlanTask;
 import com.strgmai.ace.service.runner.Intervene;
+import com.strgmai.ace.service.runner.TaskMatcher;
 import org.jooq.DSLContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,13 +45,14 @@ public class BenchController {
     private final Preflight preflight;
     private final TreatmentPin pin;
     private final Intervene intervene;
+    private final TaskMatcher taskMatcher;
 
     public BenchController(DSLContext dsl, JobQueue queue, ImporterService importer, ExperimentsService experiments,
                            StatsService stats, WorkerService worker, BenchProperties props, Preflight preflight,
-                           TreatmentPin pin, Intervene intervene) {
+                           TreatmentPin pin, Intervene intervene, TaskMatcher taskMatcher) {
         this.dsl = dsl; this.queue = queue; this.importer = importer; this.experiments = experiments;
         this.stats = stats; this.worker = worker; this.props = props; this.preflight = preflight; this.pin = pin;
-        this.intervene = intervene;
+        this.intervene = intervene; this.taskMatcher = taskMatcher;
     }
 
     @GetMapping("/api/preflight")
@@ -791,6 +793,35 @@ public class BenchController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.ok(Map.of("refused", e.getMessage()));
         }
+    }
+
+    /** #339: a standalone, post-hoc "match tasks between these two completed runs" tool for the
+     *  Compare tab - independent of #322's own live automation loop (which this shares its
+     *  matching mechanism with, but doesn't require). Re-parses each run's own
+     *  IMPLEMENTATION_PLAN.md (the only place a finished run's task goal/acceptance text still
+     *  lives - manifest.plan.tasks only carries id/title/deps/checks) the same safe way
+     *  file()/plan() already resolve a run's own files. */
+    @PostMapping("/api/runs/{a}/compare/{b}/match-tasks")
+    public Map<String, Object> matchTasks(@PathVariable String a, @PathVariable String b,
+                                          @RequestBody(required = false) Map<String, Object> body) throws Exception {
+        final List<PlanTask> aTasks = runPlanTasks(a);
+        final List<PlanTask> bTasks = runPlanTasks(b);
+        final String reviewerModel = body == null ? null : (String) body.get("reviewer_model");
+        final Path rd = Path.of(props.resultsDir(), a).toRealPath();
+        final List<TaskMatcher.TaskMatch> matches = taskMatcher.match(aTasks, bTasks, reviewerModel, rd);
+        return Map.of("matches", matches);
+    }
+
+    /** a finished run's own task list, straight from its IMPLEMENTATION_PLAN.md - empty if the run
+     *  isn't imported or never produced a plan file (same graceful-empty convention plan() uses
+     *  for a live job). */
+    private List<PlanTask> runPlanTasks(final String runId) {
+        try {
+            final var base = Path.of(props.resultsDir(), runId).toRealPath();
+            final Path planFile = base.resolve("IMPLEMENTATION_PLAN.md");
+            if (!Files.isRegularFile(planFile) || !isContainedEvenViaSymlinks(base, planFile)) return List.of();
+            return PlanParser.parse(Files.readString(planFile));
+        } catch (final Exception e) { return List.of(); }
     }
 
     static List<Double> metricValues(final List<StatsService.RunSummary> runs, final String metric) {
