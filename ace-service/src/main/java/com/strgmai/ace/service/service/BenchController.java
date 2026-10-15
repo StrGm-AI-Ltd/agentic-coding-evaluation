@@ -257,6 +257,7 @@ public class BenchController {
         } catch (final com.strgmai.ace.service.plan.PlanError e) { return Map.of("tasks", List.of(), "error", e.toString()); }
         catch (final Exception e) { return Map.of("tasks", List.of()); }
         final Path ws = Path.of(props.workspaceRoot(), String.valueOf(job.get("run_id")), "workspace");
+        final Map<String, List<Map<String, Object>>> attemptsByTask = taskAttemptsByTaskId(job);
         final List<Map<String, Object>> rows = new ArrayList<>();
         int order = 0;
         for (final List<PlanTask> wave : PlanParser.waves(tasks))
@@ -277,9 +278,34 @@ public class BenchController {
                 final var reported = com.strgmai.ace.service.runner.RunBench.reportedStatus(ws, t.id);
                 row.put("reported_status", reported == null ? null : reported.status());
                 row.put("reported_detail", reported == null ? null : reported.detail());
+                // #337: visible effort signal - how many attempts this task's own task_attempts.jsonl
+                // history actually shows, and whether any of them needed a same-session rescue, so a
+                // clean first-try pass and a costly rescued/retried one read as different outcomes.
+                final List<Map<String, Object>> taskAttempts = attemptsByTask.getOrDefault(t.id, List.of());
+                row.put("attempts", taskAttempts.size());
+                row.put("rescued", taskAttempts.stream().anyMatch(a -> Boolean.TRUE.equals(a.get("rescue_succeeded"))));
                 rows.add(row);
             }
         return Map.of("tasks", rows);
+    }
+
+    /** #337: task_attempts.jsonl grouped by task_id, read once per plan() call rather than once per
+     *  task (same file taskAttempts() below reads per-task, on demand) - empty map on any read
+     *  failure, same as every other best-effort fallback in this method. */
+    private Map<String, List<Map<String, Object>>> taskAttemptsByTaskId(final Map<String, Object> job) {
+        try {
+            final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
+            final Path file = base.resolve("task_attempts.jsonl");
+            if (!Files.isRegularFile(file) || !isContainedEvenViaSymlinks(base, file)) return Map.of();
+            final var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            final Map<String, List<Map<String, Object>>> byTask = new LinkedHashMap<>();
+            for (final String line : Files.readAllLines(file)) {
+                if (line.isBlank()) continue;
+                final Map<String, Object> entry = mapper.readValue(line, Map.class);
+                byTask.computeIfAbsent(String.valueOf(entry.get("task_id")), k -> new ArrayList<>()).add(entry);
+            }
+            return byTask;
+        } catch (final Exception e) { return Map.of(); }
     }
 
     /** the plan's task ids in execution (wave) order - same parse plan() above already does,

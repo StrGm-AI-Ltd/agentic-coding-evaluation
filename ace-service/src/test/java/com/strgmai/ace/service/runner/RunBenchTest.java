@@ -273,6 +273,52 @@ class RunBenchTest {
     /** Found live 2026-09-25: oMLX's own memory-pressure throttling was slow enough to trip the
      *  agent's 180s stall detector, and oMLX's log - the only place that explained why - spans
      *  every run on the machine and keeps growing. Each run now copies its own slice out. */
+    /** #337: task_attempts.jsonl is append-only (see logTaskAttempt()) - countPriorAttempts() just
+     *  counts existing lines for a task id, so the NEXT logTaskAttempt() call can write the correct
+     *  1-indexed attempt_number. */
+    @Test
+    void countPriorAttemptsIsZeroWithNoFileAtAll() throws Exception {
+        final Path rd = track(Files.createTempDirectory("rd"));
+        assertEquals(0, runBench().countPriorAttempts(rd, "T1"));
+    }
+
+    @Test
+    void countPriorAttemptsCountsOnlyLinesForTheGivenTaskId() throws Exception {
+        final Path rd = track(Files.createTempDirectory("rd"));
+        Files.writeString(rd.resolve("task_attempts.jsonl"), String.join("\n",
+                "{\"task_id\":\"T1\",\"rc\":3}", "{\"task_id\":\"T2\",\"rc\":0}", "{\"task_id\":\"T1\",\"rc\":0}") + "\n");
+        assertEquals(2, runBench().countPriorAttempts(rd, "T1"));
+        assertEquals(1, runBench().countPriorAttempts(rd, "T2"));
+        assertEquals(0, runBench().countPriorAttempts(rd, "T3"));
+    }
+
+    /** #337: a rescued attempt and a clean one must not write identical-looking lines - rec's own
+     *  rescue_succeeded/rescue_rc/rescue_seconds (set by rescueStep(), RunBench.java:~1526) need to
+     *  actually reach the written entry, and the entry's own attempt_number must count whatever
+     *  this task id already had logged in the same rd. */
+    @Test
+    void logTaskAttemptWritesTheAttemptNumberAndCopiesRescueFieldsWhenPresent() throws Exception {
+        final Path rd = track(Files.createTempDirectory("rd"));
+        final Path ws = track(Files.createTempDirectory("ws"));   // no docs/PROGRESS.md - reportedStatus() just reads null
+        final var bench = runBench();
+
+        bench.logTaskAttempt(rd, ws, "T1", Map.of(), 3600, 10000, 50, new java.util.LinkedHashMap<>(Map.of("rc", 3, "seconds", 100.0)));
+        final var rescuedRec = new java.util.LinkedHashMap<String, Object>(Map.of("rc", 0, "seconds", 50.0));
+        rescuedRec.put("rescue_succeeded", true); rescuedRec.put("rescue_rc", 0); rescuedRec.put("rescue_seconds", 12.5);
+        bench.logTaskAttempt(rd, ws, "T1", Map.of(), 3600, 10000, 50, rescuedRec);
+
+        final List<String> lines = Files.readAllLines(rd.resolve("task_attempts.jsonl"));
+        assertEquals(2, lines.size());
+        final var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        final Map<?, ?> first = mapper.readValue(lines.get(0), Map.class);
+        final Map<?, ?> second = mapper.readValue(lines.get(1), Map.class);
+        assertEquals(1, first.get("attempt_number"));
+        assertNull(first.get("rescue_succeeded"), "a non-rescued attempt carries no rescue fields at all");
+        assertEquals(2, second.get("attempt_number"), "the second attempt for the same task id counts the first");
+        assertEquals(true, second.get("rescue_succeeded"));
+        assertEquals(0, second.get("rescue_rc"));
+    }
+
     @Test
     void captureOmlxLogDoesNothingWhenNotConfigured() throws Exception {
         final BenchProperties props = mock(BenchProperties.class);

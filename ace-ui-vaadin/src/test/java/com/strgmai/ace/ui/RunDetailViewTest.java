@@ -72,6 +72,27 @@ class RunDetailViewTest {
         assertEquals("results: /tmp/results/r1", lines.get(lines.size() - 1));
     }
 
+    /** #328: self_review/trajectory_review's own cost_usd (an external reviewer's real $ spend)
+     *  rides into the provenance block when present; a null cost_usd (ran, but the model has no
+     *  known price) is treated the same as "never ran" - omitted, not shown as "$0.00". */
+    @Test
+    void provenanceLines_surfacesReviewerCostUsdWhenPresent() {
+        var manifest = Json.MAPPER.readTree("""
+                {"self_review": {"cost_usd": 0.0375}, "trajectory_review": {"cost_usd": null}}""");
+
+        List<String> lines = RunDetailView.provenanceLines(manifest, null);
+
+        assertTrue(lines.contains("self_review_cost_usd: $0.0375"));
+        assertTrue(lines.stream().noneMatch(l -> l.startsWith("trajectory_review_cost_usd")),
+                "a null cost_usd (ran but unpriced) is omitted, not shown as $0.00");
+    }
+
+    @Test
+    void provenanceLines_omitsReviewerCostWhenNeitherReviewRan() {
+        var manifest = Json.MAPPER.readTree("{}");
+        assertTrue(RunDetailView.provenanceLines(manifest, null).isEmpty());
+    }
+
     @Test
     void provenanceLines_degenerateManifests() {
         assertEquals(List.of(), RunDetailView.provenanceLines(null, null));

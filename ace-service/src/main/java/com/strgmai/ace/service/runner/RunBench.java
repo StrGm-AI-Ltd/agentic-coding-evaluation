@@ -357,8 +357,15 @@ public class RunBench {
      *  rd/task_attempts.jsonl - every run of a task, not just a restarted/overridden one, so a
      *  future "why did this fail" investigation (#261/#262's own motivating case) starts from a
      *  real history instead of manual interactions.jsonl archaeology. Best-effort: a logging
-     *  failure here must never fail the run itself. */
-    private void logTaskAttempt(final Path rd, final Path ws, final String taskId, final Map<String, Object> override,
+     *  failure here must never fail the run itself.
+     *
+     *  #337: also carries this attempt's own ordinal (attempt_number, 1-indexed - counts lines
+     *  already in the file for this task id, so a crash-resumed or operator-restarted task's
+     *  second-or-later go reads as a visibly distinct outcome from a clean first-try pass) and,
+     *  when rescueStep() fired on this same attempt, its rescue_succeeded/rescue_rc/rescue_seconds
+     *  - rec already carries them (set at RunBench.java:~1526) but this method never copied them
+     *  before, so a rescued pass and a clean one wrote identical-looking lines. */
+    void logTaskAttempt(final Path rd, final Path ws, final String taskId, final Map<String, Object> override,
                                 final int effTaskWall, final long effTaskTokens, final int effMaxTurns, final Map<String, Object> rec) {
         try {
             final Map<String, Object> params = new LinkedHashMap<>();
@@ -368,6 +375,7 @@ public class RunBench {
             final ReportedStatus reported = reportedStatus(ws, taskId);
             final Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("task_id", taskId);
+            entry.put("attempt_number", countPriorAttempts(rd, taskId) + 1);
             entry.put("attempt_started", rec.get("start_iso"));
             entry.put("attempt_ended", rec.get("end_iso"));
             entry.put("params", params);
@@ -376,9 +384,31 @@ public class RunBench {
             entry.put("seconds", rec.get("seconds"));
             entry.put("reported_status", reported == null ? null : reported.status());
             entry.put("reported_detail", reported == null ? null : reported.detail());
+            if (rec.get("rescue_succeeded") instanceof Boolean b) entry.put("rescue_succeeded", b);
+            if (rec.get("rescue_rc") instanceof Number n) entry.put("rescue_rc", n);
+            if (rec.get("rescue_seconds") instanceof Number n) entry.put("rescue_seconds", n);
             Files.writeString(rd.resolve("task_attempts.jsonl"), json.writeValueAsString(entry) + "\n",
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (Exception e) { log.warn("could not log task attempt for {}: {}", taskId, e.toString()); }
+    }
+
+    /** #337: how many lines already exist for this task id in THIS run's own task_attempts.jsonl -
+     *  the file is append-only (see logTaskAttempt() above), so this is exactly "how many attempts
+     *  has this task already had before the one about to be written." Missing/unreadable file, or
+     *  an unparseable line, reads as zero/skipped (a brand new run), same as every other
+     *  best-effort read in this file. */
+    long countPriorAttempts(final Path rd, final String taskId) {
+        final Path file = rd.resolve("task_attempts.jsonl");
+        if (!Files.isRegularFile(file)) return 0;
+        try {
+            long count = 0;
+            for (final String l : Files.readAllLines(file)) {
+                if (l.isBlank()) continue;
+                try { if (taskId.equals(json.readTree(l).path("task_id").asText(null))) count++; }
+                catch (Exception e) { /* an unparseable line doesn't count as this task's attempt */ }
+            }
+            return count;
+        } catch (Exception e) { return 0; }
     }
 
     /** the task's own prompt (tasks/&lt;task&gt;/PROMPT.md, vendored as a resource) when it exists,
