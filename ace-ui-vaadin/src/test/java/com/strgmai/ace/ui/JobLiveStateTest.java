@@ -549,6 +549,32 @@ class JobLiveStateTest {
         assertEquals(120L, state.sessions().get(0).totalTokens());
     }
 
+    /** #333, found live: Tailer deliberately replays every event (including "request") in full on
+     *  every SSE reconnect, so a request already folded in must not be folded in a second time just
+     *  because a late-joining/reconnecting viewer received it again. seq alone can't be the dedup
+     *  key (RecordingProxy resets it to 0 per session), so this pins the actual key: a repeat of the
+     *  SAME session_id+seq is skipped; a DIFFERENT seq in the same session still counts. */
+    @Test
+    void aReplayedRequestWithTheSameSessionIdAndSeqIsNotFoldedInTwice() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: session_started
+                data: {"session_id": "aaaaaaaa-0000-0000-0000-000000000000"}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "seq": 1, "completion_tokens": 120}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "seq": 1, "completion_tokens": 120}
+
+                event: request
+                data: {"type": "request", "session_id": "aaaaaaaa-0000-0000-0000-000000000000", "seq": 2, "completion_tokens": 50}
+
+                """).forEach(state::apply);
+        assertEquals(170L, state.totalCompletionTokens());
+        assertEquals(2L, state.requestCount());
+    }
+
     /** totalCompletionTokens() is the run-wide counterpart to a single session's totalTokens() -
      *  summed across every session seen so far, not just the one a given request belongs to. */
     @Test
