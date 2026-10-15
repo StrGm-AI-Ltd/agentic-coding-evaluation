@@ -76,6 +76,17 @@ public final class JobLiveState implements Serializable {
     // was running forced exactly this kind of reconnect.
     private final Map<String, String> lastSeenSessionPath = new LinkedHashMap<>();
     private final Deque<RequestRow> recentRequests = new ArrayDeque<>();
+    // "session_id#seq" of every request event already folded into the totals below - #333: Tailer's
+    // own deliberate full-replay-on-reconnect design (see lastSeenSessionPath's comment above) means
+    // every "request" event is redelivered in full on every SSE reconnect, exactly like
+    // session_started/session_done already correctly expect - but unlike those two, nothing here
+    // guarded against re-folding a replayed request into requestCount/totalCompletionTokens/
+    // totalPromptTokens/the per-session speed and wall-time sums, silently inflating every one of
+    // them on every reconnect (routine: a late-joining viewer, any transient network blip, any
+    // ace-service redeploy). seq alone isn't unique run-wide - RecordingProxy's own counter is a
+    // per-proxy/per-session instance field, reset to 0 for every new session - so the key must pair
+    // it with session_id, the one field that IS unique run-wide.
+    private final java.util.Set<String> seenRequestKeys = new java.util.HashSet<>();
     private long requestCount;
     private Long lastTokens;
     private long totalCompletionTokens;
@@ -110,6 +121,15 @@ public final class JobLiveState implements Serializable {
             case "session_done" -> markSessionDone(data);
             case "execution_order" -> executionOrder = parseExecutionOrder(data);
             case "request" -> {
+                // #333: skip a replayed delivery of a request already folded in - see
+                // seenRequestKeys' own field comment. A request with no session_id/seq (shouldn't
+                // happen - Tailer always sets both) is never deduped, since wrongly dropping a real
+                // request is worse than the rare risk of double-counting one with no key to catch it.
+                final var sessionId = Fmt.textOr(data.path("session_id"), null);
+                final var hasSeq = data.path("seq").isNumber();
+                if (sessionId != null && hasSeq && !seenRequestKeys.add(sessionId + "#" + data.path("seq").asInt())) {
+                    return;
+                }
                 requestCount += 1;
                 if (data.hasNonNull("budget_spent_completion_tokens")) {
                     lastTokens = data.get("budget_spent_completion_tokens").longValue();
