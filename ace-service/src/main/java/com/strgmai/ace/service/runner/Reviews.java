@@ -93,7 +93,12 @@ public class Reviews {
         out.put("seconds", rec.seconds());
         out.put("rc", rec.rc());
         out.put("over_budget", rec.rc() == 124);
-        out.put("usage", com.strgmai.ace.service.agent.AgentSession.usage(rec.sessionFile()));   // the only token source for an external reviewer
+        final Map<String, Long> usage = com.strgmai.ace.service.agent.AgentSession.usage(rec.sessionFile());
+        out.put("usage", usage);   // the only token source for an external reviewer
+        // #328: real $ spend for a paid external reviewer - local oMLX calls cost the operator
+        // nothing, so this is deliberately external-only (see ModelPricing's own "don't guess" rule
+        // for a model with no known rate - null, not zero, so it reads as "unpriced" not "free").
+        if (external) out.put("cost_usd", com.strgmai.ace.service.agent.ModelPricing.costUsd(reviewer.substring(reviewer.indexOf('/') + 1), usage));
         if (!external) {   // the in-journal requests + budget refusals of the reviewer's window
             Map<String, Object> rf = com.strgmai.ace.service.runner.JournalFacts.facts(rd.resolve("interactions.jsonl").toString(),
                     rec.start().toString(), rec.end().toString(), null, null, null);
@@ -164,7 +169,11 @@ public class Reviews {
         out.put("seconds", rec.seconds());
         out.put("rc", rec.rc());
         out.put("over_budget", rec.rc() == 124);
-        out.put("usage", com.strgmai.ace.service.agent.AgentSession.usage(rec.sessionFile()));
+        final Map<String, Long> usage = com.strgmai.ace.service.agent.AgentSession.usage(rec.sessionFile());
+        out.put("usage", usage);
+        // #328: see selfReview()'s identical comment - external-only, null (not zero) for an
+        // unpriced model.
+        if (external) out.put("cost_usd", com.strgmai.ace.service.agent.ModelPricing.costUsd(reviewer.substring(reviewer.indexOf('/') + 1), usage));
         if (!external) {
             Map<String, Object> rf = com.strgmai.ace.service.runner.JournalFacts.facts(rd.resolve("interactions.jsonl").toString(),
                     rec.start().toString(), rec.end().toString(), null, null, null);

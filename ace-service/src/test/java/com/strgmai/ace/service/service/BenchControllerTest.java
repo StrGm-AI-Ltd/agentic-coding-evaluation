@@ -375,6 +375,50 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.tasks[0].reported_detail").value("missing a DB migration"));
     }
 
+    /** #337: a visible effort signal per task - how many attempts task_attempts.jsonl actually
+     *  shows, and whether any of them needed a rescue, so a clean pass and a rescued/retried one
+     *  read as different outcomes in the Plan grid. */
+    @Test
+    void jobPlanSurfacesAttemptCountAndRescuedFromTaskAttemptsFile() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir);
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"),
+                "## T1 — a task\n- Goal: something\n\n## T2 — another\n- Goal: something else\n");
+        Files.writeString(runDir.resolve("task_attempts.jsonl"), String.join("\n",
+                "{\"task_id\":\"T1\",\"attempt_number\":1,\"rc\":3}",
+                "{\"task_id\":\"T1\",\"attempt_number\":2,\"rc\":0}",
+                "{\"task_id\":\"T2\",\"attempt_number\":1,\"rc\":0,\"rescue_succeeded\":true}") + "\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(Files.createTempDirectory("ws-root").toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/plan"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tasks[0].id").value("T1"))
+                .andExpect(jsonPath("$.tasks[0].attempts").value(2))
+                .andExpect(jsonPath("$.tasks[0].rescued").value(false))
+                .andExpect(jsonPath("$.tasks[1].id").value("T2"))
+                .andExpect(jsonPath("$.tasks[1].attempts").value(1))
+                .andExpect(jsonPath("$.tasks[1].rescued").value(true));
+    }
+
+    @Test
+    void jobPlanReportsZeroAttemptsWithNoTaskAttemptsFile() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir);
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), "## T1 — a task\n- Goal: something\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(Files.createTempDirectory("ws-root").toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/plan"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tasks[0].attempts").value(0))
+                .andExpect(jsonPath("$.tasks[0].rescued").value(false));
+    }
+
     @Test
     void jobPlanIsAnEmptyListBeforeAnyPlanFileExists() throws Exception {
         final var resultsDir = Files.createTempDirectory("results");

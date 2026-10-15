@@ -539,6 +539,10 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 .setHeader("generated").setAutoWidth(true).setFlexGrow(0);
         grid.addColumn(t -> Fmt.count(taskStats(live.sessions(), t.id(), live.currentStep()).promptTokens()))
                 .setHeader("prefilled").setAutoWidth(true).setFlexGrow(0);
+        // #337: blank for the common case (one clean attempt, never rescued) - a clean pass and a
+        // rescued/retried one should read as visibly different outcomes, not the same checkmark.
+        grid.addColumn(t -> t.attempts() <= 1 && !t.rescued() ? "" : t.attempts() + (t.rescued() ? " (rescued)" : ""))
+                .setHeader("attempts").setAutoWidth(true).setFlexGrow(0);
         grid.getColumns().forEach(c -> c.setResizable(true));
         grid.addItemClickListener(e -> openTaskPromptDialog(e.getItem()));
         grid.getStyle().set("cursor", "pointer");

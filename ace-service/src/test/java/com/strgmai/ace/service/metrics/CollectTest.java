@@ -34,6 +34,34 @@ class CollectTest {
         assertEquals(1049L, ((Number) leaderboard.get("total_wall_sec")).longValue());
     }
 
+    /** #337: a task retried within the run (2 logged attempts) and a task rescued mid-session both
+     *  need to surface as a run-level effort signal, distinct from a run where every task one-shot
+     *  cleanly. */
+    @Test
+    void retriedAndRescuedTasksAreCountedAtTheRunLevel(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);
+        Files.writeString(runDir.resolve("task_attempts.jsonl"), String.join("\n",
+                "{\"task_id\":\"T1\",\"attempt_number\":1,\"rc\":3}",
+                "{\"task_id\":\"T1\",\"attempt_number\":2,\"rc\":0}",
+                "{\"task_id\":\"T2\",\"attempt_number\":1,\"rc\":0,\"rescue_succeeded\":true}",
+                "{\"task_id\":\"T3\",\"attempt_number\":1,\"rc\":0}") + "\n");
+        final Map<String, Object> manifest = Map.of("phases", List.of(), "tasks", List.of(), "waves", List.of());
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        final Map<String, Object> leaderboard = (Map<String, Object>) out.get("leaderboard");
+        assertEquals(1, leaderboard.get("tasks_with_retries"), "only T1 has more than one logged attempt");
+        assertEquals(1, leaderboard.get("tasks_rescued"), "only T2 has a rescue_succeeded attempt");
+    }
+
+    @Test
+    void aRunWithNoTaskAttemptsFileReportsZeroEffortCounts(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);
+        final Map<String, Object> manifest = Map.of("phases", List.of(), "tasks", List.of(), "waves", List.of());
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        final Map<String, Object> leaderboard = (Map<String, Object>) out.get("leaderboard");
+        assertEquals(0, leaderboard.get("tasks_with_retries"));
+        assertEquals(0, leaderboard.get("tasks_rescued"));
+    }
+
     /** #250: found live - a resumed phase (R18: skipped this attempt, so it never recorded a real
      *  start/end timestamp) has start_iso/end_iso missing from the manifest. String.valueOf(null)
      *  turns that into the literal string "null", which sails past JournalFacts.facts()'s own

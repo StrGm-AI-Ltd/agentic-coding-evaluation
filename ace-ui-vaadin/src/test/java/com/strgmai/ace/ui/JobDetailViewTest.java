@@ -241,7 +241,12 @@ class JobDetailViewTest {
 
     private static Api.PlanTask planTask(final String id, final boolean implemented, final boolean handoffDone,
                                          final String reportedStatus, final String reportedDetail) {
-        return new Api.PlanTask(0, id, "", "", List.of(), implemented, handoffDone, reportedStatus, reportedDetail);
+        return planTask(id, implemented, handoffDone, reportedStatus, reportedDetail, 0, false);
+    }
+
+    private static Api.PlanTask planTask(final String id, final boolean implemented, final boolean handoffDone,
+                                         final String reportedStatus, final String reportedDetail, final int attempts, final boolean rescued) {
+        return new Api.PlanTask(0, id, "", "", List.of(), implemented, handoffDone, reportedStatus, reportedDetail, attempts, rescued);
     }
 
     @Test

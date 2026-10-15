@@ -138,7 +138,8 @@ public final class Api {
      *  what's missing, why it's blocked, or the harness fallback's own fixed explanation.
      *  See JobDetailView.taskStatus(). */
     public record PlanTask(int order, String id, String title, String goal, List<String> deps,
-                           boolean implemented, boolean handoff_done, String reported_status, String reported_detail) {
+                           boolean implemented, boolean handoff_done, String reported_status, String reported_detail,
+                           int attempts, boolean rescued) {
     }
 
     /** GET /api/jobs/{id}/tasks/{taskId}/prompt — progressively enriched: text is always the task's

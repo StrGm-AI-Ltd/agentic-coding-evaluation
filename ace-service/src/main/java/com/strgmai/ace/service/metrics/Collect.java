@@ -74,6 +74,13 @@ public final class Collect {
         final Double efficiencyPct = efficiencyPct(manifest, totalSec);
         if (efficiencyPct != null) leaderboard.put("efficiency_pct", efficiencyPct);
 
+        // #337: a visible effort signal at the run level - how many distinct tasks needed more than
+        // one attempt, and how many of those were rescued mid-session, so a run that one-shot every
+        // task and one that needed costly retries/rescues don't report identically here either.
+        final Map<String, Object> effort = taskEffortCounts(runDir);
+        leaderboard.put("tasks_with_retries", effort.get("tasks_with_retries"));
+        leaderboard.put("tasks_rescued", effort.get("tasks_rescued"));
+
         // ---- agent_result_pct: the composite blended with the calibration terms ----
         final Map<String, Object> review = (Map<String, Object>) manifest.getOrDefault("review_config", Map.of());
         final Map<String, Object> traj = (Map<String, Object>) manifest.getOrDefault("trajectory_review_config", Map.of());
@@ -132,6 +139,27 @@ public final class Collect {
         // run - a chart data blob, not a leaderboard scalar, so it lives alongside "steps"
         out.put("speed_by_context", jf.getOrDefault("speed_by_context", List.of()));
         return out;
+    }
+
+    /** #337: groups runDir/task_attempts.jsonl by task_id - tasks_with_retries counts task ids with
+     *  more than one logged attempt, tasks_rescued counts task ids where any attempt's
+     *  rescue_succeeded is true (see RunBench.logTaskAttempt()). Missing/unreadable file reads as
+     *  all-zero (a run too old to have the file, or one with no retries/rescues at all look the
+     *  same here - both correctly report "no extra effort"). */
+    static Map<String, Object> taskEffortCounts(final Path runDir) {
+        final Path file = runDir.resolve("task_attempts.jsonl");
+        if (!Files.isRegularFile(file)) return Map.of("tasks_with_retries", 0, "tasks_rescued", 0);
+        try {
+            final Map<String, List<JsonNode>> byTask = new LinkedHashMap<>();
+            for (final String line : Files.readAllLines(file)) {
+                if (line.isBlank()) continue;
+                final JsonNode e = JSON.readTree(line);
+                byTask.computeIfAbsent(e.path("task_id").asText(""), k -> new ArrayList<>()).add(e);
+            }
+            final long withRetries = byTask.values().stream().filter(l -> l.size() > 1).count();
+            final long rescued = byTask.values().stream().filter(l -> l.stream().anyMatch(e -> e.path("rescue_succeeded").asBoolean(false))).count();
+            return Map.of("tasks_with_retries", (int) withRetries, "tasks_rescued", (int) rescued);
+        } catch (Exception e) { return Map.of("tasks_with_retries", 0, "tasks_rescued", 0); }
     }
 
     /** How much of the rung's own declared wall-clock budget (ladder.json's budget_sec - the SAME

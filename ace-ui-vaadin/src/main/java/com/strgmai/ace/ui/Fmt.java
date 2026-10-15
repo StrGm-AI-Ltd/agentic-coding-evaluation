@@ -53,6 +53,13 @@ public final class Fmt {
         return value == null ? "–" : String.format(Locale.ROOT, "%.1fs", value);
     }
 
+    /** #328: a reviewer session's own $ spend (self_review.cost_usd/trajectory_review.cost_usd) -
+     *  null means "unpriced" (ModelPricing has no rate for that model), not "free," so it reads the
+     *  same as every other missing-value "–" here, never a misleading "$0.00". */
+    public static String usd(final Double value) {
+        return value == null ? "–" : String.format(Locale.ROOT, "$%.4f", value);
+    }
+
     /** e.g. "340ms" or, once it crosses a second, "1.4s" — for a request's first_byte_ms (TTFT). */
     public static String millis(final Long value) {
         if (value == null) {

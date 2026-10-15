@@ -523,6 +523,15 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
             lines.add("usable_context: " + (usableContext.isNumber()
                     ? Fmt.count(usableContext.longValue()) : Fmt.textOr(usableContext, "–")));
         }
+        // #328: an external (paid) self-review/trajectory-review session's own $ spend - omitted,
+        // same as every other absent key in this block, both when that step never ran AND when it
+        // ran but the model has no known price (ModelPricing's own "don't guess" rule) - never a
+        // misleading "$0.00" for either case.
+        for (final var field : List.of("self_review", "trajectory_review")) {
+            final var review = manifest == null ? null : manifest.get(field);
+            if (review != null && review.isObject() && review.hasNonNull("cost_usd"))
+                lines.add(field + "_cost_usd: " + Fmt.usd(review.get("cost_usd").doubleValue()));
+        }
         if (resultsDir != null && !resultsDir.isBlank()) {
             lines.add("results: " + resultsDir);
         }
