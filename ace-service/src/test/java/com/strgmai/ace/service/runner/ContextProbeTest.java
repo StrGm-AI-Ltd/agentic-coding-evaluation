@@ -115,4 +115,18 @@ class ContextProbeTest {
             upstream.stop(0);
         }
     }
+
+    // #340: restoreCap() must never touch the real oMLX install (setModelCap/restartServer, both
+    // real-filesystem/real-process operations with no test seam) unless THIS job's own prepareCap()
+    // actually raised something - these two guard-clause cases are exactly the ones a future change
+    // to restoreCap()'s condition could silently break into a real restart during `./gradlew test`.
+    @Test
+    void restoreCapIsANoOpWhenPrepareCapNeverRaisedAnything() throws Exception {
+        new ContextProbe().restoreCap("some-model", "http://127.0.0.1:9191/v1", "k", Map.of());
+    }
+
+    @Test
+    void restoreCapIsANoOpWhenCapInfoExplicitlyMarksNoRaise() throws Exception {
+        new ContextProbe().restoreCap("some-model", "http://127.0.0.1:9191/v1", "k", Map.of("raised", false));
+    }
 }

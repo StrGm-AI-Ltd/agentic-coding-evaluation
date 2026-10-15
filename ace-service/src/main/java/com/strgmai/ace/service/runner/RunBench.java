@@ -416,204 +416,216 @@ public class RunBench {
         if (!(cfg.get("java_home") instanceof String jh) || jh.isBlank())
             cfg.put("java_home", props.javaHome() == null || props.javaHome().isBlank()
                     ? DockerService.sh(20, "/usr/libexec/java_home", "-v", String.valueOf(cfg.getOrDefault("java_major", 21))).out().strip() : props.javaHome());
-        // ---- step 0: probe the window this setup offers, derive every knob (ports apply_context) ----
-        Map<String, Object> probeRec = null, derived = Map.of();
-        Map<String, Object> probeSansCurve;
-        if (Boolean.TRUE.equals(cfg.get("context_probe"))) {
-            Map<String, Object> ensured = probe.ensure(props, Boolean.TRUE.equals(cfg.get("context_probe_fresh")),
-                    cfg.get("task_wall_sec") instanceof Number n ? n.intValue() : null, null);
-            probeRec = (Map<String, Object>) ensured.get("probe");
-            derived = (Map<String, Object>) ensured.get("derived");
-            if (derived == null || Boolean.TRUE.equals(derived.get("too_small")))
-                throw new IllegalStateException("context probe failed: " + ensured.getOrDefault("error", "window below context.min_usable: this setup is not benchmarkable as configured"));
-            probeSansCurve = new LinkedHashMap<>(probeRec);
-            probeSansCurve.remove("curve");
-            Files.writeString(rd.resolve("context_probe.json"), json.writerWithDefaultPrettyPrinter().writeValueAsString(probeSansCurve));
-            Packs.setWindow((Integer) derived.get("usable_context"));
-            Packs.setScale(((Number) derived.get("pack_scale")).doubleValue(), Map.of("contract", Packs.CAPS.get("contract")));
-            cfg.put("usable_context", derived.get("usable_context"));
-            cfg.put("max_output_tokens", derived.get("max_output_tokens"));
-            cfg.put("compaction_trigger", derived.get("compaction_trigger_tokens"));
-            List<double[]> decodeCurve = new ArrayList<>();   // convert the probe record ONCE (R8's time model)
-            for (Object o : (List<?>) probeRec.getOrDefault("curve", List.of())) {
-                final Map<String, Object> c = (Map<String, Object>) o;
-                if ("200".equals(String.valueOf(c.get("status"))) && c.get("prompt_tokens") instanceof Number && c.get("decode_tps") instanceof Number)
-                    decodeCurve.add(new double[]{((Number) c.get("prompt_tokens")).doubleValue(), ((Number) c.get("decode_tps")).doubleValue()});
+        Map<String, Object> capInfo = null;
+        try {
+            // ---- step 0: probe the window this setup offers, derive every knob (ports apply_context) ----
+            Map<String, Object> probeRec = null, derived = Map.of();
+            Map<String, Object> probeSansCurve;
+            if (Boolean.TRUE.equals(cfg.get("context_probe"))) {
+                Map<String, Object> ensured = probe.ensure(props, Boolean.TRUE.equals(cfg.get("context_probe_fresh")),
+                        cfg.get("task_wall_sec") instanceof Number n ? n.intValue() : null, null);
+                probeRec = (Map<String, Object>) ensured.get("probe");
+                derived = (Map<String, Object>) ensured.get("derived");
+                capInfo = (Map<String, Object>) ensured.get("cap_info");
+                if (derived == null || Boolean.TRUE.equals(derived.get("too_small")))
+                    throw new IllegalStateException("context probe failed: " + ensured.getOrDefault("error", "window below context.min_usable: this setup is not benchmarkable as configured"));
+                probeSansCurve = new LinkedHashMap<>(probeRec);
+                probeSansCurve.remove("curve");
+                Files.writeString(rd.resolve("context_probe.json"), json.writerWithDefaultPrettyPrinter().writeValueAsString(probeSansCurve));
+                Packs.setWindow((Integer) derived.get("usable_context"));
+                Packs.setScale(((Number) derived.get("pack_scale")).doubleValue(), Map.of("contract", Packs.CAPS.get("contract")));
+                cfg.put("usable_context", derived.get("usable_context"));
+                cfg.put("max_output_tokens", derived.get("max_output_tokens"));
+                cfg.put("compaction_trigger", derived.get("compaction_trigger_tokens"));
+                List<double[]> decodeCurve = new ArrayList<>();   // convert the probe record ONCE (R8's time model)
+                for (Object o : (List<?>) probeRec.getOrDefault("curve", List.of())) {
+                    final Map<String, Object> c = (Map<String, Object>) o;
+                    if ("200".equals(String.valueOf(c.get("status"))) && c.get("prompt_tokens") instanceof Number && c.get("decode_tps") instanceof Number)
+                        decodeCurve.add(new double[]{((Number) c.get("prompt_tokens")).doubleValue(), ((Number) c.get("decode_tps")).doubleValue()});
+                }
+                cfg.put("_decode_curve", decodeCurve);
+            } else {
+                // the job's own pinned window (queue runs, per arm) wins over the operator's global one.
+                // #298: effectiveContextWindow(), not the raw accessor - this codebase's own pervasive
+                // "0 = unlimited" convention (every other budget knob throughout this class) means an
+                // operator setting ace.context-window: 0 to mean "no cap" expects that, not for the
+                // window to collapse to a literal 0; effectiveContextWindow() already treats
+                // null-or-non-positive as "unset" so this default applies the same way either case.
+                int window = cfg.get("context_window") instanceof Number n ? n.intValue()
+                        : props.effectiveContextWindow() == null ? 262144 : props.effectiveContextWindow();
+                // Map.of() rejects a null value outright - min_decode_tps IS null here: skipping the probe
+                // (step 0's whole job is measuring it) means there is no measured decode throughput
+                final Map<String, Object> derivedNoProbe = new LinkedHashMap<>();
+                derivedNoProbe.put("usable_context", window);
+                derivedNoProbe.put("pack_scale", Math.max(0.25, Math.min(1.0, window / 65536.0)));
+                derivedNoProbe.put("max_output_tokens", Math.min(props.maxOutputTokens(), (int) (window * 0.125)));
+                derivedNoProbe.put("compaction_trigger_tokens", (int) (window * 0.43));
+                derivedNoProbe.put("task_tokens", (int) (window * 1.25 / 1000) * 1000);
+                derivedNoProbe.put("min_decode_tps", null);
+                derivedNoProbe.put("max_parallel", 1);
+                derived = derivedNoProbe;
+                Packs.setWindow(window);
+                Packs.setScale((Double) derived.get("pack_scale"), Map.of());
+                cfg.put("usable_context", window);
+                cfg.put("max_output_tokens", derivedNoProbe.get("max_output_tokens"));
             }
-            cfg.put("_decode_curve", decodeCurve);
-        } else {
-            // the job's own pinned window (queue runs, per arm) wins over the operator's global one.
-            // #298: effectiveContextWindow(), not the raw accessor - this codebase's own pervasive
-            // "0 = unlimited" convention (every other budget knob throughout this class) means an
-            // operator setting ace.context-window: 0 to mean "no cap" expects that, not for the
-            // window to collapse to a literal 0; effectiveContextWindow() already treats
-            // null-or-non-positive as "unset" so this default applies the same way either case.
-            int window = cfg.get("context_window") instanceof Number n ? n.intValue()
-                    : props.effectiveContextWindow() == null ? 262144 : props.effectiveContextWindow();
-            // Map.of() rejects a null value outright - min_decode_tps IS null here: skipping the probe
-            // (step 0's whole job is measuring it) means there is no measured decode throughput
-            final Map<String, Object> derivedNoProbe = new LinkedHashMap<>();
-            derivedNoProbe.put("usable_context", window);
-            derivedNoProbe.put("pack_scale", Math.max(0.25, Math.min(1.0, window / 65536.0)));
-            derivedNoProbe.put("max_output_tokens", Math.min(props.maxOutputTokens(), (int) (window * 0.125)));
-            derivedNoProbe.put("compaction_trigger_tokens", (int) (window * 0.43));
-            derivedNoProbe.put("task_tokens", (int) (window * 1.25 / 1000) * 1000);
-            derivedNoProbe.put("min_decode_tps", null);
-            derivedNoProbe.put("max_parallel", 1);
-            derived = derivedNoProbe;
-            Packs.setWindow(window);
-            Packs.setScale((Double) derived.get("pack_scale"), Map.of());
-            cfg.put("usable_context", window);
-            cfg.put("max_output_tokens", derivedNoProbe.get("max_output_tokens"));
-        }
-        // an explicit --max-tokens is an operator override, not a measurement: it wins over
-        // whatever step 0 (probed or not) derived
-        if (cfg.get("max_tokens_override") instanceof Number mt) cfg.put("max_output_tokens", mt.intValue());
-        // 0 means unlimited (the system-wide "0 = no budget" convention)
-        final int firstTokenTimeoutSec = cfg.get("first_token_timeout_sec") instanceof Number n3 ? n3.intValue() : 0;
-        cfg.put("first_token_timeout_ms", firstTokenTimeoutSec * 1000L);
-        // pinned once per run and reused at every proxies.start(...) call site (RunBench, Reviews) -
-        // the run's own sampler knobs (#72): null fields fall back to the operator-wide ace.*
-        // default, or are simply omitted from the request when no such default exists (see
-        // RecordingProxy.forward()). firstTokenTimeoutSec (#92) is not a sampler knob, but rides the
-        // same "one bag of per-run proxy config, pinned once" vehicle rather than a second one -
-        // it bounds RecordingProxy's own upstream connect wait, which used to be a hardcoded 290s
-        // regardless of what --first-token-timeout was actually set to.
-        cfg.put("_sampler_overrides", new RecordingProxy.SamplerOverrides(
-                cfg.get("temperature") instanceof Number t ? t.doubleValue() : null,
-                cfg.get("top_p") instanceof Number tp ? tp.doubleValue() : null,
-                cfg.get("top_k") instanceof Number tk ? tk.intValue() : null,
-                cfg.get("repetition_penalty") instanceof Number rp ? rp.doubleValue() : null,
-                cfg.get("max_output_tokens") instanceof Number mo ? mo.intValue() : null,
-                cfg.get("reasoning_effort") instanceof String re && !re.isBlank() ? re : null,
-                firstTokenTimeoutSec,
-                cfg.get("usable_context") instanceof Number uc ? uc.intValue() : null));
-        // 0 means unlimited (the system-wide "0 = no budget" convention)
-        final int taskWall = cfg.get("task_wall_sec") instanceof Number n ? n.intValue() : 0;
-        long taskTokens = cfg.get("task_tokens") instanceof Number n2 ? n2.longValue()
-                : ((Number) derived.getOrDefault("task_tokens", 0)).longValue();
-        if (!(cfg.get("compaction_trigger") instanceof Number)) cfg.put("compaction_trigger", props.compactionTrigger());
-        // #236: harness=pi needs its own HOME seeded with a models.json before any session runs -
-        // this is the one-time per-run setup (mirrors Python's run_once() setup + fresh_home());
-        // the per-call baseUrl patch happens separately, right before each individual pi invocation
-        if ("pi".equals(cfg.get("harness")))
-            PiAgent.seedHome(home, (String) cfg.getOrDefault("model", props.model()),
-                    (Integer) cfg.get("usable_context"), (Integer) cfg.get("max_output_tokens"));
+            // an explicit --max-tokens is an operator override, not a measurement: it wins over
+            // whatever step 0 (probed or not) derived
+            if (cfg.get("max_tokens_override") instanceof Number mt) cfg.put("max_output_tokens", mt.intValue());
+            // 0 means unlimited (the system-wide "0 = no budget" convention)
+            final int firstTokenTimeoutSec = cfg.get("first_token_timeout_sec") instanceof Number n3 ? n3.intValue() : 0;
+            cfg.put("first_token_timeout_ms", firstTokenTimeoutSec * 1000L);
+            // pinned once per run and reused at every proxies.start(...) call site (RunBench, Reviews) -
+            // the run's own sampler knobs (#72): null fields fall back to the operator-wide ace.*
+            // default, or are simply omitted from the request when no such default exists (see
+            // RecordingProxy.forward()). firstTokenTimeoutSec (#92) is not a sampler knob, but rides the
+            // same "one bag of per-run proxy config, pinned once" vehicle rather than a second one -
+            // it bounds RecordingProxy's own upstream connect wait, which used to be a hardcoded 290s
+            // regardless of what --first-token-timeout was actually set to.
+            cfg.put("_sampler_overrides", new RecordingProxy.SamplerOverrides(
+                    cfg.get("temperature") instanceof Number t ? t.doubleValue() : null,
+                    cfg.get("top_p") instanceof Number tp ? tp.doubleValue() : null,
+                    cfg.get("top_k") instanceof Number tk ? tk.intValue() : null,
+                    cfg.get("repetition_penalty") instanceof Number rp ? rp.doubleValue() : null,
+                    cfg.get("max_output_tokens") instanceof Number mo ? mo.intValue() : null,
+                    cfg.get("reasoning_effort") instanceof String re && !re.isBlank() ? re : null,
+                    firstTokenTimeoutSec,
+                    cfg.get("usable_context") instanceof Number uc ? uc.intValue() : null));
+            // 0 means unlimited (the system-wide "0 = no budget" convention)
+            final int taskWall = cfg.get("task_wall_sec") instanceof Number n ? n.intValue() : 0;
+            long taskTokens = cfg.get("task_tokens") instanceof Number n2 ? n2.longValue()
+                    : ((Number) derived.getOrDefault("task_tokens", 0)).longValue();
+            if (!(cfg.get("compaction_trigger") instanceof Number)) cfg.put("compaction_trigger", props.compactionTrigger());
+            // #236: harness=pi needs its own HOME seeded with a models.json before any session runs -
+            // this is the one-time per-run setup (mirrors Python's run_once() setup + fresh_home());
+            // the per-call baseUrl patch happens separately, right before each individual pi invocation
+            if ("pi".equals(cfg.get("harness")))
+                PiAgent.seedHome(home, (String) cfg.getOrDefault("model", props.model()),
+                        (Integer) cfg.get("usable_context"), (Integer) cfg.get("max_output_tokens"));
 
-        final Map<String, Object> manifest = new LinkedHashMap<>();
-        manifest.put("schema_version", BenchProperties.RESULT_SCHEMA);
-        manifest.put("run_id", runId);
-        manifest.put("task", task);
-        manifest.put("mode", mode);
-        manifest.put("plan_source", planSource);
-        manifest.put("harness_version", BenchProperties.HARNESS_VERSION);
-        manifest.put("started", nowIso());
-        manifest.put("derived", derived);
-        manifest.put("snapshots", new LinkedHashMap<String, String>());
-        manifest.put("phases", new ArrayList<Map<String, Object>>());
-        manifest.put("tasks", new ArrayList<Map<String, Object>>());
-        manifest.put("waves", new ArrayList<Map<String, Object>>());
-        manifest.put("docker_windows", new ArrayList<Map<String, Object>>());
-        manifest.put("provenance", Map.of("model", cfg.getOrDefault("model", props.model()), "harness", cfg.getOrDefault("harness", "ref"),
-                "harness_version", BenchProperties.HARNESS_VERSION, "java_home", cfg.get("java_home"),
-                "runner", System.getProperty("ace.build", "ace-service")));
-        // was always read for comparability (StatsService.KEY_FIELDS) but never actually written -
-        // every run compared equal (both null) on this field, giving it no real protective value.
-        // A run-level override replaces ReferenceAgent's own per-phase-kind DEFAULT_REASONING
-        // table entirely (design rule 5: "record what was sent, not what was configured");
-        // unset stays "default"
-        manifest.put("reasoning_policy", cfg.get("reasoning_effort") instanceof String re && !re.isBlank() ? re : "default");
-        // #265, found live: this fires on every run() invocation - the original job start AND every
-        // resume-after-pause, force-moving the SAME tag each time (RunBenchSupport.snapshot does
-        // `git tag -f`) - so it marks "where THIS attempt began," not "the run's true beginning."
-        // It was named "phase/start" and so matched nearestPhaseTagSha's own "phase/*" glob,
-        // silently winning over the real task-boundary tag (e.g. phase/T3) it's nearer to after any
-        // pause/resume - diffAgainstTag (the UI's Changes tab) and Judge.currentDiffSummary() both
-        // call nearestPhaseTagSha, so both were silently showing only the diff since the last
-        // resume, not the task's real cumulative diff. Named outside the "phase/*" namespace so it
-        // can never collide with a real phase/task boundary again.
-        ((Map<String, String>) manifest.get("snapshots")).put("start", RunBenchSupport.snapshot(ws, "run/start"));
-        Path journal = rd.resolve("interactions.jsonl");
+            final Map<String, Object> manifest = new LinkedHashMap<>();
+            manifest.put("schema_version", BenchProperties.RESULT_SCHEMA);
+            manifest.put("run_id", runId);
+            manifest.put("task", task);
+            manifest.put("mode", mode);
+            manifest.put("plan_source", planSource);
+            manifest.put("harness_version", BenchProperties.HARNESS_VERSION);
+            manifest.put("started", nowIso());
+            manifest.put("derived", derived);
+            manifest.put("snapshots", new LinkedHashMap<String, String>());
+            manifest.put("phases", new ArrayList<Map<String, Object>>());
+            manifest.put("tasks", new ArrayList<Map<String, Object>>());
+            manifest.put("waves", new ArrayList<Map<String, Object>>());
+            manifest.put("docker_windows", new ArrayList<Map<String, Object>>());
+            manifest.put("provenance", Map.of("model", cfg.getOrDefault("model", props.model()), "harness", cfg.getOrDefault("harness", "ref"),
+                    "harness_version", BenchProperties.HARNESS_VERSION, "java_home", cfg.get("java_home"),
+                    "runner", System.getProperty("ace.build", "ace-service")));
+            // was always read for comparability (StatsService.KEY_FIELDS) but never actually written -
+            // every run compared equal (both null) on this field, giving it no real protective value.
+            // A run-level override replaces ReferenceAgent's own per-phase-kind DEFAULT_REASONING
+            // table entirely (design rule 5: "record what was sent, not what was configured");
+            // unset stays "default"
+            manifest.put("reasoning_policy", cfg.get("reasoning_effort") instanceof String re && !re.isBlank() ? re : "default");
+            // #265, found live: this fires on every run() invocation - the original job start AND every
+            // resume-after-pause, force-moving the SAME tag each time (RunBenchSupport.snapshot does
+            // `git tag -f`) - so it marks "where THIS attempt began," not "the run's true beginning."
+            // It was named "phase/start" and so matched nearestPhaseTagSha's own "phase/*" glob,
+            // silently winning over the real task-boundary tag (e.g. phase/T3) it's nearer to after any
+            // pause/resume - diffAgainstTag (the UI's Changes tab) and Judge.currentDiffSummary() both
+            // call nearestPhaseTagSha, so both were silently showing only the diff since the last
+            // resume, not the task's real cumulative diff. Named outside the "phase/*" namespace so it
+            // can never collide with a real phase/task boundary again.
+            ((Map<String, String>) manifest.get("snapshots")).put("start", RunBenchSupport.snapshot(ws, "run/start"));
+            Path journal = rd.resolve("interactions.jsonl");
 
-        DockerService.dockerTools(home.toString());   // CLI plugins (R7), before the HOME is copied for parallel tasks
-        cfg.put("_agent_env", RunBenchSupport.scrubbedEnv(home.toString(), runId, (String) cfg.get("java_home")));   // isolation reaches the agent
+            DockerService.dockerTools(home.toString());   // CLI plugins (R7), before the HOME is copied for parallel tasks
+            cfg.put("_agent_env", RunBenchSupport.scrubbedEnv(home.toString(), runId, (String) cfg.get("java_home")));   // isolation reaches the agent
 
-        if ("orchestrated".equals(mode)) orchestratedPhase(cfg, runId, rd, ws, home, journal, manifest, planSource, promptText, taskWall, taskTokens, task);
-        else monolithicPhases(cfg, runId, rd, ws, journal, manifest, promptText, task);
-        writeManifest(rd, manifest);
-        // R17: bundle the agent's actual solution NOW - this is the FINAL bundle (#306's own
-        // snapshotRunProgress() already took one after every task/wave along the way, but this is
-        // the one that must land AFTER the whole run, not just after the last task). Nothing after
-        // this point ever adds anything worth re-bundling for: oracle scoring never commits at all, and
-        // Reviews.selfReview()/trajectoryReview() revert any source the reviewer touched (git checkout
-        // back to their own pre-review snapshot) before their own commit, so the tracked source there
-        // is byte-for-byte identical to what's bundled here already; their own report artifacts
-        // (SELF_REVIEW.md, trajectory_review.json, ...) are separately Files.copy()'d straight into rd
-        // regardless of git. Bundling here, before any of that runs, is also the safest point there
-        // is: oracle scoring runs the agent's OWN generated docker compose/build commands inside ws,
-        // and containers default to root, so anything they write back through a bind mount can leave
-        // root-owned files behind that silently break a LATER git bundle over the same tree (confirmed
-        // live: every one of 16 successfully-completed runs in the DB had no workspace.bundle at all,
-        // despite this identical command succeeding in isolation).
-        bundleWorkspace(ws, rd);
-        // rd/source/ - a PLAIN, ready-to-run directory (docker-compose.yml, Dockerfile, src/, ...),
-        // not just a .bundle a human would need to `git clone` before they could actually use it.
-        // Found live 2026-09-28: ws lives under $TMPDIR, survives only until the OS decides to sweep
-        // it - a run from days earlier had already lost its working tree AND part of its own git
-        // object store by the time anyone went looking, needing manual git-internals surgery to
-        // recover. Gates the ws/home cleanup below exactly like bundleWorkspace's own comment argues
-        // for the bundle: never delete the only copy of what a run produced without a confirmed,
-        // actually-usable replacement already sitting in rd.
-        final boolean sourceExported = exportSource(ws, rd);
-
-        // ---- reviews (scored for CALIBRATION against the oracle; they never replace it) ----
-        final Map<String, Object> reviewCfg = cfg.get("review") instanceof Map<?, ?> r ? (Map<String, Object>) r : Map.of();
-        if (Boolean.TRUE.equals(reviewCfg.get("enabled"))) {
-            final List<PlanTask> tasks = Files.isRegularFile(ws.resolve("docs/IMPLEMENTATION_PLAN.md")) ? PlanParser.parseFile(ws.resolve("docs/IMPLEMENTATION_PLAN.md")) : List.of();
-            manifest.put("self_review", reviews.selfReview(cfg, ws, rd, manifest, tasks, promptText, proxies,
-                    (String) reviewCfg.get("model"), Boolean.TRUE.equals(reviewCfg.get("blind"))));
+            if ("orchestrated".equals(mode)) orchestratedPhase(cfg, runId, rd, ws, home, journal, manifest, planSource, promptText, taskWall, taskTokens, task);
+            else monolithicPhases(cfg, runId, rd, ws, journal, manifest, promptText, task);
             writeManifest(rd, manifest);
-        }
-        final Map<String, Object> trajCfg = cfg.get("trajectory_review") instanceof Map<?, ?> t ? (Map<String, Object>) t : Map.of();
-        if (Boolean.TRUE.equals(trajCfg.get("enabled"))) {
-            manifest.put("trajectory_review", reviews.trajectoryReview(cfg, ws, rd, manifest, (String) trajCfg.get("model"), proxies));
-            writeManifest(rd, manifest);
-        }
+            // R17: bundle the agent's actual solution NOW - this is the FINAL bundle (#306's own
+            // snapshotRunProgress() already took one after every task/wave along the way, but this is
+            // the one that must land AFTER the whole run, not just after the last task). Nothing after
+            // this point ever adds anything worth re-bundling for: oracle scoring never commits at all, and
+            // Reviews.selfReview()/trajectoryReview() revert any source the reviewer touched (git checkout
+            // back to their own pre-review snapshot) before their own commit, so the tracked source there
+            // is byte-for-byte identical to what's bundled here already; their own report artifacts
+            // (SELF_REVIEW.md, trajectory_review.json, ...) are separately Files.copy()'d straight into rd
+            // regardless of git. Bundling here, before any of that runs, is also the safest point there
+            // is: oracle scoring runs the agent's OWN generated docker compose/build commands inside ws,
+            // and containers default to root, so anything they write back through a bind mount can leave
+            // root-owned files behind that silently break a LATER git bundle over the same tree (confirmed
+            // live: every one of 16 successfully-completed runs in the DB had no workspace.bundle at all,
+            // despite this identical command succeeding in isolation).
+            bundleWorkspace(ws, rd);
+            // rd/source/ - a PLAIN, ready-to-run directory (docker-compose.yml, Dockerfile, src/, ...),
+            // not just a .bundle a human would need to `git clone` before they could actually use it.
+            // Found live 2026-09-28: ws lives under $TMPDIR, survives only until the OS decides to sweep
+            // it - a run from days earlier had already lost its working tree AND part of its own git
+            // object store by the time anyone went looking, needing manual git-internals surgery to
+            // recover. Gates the ws/home cleanup below exactly like bundleWorkspace's own comment argues
+            // for the bundle: never delete the only copy of what a run produced without a confirmed,
+            // actually-usable replacement already sitting in rd.
+            final boolean sourceExported = exportSource(ws, rd);
 
-        // ---- oracle: the pinned-container build checks, the compose runtime checks, the black-box suite ----
-        manifest.put("ended", nowIso());
-        manifest.put("journal", journal.toString());
-        final Map<String, Object> facts = JournalFacts.facts(journal.toString(), null, null, List.of(), List.of(), null);
-        manifest.put("journal_facts", facts);
-        manifest.put("validity", Validity.validity(manifest, facts, props.maxErrorRate()));
-        writeManifest(rd, manifest);
-        final Map<String, Object> oracleReport = oracle.score(ws, task, (String) cfg.get("system_base_url"), manifest);
-        Files.writeString(rd.resolve("oracle.json"), json.writerWithDefaultPrettyPrinter().writeValueAsString(oracleReport));
-        // --efficiency-weight: unlike review/trajectory/parallel-plan's weight, this isn't tied to a
-        // feature that conditionally ran - it's measurable on every run, so it's recorded here rather
-        // than inside a feature-specific session method (same shape Reviews.java uses for its own
-        // *_config weights, just with no corresponding session to hang it off of)
-        if (cfg.get("efficiency_weight") instanceof Number ew)
-            Reviews.manifestMap(manifest, "efficiency_config").put("weight", ew.doubleValue());
-        // ---- metrics.json: the leaderboard block + per-step scores (collect.py) ----
-        Files.writeString(rd.resolve("metrics.json"), json.writerWithDefaultPrettyPrinter()
-                .writeValueAsString(com.strgmai.ace.service.metrics.Collect.collect(rd, manifest)));
-        // ---- trajectory metrics from the journal ----
-        final Map<String, Object> summary = reviews.renderTrajectory(rd, manifest);
-        manifest.put("decode_tps_median", summary.get("decode_tps_median"));
-        manifest.put("decode_tps_median_short", summary.get("decode_tps_median_short"));
-        manifest.put("contention", Map.of("docker_up", DockerService.dockerRunning(), "docker_windows", manifest.get("docker_windows")));
-        writeManifest(rd, manifest);
-        //todo ACE should be model provider agnostic
-        captureOmlxLog(rd, manifest);
-        // ws is never deleted: it's the run's own git repo, and the ONLY place a task's commit
-        // (manifest.snapshots.<id>) can be `git show`n directly - workspace.bundle/source/ in rd
-        // are a second, resilient copy for when ws's $TMPDIR location gets swept, not a replacement
-        // for being able to inspect the real thing. home has no such role (just the scrubbed HOME
-        // copy agent sessions ran under) and is still cleaned up once a usable copy of the source
-        // is confirmed sitting in rd.
-        if (sourceExported) deleteRecursive(home);
-        return manifest;
+            // ---- reviews (scored for CALIBRATION against the oracle; they never replace it) ----
+            final Map<String, Object> reviewCfg = cfg.get("review") instanceof Map<?, ?> r ? (Map<String, Object>) r : Map.of();
+            if (Boolean.TRUE.equals(reviewCfg.get("enabled"))) {
+                final List<PlanTask> tasks = Files.isRegularFile(ws.resolve("docs/IMPLEMENTATION_PLAN.md")) ? PlanParser.parseFile(ws.resolve("docs/IMPLEMENTATION_PLAN.md")) : List.of();
+                manifest.put("self_review", reviews.selfReview(cfg, ws, rd, manifest, tasks, promptText, proxies,
+                        (String) reviewCfg.get("model"), Boolean.TRUE.equals(reviewCfg.get("blind"))));
+                writeManifest(rd, manifest);
+            }
+            final Map<String, Object> trajCfg = cfg.get("trajectory_review") instanceof Map<?, ?> t ? (Map<String, Object>) t : Map.of();
+            if (Boolean.TRUE.equals(trajCfg.get("enabled"))) {
+                manifest.put("trajectory_review", reviews.trajectoryReview(cfg, ws, rd, manifest, (String) trajCfg.get("model"), proxies));
+                writeManifest(rd, manifest);
+            }
+
+            // ---- oracle: the pinned-container build checks, the compose runtime checks, the black-box suite ----
+            manifest.put("ended", nowIso());
+            manifest.put("journal", journal.toString());
+            final Map<String, Object> facts = JournalFacts.facts(journal.toString(), null, null, List.of(), List.of(), null);
+            manifest.put("journal_facts", facts);
+            manifest.put("validity", Validity.validity(manifest, facts, props.maxErrorRate()));
+            writeManifest(rd, manifest);
+            final Map<String, Object> oracleReport = oracle.score(ws, task, (String) cfg.get("system_base_url"), manifest);
+            Files.writeString(rd.resolve("oracle.json"), json.writerWithDefaultPrettyPrinter().writeValueAsString(oracleReport));
+            // --efficiency-weight: unlike review/trajectory/parallel-plan's weight, this isn't tied to a
+            // feature that conditionally ran - it's measurable on every run, so it's recorded here rather
+            // than inside a feature-specific session method (same shape Reviews.java uses for its own
+            // *_config weights, just with no corresponding session to hang it off of)
+            if (cfg.get("efficiency_weight") instanceof Number ew)
+                Reviews.manifestMap(manifest, "efficiency_config").put("weight", ew.doubleValue());
+            // ---- metrics.json: the leaderboard block + per-step scores (collect.py) ----
+            Files.writeString(rd.resolve("metrics.json"), json.writerWithDefaultPrettyPrinter()
+                    .writeValueAsString(com.strgmai.ace.service.metrics.Collect.collect(rd, manifest)));
+            // ---- trajectory metrics from the journal ----
+            final Map<String, Object> summary = reviews.renderTrajectory(rd, manifest);
+            manifest.put("decode_tps_median", summary.get("decode_tps_median"));
+            manifest.put("decode_tps_median_short", summary.get("decode_tps_median_short"));
+            manifest.put("contention", Map.of("docker_up", DockerService.dockerRunning(), "docker_windows", manifest.get("docker_windows")));
+            writeManifest(rd, manifest);
+            //todo ACE should be model provider agnostic
+            captureOmlxLog(rd, manifest);
+            // ws is never deleted: it's the run's own git repo, and the ONLY place a task's commit
+            // (manifest.snapshots.<id>) can be `git show`n directly - workspace.bundle/source/ in rd
+            // are a second, resilient copy for when ws's $TMPDIR location gets swept, not a replacement
+            // for being able to inspect the real thing. home has no such role (just the scrubbed HOME
+            // copy agent sessions ran under) and is still cleaned up once a usable copy of the source
+            // is confirmed sitting in rd.
+            if (sourceExported) deleteRecursive(home);
+            return manifest;
+        } finally {
+            // #340: restore whatever max_context_window override existed before THIS job's own
+            // prepareCap() raised it (null means none existed) - success, failure, or exception,
+            // so an operator who isn't running ACE right now gets their own setting back instead
+            // of whatever this job last measured. No-op if prepareCap() never actually raised it.
+            if (capInfo != null)
+                probe.restoreCap((String) cfg.getOrDefault("model", props.model()), props.endpoint(),
+                        props.apiKey() == null ? "" : props.apiKey(), capInfo);
+        }
     }
 
     /** Snapshots the run's own slice of the oMLX server log into rd/omlx_server.log, when
