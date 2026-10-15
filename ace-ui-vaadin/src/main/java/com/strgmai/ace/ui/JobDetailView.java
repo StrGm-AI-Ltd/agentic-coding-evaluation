@@ -528,16 +528,16 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         ? (t.title() == null ? "" : t.title()) : t.goal())
                 .setHeader("description").setFlexGrow(1);
         grid.addColumn(t -> taskStatus(live.sessions(), t,
-                        currentJob != null && JobStatuses.isTerminal(currentJob.status())))
+                        currentJob != null && JobStatuses.isTerminal(currentJob.status()), live.currentStep()))
                 .setHeader("status").setAutoWidth(true).setFlexGrow(0)
                 // #262: the status word alone doesn't say WHY a task didn't just succeed - hover
                 // for the agent's own self-reported detail (or the harness fallback's explanation).
                 .setTooltipGenerator(t -> taskStatusReason(live.sessions(), t));
-        grid.addColumn(t -> Fmt.daysHoursMinutes(taskStats(live.sessions(), t.id()).wallSec()))
+        grid.addColumn(t -> Fmt.daysHoursMinutes(taskStats(live.sessions(), t.id(), live.currentStep()).wallSec()))
                 .setHeader("time").setAutoWidth(true).setFlexGrow(0);
-        grid.addColumn(t -> Fmt.count(taskStats(live.sessions(), t.id()).completionTokens()))
+        grid.addColumn(t -> Fmt.count(taskStats(live.sessions(), t.id(), live.currentStep()).completionTokens()))
                 .setHeader("generated").setAutoWidth(true).setFlexGrow(0);
-        grid.addColumn(t -> Fmt.count(taskStats(live.sessions(), t.id()).promptTokens()))
+        grid.addColumn(t -> Fmt.count(taskStats(live.sessions(), t.id(), live.currentStep()).promptTokens()))
                 .setHeader("prefilled").setAutoWidth(true).setFlexGrow(0);
         grid.getColumns().forEach(c -> c.setResizable(true));
         grid.addItemClickListener(e -> openTaskPromptDialog(e.getItem()));
@@ -590,17 +590,26 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  data alone read a genuinely-finished task as "not started" every time. terminal is only the
      *  very last resort, for a task none of these signals has anything on at all (e.g. the plan file
      *  itself couldn't be matched to a tag for some reason) - "not started" would be an outright
-     *  wrong claim on an already-finished job there. */
-    static String taskStatus(final List<JobLiveState.SessionRow> sessions, final Api.PlanTask task, final boolean terminal) {
+     *  wrong claim on an already-finished job there.
+     *
+     *  #335, found live: "nothing is more current than it is running right now" stops being true
+     *  the moment a DIFFERENT task is demonstrably the live one - a pause+reorder (or any other
+     *  interruption that never produces a session_done) leaves the old session permanently
+     *  unclosed, and closeAbandonedAttempt() only fires when THIS SAME task is retried, which can
+     *  be many tasks away. currentStep is the one live signal that's always current regardless of
+     *  which task it names - an unclosed session only still counts as "running" when it's also the
+     *  current step; otherwise it's treated exactly like an already-recognized abandoned attempt. */
+    static String taskStatus(final List<JobLiveState.SessionRow> sessions, final Api.PlanTask task, final boolean terminal, final String currentStep) {
         final var last = lastMatchingSession(sessions, task.id());
-        if (last != null && last.endedStage() == null) return "running";
+        if (last != null && last.endedStage() == null && task.id().equals(currentStep)) return "running";
+        final var endedStage = last == null ? null : (last.endedStage() != null ? last.endedStage() : "interrupted");
         if (task.implemented()) {
             final var reported = task.reported_status();
             final var suffix = task.handoff_done() ? "" : " (handoff pending)";
             if (reported != null) return reported + suffix;
             return task.handoff_done() ? "done" : "implemented (handoff pending)";
         }
-        if (last != null) return last.endedStage();
+        if (endedStage != null) return endedStage;
         return terminal ? "see Run detail" : "not started";
     }
 
@@ -632,12 +641,20 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  only needs the CURRENT state), this sums EVERY session matching the task's id: a task
      *  retried or continued across multiple sessions has genuinely spent time/tokens in all of
      *  them, not just its latest one, same reasoning JobLiveState.totalActiveSeconds() already
-     *  applies at the whole-run level. A still-open session (no endedStage yet) contributes its
-     *  own elapsed-so-far, so the figure ticks up live while a task is actually running. */
+     *  applies at the whole-run level. A still-open session for the task that's actually the
+     *  current step contributes its own elapsed-so-far, so the figure ticks up live while a task
+     *  is actually running.
+     *
+     *  #335: an unclosed session for a DIFFERENT (non-current) task was abandoned, not running -
+     *  summing to "now" would grow it forever even though nothing has touched that task since.
+     *  Frozen instead at the earliest moment some OTHER task's own session started after this one
+     *  began - the latest point this session could still have been the live one - falling back to
+     *  "now" only if nothing else has started since (shouldn't happen: that would make it the
+     *  current step, the branch above). */
     record TaskStats(double wallSec, long completionTokens, long promptTokens) {
     }
 
-    static TaskStats taskStats(final List<JobLiveState.SessionRow> sessions, final String taskId) {
+    static TaskStats taskStats(final List<JobLiveState.SessionRow> sessions, final String taskId, final String currentStep) {
         final var prefix = "Task " + taskId;
         var wall = 0.0;
         var completion = 0L;
@@ -649,12 +666,36 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 if (s.wallSec() != null) wall += s.wallSec();
             } else {
                 final var start = Fmt.parseTime(s.ts());
-                if (start != null) wall += Duration.between(start, OffsetDateTime.now()).getSeconds();
+                if (start != null) {
+                    final var end = taskId.equals(currentStep) ? OffsetDateTime.now()
+                            : earliestOtherTaskSessionStartAfter(sessions, taskId, s.ts());
+                    wall += Duration.between(start, end != null ? end : OffsetDateTime.now()).getSeconds();
+                }
             }
             if (s.totalTokens() != null) completion += s.totalTokens();
             if (s.promptTokens() != null) prompt += s.promptTokens();
         }
         return new TaskStats(wall, completion, prompt);
+    }
+
+    /** The earliest start, across every session in the run, strictly after afterTs - excluding
+     *  taskId's own (sub-)sessions (a judge/continuation/handoff turn for the SAME task is still
+     *  that task running, not evidence something else superseded it). name() is the session's raw
+     *  label ("T21", "T21-judge-turn20", ...), unlike description()'s human-rendered form - a
+     *  plain prefix+hyphen check on it avoids the same T2-vs-T21 collision lastMatchingSession's
+     *  own prefix+space check on description() guards against. */
+    private static OffsetDateTime earliestOtherTaskSessionStartAfter(
+            final List<JobLiveState.SessionRow> sessions, final String taskId, final String afterTs) {
+        final var after = Fmt.parseTime(afterTs);
+        if (after == null) return null;
+        OffsetDateTime earliest = null;
+        for (final var s : sessions) {
+            final var name = s.name();
+            if (name != null && (name.equals(taskId) || name.startsWith(taskId + "-"))) continue;
+            final var t = Fmt.parseTime(s.ts());
+            if (t != null && t.isAfter(after) && (earliest == null || t.isBefore(earliest))) earliest = t;
+        }
+        return earliest;
     }
 
     /** The task's prompt and its own git changes, on demand, as two tabs of one dialog. Polling
