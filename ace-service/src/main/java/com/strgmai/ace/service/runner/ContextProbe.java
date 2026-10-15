@@ -211,6 +211,30 @@ public final class ContextProbe {
         return prev;
     }
 
+    /** #340: setModelCap() always WRITES a value - this is its matching "put it back to unset"
+     *  operation, for when no override existed before this job's own raise (setModelCap()'s own
+     *  "previous value" was null). */
+    static void clearModelCap(final String model) throws IOException {
+        if (!Files.exists(MODEL_SETTINGS)) return;
+        final ObjectNode d = (ObjectNode) JSON.readTree(Files.readString(MODEL_SETTINGS));
+        if (d.has("models") && d.get("models").isObject() && d.get("models").has(model)) {
+            ((ObjectNode) d.get("models").get(model)).remove("max_context_window");
+            Files.writeString(MODEL_SETTINGS, JSON.writerWithDefaultPrettyPrinter().writeValueAsString(d));
+        }
+    }
+
+    /** #340: restore whatever max_context_window override existed before THIS job's own
+     *  prepareCap() raised it - called once at job end (success, failure, or exception) by
+     *  RunBench.runOnce()'s finally block, using the exact capInfo prepareCap() returned. A no-op
+     *  if prepareCap() never actually raised anything (capInfo.get("raised") unset). */
+    public void restoreCap(final String model, final String endpoint, final String key, final Map<String, Object> capInfo) throws IOException {
+        if (!Boolean.TRUE.equals(capInfo.get("raised"))) return;
+        final Object prev = capInfo.get("prev_override");
+        if (prev == null) clearModelCap(model);
+        else setModelCap(model, ((Number) prev).intValue());
+        restartServer(endpoint, key);
+    }
+
     /** `omlx restart` with the orphan trap handled: the old server must be gone and exactly one new one must answer /health */
     public void restartServer(final String endpoint, final String key) {
         if (!Files.exists(OMLX_BIN)) throw new IllegalStateException("~/.omlx/bin/omlx not present: cannot restart the server");
@@ -258,7 +282,8 @@ public final class ContextProbe {
         final Map<String, Object> info = new LinkedHashMap<>(Map.of("cap_before", before, "positional_limit", wanted, "cap_probe", before, "restarts", 0));
         if (!Boolean.TRUE.equals(o.get("raise_cap")) || !Files.exists(OMLX_BIN)) return info;
         if (before != null && before >= wanted) return info;
-        setModelCap(model, wanted);
+        info.put("raised", true);
+        info.put("prev_override", setModelCap(model, wanted));
         restartServer(endpoint, key);
         info.merge("restarts", 1, (a, b) -> (int) a + (int) b);
         final Integer now = serverCap(endpoint, key, model);
@@ -601,10 +626,11 @@ public final class ContextProbe {
                 rec = null;
             }
         }
+        Map<String, Object> capInfo = null;
         if (rec == null) {
             if (Boolean.TRUE.equals(setup.facts().get("docker_up")))
                 return Map.of("error", "Docker Desktop is up: a probe now would measure a contended machine (decode ~4x slower, memory shared with the VM); quit Docker, or pin context-window in the config");
-            final Map<String, Object> capInfo = prepareCap(props.model(), props.endpoint(), props.apiKey() == null ? "" : props.apiKey(), modelDirs, o);
+            capInfo = prepareCap(props.model(), props.endpoint(), props.apiKey() == null ? "" : props.apiKey(), modelDirs, o);
             rec = probe(props.model(), props.endpoint(), props.apiKey() == null ? "" : props.apiKey(), o);
             rec.put("setup", setup.facts());
             rec.put("setup_key", setup.key());
@@ -625,6 +651,10 @@ public final class ContextProbe {
         out.put("probe", rec);
         out.put("derived", Boolean.TRUE.equals(rec.get("ok")) ? derive(rec, props, taskWallSec) : null);
         out.put("cache_path", path.toString());
+        // #340: only set on a FRESH probe this call actually ran (never on a cache hit) - a past
+        // invocation's own raise, if any, was already restored by that past invocation's own
+        // RunBench.runOnce() finally block; this call never touched the cap at all.
+        out.put("cap_info", capInfo);
         return out;
     }
 
