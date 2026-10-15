@@ -147,6 +147,14 @@ public class ServiceClient implements Serializable {
                 .body(Api.CompareResponse.class);
     }
 
+    public Api.MatchTasksResponse matchTasks(final String a, final String b, final Api.MatchTasksRequest request) {
+        return http.post().uri("/api/runs/{a}/compare/{b}/match-tasks", a, b)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(request)
+                .retrieve()
+                .body(Api.MatchTasksResponse.class);
+    }
+
     public Api.ImportResult importAll() {
         return http.post().uri("/api/import").retrieve().body(Api.ImportResult.class);
     }

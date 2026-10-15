@@ -57,6 +57,7 @@ class BenchControllerTest {
     private DSLContext dsl;
     private BenchProperties props;
     private Intervene intervene;
+    private com.strgmai.ace.service.runner.TaskMatcher taskMatcher;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -73,7 +74,8 @@ class BenchControllerTest {
         final Preflight preflight = mock(Preflight.class);
         final TreatmentPin pin = mock(TreatmentPin.class);
         intervene = new Intervene();
-        final var controller = new BenchController(dsl, queue, importer, experiments, stats, worker, props, preflight, pin, intervene);
+        taskMatcher = mock(com.strgmai.ace.service.runner.TaskMatcher.class);
+        final var controller = new BenchController(dsl, queue, importer, experiments, stats, worker, props, preflight, pin, intervene, taskMatcher);
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ApiExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter())
@@ -417,6 +419,41 @@ class BenchControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.tasks[0].attempts").value(0))
                 .andExpect(jsonPath("$.tasks[0].rescued").value(false));
+    }
+
+    /** #339: the endpoint must actually re-parse BOTH runs' own IMPLEMENTATION_PLAN.md (not reuse
+     *  a job's live-plan machinery, which is keyed by job id / a live workspace, not a finished
+     *  run) and hand the real parsed task lists to TaskMatcher, returning whatever it matches. */
+    @Test
+    void matchTasksParsesBothRunsPlansAndReturnsTheMatcherResult() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        Files.createDirectories(resultsDir.resolve("run-a"));
+        Files.createDirectories(resultsDir.resolve("run-b"));
+        Files.writeString(resultsDir.resolve("run-a/IMPLEMENTATION_PLAN.md"), "## T1 — deposits endpoint\n- Goal: handle deposits\n");
+        Files.writeString(resultsDir.resolve("run-b/IMPLEMENTATION_PLAN.md"), "## T9 — account and deposits\n- Goal: accounts and money rules\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(taskMatcher.match(argThat(l -> l.size() == 1 && l.get(0).id.equals("T1")),
+                argThat(l -> l.size() == 1 && l.get(0).id.equals("T9")), isNull(), any()))
+                .thenReturn(List.of(new com.strgmai.ace.service.runner.TaskMatcher.TaskMatch("T1", "deposits endpoint", "T9", "account and deposits")));
+
+        mvc.perform(post("/api/runs/run-a/compare/run-b/match-tasks").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.matches[0].aId").value("T1"))
+                .andExpect(jsonPath("$.matches[0].bId").value("T9"))
+                .andExpect(jsonPath("$.matches[0].bTitle").value("account and deposits"));
+    }
+
+    @Test
+    void matchTasksTreatsAMissingPlanFileAsAnEmptyTaskListNotAnError() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        Files.createDirectories(resultsDir.resolve("run-a"));
+        Files.createDirectories(resultsDir.resolve("run-b"));
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(taskMatcher.match(List.of(), List.of(), null, resultsDir.resolve("run-a").toRealPath())).thenReturn(List.of());
+
+        mvc.perform(post("/api/runs/run-a/compare/run-b/match-tasks").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.matches").isEmpty());
     }
 
     @Test
