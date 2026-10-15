@@ -810,6 +810,111 @@ class BenchControllerTest {
         assertFalse(com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/T3"));
     }
 
+    /** #321: the pre-run counterpart of restartTask() - a task that has never run has no
+     *  phase/{id} tag to reset to, so this endpoint takes a plain paused job and writes the
+     *  override with no git involvement at all. */
+    @Test
+    void pendingOverrideRequiresAPausedJob() throws Exception {
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "running"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/override").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail", containsString("paused")));
+        verify(queue, never()).setTaskOverride(any(), any(), any());
+    }
+
+    @Test
+    void pendingOverrideRejectsATaskThatAlreadyRan() throws Exception {
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/start");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T2");   // T2 already ran
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/override").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail", containsString("already run")))
+                .andExpect(jsonPath("$.detail", containsString("/restart")));
+        verify(queue, never()).setTaskOverride(any(), any(), any());
+    }
+
+    @Test
+    void pendingOverrideRejectsAnUnknownTaskId() throws Exception {
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/start");
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir);
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), "## T2 — second\n- Goal: b\n");
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T99/override").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail", containsString("T99")));
+        verify(queue, never()).setTaskOverride(any(), any(), any());
+    }
+
+    @Test
+    void pendingOverrideRejectsUnknownOverrideFields() throws Exception {
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/start");
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir);
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), "## T2 — second\n- Goal: b\n");
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/override").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"overrides\":{\"model\":\"some-other-model\"}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail", containsString("model")));
+        verify(queue, never()).setTaskOverride(any(), any(), any());
+    }
+
+    @Test
+    void pendingOverrideWritesTheOverrideWithNoGitSideEffects() throws Exception {
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/start");   // T2 itself never ran
+        final String beforeHead = com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "rev-parse", "HEAD");
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir);
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), """
+                ## T1 — first
+                - Goal: a
+                ## T2 — second
+                - Goal: b
+                - Dependencies: T1
+                """);
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
+        when(queue.setTaskOverride(eq(JOB_1), eq("T2"), anyMap()))
+                .thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/override").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"overrides\":{\"judge_enabled\":true,\"judge_every_n_turns\":10,\"budget_rescue_enabled\":true}}"))
+                .andExpect(status().isOk());
+
+        verify(queue).setTaskOverride(JOB_1, "T2", Map.of("judge_enabled", true, "judge_every_n_turns", 10, "budget_rescue_enabled", true));
+        // unlike restartTask(), nothing in the workspace is touched - no backup tag, no reset
+        assertTrue(com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "tag", "-l", "backup/*").isBlank());
+        assertEquals(beforeHead, com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "rev-parse", "HEAD"));
+        assertFalse(com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/T2"));
+    }
+
     @Test
     void restartSessionRejectsAnUnknownName() throws Exception {
         mvc.perform(post("/api/jobs/" + JOB_1 + "/sessions/T2/restart").contentType(MediaType.APPLICATION_JSON).content("{}"))

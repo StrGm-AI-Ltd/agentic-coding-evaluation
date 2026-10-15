@@ -1002,24 +1002,32 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         interveneRow.add(row);
     }
 
-    /** #263: a static form (built ONCE, never rebuilt by the polling loop above - unlike
+    /** #263/#321: a static form (built ONCE, never rebuilt by the polling loop above - unlike
      *  Prompt/Changes/History, rebuilding this would wipe out whatever the operator is mid-typing
-     *  into the override fields). Gated on the job actually being paused and the task having
-     *  already run at least once - restarting a task that is still live, or has never run, makes
-     *  no sense (there is no phase/{id} tag yet for the backend to reset to). */
+     *  into the override fields). Always requires the job paused first - either flow writes
+     *  jobs.task_overrides, and WorkerService only rebuilds cfg (so only re-reads that column)
+     *  when a job is next claimed, so a write made while still running would silently not apply
+     *  until a future pause/resume anyway.
+     *
+     *  Branches on whether the task has run yet: one that has gets the destructive restart flow
+     *  (#263 - discards and redoes its own and every later task's work); one that hasn't gets the
+     *  non-destructive #321 flow instead - same override fields, nothing discarded, no requeue()
+     *  needed since the task was never going to run until the job resumes anyway. */
     private void buildRestartTab(final Api.PlanTask task, final com.vaadin.flow.component.dialog.Dialog dialog, final Div restartBody) {
-        if (!task.implemented()) {
-            restartBody.add(Panels.mono("This task hasn't finished a session yet - nothing to restart."));
-            return;
-        }
+        final boolean pending = !task.implemented();
         if (currentJob == null || !"paused".equals(currentJob.status())) {
-            restartBody.add(Panels.mono("Pause the run first - a task can only be restarted while the job is paused."));
+            restartBody.add(Panels.mono(pending
+                    ? "Pause the run first - a pending task's settings can only be set while the job is paused."
+                    : "Pause the run first - a task can only be restarted while the job is paused."));
             return;
         }
-        final var warning = new Span("Restarts " + task.id() + " and every task after it in plan order - their "
+        final var warning = new Span(pending
+                ? "Sets " + task.id() + "'s own settings for when it runs - nothing has run yet, so nothing is discarded."
+                : "Restarts " + task.id() + " and every task after it in plan order - their "
                 + "current work is discarded (a backup git tag is made first in the workspace, but it is not "
                 + "exposed here - recoverable only via a plain `git tag -l 'backup/*'` on the host).");
-        warning.getStyle().set("color", "var(--lumo-error-text-color)").set("font-size", "0.85em").set("display", "block").set("margin-bottom", "8px");
+        warning.getStyle().set("color", pending ? "var(--lumo-secondary-text-color)" : "var(--lumo-error-text-color)")
+                .set("font-size", "0.85em").set("display", "block").set("margin-bottom", "8px");
 
         final var taskWall = new com.vaadin.flow.component.textfield.IntegerField("Task wall (sec)");
         final var taskTokens = new com.vaadin.flow.component.textfield.IntegerField("Task tokens");
@@ -1072,7 +1080,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         if (currentOverride.get("judge_model") instanceof String s && !s.isBlank()) judgeModel.setValue(s);
         if (Boolean.TRUE.equals(currentOverride.get("budget_rescue_enabled"))) rescueEnabled.setValue(true);
 
-        final var restartButton = new Button("Restart from " + task.id(), e -> {
+        final var restartButton = new Button(pending ? "Save settings for " + task.id() : "Restart from " + task.id(), e -> {
             final java.util.Map<String, Object> overrides = new java.util.LinkedHashMap<>();
             if (taskWall.getValue() != null) overrides.put("task_wall_sec", taskWall.getValue());
             if (taskTokens.getValue() != null) overrides.put("task_tokens", taskTokens.getValue());
@@ -1084,12 +1092,16 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             if (judgeModel.getValue() != null && !judgeModel.getValue().isBlank()) overrides.put("judge_model", judgeModel.getValue());
             if (rescueEnabled.getValue()) overrides.put("budget_rescue_enabled", true);
             try {
-                client.restartTask(jobId, task.id(), overrides);
-                client.requeue(jobId);
+                if (pending) {
+                    client.setPendingTaskOverride(jobId, task.id(), overrides);
+                } else {
+                    client.restartTask(jobId, task.id(), overrides);
+                    client.requeue(jobId);
+                }
                 refresh();
                 dialog.close();
             } catch (final Exception ex) {
-                log.warn("could not restart task {} on job {}: {}", task.id(), jobId, ex.toString());
+                log.warn("could not {} task {} on job {}: {}", pending ? "set pending override for" : "restart", task.id(), jobId, ex.toString());
                 Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
             }
         });

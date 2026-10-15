@@ -21,3 +21,5 @@ logs/
 *.db
 *.db-shm
 *.db-wal
+*-context.md
+PARAM_TUNING_LOG.md

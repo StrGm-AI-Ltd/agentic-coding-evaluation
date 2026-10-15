@@ -502,6 +502,61 @@ class RunBenchTest {
     }
 
     @Test
+    void effectiveCompactionTriggerPrefersTheTaskOverrideOverTheRunLevelValue() {
+        assertEquals(60000, RunBench.effectiveCompactionTrigger(Map.of("compaction_trigger", 60000), 40000));
+        assertEquals(40000, RunBench.effectiveCompactionTrigger(Map.of(), 40000), "no override - the run-level value stands");
+        assertEquals(40000, RunBench.effectiveCompactionTrigger(Map.of("compaction_trigger", "not-a-number"), 40000));
+    }
+
+    /** #322: a task_override for any sampler field replaces just that field - the others keep
+     *  whatever the run-level SamplerOverrides already carried (an empty override must return the
+     *  exact same base instance, not a field-by-field-identical copy, since callers may rely on
+     *  that - see RecordingProxy's own "pinned once per run" reasoning). */
+    @Test
+    void effectiveSamplerOverridesMergesOnlyTheFieldsATaskOverrideActuallySets() {
+        final Map<String, Object> cfg = new java.util.HashMap<>();
+        final var base = new com.strgmai.ace.service.proxy.RecordingProxy.SamplerOverrides(0.6, 0.95, 20, 1.0, 20000, "medium", 1000, 210000);
+        cfg.put("_sampler_overrides", base);
+
+        assertSame(base, RunBench.effectiveSamplerOverrides(cfg, Map.of()), "no override - the exact same pinned instance comes back");
+
+        final var merged = RunBench.effectiveSamplerOverrides(cfg, Map.of("max_tokens", 180000, "reasoning_effort", "low"));
+        assertEquals(180000, merged.maxOutputTokens(), "overridden");
+        assertEquals("low", merged.reasoningEffort(), "overridden");
+        assertEquals(0.6, merged.temperature(), "not overridden - kept from the run-level base");
+        assertEquals(0.95, merged.topP());
+        assertEquals(20, merged.topK());
+        assertEquals(1.0, merged.repetitionPenalty());
+        assertEquals(1000, merged.firstTokenTimeoutSec(), "never task-overridable - the agent-loop side already has its own override");
+        assertEquals(210000, merged.contextWindow(), "never task-overridable - a fact about the model server, not a per-task choice");
+    }
+
+    @Test
+    void effectiveSamplerOverridesFallsBackToNoneWhenTheRunNeverPinnedAny() {
+        final var merged = RunBench.effectiveSamplerOverrides(Map.of(), Map.of("temperature", 0.2));
+        assertEquals(0.2, merged.temperature());
+        assertNull(merged.topP());
+    }
+
+    /** #322: rescue_wall_sec/rescue_tokens/rescue_keep_recent_turns were deliberately
+     *  operator-wide-only before - lifted for the same reason budget_rescue_enabled itself is
+     *  task-overridable. */
+    @Test
+    void effectiveRescueCfgNowAlsoTakesWallTokensAndKeepRecentTurnsFromTheTaskOverride() {
+        final Map<String, Object> cfg = Map.of("budget_rescue", Map.of("enabled", true, "wall_sec", 28000, "tokens", 65000));
+        final var withoutOverride = RunBench.effectiveRescueCfg(cfg, Map.of());
+        assertEquals(28000, withoutOverride.get("wall_sec"));
+        assertEquals(65000, withoutOverride.get("tokens"), "copied verbatim from the run-level map - no override applied yet");
+
+        final var withOverride = RunBench.effectiveRescueCfg(cfg, Map.of(
+                "rescue_wall_sec", 40000, "rescue_tokens", 90000, "rescue_keep_recent_turns", 5));
+        assertEquals(true, withOverride.get("enabled"), "unrelated run-level field untouched");
+        assertEquals(40000, withOverride.get("wall_sec"));
+        assertEquals(90000L, withOverride.get("tokens"));
+        assertEquals(5, withOverride.get("keep_recent_turns"));
+    }
+
+    @Test
     void dueForJudgeCheckFiresOnceTheIntervalHasElapsedSinceTheLastCheck() {
         assertTrue(RunBench.dueForJudgeCheck(10, 0, 10), "exactly N turns since the last check (turn 0)");
         assertFalse(RunBench.dueForJudgeCheck(9, 0, 10), "one turn short");
