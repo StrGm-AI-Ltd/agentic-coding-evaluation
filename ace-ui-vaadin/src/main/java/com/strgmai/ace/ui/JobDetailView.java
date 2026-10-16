@@ -1109,6 +1109,47 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         return lines;
     }
 
+    /** Splits `text` on `delimiter`, but only where bracket depth - ( { [ counted together - is
+     *  zero: a delimiter inside a parenthetical aside (e.g. the ", " inside "(32-hex, low-16-bits
+     *  zero, ...)") is part of that aside, never a split point. */
+    private static List<String> splitAtDepthZero(final String text, final String delimiter) {
+        final List<String> parts = new ArrayList<>();
+        int depth = 0, start = 0, i = 0;
+        while (i < text.length()) {
+            final char c = text.charAt(i);
+            if (c == '(' || c == '{' || c == '[') { depth++; i++; }
+            else if (c == ')' || c == '}' || c == ']') { depth--; i++; }
+            else if (depth == 0 && text.startsWith(delimiter, i)) {
+                parts.add(text.substring(start, i).trim());
+                i += delimiter.length();
+                start = i;
+            } else i++;
+        }
+        parts.add(text.substring(start).trim());
+        return parts;
+    }
+
+    /** #355-followup-2: found live - the model's own free-text report (`reported_detail`) is one
+     *  dense run-on paragraph: a long implementation sentence packed with parenthetical asides,
+     *  then a verification sentence. Splitting on sentence boundaries first, then on top-level
+     *  semicolons/commas within each sentence (never inside a parenthetical - see
+     *  splitAtDepthZero()), turns that into one line per sentence, with a multi-clause sentence's
+     *  own clauses listed one per line beneath it - the same shape a human reads these reports as,
+     *  without needing to understand the content to produce it. A single-clause sentence stays
+     *  one plain line rather than being bulleted for no reason. */
+    private static List<String> detailLines(final String detail) {
+        final List<String> lines = new ArrayList<>();
+        for (final String sentence : splitAtDepthZero(detail, ". ")) {
+            if (sentence.isBlank()) continue;
+            final List<String> clauses = new ArrayList<>();
+            for (final String semiClause : splitAtDepthZero(sentence, "; "))
+                clauses.addAll(splitAtDepthZero(semiClause, ", "));
+            if (clauses.size() <= 1) lines.add(sentence);
+            else for (final String clause : clauses) if (!clause.isBlank()) lines.add("  " + clause);
+        }
+        return lines;
+    }
+
     record AttemptSection(String header, String body) {
     }
 
@@ -1136,7 +1177,11 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             if (a.hasNonNull("reported_status")) {
                 body.append("rc: ").append(a.path("attempt_rc").asText("?")).append("   outcome: ").append(a.path("reported_status").asText()).append('\n');
                 final String detail = a.path("reported_detail").asText(null);
-                if (detail != null && !detail.isBlank()) body.append("detail: ").append(detail).append('\n');
+                if (detail != null && !detail.isBlank()) {
+                    body.append("detail:");
+                    for (final var line : detailLines(detail)) body.append('\n').append(line);
+                    body.append('\n');
+                }
             }
             body.append("wall time: ").append(a.path("seconds").asText("?")).append("s   model turns: ").append(a.path("turns").asText("0")).append('\n');
             body.append("context compactions: ").append(a.path("compactions").asText("0"))
