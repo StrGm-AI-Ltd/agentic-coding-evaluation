@@ -1296,6 +1296,26 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         return data;
     }
 
+    /** This chart's own tooltip, read only from series[0] (prefill tok/s) - the addon's Tooltip
+     *  bean has no "enabledOnSeries" (the real ApexCharts.js option for this), so a raw JS
+     *  function is the only way to leave the compaction column (series[1]) out of the tooltip
+     *  entirely, same pattern as RunDetailView.speedByContextTooltipJs(). `shared`/`intersect`
+     *  stay at their defaults (shared, not intersect) so hovering anywhere near a category still
+     *  shows it - the compaction series' own invisible-until-marked columns would otherwise need
+     *  a literal hover to trigger anything. */
+    static String requestSpeedTooltipJs() {
+        return """
+                function(struct) {
+                  var i = struct.dataPointIndex;
+                  var v = struct.series[0][i];
+                  if (v === null || v === undefined) return '';
+                  return '<div style="padding:8px 12px">' +
+                    '<div style="font-weight:600;margin-bottom:4px">request #' + (i + 1) + '</div>' +
+                    '<div>prefill tok/s: ' + v + '</div></div>';
+                }
+                """;
+    }
+
     /** Prefill tok/s for every request ONE attempt's own session made, in order - the operator
      *  asked for a chart per attempt that actually made a request, not one chart combining every
      *  attempt's requests together (a false start and the real redo read as two different
@@ -1329,7 +1349,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                                 .withColumnWidth("6%").build())
                         .build())
                 .withLegend(com.github.appreciated.apexcharts.config.builder.LegendBuilder.get().withShow(false).build())
-                .withTooltip(com.github.appreciated.apexcharts.config.builder.TooltipBuilder.get().withShared(false).build())
+                .withTooltip(com.github.appreciated.apexcharts.config.builder.TooltipBuilder.get()
+                        .withCustom(requestSpeedTooltipJs()).build())
                 .withXaxis(XAxisBuilder.get().withCategories(categories).withLabels(xaxisLabels)
                         .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
                                 .withText("request # (red column: a compaction landed right before it)").build())

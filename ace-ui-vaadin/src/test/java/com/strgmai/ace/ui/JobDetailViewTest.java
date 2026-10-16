@@ -713,6 +713,23 @@ class JobDetailViewTest {
         assertTrue(js.contains("% 10 === 0"), js);
     }
 
+    /** The operator reported the compaction column's own tooltip showing a meaningless
+     *  "compaction: 92.20" (its data value is just the series' own peak - see
+     *  compactionColumnData() above - not a real reading), while the main line's tooltip had gone
+     *  missing entirely. Root cause: the addon's Tooltip bean has no "enabledOnSeries" (the real
+     *  ApexCharts.js option for excluding a series from the tooltip), and the earlier
+     *  `shared(false)` setting required a literal hover over a point's own (invisible, 0-radius)
+     *  marker to show anything. A custom JS tooltip reading only series[0] is the only way to
+     *  leave the compaction series out while keeping hover-anywhere-near-x working for the main
+     *  one - pinned by asserting its source only reads series[0], never series[1]. */
+    @Test
+    void requestSpeedTooltipJs_readsOnlyTheMainSeriesNeverTheCompactionColumn() {
+        final var js = JobDetailView.requestSpeedTooltipJs();
+        assertTrue(js.contains("struct.series[0]"), js);
+        assertFalse(js.contains("series[1]"), js);
+        assertFalse(js.contains("compaction"), js);
+    }
+
     /** #355-followup-5: the operator asked for a marker where a compaction landed. Realized as a
      *  SECOND series (a thin column) sharing the main series' own category axis, not an
      *  ApexCharts x-axis annotation - this ApexCharts version's own annotation-resolution code
