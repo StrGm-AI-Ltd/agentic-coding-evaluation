@@ -530,6 +530,30 @@ class JobDetailViewTest {
         assertTrue(sections.get(1).body().contains("bash (run a shell command): 2"), sections.get(1).body());
     }
 
+    /** #355-followup-4: the operator asked for a chart per attempt that actually made a request,
+     *  not one combined chart for the whole task - each AttemptSection carries only ITS OWN
+     *  attempt's "request_speeds", read straight from BenchController.taskStats()'s own
+     *  per-attempt array (already filtered server-side by that attempt's own session id). */
+    @Test
+    void attemptSections_carriesEachAttemptsOwnRequestSpeedsSeparately() {
+        final var stats = Json.MAPPER.readTree("""
+                {"state": "done", "attempts": [
+                    {"started_iso": "2026-10-16T10:00:00Z", "turns": 0, "compactions": 0, "tool_errors": 0, "tool_calls": {}, "seconds": 5.0,
+                     "request_speeds": [{"seq": 2, "prompt_tokens": 200, "prefill_tok_per_sec": 75.0}]},
+                    {"started_iso": "2026-10-16T15:25:47Z", "turns": 117, "compactions": 0, "tool_errors": 0, "tool_calls": {}, "seconds": 21836.8,
+                     "request_speeds": [{"seq": 3, "prompt_tokens": 500, "prefill_tok_per_sec": 120.5},
+                                        {"seq": 4, "prompt_tokens": 1069, "prefill_tok_per_sec": 89.93}]}
+                ]}""");
+
+        final var sections = JobDetailView.attemptSections(stats);
+
+        assertEquals(1, sections.get(0).requestSpeeds().size(), "attempt 1 has only its own one request");
+        assertEquals(75.0, sections.get(0).requestSpeeds().get(0).prefillTokPerSec());
+        assertEquals(2, sections.get(1).requestSpeeds().size(), "attempt 2 has only its own two requests, not attempt 1's");
+        assertEquals(120.5, sections.get(1).requestSpeeds().get(0).prefillTokPerSec());
+        assertEquals(89.93, sections.get(1).requestSpeeds().get(1).prefillTokPerSec());
+    }
+
     /** #355-followup-2: a session cut off before RunBench.logTaskAttempt() ever ran leaves no
      *  matching task_attempts.jsonl row - that attempt still gets its own section (turns/wall
      *  time/compactions), just without the params/outcome lines, rather than showing nothing. */
@@ -629,19 +653,20 @@ class JobDetailViewTest {
         assertTrue(JobDetailView.attemptSections(Json.MAPPER.readTree("{\"state\": \"not_started\"}")).isEmpty());
     }
 
-    /** #355-followup-3: the Stats tab's new per-request prefill-speed chart - pure, tested
-     *  against BenchController.taskStats()'s own "request_speeds" shape, same convention as
-     *  RunDetailView.speedByContextRows(). A missing prefill figure (a failed/non-streamed call)
-     *  must read as a null data point, not a crash or a silently-dropped request. */
+    /** #355-followup-3/4: the Stats tab's per-attempt prefill-speed chart - pure, tested against
+     *  one attempt's own "request_speeds" array shape (BenchController.taskStats()'s
+     *  "attempts[].request_speeds"), same convention as RunDetailView.speedByContextRows(). A
+     *  missing prefill figure (a failed/non-streamed call) must read as a null data point, not a
+     *  crash or a silently-dropped request. */
     @Test
     void requestSpeedPoints_readsSeqAndPrefillSpeedInOrder() {
-        final var stats = Json.MAPPER.readTree("""
-                {"request_speeds": [
+        final var arr = Json.MAPPER.readTree("""
+                [
                     {"seq": 2, "prompt_tokens": 500, "prefill_tok_per_sec": 120.5},
                     {"seq": 3, "prompt_tokens": 1069, "prefill_tok_per_sec": 89.93}
-                ]}""");
+                ]""");
 
-        final var points = JobDetailView.requestSpeedPoints(stats);
+        final var points = JobDetailView.requestSpeedPoints(arr);
 
         assertEquals(2, points.size());
         assertEquals(2, points.get(0).seq());
@@ -651,7 +676,7 @@ class JobDetailViewTest {
     }
 
     @Test
-    void requestSpeedPoints_isEmptyWhenStatsHasNoRequestSpeedsField() {
+    void requestSpeedPoints_isEmptyWhenGivenANonArrayNode() {
         assertTrue(JobDetailView.requestSpeedPoints(Json.MAPPER.readTree("{\"state\": \"done\"}")).isEmpty());
     }
 

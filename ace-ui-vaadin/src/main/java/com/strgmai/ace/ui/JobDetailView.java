@@ -934,18 +934,24 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 }
                 for (final var line : taskStatsLines(stats, taskStats(live.sessions(), task.id(), live.currentStep())))
                     statsBody.add(Panels.mono(line));
-                // only worth its own breakdown once there's more than one attempt to tell apart -
-                // a single-attempt task would just duplicate the summary lines just added above
+                // only worth its own text breakdown once there's more than one attempt to tell
+                // apart - a single-attempt task would just duplicate the summary lines just added
+                // above. Every attempt that actually made a request still gets its own chart
+                // regardless (the operator asked for one per attempt, not one for the whole task) -
+                // a single-attempt task's own chart just doesn't need an "Attempt N" label on it.
                 final var sections = attemptSections(stats);
                 if (sections.size() > 1) {
-                    for (final var section : sections) {
+                    for (int i = 0; i < sections.size(); i++) {
+                        final var section = sections.get(i);
                         final var header = new com.vaadin.flow.component.html.H4(section.header());
                         header.getStyle().set("margin", "12px 0 4px 0").set("font-size", "0.95em");
                         statsBody.add(header);
                         statsBody.add(Panels.mono(section.body()));
+                        addRequestSpeedChart(section.requestSpeeds(), statsBody, "Prefill speed by request — Attempt " + (i + 1));
                     }
+                } else if (sections.size() == 1) {
+                    addRequestSpeedChart(sections.get(0).requestSpeeds(), statsBody, "Prefill speed by request");
                 }
-                addRequestSpeedChart(stats, statsBody);
             } catch (final Exception ex) {
                 statsBody.removeAll();
                 statsBody.add(Panels.error(client.errorText(ex)));
@@ -1212,11 +1218,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     record RequestSpeedPoint(int seq, Double prefillTokPerSec) {
     }
 
-    /** #355-followup-3: BenchController.taskStats()'s own "request_speeds" array (seq-ordered,
-     *  already filtered to this task's own session(s)) - pure/testable, same convention as
-     *  RunDetailView.speedByContextRows(). */
-    static List<RequestSpeedPoint> requestSpeedPoints(final JsonNode stats) {
-        final var arr = stats.path("request_speeds");
+    /** One attempt's own "request_speeds" array (BenchController.taskStats()'s "attempts[].
+     *  request_speeds", seq-ordered, already filtered to that attempt's own session) - pure/
+     *  testable, same convention as RunDetailView.speedByContextRows(). Takes the array node
+     *  directly (not the whole stats object) so it works the same whether called per-attempt
+     *  (the normal case - the operator asked for a chart per attempt, not one combined chart for
+     *  the whole task) or against any other array of this same shape. */
+    static List<RequestSpeedPoint> requestSpeedPoints(final JsonNode arr) {
         if (!arr.isArray() || arr.isEmpty()) return List.of();
         final List<RequestSpeedPoint> points = new ArrayList<>();
         for (final var r : arr) {
@@ -1238,19 +1246,21 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         return categories;
     }
 
-    /** Prefill tok/s for every request this task's own session(s) made, in order - the operator
-     *  asked for this specifically: RunDetailView's own "speed vs context size" chart buckets and
-     *  averages across the WHOLE run, which hides a single slow request inside this one task.
-     *  One point per request (x-axis is this task's own 1st/2nd/3rd/... request, not the request's
-     *  run-wide seq number, which would read as an arbitrary large offset for a task that ran late
-     *  in the run) - added to `container` directly, same as every other Stats-tab element. */
-    private void addRequestSpeedChart(final JsonNode stats, final Div container) {
-        final var points = requestSpeedPoints(stats);
+    /** Prefill tok/s for every request ONE attempt's own session made, in order - the operator
+     *  asked for a chart per attempt that actually made a request, not one chart combining every
+     *  attempt's requests together (a false start and the real redo read as two different
+     *  sessions with their own separate stories, not one continuous timeline). x-axis is this
+     *  attempt's own 1st/2nd/3rd/... request, not the request's run-wide seq number, which would
+     *  read as an arbitrary large offset for a task that ran late in the run. A thin (1.5px)
+     *  stroke - the default width reads as a solid blob once 100+ points are packed into one
+     *  chart. Added to `container` directly, same as every other Stats-tab element. */
+    private void addRequestSpeedChart(final List<RequestSpeedPoint> points, final Div container, final String title) {
         if (points.isEmpty()) return;
-        container.add(Panels.sectionTitle("Prefill speed by request"));
+        container.add(Panels.sectionTitle(title));
         final var categories = requestSpeedCategories(points.size());
         final var chart = ApexChartsBuilder.get()
                 .withChart(ChartBuilder.get().withType(Type.LINE).build())
+                .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get().withWidth(1.5).build())
                 .withXaxis(XAxisBuilder.get().withCategories(categories)
                         .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
                                 .withText("request #").build())
@@ -1259,11 +1269,11 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 .withSeries(SeriesBuilder.get().withName("prefill tok/s")
                         .withData(points.stream().map(RequestSpeedPoint::prefillTokPerSec).toArray(Double[]::new)).build())
                 .build();
-        chart.setHeight("260px");
+        chart.setHeight("220px");
         container.add(chart);
     }
 
-    record AttemptSection(String header, String body) {
+    record AttemptSection(String header, String body, List<RequestSpeedPoint> requestSpeeds) {
     }
 
     /** #355-followup-2: one section per session file sharing a task's label, oldest first,
@@ -1304,7 +1314,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                     .append("   failed tool calls: ").append(a.path("tool_errors").asText("0"));
             final var tc = a.path("tool_calls");
             if (tc.isObject() && tc.size() > 0) for (final var line : toolCallLines(tc)) body.append('\n').append(line);
-            sections.add(new AttemptSection(header.toString(), body.toString()));
+            sections.add(new AttemptSection(header.toString(), body.toString(), requestSpeedPoints(a.path("request_speeds"))));
         }
         return sections;
     }
