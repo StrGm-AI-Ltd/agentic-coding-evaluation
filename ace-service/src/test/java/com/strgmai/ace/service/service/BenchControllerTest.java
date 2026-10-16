@@ -32,6 +32,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.emptyString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -778,6 +779,29 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.attempts[1].request_speeds[0].prefill_tok_per_sec").value(120.5))
                 .andExpect(jsonPath("$.attempts[1].request_speeds[1].seq").value(4))
                 .andExpect(jsonPath("$.attempts[1].request_speeds[1].prefill_tok_per_sec").value(89.93));
+    }
+
+    /** generation_tok_per_sec (response.usage.generation_tokens_per_second) rides along next to
+     *  prefill_tok_per_sec - unlike prefill speed, it's optional: a line still counts with it
+     *  missing, and the field comes through as JSON null rather than being omitted. */
+    @Test
+    void taskStatsIncludesGenerationSpeedWhenPresentAndNullWhenAbsent() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": []}");
+        Files.writeString(runDir.resolve("sessions/a.jsonl"),
+                "{\"type\":\"session\",\"id\":\"session-gen\",\"label\":\"T9\",\"ts\":\"2026-10-16T10:00:00Z\"}\n");
+        Files.writeString(runDir.resolve("interactions.jsonl"), String.join("\n",
+                "{\"seq\":1,\"session_id\":\"session-gen\",\"response\":{\"usage\":{\"prompt_tokens\":100,\"prompt_tokens_per_second\":50.0,\"generation_tokens_per_second\":30.5}}}",
+                "{\"seq\":2,\"session_id\":\"session-gen\",\"response\":{\"usage\":{\"prompt_tokens\":200,\"prompt_tokens_per_second\":60.0}}}") + "\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T9/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].generation_tok_per_sec").value(30.5))
+                .andExpect(jsonPath("$.attempts[0].request_speeds[1].generation_tok_per_sec").value(nullValue()));
     }
 
     /** #355-followup-6: found live on T11 - RunBenchSupport's own session-id scheme is

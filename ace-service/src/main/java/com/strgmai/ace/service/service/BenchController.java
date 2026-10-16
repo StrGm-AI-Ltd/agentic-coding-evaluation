@@ -804,11 +804,13 @@ public class BenchController {
         return perAttempt;
     }
 
-    /** one interactions.jsonl line -> {seq, session_id, prompt_tokens, prefill_tok_per_sec}, or
-     *  null when the line's own session_id doesn't match (the caller's substring pre-check is
-     *  only a hint - this confirms it against the real field) or it carries no usable usage block
-     *  (a non-streamed or failed call). response.usage.prompt_tokens_per_second is oMLX's own
-     *  reported figure - never re-derived from prompt_tokens/time_to_first_token here. */
+    /** one interactions.jsonl line -> {seq, session_id, prompt_tokens, prefill_tok_per_sec,
+     *  generation_tok_per_sec}, or null when the line's own session_id doesn't match (the
+     *  caller's substring pre-check is only a hint - this confirms it against the real field) or
+     *  it carries no usable usage block (a non-streamed or failed call). response.usage's own
+     *  prompt_tokens_per_second/generation_tokens_per_second are oMLX's own reported figures -
+     *  never re-derived from prompt_tokens/time_to_first_token here. generation_tok_per_sec is
+     *  optional (null when absent) - unlike prefill speed, it isn't required for a line to count. */
     private static Map<String, Object> parseRequestSpeedEntry(final com.fasterxml.jackson.core.JsonFactory factory, final String line, final Set<String> sessionIds) {
         try (var p = factory.createParser(line)) {
             if (p.nextToken() != com.fasterxml.jackson.core.JsonToken.START_OBJECT) return null;
@@ -817,6 +819,7 @@ public class BenchController {
             String ts = null;
             Integer promptTokens = null;
             Double prefillTps = null;
+            Double generationTps = null;
             while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
                 final String field = p.currentName();
                 p.nextToken();
@@ -835,6 +838,7 @@ public class BenchController {
                                         p.nextToken();
                                         if ("prompt_tokens".equals(uf)) promptTokens = p.getIntValue();
                                         else if ("prompt_tokens_per_second".equals(uf)) prefillTps = p.getDoubleValue();
+                                        else if ("generation_tokens_per_second".equals(uf)) generationTps = p.getDoubleValue();
                                         else p.skipChildren();
                                     }
                                 } else p.skipChildren();
@@ -851,6 +855,7 @@ public class BenchController {
             out.put("ts", ts);
             out.put("prompt_tokens", promptTokens);
             out.put("prefill_tok_per_sec", prefillTps);
+            out.put("generation_tok_per_sec", generationTps);
             return out;
         } catch (final Exception e) { return null; }
     }

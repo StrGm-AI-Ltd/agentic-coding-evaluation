@@ -660,12 +660,13 @@ class JobDetailViewTest {
      *  one attempt's own "request_speeds" array shape (BenchController.taskStats()'s
      *  "attempts[].request_speeds"), same convention as RunDetailView.speedByContextRows(). A
      *  missing prefill figure (a failed/non-streamed call) must read as a null data point, not a
-     *  crash or a silently-dropped request. */
+     *  crash or a silently-dropped request - generation_tok_per_sec is optional on the backend
+     *  the same way, so it gets the same null-when-absent treatment here (seq 3). */
     @Test
-    void requestSpeedPoints_readsSeqAndPrefillSpeedInOrder() {
+    void requestSpeedPoints_readsSeqAndPrefillAndGenerationSpeedInOrder() {
         final var arr = Json.MAPPER.readTree("""
                 [
-                    {"seq": 2, "prompt_tokens": 500, "prefill_tok_per_sec": 120.5},
+                    {"seq": 2, "prompt_tokens": 500, "prefill_tok_per_sec": 120.5, "generation_tok_per_sec": 12.3},
                     {"seq": 3, "prompt_tokens": 1069, "prefill_tok_per_sec": 89.93}
                 ]""");
 
@@ -674,8 +675,10 @@ class JobDetailViewTest {
         assertEquals(2, points.size());
         assertEquals(2, points.get(0).seq());
         assertEquals(120.5, points.get(0).prefillTokPerSec());
+        assertEquals(12.3, points.get(0).generationTokPerSec());
         assertEquals(3, points.get(1).seq());
         assertEquals(89.93, points.get(1).prefillTokPerSec());
+        assertNull(points.get(1).generationTokPerSec());
     }
 
     @Test
@@ -719,13 +722,15 @@ class JobDetailViewTest {
      *  missing entirely. Root cause: the addon's Tooltip bean has no "enabledOnSeries" (the real
      *  ApexCharts.js option for excluding a series from the tooltip), and the earlier
      *  `shared(false)` setting required a literal hover over a point's own (invisible, 0-radius)
-     *  marker to show anything. A custom JS tooltip reading only series[0] is the only way to
-     *  leave the compaction series out while keeping hover-anywhere-near-x working for the main
-     *  one - pinned by asserting its source only reads series[0], never series[1]. */
+     *  marker to show anything. A custom JS tooltip reading series[0] (prefill) and series[2]
+     *  (generation, added later) is the only way to leave the compaction series out while keeping
+     *  hover-anywhere-near-x working for the real two - pinned by asserting its source reads
+     *  series[0] and series[2], never series[1] or the word "compaction". */
     @Test
-    void requestSpeedTooltipJs_readsOnlyTheMainSeriesNeverTheCompactionColumn() {
+    void requestSpeedTooltipJs_readsTheTwoRealSeriesNeverTheCompactionColumn() {
         final var js = JobDetailView.requestSpeedTooltipJs();
         assertTrue(js.contains("struct.series[0]"), js);
+        assertTrue(js.contains("struct.series[2]"), js);
         assertFalse(js.contains("series[1]"), js);
         assertFalse(js.contains("compaction"), js);
     }
@@ -744,9 +749,9 @@ class JobDetailViewTest {
     @Test
     void compactionColumnData_onePerPositionSetToTheSeriesOwnPeak() {
         final var points = List.of(
-                new JobDetailView.RequestSpeedPoint(1, 10.0),
-                new JobDetailView.RequestSpeedPoint(2, 40.0),
-                new JobDetailView.RequestSpeedPoint(3, 25.0));
+                new JobDetailView.RequestSpeedPoint(1, 10.0, null),
+                new JobDetailView.RequestSpeedPoint(2, 40.0, null),
+                new JobDetailView.RequestSpeedPoint(3, 25.0, null));
         final var data = JobDetailView.compactionColumnData(List.of(1, 3), points);
 
         assertEquals(3, data.length);
@@ -757,7 +762,7 @@ class JobDetailViewTest {
 
     @Test
     void compactionColumnData_dropsPositionsPastTheSeriesOwnLength() {
-        final var points = List.of(new JobDetailView.RequestSpeedPoint(1, 10.0), new JobDetailView.RequestSpeedPoint(2, 20.0));
+        final var points = List.of(new JobDetailView.RequestSpeedPoint(1, 10.0, null), new JobDetailView.RequestSpeedPoint(2, 20.0, null));
         final var data = JobDetailView.compactionColumnData(List.of(1, 999), points);
 
         assertEquals(2, data.length);
@@ -767,7 +772,7 @@ class JobDetailViewTest {
 
     @Test
     void compactionColumnData_isAllNullWhenNoCompactionsHappened() {
-        final var points = List.of(new JobDetailView.RequestSpeedPoint(1, 10.0), new JobDetailView.RequestSpeedPoint(2, 20.0));
+        final var points = List.of(new JobDetailView.RequestSpeedPoint(1, 10.0, null), new JobDetailView.RequestSpeedPoint(2, 20.0, null));
         final var data = JobDetailView.compactionColumnData(List.of(), points);
 
         assertEquals(2, data.length);
