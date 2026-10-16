@@ -1129,6 +1129,16 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         return parts;
     }
 
+    /** a loose but deliberately narrow signal that a line is reporting a VERIFICATION outcome
+     *  (test counts, build status) rather than describing what was implemented - the operator's
+     *  own question ("did this work, and is there evidence?") this project's whole Stats-tab
+     *  vocabulary already answers with: GREEN/RED (BenchController's own verification.green
+     *  rendering), BUILD SUCCESSFUL (Gradle's own output these reports quote verbatim), test(s)/
+     *  pass(ed)/passing, regression(s), failure(s). Deliberately NOT "build" alone (too generic -
+     *  "build the request" reads as implementation, not verification). */
+    private static final java.util.regex.Pattern VERIFICATION_SIGNAL = java.util.regex.Pattern.compile(
+            "(?i)\\b(tests?|passed?|passing|verified|verify|verification|green|red|regressions?|failures?)\\b|BUILD SUCCESSFUL");
+
     /** #355-followup-2: found live - the model's own free-text report (`reported_detail`) is one
      *  dense run-on paragraph: a long implementation sentence packed with parenthetical asides,
      *  then a verification sentence. Splitting on sentence boundaries first, then on top-level
@@ -1136,7 +1146,15 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  splitAtDepthZero()), turns that into one line per sentence, with a multi-clause sentence's
      *  own clauses listed one per line beneath it - the same shape a human reads these reports as,
      *  without needing to understand the content to produce it. A single-clause sentence stays
-     *  one plain line rather than being bulleted for no reason. */
+     *  one plain line rather than being bulleted for no reason.
+     *
+     *  The operator asked to lead with verification and keep implementation detail secondary
+     *  (that's the part actually answering "did this work," not "how"): lines are then stably
+     *  partitioned into a "verification:" group (VERIFICATION_SIGNAL matches) shown first and an
+     *  "implementation:" group shown after, each keeping its own original relative order. When
+     *  either group is empty - nothing matched, or everything did - there is no meaningful split
+     *  to make, so the lines are returned as-is rather than wrapping a single uniform list in a
+     *  label that would add nothing. */
     private static List<String> detailLines(final String detail) {
         final List<String> lines = new ArrayList<>();
         for (final String sentence : splitAtDepthZero(detail, ". ")) {
@@ -1147,7 +1165,15 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             if (clauses.size() <= 1) lines.add(sentence);
             else for (final String clause : clauses) if (!clause.isBlank()) lines.add("  " + clause);
         }
-        return lines;
+        final List<String> verification = lines.stream().filter(l -> VERIFICATION_SIGNAL.matcher(l).find()).toList();
+        final List<String> implementation = lines.stream().filter(l -> !VERIFICATION_SIGNAL.matcher(l).find()).toList();
+        if (verification.isEmpty() || implementation.isEmpty()) return lines;
+        final List<String> ordered = new ArrayList<>();
+        ordered.add("verification:");
+        ordered.addAll(verification);
+        ordered.add("implementation:");
+        ordered.addAll(implementation);
+        return ordered;
     }
 
     record AttemptSection(String header, String body) {
