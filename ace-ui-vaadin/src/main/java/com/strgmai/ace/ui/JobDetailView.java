@@ -724,22 +724,28 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         dialog.setWidth("min(900px, 90vw)");
         dialog.setHeight("min(650px, 85vh)");
 
+        // each body below gets the SAME explicit "width: 100%; box-sizing: border-box" fix
+        // transcriptBody/interveneRow already needed and explain further down: a VerticalLayout
+        // does not stretch its children to its own width by default, so without it every tab's
+        // content (and the tab strip itself) only grows as wide as its own content - its right
+        // edge lands wherever that happens to be instead of the dialog's own right edge, where
+        // the footer's Close button sits (found live: visibly misaligned against it).
         final var promptBody = new Div();
-        promptBody.getStyle().set("overflow", "auto");
+        promptBody.getStyle().set("overflow", "auto").set("width", "100%").set("box-sizing", "border-box");
         final var diffBody = new Div();
-        diffBody.getStyle().set("overflow", "auto");
+        diffBody.getStyle().set("overflow", "auto").set("width", "100%").set("box-sizing", "border-box");
         diffBody.setVisible(false);
         final var restartBody = new Div();
-        restartBody.getStyle().set("overflow", "auto");
+        restartBody.getStyle().set("overflow", "auto").set("width", "100%").set("box-sizing", "border-box");
         restartBody.setVisible(false);
         final var historyBody = new Div();
-        historyBody.getStyle().set("overflow", "auto");
+        historyBody.getStyle().set("overflow", "auto").set("width", "100%").set("box-sizing", "border-box");
         historyBody.setVisible(false);
         final var judgeBody = new Div();
-        judgeBody.getStyle().set("overflow", "auto");
+        judgeBody.getStyle().set("overflow", "auto").set("width", "100%").set("box-sizing", "border-box");
         judgeBody.setVisible(false);
         final var statsBody = new Div();
-        statsBody.getStyle().set("overflow", "auto");
+        statsBody.getStyle().set("overflow", "auto").set("width", "100%").set("box-sizing", "border-box");
         statsBody.setVisible(false);
         // the operator-facing live transcript - see openTaskTranscriptTab() below for why this
         // is its own method rather than inlined like the bodies above (its content keeps
@@ -769,6 +775,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var statsTab = new com.vaadin.flow.component.tabs.Tab("Stats");
         final var transcriptTab = new com.vaadin.flow.component.tabs.Tab("Live");
         final var tabs = new com.vaadin.flow.component.tabs.Tabs(promptTab, changesTab, restartTab, historyTab, judgeTab, statsTab, transcriptTab);
+        tabs.getStyle().set("width", "100%").set("box-sizing", "border-box");
         tabs.addSelectedChangeListener(e -> {
             promptBody.setVisible(tabs.getSelectedTab() == promptTab);
             diffBody.setVisible(tabs.getSelectedTab() == changesTab);
@@ -1502,13 +1509,14 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         dialog.setWidth("min(900px, 90vw)");
         dialog.setHeight("min(650px, 85vh)");
 
+        // same explicit width fix openTaskPromptDialog() needs - see its own comment for why
         final var promptBody = new Div();
-        promptBody.getStyle().set("overflow", "auto");
+        promptBody.getStyle().set("overflow", "auto").set("width", "100%").set("box-sizing", "border-box");
         final var diffBody = new Div();
-        diffBody.getStyle().set("overflow", "auto");
+        diffBody.getStyle().set("overflow", "auto").set("width", "100%").set("box-sizing", "border-box");
         diffBody.setVisible(false);
         final var restartBody = new Div();
-        restartBody.getStyle().set("overflow", "auto");
+        restartBody.getStyle().set("overflow", "auto").set("width", "100%").set("box-sizing", "border-box");
         restartBody.setVisible(false);
 
         final var promptTab = new com.vaadin.flow.component.tabs.Tab("Prompt");
@@ -1518,6 +1526,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final com.vaadin.flow.component.tabs.Tabs tabs = showRestart
                 ? new com.vaadin.flow.component.tabs.Tabs(promptTab, changesTab, restartTab)
                 : new com.vaadin.flow.component.tabs.Tabs(promptTab, changesTab);
+        tabs.getStyle().set("width", "100%").set("box-sizing", "border-box");
         tabs.addSelectedChangeListener(e -> {
             promptBody.setVisible(tabs.getSelectedTab() == promptTab);
             diffBody.setVisible(tabs.getSelectedTab() == changesTab);
