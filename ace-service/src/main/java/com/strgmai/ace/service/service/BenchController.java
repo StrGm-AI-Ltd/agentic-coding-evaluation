@@ -22,6 +22,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static com.strgmai.ace.service.jooq.Tables.CHECK_RESULTS;
 import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
@@ -501,7 +502,7 @@ public class BenchController {
      *  finished, or finished a while ago. found=false means no session file for this task exists
      *  AT ALL yet (genuinely not started); found=true with every count still 0 is a real, distinct
      *  state (started, nothing logged yet) - never confused with "not started". */
-    record AttemptCounts(String sessionId, String startedIso, String endedIso, int turns, int compactions,
+    record AttemptCounts(String sessionId, String sessionUuid, String startedIso, String endedIso, int turns, int compactions,
                           int toolErrorsTotal, Map<String, Object> toolCalls, double wallSec) {
     }
 
@@ -582,6 +583,7 @@ public class BenchController {
         int turns = 0, compactions = 0, toolErrorsTotal = 0;
         final Map<String, int[]> toolCounts = new LinkedHashMap<>();   // toolName -> [total, errors]
         Instant firstTs = null, lastTs = null;
+        String sessionUuid = null;
         for (final String line : lines) {
             if (line.isBlank()) continue;
             final Map<String, Object> e;
@@ -594,6 +596,7 @@ public class BenchController {
                 } catch (final Exception ignore) { /* malformed ts must not sink the whole count */ }
             }
             final String type = String.valueOf(e.get("type"));
+            if ("session".equals(type)) { if (e.get("id") instanceof String id) sessionUuid = id; continue; }
             if ("compaction".equals(type)) { compactions++; continue; }
             if (!"message".equals(type) || !(e.get("message") instanceof Map<?, ?> m)) continue;
             final Object role = m.get("role");
@@ -607,7 +610,7 @@ public class BenchController {
         final Map<String, Object> toolCallsOut = new LinkedHashMap<>();
         toolCounts.forEach((name, c) -> toolCallsOut.put(name, Map.of("count", c[0], "errors", c[1])));
         final double wallSec = firstTs == null ? 0.0 : Duration.between(firstTs, lastTs).toMillis() / 1000.0;
-        return new AttemptCounts(f.getFileName().toString(), firstTs == null ? null : firstTs.toString(),
+        return new AttemptCounts(f.getFileName().toString(), sessionUuid, firstTs == null ? null : firstTs.toString(),
                 lastTs == null ? null : lastTs.toString(), turns, compactions, toolErrorsTotal, toolCallsOut, wallSec);
     }
 
@@ -683,6 +686,85 @@ public class BenchController {
         try { return Instant.parse(iso); } catch (final Exception e) { return null; }
     }
 
+    /** #355-followup-3: per-request prefill speed for the Stats tab's new chart - found live
+     *  that this run's own interactions.jsonl (the proxy's journal of every call through it,
+     *  RecordingProxy) was 208MB across only 1472 lines: each line carries the full request
+     *  (growing conversation history + tool specs) and response (generated text) alongside the
+     *  tiny "usage" object actually needed here. A plain ObjectMapper.readValue() per line would
+     *  materialize all of that just to read 2 numbers, repeatedly, on every poll while a task's
+     *  dialog is open - this streams the file line by line (never holding more than one line in
+     *  memory) and, line by line, uses Jackson's low-level streaming parser to walk down to
+     *  "response.usage" and skipChildren() everything else ("request", "reasoning", "content",
+     *  "tool_calls") without ever building a tree for them. A quick substring pre-check against
+     *  this task's own session id(s) (read from the session file's own header "id" field, the
+     *  same value AgentSession/ReferenceAgent stamp as X-Ace-Session-Id) skips full parsing for
+     *  every line that cannot possibly be this task's before paying for even the streaming parse. */
+    private List<Map<String, Object>> requestSpeeds(final Path base, final List<AttemptCounts> attempts) {
+        final Set<String> sessionIds = attempts.stream().map(AttemptCounts::sessionUuid).filter(Objects::nonNull).collect(Collectors.toSet());
+        if (sessionIds.isEmpty()) return List.of();
+        final Path file = base.resolve("interactions.jsonl");
+        if (!Files.isRegularFile(file) || !isContainedEvenViaSymlinks(base, file)) return List.of();
+        final var factory = new com.fasterxml.jackson.core.JsonFactory();
+        final List<Map<String, Object>> out = new ArrayList<>();
+        try (var reader = Files.newBufferedReader(file)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isBlank() || sessionIds.stream().noneMatch(line::contains)) continue;
+                final Map<String, Object> entry = parseRequestSpeedEntry(factory, line, sessionIds);
+                if (entry != null) out.add(entry);
+            }
+        } catch (final Exception e) { return out; }
+        out.sort(Comparator.comparingLong(e -> ((Number) e.get("seq")).longValue()));
+        return out;
+    }
+
+    /** one interactions.jsonl line -> {seq, prompt_tokens, prefill_tok_per_sec}, or null when the
+     *  line's own session_id doesn't match (the caller's substring pre-check is only a hint - this
+     *  confirms it against the real field) or it carries no usable usage block (a non-streamed or
+     *  failed call). response.usage.prompt_tokens_per_second is oMLX's own reported figure - never
+     *  re-derived from prompt_tokens/time_to_first_token here. */
+    private static Map<String, Object> parseRequestSpeedEntry(final com.fasterxml.jackson.core.JsonFactory factory, final String line, final Set<String> sessionIds) {
+        try (var p = factory.createParser(line)) {
+            if (p.nextToken() != com.fasterxml.jackson.core.JsonToken.START_OBJECT) return null;
+            Long seq = null;
+            String sessionId = null;
+            Integer promptTokens = null;
+            Double prefillTps = null;
+            while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
+                final String field = p.currentName();
+                p.nextToken();
+                switch (field) {
+                    case "seq" -> seq = p.getLongValue();
+                    case "session_id" -> sessionId = p.getText();
+                    case "response" -> {
+                        if (p.currentToken() == com.fasterxml.jackson.core.JsonToken.START_OBJECT) {
+                            while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
+                                final String rf = p.currentName();
+                                p.nextToken();
+                                if ("usage".equals(rf) && p.currentToken() == com.fasterxml.jackson.core.JsonToken.START_OBJECT) {
+                                    while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
+                                        final String uf = p.currentName();
+                                        p.nextToken();
+                                        if ("prompt_tokens".equals(uf)) promptTokens = p.getIntValue();
+                                        else if ("prompt_tokens_per_second".equals(uf)) prefillTps = p.getDoubleValue();
+                                        else p.skipChildren();
+                                    }
+                                } else p.skipChildren();
+                            }
+                        } else p.skipChildren();
+                    }
+                    default -> p.skipChildren();
+                }
+            }
+            if (sessionId == null || !sessionIds.contains(sessionId) || seq == null || promptTokens == null || prefillTps == null) return null;
+            final Map<String, Object> out = new LinkedHashMap<>();
+            out.put("seq", seq);
+            out.put("prompt_tokens", promptTokens);
+            out.put("prefill_tok_per_sec", prefillTps);
+            return out;
+        } catch (final Exception e) { return null; }
+    }
+
     /** #355/#355-followup: the task detail dialog's own Stats tab. Three states: "done"
      *  (manifest.tasks has this task's own completed record - RunBench.snapshotRunProgress()
      *  writes it incrementally after EVERY task, not just at the end of the run - carrying rc,
@@ -727,6 +809,7 @@ public class BenchController {
             // rather than showing nothing just because this one task happened to be skip-resumed
             if (out.get("seconds") == null && live.found()) out.put("seconds", live.wallSec());
             out.put("attempts", attemptSections(base, taskId, live.attempts()));
+            out.put("request_speeds", requestSpeeds(base, live.attempts()));
             if (entry != null) {
                 final Path metricsFile = base.resolve("metrics.json");
                 if (Files.isRegularFile(metricsFile) && isContainedEvenViaSymlinks(base, metricsFile)) {

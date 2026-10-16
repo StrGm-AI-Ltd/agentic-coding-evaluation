@@ -1,5 +1,12 @@
 package com.strgmai.ace.ui;
 
+import com.github.appreciated.apexcharts.ApexChartsBuilder;
+import com.github.appreciated.apexcharts.config.builder.ChartBuilder;
+import com.github.appreciated.apexcharts.config.builder.SeriesBuilder;
+import com.github.appreciated.apexcharts.config.builder.XAxisBuilder;
+import com.github.appreciated.apexcharts.config.builder.YAxisBuilder;
+import com.github.appreciated.apexcharts.config.chart.Type;
+import com.github.appreciated.apexcharts.config.yaxis.builder.TitleBuilder;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
@@ -931,6 +938,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         statsBody.add(Panels.mono(section.body()));
                     }
                 }
+                addRequestSpeedChart(stats, statsBody);
             } catch (final Exception ex) {
                 statsBody.removeAll();
                 statsBody.add(Panels.error(client.errorText(ex)));
@@ -1192,6 +1200,49 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             }
         }
         return lines;
+    }
+
+    record RequestSpeedPoint(int seq, Double prefillTokPerSec) {
+    }
+
+    /** #355-followup-3: BenchController.taskStats()'s own "request_speeds" array (seq-ordered,
+     *  already filtered to this task's own session(s)) - pure/testable, same convention as
+     *  RunDetailView.speedByContextRows(). */
+    static List<RequestSpeedPoint> requestSpeedPoints(final JsonNode stats) {
+        final var arr = stats.path("request_speeds");
+        if (!arr.isArray() || arr.isEmpty()) return List.of();
+        final List<RequestSpeedPoint> points = new ArrayList<>();
+        for (final var r : arr) {
+            final var tps = r.path("prefill_tok_per_sec");
+            points.add(new RequestSpeedPoint(r.path("seq").asInt(0), tps.isNumber() ? tps.doubleValue() : null));
+        }
+        return points;
+    }
+
+    /** Prefill tok/s for every request this task's own session(s) made, in order - the operator
+     *  asked for this specifically: RunDetailView's own "speed vs context size" chart buckets and
+     *  averages across the WHOLE run, which hides a single slow request inside this one task.
+     *  One point per request (x-axis is this task's own 1st/2nd/3rd/... request, not the request's
+     *  run-wide seq number, which would read as an arbitrary large offset for a task that ran late
+     *  in the run) - added to `container` directly, same as every other Stats-tab element. */
+    private void addRequestSpeedChart(final JsonNode stats, final Div container) {
+        final var points = requestSpeedPoints(stats);
+        if (points.isEmpty()) return;
+        container.add(Panels.sectionTitle("Prefill speed by request"));
+        final var categories = new String[points.size()];
+        for (int i = 0; i < points.size(); i++) categories[i] = String.valueOf(i + 1);
+        final var chart = ApexChartsBuilder.get()
+                .withChart(ChartBuilder.get().withType(Type.LINE).build())
+                .withXaxis(XAxisBuilder.get().withCategories(categories)
+                        .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
+                                .withText("request #").build())
+                        .build())
+                .withYaxis(YAxisBuilder.get().withTitle(TitleBuilder.get().withText("prefill tok/s").build()).build())
+                .withSeries(SeriesBuilder.get().withName("prefill tok/s")
+                        .withData(points.stream().map(RequestSpeedPoint::prefillTokPerSec).toArray(Double[]::new)).build())
+                .build();
+        chart.setHeight("260px");
+        container.add(chart);
     }
 
     record AttemptSection(String header, String body) {
