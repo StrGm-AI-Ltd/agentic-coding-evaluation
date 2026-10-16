@@ -1069,6 +1069,46 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         return lines;
     }
 
+    /** #355-followup-2: found live - a raw "{"task_wall_sec":32400,...}" map dump read as noise
+     *  next to the same section's own labeled "wall time"/"model turns" lines. Every knob
+     *  RESTART_OVERRIDE_KEYS (BenchController) can actually carry, named the way an operator
+     *  deciding whether to adjust it would recognize - same convention as toolLabel() above. An
+     *  unrecognized key (should not happen - this list is kept in step with RESTART_OVERRIDE_KEYS)
+     *  still shows itself rather than going blank. */
+    static String paramLabel(final String key) {
+        return switch (key) {
+            case "task_wall_sec" -> "wall-clock budget (s)";
+            case "task_tokens" -> "token budget";
+            case "max_turns" -> "turn limit";
+            case "wrapup_wall_sec" -> "wrap-up wall-clock budget (s)";
+            case "wrapup_tokens" -> "wrap-up token budget";
+            case "first_token_timeout_sec" -> "first-token timeout (s)";
+            case "judge_enabled" -> "judge enabled";
+            case "judge_every_n_turns" -> "judge interval (turns)";
+            case "judge_model" -> "judge model";
+            case "budget_rescue_enabled" -> "budget-rescue enabled";
+            case "compaction_trigger" -> "compaction trigger (tokens)";
+            case "max_tokens" -> "max response tokens";
+            case "temperature" -> "temperature";
+            case "top_p" -> "top-p";
+            case "top_k" -> "top-k";
+            case "repetition_penalty" -> "repetition penalty";
+            case "reasoning_effort" -> "reasoning effort";
+            case "rescue_wall_sec" -> "rescue wall-clock budget (s)";
+            case "rescue_tokens" -> "rescue token budget";
+            case "rescue_keep_recent_turns" -> "rescue: turns kept";
+            default -> key;
+        };
+    }
+
+    private static List<String> paramLines(final JsonNode params) {
+        final List<String> lines = new ArrayList<>();
+        final var names = new ArrayList<>(params.propertyNames());
+        Collections.sort(names);
+        for (final var name : names) lines.add("  " + paramLabel(name) + ": " + params.path(name).asText());
+        return lines;
+    }
+
     record AttemptSection(String header, String body) {
     }
 
@@ -1087,14 +1127,16 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             if (a.hasNonNull("started_iso")) header.append(" — ").append(a.path("started_iso").asText());
             if (a.hasNonNull("ended_iso")) header.append(" → ").append(a.path("ended_iso").asText());
             final var body = new StringBuilder();
-            if (a.hasNonNull("params")) {
-                body.append("params: ").append(a.path("params")).append(a.path("overridden").asBoolean(false) ? " (overridden)" : " (run default)").append('\n');
+            final var params = a.path("params");
+            if (params.isObject() && params.size() > 0) {
+                body.append("params (").append(a.path("overridden").asBoolean(false) ? "overridden" : "run default").append("):");
+                for (final var line : paramLines(params)) body.append('\n').append(line);
+                body.append('\n');
             }
             if (a.hasNonNull("reported_status")) {
-                body.append("rc: ").append(a.path("attempt_rc").asText("?")).append("   outcome: ").append(a.path("reported_status").asText());
+                body.append("rc: ").append(a.path("attempt_rc").asText("?")).append("   outcome: ").append(a.path("reported_status").asText()).append('\n');
                 final String detail = a.path("reported_detail").asText(null);
-                if (detail != null && !detail.isBlank()) body.append(" - ").append(detail);
-                body.append('\n');
+                if (detail != null && !detail.isBlank()) body.append("detail: ").append(detail).append('\n');
             }
             body.append("wall time: ").append(a.path("seconds").asText("?")).append("s   model turns: ").append(a.path("turns").asText("0")).append('\n');
             body.append("context compactions: ").append(a.path("compactions").asText("0"))

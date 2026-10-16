@@ -515,8 +515,9 @@ class JobDetailViewTest {
         assertEquals(2, sections.size());
         assertTrue(sections.get(0).header().startsWith("Attempt 1"));
         assertTrue(sections.get(0).header().contains("2026-10-14T10:00:00Z"));
-        assertTrue(sections.get(0).body().contains("params: ") && sections.get(0).body().contains("32400"), sections.get(0).body());
+        assertTrue(sections.get(0).body().contains("params (") && sections.get(0).body().contains("32400"), sections.get(0).body());
         assertTrue(sections.get(0).body().contains("overridden"), sections.get(0).body());
+        assertTrue(sections.get(0).body().contains("wall-clock budget (s): 32400"), "raw key names must read as labels: " + sections.get(0).body());
         assertTrue(sections.get(0).body().contains("rc: 2") && sections.get(0).body().contains("outcome: crashed")
                 && sections.get(0).body().contains("transient infra error"), sections.get(0).body());
 
@@ -540,9 +541,35 @@ class JobDetailViewTest {
         final var sections = JobDetailView.attemptSections(stats);
 
         assertEquals(1, sections.size());
-        assertFalse(sections.get(0).body().contains("params:"), sections.get(0).body());
+        assertFalse(sections.get(0).body().contains("params ("), sections.get(0).body());
         assertFalse(sections.get(0).body().contains("outcome:"), sections.get(0).body());
         assertTrue(sections.get(0).body().contains("wall time: 5.0s   model turns: 3"), sections.get(0).body());
+    }
+
+    /** #355-followup-2: found live - a raw map dump ("{"task_wall_sec":32400,...}") next to this
+     *  same section's own labeled "wall time"/"model turns" lines read as noise, and "outcome:
+     *  done - <a long run-on paragraph>" crammed the harness's own free-text report onto the same
+     *  line as the outcome. Params get one labeled line each (paramLabel(), same convention as
+     *  toolLabel()); the free-text report gets its own "detail:" line. */
+    @Test
+    void attemptSections_rendersParamsAsLabeledLinesAndSeparatesOutcomeFromItsFreeTextDetail() {
+        final var stats = Json.MAPPER.readTree("""
+                {"state": "done", "attempts": [
+                    {"session_id": "a.jsonl", "started_iso": "2026-10-14T22:29:55Z", "ended_iso": "2026-10-15T00:17:50Z",
+                     "turns": 44, "compactions": 0, "tool_errors": 4, "tool_calls": {},
+                     "seconds": 6121.46, "params": {"task_wall_sec": 32400, "compaction_trigger": 110000},
+                     "overridden": true, "attempt_rc": 0, "reported_status": "done",
+                     "reported_detail": "a long run-on paragraph describing everything the model did"}
+                ]}""");
+
+        final var body = JobDetailView.attemptSections(stats).get(0).body();
+
+        assertFalse(body.contains("{\"task_wall_sec\""), "no raw JSON map dump: " + body);
+        assertTrue(body.contains("wall-clock budget (s): 32400"), body);
+        assertTrue(body.contains("compaction trigger (tokens): 110000"), "compaction_trigger must get a readable label: " + body);
+        assertTrue(body.contains("rc: 0   outcome: done"), body);
+        assertFalse(body.contains("outcome: done -"), "the free-text report must not be crammed onto the outcome line: " + body);
+        assertTrue(body.contains("detail: a long run-on paragraph"), "the free-text report gets its own line: " + body);
     }
 
     @Test
