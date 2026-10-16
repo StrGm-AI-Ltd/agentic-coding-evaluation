@@ -5,6 +5,7 @@ import org.springframework.web.client.ResourceAccessException;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -569,7 +570,39 @@ class JobDetailViewTest {
         assertTrue(body.contains("compaction trigger (tokens): 110000"), "compaction_trigger must get a readable label: " + body);
         assertTrue(body.contains("rc: 0   outcome: done"), body);
         assertFalse(body.contains("outcome: done -"), "the free-text report must not be crammed onto the outcome line: " + body);
-        assertTrue(body.contains("detail: a long run-on paragraph"), "the free-text report gets its own line: " + body);
+        assertTrue(body.contains("detail:\na long run-on paragraph"), "the free-text report gets its own line: " + body);
+    }
+
+    /** #355-followup-2: the exact T3 attempt-2 report, seen live - one dense run-on paragraph
+     *  packed with parenthetical asides, then a verification sentence. detailLines() must split
+     *  on sentence boundaries, then on top-level ("; "/", ") separators WITHIN each sentence -
+     *  never on a separator sitting inside a parenthetical, like "(32-hex, low-16-bits zero, ...)"
+     *  or "(ErrorCodes enum; allCodes() asserts exact frozen set)" - so each real top-level item
+     *  (ErrorEnvelope, TraceId+Propagation, TraceContext, StructuredLog, the two verification
+     *  clauses) lands on its own line instead of one unreadable wall of text. */
+    @Test
+    void attemptSections_breaksTheModelsOwnFreeTextReportIntoOneLinePerTopLevelClause() {
+        final String detail = ":common kernel (kernel/ package, no Spring): ErrorEnvelope {code,message} with hand-rolled JSON "
+                + "render/parse + all 13 §5.6 stable codes (ErrorCodes enum; allCodes() asserts exact frozen set), TraceId W3C "
+                + "128-bit gen/parse/traceparent+flags (32-hex, low-16-bits zero, non-zero guard, case-insensitive) + Propagation "
+                + "traceparent helper, TraceContext ThreadLocal scope stack (nested open/close restores outer, currentOrNull/current), "
+                + "StructuredLog JSON line carrying service/traceId/accountId/level/operation/message with grammar-validated "
+                + "service+operation+accountId and JSON-escaped message. 35 new :common tests all pass (19 ErrorEnvelope incl. "
+                + "per-code @EnumSource + escape/unicode round-trip, 8 TracePropagation incl. 2000-distinct-ids + hop-to-hop "
+                + "propagator, 8 StructuredLog asserting parsed values/quote-structure); :common:build green and full root "
+                + "./gradlew build green (all 5 suites rerun under JDK21).";
+        final var stats = Json.MAPPER.valueToTree(Map.of("state", "done", "attempts", List.of(
+                Map.of("turns", 35, "compactions", 0, "tool_errors", 0, "tool_calls", Map.of(), "seconds", 6475.164,
+                        "attempt_rc", 0, "reported_status", "done", "reported_detail", detail))));
+
+        final var body = JobDetailView.attemptSections(stats).get(0).body();
+
+        assertTrue(body.contains("\n  TraceId W3C 128-bit"), "TraceId+Propagation is its own line, not split by the commas inside its own parens: " + body);
+        assertFalse(body.contains("\n  low-16-bits zero"), "a comma INSIDE a parenthetical must not become its own line: " + body);
+        assertFalse(body.contains("\n  allCodes() asserts exact frozen set"), "a semicolon inside a parenthetical must not split either: " + body);
+        assertTrue(body.contains("\n  StructuredLog JSON line carrying"), body);
+        assertTrue(body.contains("\n  35 new :common tests all pass"), "the verification sentence's two top-level clauses split on their semicolon: " + body);
+        assertTrue(body.contains("\n  :common:build green and full root"), body);
     }
 
     @Test
