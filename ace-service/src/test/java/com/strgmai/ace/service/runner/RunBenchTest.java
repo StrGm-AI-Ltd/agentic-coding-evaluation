@@ -319,6 +319,28 @@ class RunBenchTest {
         assertEquals(0, second.get("rescue_rc"));
     }
 
+    /** #337-followup: params used to carry only task_wall_sec/task_tokens/max_turns - every OTHER
+     *  override actually in effect for this attempt (compaction_trigger, judge_enabled, etc.) was
+     *  silently dropped, even though it was right there in `override`. Found live: the Stats tab's
+     *  per-attempt breakdown (#355-followup-2) never had anything to show beyond the three hardcoded
+     *  fields, no matter what was actually adjusted for that attempt. */
+    @Test
+    void logTaskAttemptCarriesEveryOverriddenKeyIntoParamsNotJustTheThreeHardcodedOnes() throws Exception {
+        final Path rd = track(Files.createTempDirectory("rd"));
+        final Path ws = track(Files.createTempDirectory("ws"));
+        final var bench = runBench();
+
+        bench.logTaskAttempt(rd, ws, "T9", Map.of("compaction_trigger", 110000, "judge_enabled", true),
+                32400, 180000, 1000, new java.util.LinkedHashMap<>(Map.of("rc", 0, "seconds", 10.0)));
+
+        final var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        final Map<?, ?> entry = mapper.readValue(Files.readAllLines(rd.resolve("task_attempts.jsonl")).get(0), Map.class);
+        final Map<?, ?> params = (Map<?, ?>) entry.get("params");
+        assertEquals(32400, params.get("task_wall_sec"));
+        assertEquals(110000, params.get("compaction_trigger"), "an overridden knob beyond the three hardcoded fields must still show up");
+        assertEquals(true, params.get("judge_enabled"));
+    }
+
     @Test
     void captureOmlxLogDoesNothingWhenNotConfigured() throws Exception {
         final BenchProperties props = mock(BenchProperties.class);
