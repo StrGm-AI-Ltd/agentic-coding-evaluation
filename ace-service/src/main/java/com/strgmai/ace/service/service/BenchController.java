@@ -510,37 +510,44 @@ public class BenchController {
         final Path dir = base.resolve("sessions");
         if (!Files.isDirectory(dir)) return SessionCounts.NOT_FOUND;
         final var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        Path latest = null;
+        java.nio.file.attribute.FileTime latestMtime = null;
         try (var stream = Files.list(dir)) {
             for (final Path f : stream.filter(p -> p.getFileName().toString().endsWith(".jsonl")).toList()) {
-                final List<String> lines;
-                try { lines = Files.readAllLines(f); } catch (final Exception ignore) { continue; }
-                if (lines.isEmpty()) continue;
+                final String firstLine;
+                try (var lines = Files.lines(f)) { firstLine = lines.findFirst().orElse(null); } catch (final Exception ignore) { continue; }
+                if (firstLine == null) continue;
                 final Map<String, Object> header;
-                try { header = mapper.readValue(lines.get(0), Map.class); } catch (final Exception ignore) { continue; }
+                try { header = mapper.readValue(firstLine, Map.class); } catch (final Exception ignore) { continue; }
                 if (!taskId.equals(header.get("label"))) continue;
-                int turns = 0, compactions = 0, toolErrorsTotal = 0;
-                final Map<String, int[]> toolCounts = new LinkedHashMap<>();   // toolName -> [total, errors]
-                for (final String line : lines) {
-                    if (line.isBlank()) continue;
-                    final Map<String, Object> e;
-                    try { e = mapper.readValue(line, Map.class); } catch (final Exception ignore) { continue; }
-                    final String type = String.valueOf(e.get("type"));
-                    if ("compaction".equals(type)) { compactions++; continue; }
-                    if (!"message".equals(type) || !(e.get("message") instanceof Map<?, ?> m)) continue;
-                    final Object role = m.get("role");
-                    if ("assistant".equals(role)) turns++;
-                    else if ("toolResult".equals(role)) {
-                        final int[] c = toolCounts.computeIfAbsent(String.valueOf(m.get("toolName")), k -> new int[2]);
-                        c[0]++;
-                        if (Boolean.TRUE.equals(m.get("isError"))) { c[1]++; toolErrorsTotal++; }
-                    }
-                }
-                final Map<String, Object> toolCallsOut = new LinkedHashMap<>();
-                toolCounts.forEach((name, c) -> toolCallsOut.put(name, Map.of("count", c[0], "errors", c[1])));
-                return new SessionCounts(true, turns, compactions, toolErrorsTotal, toolCallsOut);
+                final java.nio.file.attribute.FileTime mtime;
+                try { mtime = Files.getLastModifiedTime(f); } catch (final Exception ignore) { continue; }
+                if (latestMtime == null || mtime.compareTo(latestMtime) > 0) { latest = f; latestMtime = mtime; }
             }
         } catch (final Exception e) { return SessionCounts.NOT_FOUND; }
-        return SessionCounts.NOT_FOUND;
+        if (latest == null) return SessionCounts.NOT_FOUND;
+        final List<String> lines;
+        try { lines = Files.readAllLines(latest); } catch (final Exception e) { return SessionCounts.NOT_FOUND; }
+        int turns = 0, compactions = 0, toolErrorsTotal = 0;
+        final Map<String, int[]> toolCounts = new LinkedHashMap<>();   // toolName -> [total, errors]
+        for (final String line : lines) {
+            if (line.isBlank()) continue;
+            final Map<String, Object> e;
+            try { e = mapper.readValue(line, Map.class); } catch (final Exception ignore) { continue; }
+            final String type = String.valueOf(e.get("type"));
+            if ("compaction".equals(type)) { compactions++; continue; }
+            if (!"message".equals(type) || !(e.get("message") instanceof Map<?, ?> m)) continue;
+            final Object role = m.get("role");
+            if ("assistant".equals(role)) turns++;
+            else if ("toolResult".equals(role)) {
+                final int[] c = toolCounts.computeIfAbsent(String.valueOf(m.get("toolName")), k -> new int[2]);
+                c[0]++;
+                if (Boolean.TRUE.equals(m.get("isError"))) { c[1]++; toolErrorsTotal++; }
+            }
+        }
+        final Map<String, Object> toolCallsOut = new LinkedHashMap<>();
+        toolCounts.forEach((name, c) -> toolCallsOut.put(name, Map.of("count", c[0], "errors", c[1])));
+        return new SessionCounts(true, turns, compactions, toolErrorsTotal, toolCallsOut);
     }
 
     /** #355/#355-followup: the task detail dialog's own Stats tab. Three states: "done"

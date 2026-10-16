@@ -195,7 +195,7 @@ public final class Collect {
         final Path dir = runDir.resolve("sessions");
         if (!Files.isDirectory(dir)) return empty;
         try {
-            final Map<String, Object> tasks = new LinkedHashMap<>();
+            final Map<String, double[]> taskAcc = new LinkedHashMap<>();   // label -> [overheadSec, events], summed across every file sharing that label
             final List<double[]> events = new ArrayList<>();   // [epochMillis, overheadSec]
             double total = 0.0;
             try (var stream = Files.list(dir)) {
@@ -242,7 +242,9 @@ public final class Collect {
                         events.add(new double[]{turnMs.get(gi + 1), overhead});
                     }
                     if (taskEvents > 0) {
-                        tasks.put(label, Map.of("overhead_sec", round1(taskTotal), "events", taskEvents));
+                        final double[] acc = taskAcc.computeIfAbsent(label, k -> new double[2]);
+                        acc[0] += taskTotal;
+                        acc[1] += taskEvents;
                         total += taskTotal;
                     }
                 }
@@ -256,6 +258,8 @@ public final class Collect {
                 cumulative += ev[1];
                 timeline.add(Map.of("elapsed_sec", Math.round((ev[0] - startMs) / 1000.0), "cumulative_sec", round1(cumulative)));
             }
+            final Map<String, Object> tasks = new LinkedHashMap<>();
+            taskAcc.forEach((label, acc) -> tasks.put(label, Map.of("overhead_sec", round1(acc[0]), "events", (int) acc[1])));
             return Map.of("total_sec", round1(total), "tasks", tasks, "timeline", timeline);
         } catch (Exception e) { return empty; }
     }
