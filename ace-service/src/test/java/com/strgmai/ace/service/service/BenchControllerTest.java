@@ -18,6 +18,8 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -567,6 +569,38 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.turns").value(2))
                 .andExpect(jsonPath("$.compactions").value(1))
                 .andExpect(jsonPath("$.rc").doesNotExist());
+    }
+
+    /** #355-followup: a task that got a false start (e.g. interrupted by an operator pause right
+     *  after it began) ends up with TWO session files sharing its label - an empty/near-empty
+     *  stale one from the false start, and the real one from the attempt that actually ran.
+     *  sessionCounts() must pick the one with the latest mtime, not whichever Files.list() happens
+     *  to enumerate first (that order is filesystem-dependent, not chronological) - otherwise the
+     *  Stats tab can silently show zeros for a task that actually ran plenty of turns. */
+    @Test
+    void taskStatsUsesTheLatestSessionFileWhenMultipleFilesShareTheSameLabel() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": []}");
+        final var staleFile = runDir.resolve("sessions/z_falsestart.jsonl");
+        Files.writeString(staleFile, "{\"label\":\"T3\"}\n");
+        Files.setLastModifiedTime(staleFile, FileTime.from(Instant.parse("2026-10-14T00:00:00Z")));
+        final var realFile = runDir.resolve("sessions/a_real.jsonl");
+        Files.writeString(realFile, String.join("\n",
+                "{\"label\":\"T3\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"}}",
+                "{\"type\":\"compaction\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"}}") + "\n");
+        Files.setLastModifiedTime(realFile, FileTime.from(Instant.parse("2026-10-14T06:00:00Z")));
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T3/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("running"))
+                .andExpect(jsonPath("$.turns").value(2))
+                .andExpect(jsonPath("$.compactions").value(1));
     }
 
     /** #355: once the WHOLE run finishes (not just this task), oracle.json/metrics.json also

@@ -316,4 +316,29 @@ class CollectTest {
         assertEquals(20.0, ((Number) timeline.get(0).get("cumulative_sec")).doubleValue(), 0.001);
         assertEquals(20.0 + 50.0, ((Number) timeline.get(1).get("cumulative_sec")).doubleValue(), 0.001, "T1's event adds on top, running total");
     }
+
+    /** #355-followup: a task that got a false start ends up with two session files sharing its
+     *  label (the real redo keeps the SAME label, since it's the same task). When BOTH files
+     *  independently have real compaction overhead - not just the usual empty false-start case,
+     *  which is filtered out before ever reaching the per-task map - the per-task breakdown must
+     *  be the SUM of both files' own overhead/events, not whichever file happened to be processed
+     *  last silently overwriting the other's contribution. The run-level total_sec already summed
+     *  correctly across files even before this fix; only the per-task entry was wrong. */
+    @Test
+    void perTaskOverheadAccumulatesAcrossMultipleSessionFilesSharingTheSameLabel(@TempDir final Path runDir) throws Exception {
+        writeSession(runDir, "a.jsonl", "T16",
+                turn("2026-01-01T00:00:00Z"), turn("2026-01-01T00:00:10Z"),
+                turn("2026-01-01T00:00:20Z"), turn("2026-01-01T00:00:30Z"),
+                COMPACTION, turn("2026-01-01T00:01:20Z"));   // overhead = 50 - 10 = 40s
+        writeSession(runDir, "b.jsonl", "T16",
+                turn("2026-01-01T02:00:00Z"), turn("2026-01-01T02:00:10Z"),
+                turn("2026-01-01T02:00:20Z"), turn("2026-01-01T02:00:30Z"),
+                COMPACTION, turn("2026-01-01T02:01:00Z"));   // overhead = 30 - 10 = 20s
+        final Map<String, Object> out = Collect.compactionOverhead(runDir);
+        assertEquals(60.0, ((Number) out.get("total_sec")).doubleValue(), 0.001, "40 (a) + 20 (b)");
+        final Map<String, Object> tasks = (Map<String, Object>) out.get("tasks");
+        final Map<String, Object> t16 = (Map<String, Object>) tasks.get("T16");
+        assertEquals(60.0, ((Number) t16.get("overhead_sec")).doubleValue(), 0.001, "must be the sum, not just the last file processed");
+        assertEquals(2, t16.get("events"));
+    }
 }
