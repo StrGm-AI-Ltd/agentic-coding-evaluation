@@ -736,42 +736,52 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.attempts[1].reported_status").value("done"));
     }
 
-    /** #355-followup-3: the Stats tab's new per-request prefill-speed chart. Reads the session
+    /** #355-followup-3/4: the Stats tab's per-attempt prefill-speed chart (the operator asked for
+     *  one chart per attempt, not one combined chart for the whole task). Reads each session
      *  file's own header "id" (the real session UUID, distinct from the attempt's filename) and
-     *  filters interactions.jsonl down to just this task's own requests, in seq order, pulling
+     *  filters interactions.jsonl down to just THAT attempt's own requests, in seq order, pulling
      *  response.usage.prompt_tokens/prompt_tokens_per_second straight through - never re-derived.
-     *  A request belonging to a DIFFERENT session (another task, running concurrently or
-     *  earlier/later in the same run) must never leak in, and a line with no usable usage block
+     *  A request belonging to a DIFFERENT session (another task, or another attempt of this same
+     *  task) must never leak into the wrong attempt's list, and a line with no usable usage block
      *  (a failed/non-streamed call) is skipped rather than crashing the whole read. */
     @Test
-    void taskStatsReturnsPerRequestPrefillSpeedFilteredToThisTasksOwnSessionId() throws Exception {
+    void taskStatsReturnsPerAttemptPrefillSpeedFilteredToEachAttemptsOwnSessionId() throws Exception {
         final var resultsDir = Files.createTempDirectory("results");
         final var runDir = resultsDir.resolve("run-1");
         Files.createDirectories(runDir.resolve("sessions"));
         Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": []}");
-        Files.writeString(runDir.resolve("sessions/a.jsonl"), String.join("\n",
-                "{\"type\":\"session\",\"id\":\"session-t9\",\"label\":\"T9\",\"ts\":\"2026-10-16T15:25:47Z\"}",
+        // two attempts of the SAME task, each with its own session id - attempt 1 made one real
+        // request before being interrupted, attempt 2 is the real, successful redo
+        Files.writeString(runDir.resolve("sessions/a_falsestart.jsonl"),
+                "{\"type\":\"session\",\"id\":\"session-attempt1\",\"label\":\"T9\",\"ts\":\"2026-10-16T10:00:00Z\"}\n");
+        Files.writeString(runDir.resolve("sessions/b_real.jsonl"), String.join("\n",
+                "{\"type\":\"session\",\"id\":\"session-attempt2\",\"label\":\"T9\",\"ts\":\"2026-10-16T15:25:47Z\"}",
                 "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"ts\":\"2026-10-16T15:26:00Z\"}") + "\n");
         Files.writeString(runDir.resolve("interactions.jsonl"), String.join("\n",
                 "{\"seq\":1,\"session_id\":\"session-other-task\",\"response\":{\"usage\":{\"prompt_tokens\":999,\"prompt_tokens_per_second\":1.0}}}",
-                "{\"seq\":3,\"session_id\":\"session-t9\",\"response\":{\"usage\":{\"prompt_tokens\":1069,\"prompt_tokens_per_second\":89.93}}}",
-                "{\"seq\":2,\"session_id\":\"session-t9\",\"response\":{\"usage\":{\"prompt_tokens\":500,\"prompt_tokens_per_second\":120.5}}}",
-                "{\"seq\":4,\"session_id\":\"session-t9\",\"response\":{\"content\":\"no usage here\"}}") + "\n");
+                "{\"seq\":2,\"session_id\":\"session-attempt1\",\"response\":{\"usage\":{\"prompt_tokens\":200,\"prompt_tokens_per_second\":75.0}}}",
+                "{\"seq\":4,\"session_id\":\"session-attempt2\",\"response\":{\"usage\":{\"prompt_tokens\":1069,\"prompt_tokens_per_second\":89.93}}}",
+                "{\"seq\":3,\"session_id\":\"session-attempt2\",\"response\":{\"usage\":{\"prompt_tokens\":500,\"prompt_tokens_per_second\":120.5}}}",
+                "{\"seq\":5,\"session_id\":\"session-attempt2\",\"response\":{\"content\":\"no usage here\"}}") + "\n");
         when(props.resultsDir()).thenReturn(resultsDir.toString());
         when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
 
         mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T9/stats"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.request_speeds", hasSize(2)))
-                .andExpect(jsonPath("$.request_speeds[0].seq").value(2))
-                .andExpect(jsonPath("$.request_speeds[0].prompt_tokens").value(500))
-                .andExpect(jsonPath("$.request_speeds[0].prefill_tok_per_sec").value(120.5))
-                .andExpect(jsonPath("$.request_speeds[1].seq").value(3))
-                .andExpect(jsonPath("$.request_speeds[1].prefill_tok_per_sec").value(89.93));
+                .andExpect(jsonPath("$.attempts", hasSize(2)))
+                .andExpect(jsonPath("$.attempts[0].request_speeds", hasSize(1)))
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].seq").value(2))
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].prefill_tok_per_sec").value(75.0))
+                .andExpect(jsonPath("$.attempts[1].request_speeds", hasSize(2)))
+                .andExpect(jsonPath("$.attempts[1].request_speeds[0].seq").value(3))
+                .andExpect(jsonPath("$.attempts[1].request_speeds[0].prompt_tokens").value(500))
+                .andExpect(jsonPath("$.attempts[1].request_speeds[0].prefill_tok_per_sec").value(120.5))
+                .andExpect(jsonPath("$.attempts[1].request_speeds[1].seq").value(4))
+                .andExpect(jsonPath("$.attempts[1].request_speeds[1].prefill_tok_per_sec").value(89.93));
     }
 
     @Test
-    void taskStatsReturnsEmptyRequestSpeedsWhenThereIsNoInteractionsFileAtAll() throws Exception {
+    void taskStatsReturnsEmptyRequestSpeedsPerAttemptWhenThereIsNoInteractionsFileAtAll() throws Exception {
         final var resultsDir = Files.createTempDirectory("results");
         final var runDir = resultsDir.resolve("run-1");
         Files.createDirectories(runDir.resolve("sessions"));
@@ -783,7 +793,7 @@ class BenchControllerTest {
 
         mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T9/stats"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.request_speeds", hasSize(0)));
+                .andExpect(jsonPath("$.attempts[0].request_speeds", hasSize(0)));
     }
 
     /** #355: once the WHOLE run finishes (not just this task), oracle.json/metrics.json also
