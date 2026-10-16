@@ -36,6 +36,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Job detail — the Vaadin twin of the Jinja2 SSE live page. The page chrome is built
@@ -1247,14 +1248,12 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     /** The x-axis is one category per request (points.size() can run past 100+ on a long task,
-     *  found live on T9). Categories stay real, unique numbers ("1".."150", never blank) -
-     *  needed so a compaction annotation (addRequestSpeedChart() below) can target an EXACT
-     *  request by its own category value; ApexCharts resolves a category-axis annotation's `x`
-     *  by matching the category string verbatim, so a blanked-out "" category would be ambiguous
-     *  (shared by every thinned-out position) and the line would land on the wrong request, or
-     *  not render at all. Label DENSITY is thinned separately, in the chart's own JS label
-     *  formatter (requestSpeedLabelFormatterJs()) - that only changes what's DRAWN under each
-     *  tick, never the category values annotations and the series both still address directly. */
+     *  found live on T9). Categories stay real, unique numbers ("1".."150", never blank) - a
+     *  blanked-out "" would be ambiguous on hover/tooltip (shared by every thinned-out position).
+     *  Label DENSITY is thinned separately, in the chart's own JS label formatter
+     *  (requestSpeedLabelFormatterJs()) - that only changes what's DRAWN under each tick, never
+     *  the category values the series (and the compaction column series - see
+     *  compactionColumnData() below) both still address by their own shared category index. */
     static String[] requestSpeedCategories(final int count) {
         final var categories = new String[count];
         for (int i = 0; i < count; i++) categories[i] = String.valueOf(i + 1);
@@ -1269,30 +1268,32 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         return "function(val) { return (parseInt(val, 10) % 10 === 0) ? val : ''; }";
     }
 
-    /** One XAxisAnnotations vertical line per request ordinal a compaction landed immediately
-     *  before (BenchController.taskStats()'s "attempts[].compactions_before_request") - the
-     *  operator asked to see where compactions fall relative to the prefill-speed trend, not just
-     *  the running count already in the text summary above. `x` must be a NUMBER matching the
-     *  request ordinal, not the category string - even though requestSpeedCategories() labels
-     *  the axis with digit strings, ApexCharts auto-detects an all-numeric category array as a
-     *  numeric axis (confirmed live: the addon's own XAxisType.CATEGORIES enum serializes to the
-     *  non-standard value "categories", which ApexCharts.js doesn't recognize and silently
-     *  ignores), so annotations resolve by numeric x position, not by string label match.
-     *  Positions past the series' own length are dropped rather than pointing at a request that
-     *  was never plotted (the ordinal-alignment caveat BenchController's own javadoc notes: a
-     *  dropped request_speeds entry can shift later ordinals by one). */
-    static List<com.github.appreciated.apexcharts.config.annotations.XAxisAnnotations> compactionAnnotations(
-            final List<Integer> compactionsBeforeRequest, final int requestCount) {
-        final List<com.github.appreciated.apexcharts.config.annotations.XAxisAnnotations> out = new ArrayList<>();
+    /** One value per request ordinal (null everywhere except where a compaction landed
+     *  immediately before - BenchController.taskStats()'s own "attempts[].compactions_before_request")
+     *  for a SECOND, thin-column series plotted on the exact same category axis as the main
+     *  speed series (addRequestSpeedChart() below) - not an ApexCharts x-axis annotation.
+     *  ApexCharts 3.54.1's own x-axis annotation only resolves a category position when
+     *  xaxis.type is the literal string "category" (confirmed by reading its source,
+     *  modules/annotations/helpers.js's getX1X2()), and this addon's own XAxisType.CATEGORIES
+     *  enum constant serializes to the non-standard value "categories" instead - so that path is
+     *  unreachable through this addon, and the annotation silently fails to render (confirmed
+     *  live against T11's real data: its SVG group mounted with zero children). A second data
+     *  series sidesteps the whole annotation-resolution path: it shares the SAME category axis
+     *  as the main series, so its column lands on the correct request by construction, not by
+     *  any separate coordinate math - exactly as reliable as the main series' own line. Each
+     *  marked column's value is the series' own peak, so it visually spans (near enough) the
+     *  full plot height. Positions past the series' own length are dropped rather than pointing
+     *  at a request that was never plotted (the ordinal-alignment caveat BenchController's own
+     *  javadoc notes: a dropped request_speeds entry can shift later ordinals by one). */
+    static Double[] compactionColumnData(final List<Integer> compactionsBeforeRequest, final List<RequestSpeedPoint> points) {
+        final double peak = points.stream().map(RequestSpeedPoint::prefillTokPerSec).filter(Objects::nonNull)
+                .mapToDouble(Double::doubleValue).max().orElse(0);
+        final Double[] data = new Double[points.size()];
         for (final Integer position : compactionsBeforeRequest) {
-            if (position == null || position < 1 || position > requestCount) continue;
-            out.add(com.github.appreciated.apexcharts.config.annotations.builder.XAxisAnnotationsBuilder.get()
-                    .withX(Double.valueOf(position))
-                    .withBorderColor("#e74c3c")
-                    .withStrokeDashArray(4.0)
-                    .build());
+            if (position == null || position < 1 || position > points.size()) continue;
+            data[position - 1] = peak;
         }
-        return out;
+        return data;
     }
 
     /** Prefill tok/s for every request ONE attempt's own session made, in order - the operator
@@ -1302,7 +1303,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  attempt's own 1st/2nd/3rd/... request, not the request's run-wide seq number, which would
      *  read as an arbitrary large offset for a task that ran late in the run. A thin (1.5px)
      *  stroke - the default width reads as a solid blob once 100+ points are packed into one
-     *  chart. A dashed vertical line marks each request a compaction landed right before, so the
+     *  chart. A request a compaction landed right before is marked by a thin red column (a real
+     *  second series - see compactionColumnData() above for why, not an annotation), so the
      *  operator can see whether prefill speed actually dips there. Added to `container` directly,
      *  same as every other Stats-tab element. */
     private void addRequestSpeedChart(final List<RequestSpeedPoint> points, final List<Integer> compactionsBeforeRequest,
@@ -1312,19 +1314,28 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var categories = requestSpeedCategories(points.size());
         final var xaxisLabels = new com.github.appreciated.apexcharts.config.xaxis.Labels();
         xaxisLabels.setFormatter(requestSpeedLabelFormatterJs());
-        final var annotations = new com.github.appreciated.apexcharts.config.Annotations();
-        annotations.setXaxis(compactionAnnotations(compactionsBeforeRequest, points.size()));
+        final var speedSeries = SeriesBuilder.get().withName("prefill tok/s")
+                .withData(points.stream().map(RequestSpeedPoint::prefillTokPerSec).toArray(Double[]::new)).build();
+        final var compactionSeries = SeriesBuilder.get().withName("compaction")
+                .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
+                .withData(compactionColumnData(compactionsBeforeRequest, points)).build();
         final var chart = ApexChartsBuilder.get()
                 .withChart(ChartBuilder.get().withType(Type.LINE).build())
-                .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get().withWidth(1.5).build())
-                .withAnnotations(annotations)
+                .withColors("#008FFB", "#e74c3c")
+                .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get()
+                        .withWidthArray(1.5, 2.0).build())
+                .withPlotOptions(com.github.appreciated.apexcharts.config.builder.PlotOptionsBuilder.get()
+                        .withBar(com.github.appreciated.apexcharts.config.plotoptions.builder.BarBuilder.get()
+                                .withColumnWidth("6%").build())
+                        .build())
+                .withLegend(com.github.appreciated.apexcharts.config.builder.LegendBuilder.get().withShow(false).build())
+                .withTooltip(com.github.appreciated.apexcharts.config.builder.TooltipBuilder.get().withShared(false).build())
                 .withXaxis(XAxisBuilder.get().withCategories(categories).withLabels(xaxisLabels)
                         .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
-                                .withText("request # (dashed line: a compaction landed right before it)").build())
+                                .withText("request # (red column: a compaction landed right before it)").build())
                         .build())
                 .withYaxis(YAxisBuilder.get().withTitle(TitleBuilder.get().withText("prefill tok/s").build()).build())
-                .withSeries(SeriesBuilder.get().withName("prefill tok/s")
-                        .withData(points.stream().map(RequestSpeedPoint::prefillTokPerSec).toArray(Double[]::new)).build())
+                .withSeries(speedSeries, compactionSeries)
                 .build();
         chart.setHeight("220px");
         container.add(chart);
