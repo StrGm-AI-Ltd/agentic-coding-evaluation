@@ -796,19 +796,24 @@ class RunBenchTest {
         assertEquals(Map.of(), RunBench.effectiveRescueCfg(Map.of(), Map.of()), "no budget_rescue cfg at all on the run - never null, never throws");
     }
 
-    /** #307: the budget-exhaustion rescue step's own gating - found live on task T13 (budget
-     *  exhausted, rc=3, 12/13 tests green, one assertion away) as the motivating case; must never
-     *  fire for a wall timeout (124, nothing left to spend anyway), must stay off unless the run
-     *  explicitly opted in, and must never apply to the `pi` harness (no in-process loop to compact/
-     *  reconnect, same reason Judge/FinalTurn are no-ops there). #299-adjacent: rc=4
-     *  (ContextWindowExceeded) is rescue-eligible too - same "the harness's own proxy proactively
-     *  refused to continue" shape as rc=3, fixed by the same compacted reconnect. */
+    /** #307/#351: the budget-exhaustion rescue step's own gating - found live on task T13 (budget
+     *  exhausted, rc=3, 12/13 tests green, one assertion away) as the motivating case; must stay
+     *  off unless the run explicitly opted in, and must never apply to the `pi` harness (no
+     *  in-process loop to compact/reconnect, same reason Judge/FinalTurn are no-ops there).
+     *  #299-adjacent: rc=4 (ContextWindowExceeded) is rescue-eligible too - same "the harness's own
+     *  proxy proactively refused to continue" shape as rc=3, fixed by the same compacted reconnect.
+     *  #351: rc=124 (the task-wall timeout) is ALSO rescue-eligible now - found live on task T7,
+     *  genuinely close to done (judge: ON TRACK) but cut off mid-fix after burning ~half its wall
+     *  budget on compaction-triggered re-prefills; rescueStep()'s own rescue_wall_sec is a budget
+     *  separate from the exhausted main-session task_wall, so "nothing left to spend" never
+     *  actually applied to this case - see rescueStep()'s own javadoc for the full reasoning and
+     *  the bounded-wall/tight-compaction defaults it now applies specifically for this rc. */
     @Test
-    void shouldRescueFiresForBudgetExhaustionOrContextWindowOverflowWhenEnabledOnTheRefHarness() {
+    void shouldRescueFiresForBudgetExhaustionContextWindowOverflowOrAWallTimeoutWhenEnabledOnTheRefHarness() {
         final var enabled = Map.<String, Object>of("enabled", true);
         assertTrue(RunBench.shouldRescue(enabled, Map.of("rc", 3), "ref"), "budget exhausted, feature on, ref harness");
         assertTrue(RunBench.shouldRescue(enabled, Map.of("rc", 4), "ref"), "context window exceeded - same rescue-eligible shape as budget exhaustion");
-        assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 124), "ref"), "a wall timeout - nothing left to spend on a rescue");
+        assertTrue(RunBench.shouldRescue(enabled, Map.of("rc", 124), "ref"), "#351: a wall timeout - rescue has its own separate budget, so this is eligible too");
         assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 0), "ref"), "already succeeded - nothing to rescue");
         assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 2), "ref"), "a transient infra failure, not a budget exhaustion");
 
@@ -818,5 +823,38 @@ class RunBenchTest {
 
         assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 3), "pi"), "the pi harness has no in-process loop to compact/reconnect");
         assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 4), "pi"), "same, for the context-window rc");
+        assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 124), "pi"), "same, for the wall-timeout rc");
+    }
+
+    /** #351: the reason text rescueStep() names must match what actually happened - distinguishing
+     *  all three rescue-eligible rc values matters because the wrong reason would be misleading
+     *  (e.g. "ran out of token budget" for a task that was, like T7, nowhere near its token
+     *  budget). Exercised directly rather than only through rescueStep()'s own heavier
+     *  orchestration, same reasoning as shouldRescue()'s own extraction. */
+    @Test
+    void rescueReasonNamesTheActualCauseForEachEligibleRc() {
+        assertEquals("ran out of context window space (its own conversation history grew too large to fit)",
+                RunBench.rescueReason(Map.of("rc", 4)), "rc=4: context window, not tokens or time");
+        assertEquals("ran out of its own wall-clock time budget",
+                RunBench.rescueReason(Map.of("rc", 124)), "#351: rc=124: wall-clock time, not tokens or context space");
+        assertEquals("ran out of its own token budget",
+                RunBench.rescueReason(Map.of("rc", 3)), "rc=3: the proxy's own token-budget refusal");
+    }
+
+    /** #351: a wall-timeout rescue must never fall back to "unlimited" wall time or the operator-
+     *  wide keep-recent-turns default - the task that hit rc=124 already proved it can run away on
+     *  repeated compactions, so an unbounded second attempt (today's existing 0="unlimited"
+     *  fallback, still correct for rc=3/4) would be a real regression, not a hypothetical one. An
+     *  explicit override still wins either way - these defaults only fill in what's unconfigured. */
+    @Test
+    void wallTimeoutRescueDefaultsToABoundedWallAndATightCompactionWindow() {
+        assertEquals(RunBench.DEFAULT_WALL_TIMEOUT_RESCUE_WALL_SEC, RunBench.rescueWallFor(Map.of(), true), "no override - bounded, not unlimited, for a wall-timeout rescue");
+        assertEquals(0, RunBench.rescueWallFor(Map.of(), false), "no override - still unlimited for rc=3/4, unchanged behavior");
+        assertEquals(300, RunBench.rescueWallFor(Map.of("wall_sec", 300), true), "an explicit override always wins");
+
+        assertEquals(RunBench.DEFAULT_WALL_TIMEOUT_RESCUE_KEEP_RECENT_TURNS, RunBench.rescueKeepRecentTurnsFor(Map.of(), true, 8),
+                "no override - a tight window for a wall-timeout rescue, not the operator-wide default");
+        assertEquals(8, RunBench.rescueKeepRecentTurnsFor(Map.of(), false, 8), "no override - still the operator-wide default for rc=3/4, unchanged behavior");
+        assertEquals(5, RunBench.rescueKeepRecentTurnsFor(Map.of("keep_recent_turns", 5), true, 8), "an explicit override always wins");
     }
 }
