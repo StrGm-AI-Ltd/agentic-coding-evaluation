@@ -947,10 +947,12 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         header.getStyle().set("margin", "12px 0 4px 0").set("font-size", "0.95em");
                         statsBody.add(header);
                         statsBody.add(Panels.mono(section.body()));
-                        addRequestSpeedChart(section.requestSpeeds(), statsBody, "Prefill speed by request — Attempt " + (i + 1));
+                        addRequestSpeedChart(section.requestSpeeds(), section.compactionsBeforeRequest(), statsBody,
+                                "Prefill speed by request — Attempt " + (i + 1));
                     }
                 } else if (sections.size() == 1) {
-                    addRequestSpeedChart(sections.get(0).requestSpeeds(), statsBody, "Prefill speed by request");
+                    addRequestSpeedChart(sections.get(0).requestSpeeds(), sections.get(0).compactionsBeforeRequest(), statsBody,
+                            "Prefill speed by request");
                 }
             } catch (final Exception ex) {
                 statsBody.removeAll();
@@ -1234,16 +1236,60 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         return points;
     }
 
+    /** BenchController.taskStats()'s own "attempts[].compactions_before_request" - the 1-based
+     *  request ordinals a compaction landed immediately before, for this one attempt. Pure,
+     *  same convention as requestSpeedPoints() just above. */
+    static List<Integer> compactionsBeforeRequest(final JsonNode arr) {
+        if (!arr.isArray() || arr.isEmpty()) return List.of();
+        final List<Integer> positions = new ArrayList<>();
+        for (final var p : arr) if (p.isNumber()) positions.add(p.asInt());
+        return positions;
+    }
+
     /** The x-axis is one category per request (points.size() can run past 100+ on a long task,
-     *  found live on T9) - a label under every single one prints as an unreadable smear. Every
-     *  data point still gets plotted; only the LABEL is blanked out except on every tenth request
-     *  (#10, #20, ...), same trick a plain string-category axis (not a true numeric one, so
-     *  ApexCharts' own tick-thinning options don't apply here) always supports: an empty string
-     *  category still occupies its slot on the axis, it just draws no tick text under it. */
+     *  found live on T9). Categories stay real, unique numbers ("1".."150", never blank) -
+     *  needed so a compaction annotation (addRequestSpeedChart() below) can target an EXACT
+     *  request by its own category value; ApexCharts resolves a category-axis annotation's `x`
+     *  by matching the category string verbatim, so a blanked-out "" category would be ambiguous
+     *  (shared by every thinned-out position) and the line would land on the wrong request, or
+     *  not render at all. Label DENSITY is thinned separately, in the chart's own JS label
+     *  formatter (requestSpeedLabelFormatterJs()) - that only changes what's DRAWN under each
+     *  tick, never the category values annotations and the series both still address directly. */
     static String[] requestSpeedCategories(final int count) {
         final var categories = new String[count];
-        for (int i = 0; i < count; i++) categories[i] = (i + 1) % 10 == 0 ? String.valueOf(i + 1) : "";
+        for (int i = 0; i < count; i++) categories[i] = String.valueOf(i + 1);
         return categories;
+    }
+
+    /** A label under every single request (100+ on a long task) prints as an unreadable smear -
+     *  show one only on every tenth request (#10, #20, ...). A raw JS function string: this
+     *  wrapper has no per-tick Java callback hook for xaxis labels (same limitation its own
+     *  tooltip custom() already works around - see RunDetailView.speedByContextTooltipJs()). */
+    static String requestSpeedLabelFormatterJs() {
+        return "function(val) { return (parseInt(val, 10) % 10 === 0) ? val : ''; }";
+    }
+
+    /** One XAxisAnnotations vertical line per request ordinal a compaction landed immediately
+     *  before (BenchController.taskStats()'s "attempts[].compactions_before_request") - the
+     *  operator asked to see where compactions fall relative to the prefill-speed trend, not just
+     *  the running count already in the text summary above. `x` must be the category STRING
+     *  itself (requestSpeedCategories() keeps every one unique for exactly this reason), not a
+     *  numeric index - that's how ApexCharts resolves an annotation's position on a category
+     *  axis. Positions past the series' own length are dropped rather than pointing at a request
+     *  that was never plotted (the ordinal-alignment caveat BenchController's own javadoc notes:
+     *  a dropped request_speeds entry can shift later ordinals by one). */
+    static List<com.github.appreciated.apexcharts.config.annotations.XAxisAnnotations> compactionAnnotations(
+            final List<Integer> compactionsBeforeRequest, final int requestCount) {
+        final List<com.github.appreciated.apexcharts.config.annotations.XAxisAnnotations> out = new ArrayList<>();
+        for (final Integer position : compactionsBeforeRequest) {
+            if (position == null || position < 1 || position > requestCount) continue;
+            out.add(com.github.appreciated.apexcharts.config.annotations.builder.XAxisAnnotationsBuilder.get()
+                    .withX((Object) String.valueOf(position))
+                    .withBorderColor("#e74c3c")
+                    .withStrokeDashArray(4.0)
+                    .build());
+        }
+        return out;
     }
 
     /** Prefill tok/s for every request ONE attempt's own session made, in order - the operator
@@ -1253,17 +1299,25 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  attempt's own 1st/2nd/3rd/... request, not the request's run-wide seq number, which would
      *  read as an arbitrary large offset for a task that ran late in the run. A thin (1.5px)
      *  stroke - the default width reads as a solid blob once 100+ points are packed into one
-     *  chart. Added to `container` directly, same as every other Stats-tab element. */
-    private void addRequestSpeedChart(final List<RequestSpeedPoint> points, final Div container, final String title) {
+     *  chart. A dashed vertical line marks each request a compaction landed right before, so the
+     *  operator can see whether prefill speed actually dips there. Added to `container` directly,
+     *  same as every other Stats-tab element. */
+    private void addRequestSpeedChart(final List<RequestSpeedPoint> points, final List<Integer> compactionsBeforeRequest,
+                                       final Div container, final String title) {
         if (points.isEmpty()) return;
         container.add(Panels.sectionTitle(title));
         final var categories = requestSpeedCategories(points.size());
+        final var xaxisLabels = new com.github.appreciated.apexcharts.config.xaxis.Labels();
+        xaxisLabels.setFormatter(requestSpeedLabelFormatterJs());
+        final var annotations = new com.github.appreciated.apexcharts.config.Annotations();
+        annotations.setXaxis(compactionAnnotations(compactionsBeforeRequest, points.size()));
         final var chart = ApexChartsBuilder.get()
                 .withChart(ChartBuilder.get().withType(Type.LINE).build())
                 .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get().withWidth(1.5).build())
-                .withXaxis(XAxisBuilder.get().withCategories(categories)
+                .withAnnotations(annotations)
+                .withXaxis(XAxisBuilder.get().withCategories(categories).withLabels(xaxisLabels)
                         .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
-                                .withText("request #").build())
+                                .withText("request # (dashed line: a compaction landed right before it)").build())
                         .build())
                 .withYaxis(YAxisBuilder.get().withTitle(TitleBuilder.get().withText("prefill tok/s").build()).build())
                 .withSeries(SeriesBuilder.get().withName("prefill tok/s")
@@ -1273,7 +1327,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         container.add(chart);
     }
 
-    record AttemptSection(String header, String body, List<RequestSpeedPoint> requestSpeeds) {
+    record AttemptSection(String header, String body, List<RequestSpeedPoint> requestSpeeds, List<Integer> compactionsBeforeRequest) {
     }
 
     /** #355-followup-2: one section per session file sharing a task's label, oldest first,
@@ -1314,7 +1368,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                     .append("   failed tool calls: ").append(a.path("tool_errors").asText("0"));
             final var tc = a.path("tool_calls");
             if (tc.isObject() && tc.size() > 0) for (final var line : toolCallLines(tc)) body.append('\n').append(line);
-            sections.add(new AttemptSection(header.toString(), body.toString(), requestSpeedPoints(a.path("request_speeds"))));
+            sections.add(new AttemptSection(header.toString(), body.toString(), requestSpeedPoints(a.path("request_speeds")),
+                    compactionsBeforeRequest(a.path("compactions_before_request"))));
         }
         return sections;
     }
