@@ -920,6 +920,17 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 }
                 for (final var line : taskStatsLines(stats, taskStats(live.sessions(), task.id(), live.currentStep())))
                     statsBody.add(Panels.mono(line));
+                // only worth its own breakdown once there's more than one attempt to tell apart -
+                // a single-attempt task would just duplicate the summary lines just added above
+                final var sections = attemptSections(stats);
+                if (sections.size() > 1) {
+                    for (final var section : sections) {
+                        final var header = new com.vaadin.flow.component.html.H4(section.header());
+                        header.getStyle().set("margin", "12px 0 4px 0").set("font-size", "0.95em");
+                        statsBody.add(header);
+                        statsBody.add(Panels.mono(section.body()));
+                    }
+                }
             } catch (final Exception ex) {
                 statsBody.removeAll();
                 statsBody.add(Panels.error(client.errorText(ex)));
@@ -1033,13 +1044,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var tc = stats.path("tool_calls");
         if (tc.isObject() && tc.size() > 0) {
             lines.add("tool calls (the four actions the model can take in its own coding session):");
-            final var names = new ArrayList<>(tc.propertyNames());
-            Collections.sort(names);
-            for (final var name : names) {
-                final var c = tc.path(name);
-                final int errors = c.path("errors").asInt(0);
-                lines.add("  " + toolLabel(name) + ": " + c.path("count").asInt(0) + (errors > 0 ? " (" + errors + (errors == 1 ? " error" : " errors") + ")" : ""));
-            }
+            lines.addAll(toolCallLines(tc));
         }
         final var cs = stats.path("check_score");
         if (cs.isObject()) {
@@ -1050,6 +1055,55 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             lines.add("compaction overhead: " + co.path("overhead_sec").asText("?") + "s across " + co.path("events").asText("0") + " event(s)");
         }
         return lines;
+    }
+
+    private static List<String> toolCallLines(final JsonNode toolCalls) {
+        final List<String> lines = new ArrayList<>();
+        final var names = new ArrayList<>(toolCalls.propertyNames());
+        Collections.sort(names);
+        for (final var name : names) {
+            final var c = toolCalls.path(name);
+            final int errors = c.path("errors").asInt(0);
+            lines.add("  " + toolLabel(name) + ": " + c.path("count").asInt(0) + (errors > 0 ? " (" + errors + (errors == 1 ? " error" : " errors") + ")" : ""));
+        }
+        return lines;
+    }
+
+    record AttemptSection(String header, String body) {
+    }
+
+    /** #355-followup-2: one section per session file sharing a task's label, oldest first,
+     *  matching BenchController.taskStats()'s own "attempts" array - the per-attempt params/
+     *  outcome/turns/compactions/tool_calls breakdown the operator asked to see individually
+     *  rather than collapsed into the single aggregate taskStatsLines() above reports. Pure and
+     *  testable against real-shape fixtures, same convention as taskStatsLines() itself. */
+    static List<AttemptSection> attemptSections(final JsonNode stats) {
+        final List<AttemptSection> sections = new ArrayList<>();
+        final var attempts = stats.path("attempts");
+        if (!attempts.isArray()) return sections;
+        for (int i = 0; i < attempts.size(); i++) {
+            final var a = attempts.get(i);
+            final var header = new StringBuilder("Attempt " + (i + 1));
+            if (a.hasNonNull("started_iso")) header.append(" — ").append(a.path("started_iso").asText());
+            if (a.hasNonNull("ended_iso")) header.append(" → ").append(a.path("ended_iso").asText());
+            final var body = new StringBuilder();
+            if (a.hasNonNull("params")) {
+                body.append("params: ").append(a.path("params")).append(a.path("overridden").asBoolean(false) ? " (overridden)" : " (run default)").append('\n');
+            }
+            if (a.hasNonNull("reported_status")) {
+                body.append("rc: ").append(a.path("attempt_rc").asText("?")).append("   outcome: ").append(a.path("reported_status").asText());
+                final String detail = a.path("reported_detail").asText(null);
+                if (detail != null && !detail.isBlank()) body.append(" - ").append(detail);
+                body.append('\n');
+            }
+            body.append("wall time: ").append(a.path("seconds").asText("?")).append("s   model turns: ").append(a.path("turns").asText("0")).append('\n');
+            body.append("context compactions: ").append(a.path("compactions").asText("0"))
+                    .append("   failed tool calls: ").append(a.path("tool_errors").asText("0"));
+            final var tc = a.path("tool_calls");
+            if (tc.isObject() && tc.size() > 0) for (final var line : toolCallLines(tc)) body.append('\n').append(line);
+            sections.add(new AttemptSection(header.toString(), body.toString()));
+        }
+        return sections;
     }
 
     /** The "Live" tab: a plain-text, operator-facing peek into the task's own coding session -

@@ -463,18 +463,27 @@ public class BenchController {
         final Map<String, Object> job = queue.get(id);
         try {
             final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
-            final Path file = base.resolve("task_attempts.jsonl");
-            if (!Files.isRegularFile(file) || !isContainedEvenViaSymlinks(base, file)) return List.of();
-            final var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            final List<Map<String, Object>> all = new ArrayList<>();
-            for (final String line : Files.readAllLines(file)) {
-                if (line.isBlank()) continue;
-                final Map<String, Object> entry = mapper.readValue(line, Map.class);
-                if (taskId.equals(entry.get("task_id"))) all.add(entry);
-            }
+            final List<Map<String, Object>> all = new ArrayList<>(readTaskAttempts(base, taskId));
             Collections.reverse(all);
             return all;
         } catch (final Exception e) { return List.of(); }
+    }
+
+    /** this task's own task_attempts.jsonl rows, in file (chronological, oldest-first) order -
+     *  the shared read taskAttempts() above (newest-first, for the History tab) and taskStats()
+     *  below (matched up against sessionCounts()'s own per-attempt breakdown, for the Stats tab)
+     *  both build on. Empty on any read failure, same as every other best-effort fallback here. */
+    private List<Map<String, Object>> readTaskAttempts(final Path base, final String taskId) throws Exception {
+        final Path file = base.resolve("task_attempts.jsonl");
+        if (!Files.isRegularFile(file) || !isContainedEvenViaSymlinks(base, file)) return List.of();
+        final var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        final List<Map<String, Object>> all = new ArrayList<>();
+        for (final String line : Files.readAllLines(file)) {
+            if (line.isBlank()) continue;
+            final Map<String, Object> entry = mapper.readValue(line, Map.class);
+            if (taskId.equals(entry.get("task_id"))) all.add(entry);
+        }
+        return all;
     }
 
     /** #355-followup: turns/compactions/tool_errors must be LIVE - calculated from the task's own
@@ -492,8 +501,19 @@ public class BenchController {
      *  finished, or finished a while ago. found=false means no session file for this task exists
      *  AT ALL yet (genuinely not started); found=true with every count still 0 is a real, distinct
      *  state (started, nothing logged yet) - never confused with "not started". */
-    record SessionCounts(boolean found, int turns, int compactions, int toolErrorsTotal, Map<String, Object> toolCalls, double wallSec) {
-        static final SessionCounts NOT_FOUND = new SessionCounts(false, 0, 0, 0, Map.of(), 0.0);
+    record AttemptCounts(String sessionId, String startedIso, String endedIso, int turns, int compactions,
+                          int toolErrorsTotal, Map<String, Object> toolCalls, double wallSec) {
+    }
+
+    /** aggregate (summed across every attempt - a false-start-then-real-redo pair counts as the
+     *  task's real total cost, same convention Collect.compactionOverhead() (#361) already applies
+     *  to its own per-task total) plus the individual, chronologically-ordered per-attempt
+     *  breakdown - #355-followup-2: a task restarted partway through (an operator pause landing at
+     *  an unlucky moment, a budget-exhausted redo) leaves MULTIPLE session files sharing its label,
+     *  and collapsing them into one number hides that history from the Stats tab entirely. */
+    record SessionCounts(boolean found, int turns, int compactions, int toolErrorsTotal, Map<String, Object> toolCalls,
+                          double wallSec, List<AttemptCounts> attempts) {
+        static final SessionCounts NOT_FOUND = new SessionCounts(false, 0, 0, 0, Map.of(), 0.0, List.of());
     }
 
     /** #355: this task's own tool-call breakdown - counts (and each tool's own error count)
@@ -512,8 +532,7 @@ public class BenchController {
         final Path dir = base.resolve("sessions");
         if (!Files.isDirectory(dir)) return SessionCounts.NOT_FOUND;
         final var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-        Path latest = null;
-        java.nio.file.attribute.FileTime latestMtime = null;
+        final List<Path> matches = new ArrayList<>();
         try (var stream = Files.list(dir)) {
             for (final Path f : stream.filter(p -> p.getFileName().toString().endsWith(".jsonl")).toList()) {
                 final String firstLine;
@@ -521,15 +540,45 @@ public class BenchController {
                 if (firstLine == null) continue;
                 final Map<String, Object> header;
                 try { header = mapper.readValue(firstLine, Map.class); } catch (final Exception ignore) { continue; }
-                if (!taskId.equals(header.get("label"))) continue;
-                final java.nio.file.attribute.FileTime mtime;
-                try { mtime = Files.getLastModifiedTime(f); } catch (final Exception ignore) { continue; }
-                if (latestMtime == null || mtime.compareTo(latestMtime) > 0) { latest = f; latestMtime = mtime; }
+                if (taskId.equals(header.get("label"))) matches.add(f);
             }
         } catch (final Exception e) { return SessionCounts.NOT_FOUND; }
-        if (latest == null) return SessionCounts.NOT_FOUND;
+        if (matches.isEmpty()) return SessionCounts.NOT_FOUND;
+        final List<AttemptCounts> attempts = new ArrayList<>();
+        for (final Path f : matches) {
+            final AttemptCounts a = scanAttempt(mapper, f);
+            if (a != null) attempts.add(a);
+        }
+        if (attempts.isEmpty()) return SessionCounts.NOT_FOUND;
+        // chronological: oldest attempt first, so "Attempt 1" in the UI really is the earliest one
+        attempts.sort(Comparator.comparing(a -> a.startedIso() == null ? "" : a.startedIso()));
+        int turns = 0, compactions = 0, toolErrorsTotal = 0;
+        double wallSec = 0.0;
+        final Map<String, int[]> toolCounts = new LinkedHashMap<>();   // toolName -> [total, errors], summed across every attempt
+        for (final AttemptCounts a : attempts) {
+            turns += a.turns();
+            compactions += a.compactions();
+            toolErrorsTotal += a.toolErrorsTotal();
+            wallSec += a.wallSec();
+            a.toolCalls().forEach((name, v) -> {
+                final Map<?, ?> cm = (Map<?, ?>) v;
+                final int[] c = toolCounts.computeIfAbsent(name, k -> new int[2]);
+                c[0] += ((Number) cm.get("count")).intValue();
+                c[1] += ((Number) cm.get("errors")).intValue();
+            });
+        }
+        final Map<String, Object> toolCallsOut = new LinkedHashMap<>();
+        toolCounts.forEach((name, c) -> toolCallsOut.put(name, Map.of("count", c[0], "errors", c[1])));
+        return new SessionCounts(true, turns, compactions, toolErrorsTotal, toolCallsOut, wallSec, attempts);
+    }
+
+    /** one session file's own turns/compactions/tool_errors/tool_calls/wall-time span - the
+     *  per-attempt unit sessionCounts() sums over and the Stats tab's per-attempt sections are
+     *  built from directly. null on a missing/unreadable file; best-effort per line otherwise -
+     *  one bad line must not sink the whole attempt's count. */
+    private AttemptCounts scanAttempt(final com.fasterxml.jackson.databind.ObjectMapper mapper, final Path f) {
         final List<String> lines;
-        try { lines = Files.readAllLines(latest); } catch (final Exception e) { return SessionCounts.NOT_FOUND; }
+        try { lines = Files.readAllLines(f); } catch (final Exception e) { return null; }
         int turns = 0, compactions = 0, toolErrorsTotal = 0;
         final Map<String, int[]> toolCounts = new LinkedHashMap<>();   // toolName -> [total, errors]
         Instant firstTs = null, lastTs = null;
@@ -558,7 +607,63 @@ public class BenchController {
         final Map<String, Object> toolCallsOut = new LinkedHashMap<>();
         toolCounts.forEach((name, c) -> toolCallsOut.put(name, Map.of("count", c[0], "errors", c[1])));
         final double wallSec = firstTs == null ? 0.0 : Duration.between(firstTs, lastTs).toMillis() / 1000.0;
-        return new SessionCounts(true, turns, compactions, toolErrorsTotal, toolCallsOut, wallSec);
+        return new AttemptCounts(f.getFileName().toString(), firstTs == null ? null : firstTs.toString(),
+                lastTs == null ? null : lastTs.toString(), turns, compactions, toolErrorsTotal, toolCallsOut, wallSec);
+    }
+
+    /** #355-followup-2: each session-file attempt, enriched with the params the run actually used
+     *  for it and its own harness-reported outcome - both sourced from task_attempts.jsonl, the
+     *  History tab's own data (RunBench.logTaskAttempt()). Paired by nearest attempt_started to
+     *  the session's own first ts, since logTaskAttempt() writes attempt_started at the exact
+     *  moment the session that's about to run was created - a close match is strong evidence it's
+     *  the same attempt, an index-based pairing is not: a session cut off before logTaskAttempt()
+     *  ever ran (an operator pause landing mid-attempt) leaves a session file with NO corresponding
+     *  task_attempts.jsonl row at all, which would silently misalign every later index. A session
+     *  attempt with no close match (more than 5 minutes away) just carries no params - correctly
+     *  reflecting that the harness never got to record it, rather than guessing. */
+    private List<Map<String, Object>> attemptSections(final Path base, final String taskId, final List<AttemptCounts> attempts) throws Exception {
+        final List<Map<String, Object>> records = readTaskAttempts(base, taskId);   // chronological, oldest first
+        final boolean[] consumed = new boolean[records.size()];
+        final List<Map<String, Object>> out = new ArrayList<>();
+        for (final AttemptCounts a : attempts) {
+            final Map<String, Object> am = new LinkedHashMap<>();
+            am.put("session_id", a.sessionId());
+            am.put("started_iso", a.startedIso());
+            am.put("ended_iso", a.endedIso());
+            am.put("turns", a.turns());
+            am.put("compactions", a.compactions());
+            am.put("tool_errors", a.toolErrorsTotal());
+            am.put("tool_calls", a.toolCalls());
+            am.put("seconds", a.wallSec());
+            final Instant sessionStart = parseInstantOrNull(a.startedIso());
+            int bestIdx = -1;
+            long bestDiffMs = Long.MAX_VALUE;
+            if (sessionStart != null) {
+                for (int i = 0; i < records.size(); i++) {
+                    if (consumed[i] || !(records.get(i).get("attempt_started") instanceof String s)) continue;
+                    final Instant recStart = parseInstantOrNull(s);
+                    if (recStart == null) continue;
+                    final long diffMs = Math.abs(Duration.between(sessionStart, recStart).toMillis());
+                    if (diffMs < bestDiffMs) { bestDiffMs = diffMs; bestIdx = i; }
+                }
+            }
+            if (bestIdx >= 0 && bestDiffMs <= 300_000) {   // 5 minutes - generous given the two timestamps should be near-identical
+                consumed[bestIdx] = true;
+                final Map<String, Object> rec = records.get(bestIdx);
+                am.put("params", rec.get("params"));
+                am.put("overridden", rec.get("overridden"));
+                am.put("attempt_rc", rec.get("rc"));
+                am.put("reported_status", rec.get("reported_status"));
+                am.put("reported_detail", rec.get("reported_detail"));
+            }
+            out.add(am);
+        }
+        return out;
+    }
+
+    private static Instant parseInstantOrNull(final String iso) {
+        if (iso == null) return null;
+        try { return Instant.parse(iso); } catch (final Exception e) { return null; }
     }
 
     /** #355/#355-followup: the task detail dialog's own Stats tab. Three states: "done"
@@ -604,6 +709,7 @@ public class BenchController {
             // no "seconds" at all - fall back to the session file's own first-to-last ts span
             // rather than showing nothing just because this one task happened to be skip-resumed
             if (out.get("seconds") == null && live.found()) out.put("seconds", live.wallSec());
+            out.put("attempts", attemptSections(base, taskId, live.attempts()));
             if (entry != null) {
                 final Path metricsFile = base.resolve("metrics.json");
                 if (Files.isRegularFile(metricsFile) && isContainedEvenViaSymlinks(base, metricsFile)) {
