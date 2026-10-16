@@ -618,14 +618,44 @@ public class BenchController {
      *  moment the session that's about to run was created - a close match is strong evidence it's
      *  the same attempt, an index-based pairing is not: a session cut off before logTaskAttempt()
      *  ever ran (an operator pause landing mid-attempt) leaves a session file with NO corresponding
-     *  task_attempts.jsonl row at all, which would silently misalign every later index. A session
-     *  attempt with no close match (more than 5 minutes away) just carries no params - correctly
-     *  reflecting that the harness never got to record it, rather than guessing. */
+     *  task_attempts.jsonl row at all, which would silently misalign every later index.
+     *
+     *  Matching is GLOBAL (every attempt/record pair's own diff, smallest first), not greedy by
+     *  attempt order - found live on T3: its one false-start session (22:26) sits only 3 minutes
+     *  before the one real task_attempts.jsonl row (22:29:55, for the REAL attempt that started
+     *  right after it), which is well inside a naive per-attempt-in-order "first match within
+     *  tolerance wins" scan - the false start would have claimed the real attempt's own record,
+     *  leaving the real attempt with none. Processing diffs smallest-first guarantees the near-
+     *  exact match (microseconds, logTaskAttempt's own write) wins before the merely-close one
+     *  (minutes) is even considered. A session attempt with no match within 5 minutes just
+     *  carries no params - correctly reflecting that the harness never got to record it. */
     private List<Map<String, Object>> attemptSections(final Path base, final String taskId, final List<AttemptCounts> attempts) throws Exception {
         final List<Map<String, Object>> records = readTaskAttempts(base, taskId);   // chronological, oldest first
-        final boolean[] consumed = new boolean[records.size()];
+        final int[] matchedRecordIdx = new int[attempts.size()];
+        Arrays.fill(matchedRecordIdx, -1);
+        final List<long[]> candidates = new ArrayList<>();   // [attemptIdx, recordIdx, diffMs]
+        for (int ai = 0; ai < attempts.size(); ai++) {
+            final Instant sessionStart = parseInstantOrNull(attempts.get(ai).startedIso());
+            if (sessionStart == null) continue;
+            for (int ri = 0; ri < records.size(); ri++) {
+                if (!(records.get(ri).get("attempt_started") instanceof String s)) continue;
+                final Instant recStart = parseInstantOrNull(s);
+                if (recStart == null) continue;
+                candidates.add(new long[]{ai, ri, Math.abs(Duration.between(sessionStart, recStart).toMillis())});
+            }
+        }
+        candidates.sort(Comparator.comparingLong(c -> c[2]));
+        final boolean[] recordConsumed = new boolean[records.size()];
+        for (final long[] c : candidates) {
+            if (c[2] > 300_000) break;   // 5 minutes - generous given a true match should be near-instant
+            final int ai = (int) c[0], ri = (int) c[1];
+            if (matchedRecordIdx[ai] >= 0 || recordConsumed[ri]) continue;   // attempt or record already spoken for by a closer pair
+            matchedRecordIdx[ai] = ri;
+            recordConsumed[ri] = true;
+        }
         final List<Map<String, Object>> out = new ArrayList<>();
-        for (final AttemptCounts a : attempts) {
+        for (int ai = 0; ai < attempts.size(); ai++) {
+            final AttemptCounts a = attempts.get(ai);
             final Map<String, Object> am = new LinkedHashMap<>();
             am.put("session_id", a.sessionId());
             am.put("started_iso", a.startedIso());
@@ -635,21 +665,8 @@ public class BenchController {
             am.put("tool_errors", a.toolErrorsTotal());
             am.put("tool_calls", a.toolCalls());
             am.put("seconds", a.wallSec());
-            final Instant sessionStart = parseInstantOrNull(a.startedIso());
-            int bestIdx = -1;
-            long bestDiffMs = Long.MAX_VALUE;
-            if (sessionStart != null) {
-                for (int i = 0; i < records.size(); i++) {
-                    if (consumed[i] || !(records.get(i).get("attempt_started") instanceof String s)) continue;
-                    final Instant recStart = parseInstantOrNull(s);
-                    if (recStart == null) continue;
-                    final long diffMs = Math.abs(Duration.between(sessionStart, recStart).toMillis());
-                    if (diffMs < bestDiffMs) { bestDiffMs = diffMs; bestIdx = i; }
-                }
-            }
-            if (bestIdx >= 0 && bestDiffMs <= 300_000) {   // 5 minutes - generous given the two timestamps should be near-identical
-                consumed[bestIdx] = true;
-                final Map<String, Object> rec = records.get(bestIdx);
+            if (matchedRecordIdx[ai] >= 0) {
+                final Map<String, Object> rec = records.get(matchedRecordIdx[ai]);
                 am.put("params", rec.get("params"));
                 am.put("overridden", rec.get("overridden"));
                 am.put("attempt_rc", rec.get("rc"));
