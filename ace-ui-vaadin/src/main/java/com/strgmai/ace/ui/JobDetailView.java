@@ -1139,22 +1139,44 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     private static final java.util.regex.Pattern VERIFICATION_SIGNAL = java.util.regex.Pattern.compile(
             "(?i)\\b(tests?|passed?|passing|verified|verify|verification|green|red|regressions?|failures?)\\b|BUILD SUCCESSFUL");
 
+    /** Removes every top-level "(...)" aside from `text` (nested parens tracked correctly). The
+     *  space immediately before a removed "(" is dropped too (found live: a blanket "strip any
+     *  space before punctuation" regex is NOT safe here - this domain's own text is full of
+     *  colons and periods that are not sentence punctuation at all, e.g. ":common" module paths
+     *  and "./gradlew" relative paths, which a blanket regex corrupted into ":common"-glued-to-
+     *  its-neighbor and "root./gradlew"). Dropping only the ONE space that sat directly against
+     *  the aside being removed - "green (...)." becoming "green." - needs no such regex, and
+     *  never touches text the aside removal never touched. */
+    private static String stripParentheticals(final String text) {
+        final StringBuilder out = new StringBuilder();
+        int depth = 0;
+        for (int i = 0; i < text.length(); i++) {
+            final char c = text.charAt(i);
+            if (c == '(') {
+                if (depth == 0 && !out.isEmpty() && out.charAt(out.length() - 1) == ' ') out.setLength(out.length() - 1);
+                depth++;
+            } else if (c == ')') {
+                depth--;
+            } else if (depth == 0) {
+                out.append(c);
+            }
+        }
+        return out.toString().trim();
+    }
+
     /** #355-followup-2: found live - the model's own free-text report (`reported_detail`) is one
      *  dense run-on paragraph: a long implementation sentence packed with parenthetical asides,
      *  then a verification sentence. Splitting on sentence boundaries first, then on top-level
      *  semicolons/commas within each sentence (never inside a parenthetical - see
-     *  splitAtDepthZero()), turns that into one line per sentence, with a multi-clause sentence's
-     *  own clauses listed one per line beneath it - the same shape a human reads these reports as,
-     *  without needing to understand the content to produce it. A single-clause sentence stays
-     *  one plain line rather than being bulleted for no reason.
+     *  splitAtDepthZero()) turns that into one line per sentence, with a multi-clause sentence's
+     *  own clauses listed one per line beneath it.
      *
-     *  The operator asked to lead with verification and keep implementation detail secondary
-     *  (that's the part actually answering "did this work," not "how"): lines are then stably
-     *  partitioned into a "verification:" group (VERIFICATION_SIGNAL matches) shown first and an
-     *  "implementation:" group shown after, each keeping its own original relative order. When
-     *  either group is empty - nothing matched, or everything did - there is no meaningful split
-     *  to make, so the lines are returned as-is rather than wrapping a single uniform list in a
-     *  label that would add nothing. */
+     *  The operator asked to drop the implementation narrative entirely - "how it was built" isn't
+     *  what the Stats tab needs to answer - and to drop the verbose per-suite test-count
+     *  parenthetical too, keeping just the headline pass/build line. Only VERIFICATION_SIGNAL
+     *  lines survive, each with its own parenthetical asides stripped. A report with no
+     *  verification signal at all ends up with nothing to show - correct, not a bug: there is
+     *  genuinely no verification evidence to surface. */
     private static List<String> detailLines(final String detail) {
         final List<String> lines = new ArrayList<>();
         for (final String sentence : splitAtDepthZero(detail, ". ")) {
@@ -1162,18 +1184,14 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             final List<String> clauses = new ArrayList<>();
             for (final String semiClause : splitAtDepthZero(sentence, "; "))
                 clauses.addAll(splitAtDepthZero(semiClause, ", "));
-            if (clauses.size() <= 1) lines.add(sentence);
-            else for (final String clause : clauses) if (!clause.isBlank()) lines.add("  " + clause);
+            if (clauses.size() <= 1) {
+                if (VERIFICATION_SIGNAL.matcher(sentence).find()) lines.add(stripParentheticals(sentence));
+            } else {
+                for (final String clause : clauses)
+                    if (!clause.isBlank() && VERIFICATION_SIGNAL.matcher(clause).find()) lines.add("  " + stripParentheticals(clause));
+            }
         }
-        final List<String> verification = lines.stream().filter(l -> VERIFICATION_SIGNAL.matcher(l).find()).toList();
-        final List<String> implementation = lines.stream().filter(l -> !VERIFICATION_SIGNAL.matcher(l).find()).toList();
-        if (verification.isEmpty() || implementation.isEmpty()) return lines;
-        final List<String> ordered = new ArrayList<>();
-        ordered.add("verification:");
-        ordered.addAll(verification);
-        ordered.add("implementation:");
-        ordered.addAll(implementation);
-        return ordered;
+        return lines;
     }
 
     record AttemptSection(String header, String body) {
@@ -1204,9 +1222,12 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 body.append("rc: ").append(a.path("attempt_rc").asText("?")).append("   outcome: ").append(a.path("reported_status").asText()).append('\n');
                 final String detail = a.path("reported_detail").asText(null);
                 if (detail != null && !detail.isBlank()) {
-                    body.append("detail:");
-                    for (final var line : detailLines(detail)) body.append('\n').append(line);
-                    body.append('\n');
+                    final var lines = detailLines(detail);
+                    if (!lines.isEmpty()) {
+                        body.append("detail:");
+                        for (final var line : lines) body.append('\n').append(line);
+                        body.append('\n');
+                    }
                 }
             }
             body.append("wall time: ").append(a.path("seconds").asText("?")).append("s   model turns: ").append(a.path("turns").asText("0")).append('\n');

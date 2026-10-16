@@ -506,7 +506,7 @@ class JobDetailViewTest {
                     {"session_id": "a_falsestart.jsonl", "started_iso": "2026-10-14T10:00:00Z", "ended_iso": "2026-10-14T10:00:00Z",
                      "turns": 0, "compactions": 0, "tool_errors": 0, "tool_calls": {}, "seconds": 0.0,
                      "params": {"task_wall_sec": 32400}, "overridden": true, "attempt_rc": 2,
-                     "reported_status": "crashed", "reported_detail": "transient infra error"},
+                     "reported_status": "crashed", "reported_detail": "a transient infra error crashed the attempt before any tests ran"},
                     {"session_id": "b_real.jsonl", "started_iso": "2026-10-14T12:00:00Z", "ended_iso": "2026-10-14T12:05:00Z",
                      "turns": 1, "compactions": 0, "tool_errors": 0, "tool_calls": {"bash": {"count": 2, "errors": 0}}, "seconds": 300.0,
                      "params": {"task_wall_sec": 32400, "task_tokens": 180000}, "overridden": true, "attempt_rc": 0,
@@ -522,7 +522,7 @@ class JobDetailViewTest {
         assertTrue(sections.get(0).body().contains("overridden"), sections.get(0).body());
         assertTrue(sections.get(0).body().contains("wall-clock budget (s): 32400"), "raw key names must read as labels: " + sections.get(0).body());
         assertTrue(sections.get(0).body().contains("rc: 2") && sections.get(0).body().contains("outcome: crashed")
-                && sections.get(0).body().contains("transient infra error"), sections.get(0).body());
+                && sections.get(0).body().contains("crashed the attempt before any tests ran"), sections.get(0).body());
 
         assertTrue(sections.get(1).header().startsWith("Attempt 2"));
         assertTrue(sections.get(1).body().contains("180000"), sections.get(1).body());
@@ -562,7 +562,7 @@ class JobDetailViewTest {
                      "turns": 44, "compactions": 0, "tool_errors": 4, "tool_calls": {},
                      "seconds": 6121.46, "params": {"task_wall_sec": 32400, "compaction_trigger": 110000},
                      "overridden": true, "attempt_rc": 0, "reported_status": "done",
-                     "reported_detail": "a long run-on paragraph describing everything the model did"}
+                     "reported_detail": "a long run-on paragraph describing everything the model did. 12 new tests all pass"}
                 ]}""");
 
         final var body = JobDetailView.attemptSections(stats).get(0).body();
@@ -572,16 +572,15 @@ class JobDetailViewTest {
         assertTrue(body.contains("compaction trigger (tokens): 110000"), "compaction_trigger must get a readable label: " + body);
         assertTrue(body.contains("rc: 0   outcome: done"), body);
         assertFalse(body.contains("outcome: done -"), "the free-text report must not be crammed onto the outcome line: " + body);
-        assertTrue(body.contains("detail:\na long run-on paragraph"), "the free-text report gets its own line: " + body);
+        assertTrue(body.contains("detail:\n12 new tests all pass"), "the free-text report gets its own line: " + body);
+        assertFalse(body.contains("a long run-on paragraph"), "the operator asked to drop the implementation narrative entirely: " + body);
     }
 
-    /** #355-followup-2: the exact T3 attempt-2 report, seen live - one dense run-on paragraph
-     *  packed with parenthetical asides, then a verification sentence. detailLines() must split
-     *  on sentence boundaries, then on top-level ("; "/", ") separators WITHIN each sentence -
-     *  never on a separator sitting inside a parenthetical, like "(32-hex, low-16-bits zero, ...)"
-     *  or "(ErrorCodes enum; allCodes() asserts exact frozen set)" - so each real top-level item
-     *  (ErrorEnvelope, TraceId+Propagation, TraceContext, StructuredLog, the two verification
-     *  clauses) lands on its own line instead of one unreadable wall of text. */
+    /** #355-followup-2: the exact T3 attempt-2 report, seen live - one dense run-on implementation
+     *  paragraph (ErrorEnvelope/TraceId/TraceContext/StructuredLog), then a verification sentence
+     *  carrying a verbose per-suite test-count parenthetical. The operator asked to drop the
+     *  implementation narrative entirely (how it was built isn't what the Stats tab answers) and
+     *  to drop that verbose parenthetical too, keeping just the headline pass/build line. */
     private static final String T3_ATTEMPT_2_DETAIL = ":common kernel (kernel/ package, no Spring): ErrorEnvelope {code,message} with hand-rolled JSON "
             + "render/parse + all 13 §5.6 stable codes (ErrorCodes enum; allCodes() asserts exact frozen set), TraceId W3C "
             + "128-bit gen/parse/traceparent+flags (32-hex, low-16-bits zero, non-zero guard, case-insensitive) + Propagation "
@@ -599,49 +598,30 @@ class JobDetailViewTest {
     }
 
     @Test
-    void attemptSections_breaksTheModelsOwnFreeTextReportIntoOneLinePerTopLevelClause() {
+    void attemptSections_dropsTheImplementationNarrativeAndTheVerboseTestBreakdownKeepingOnlyTheHeadlineVerificationLines() {
         final var body = JobDetailView.attemptSections(statsWithOneAttemptDetail(T3_ATTEMPT_2_DETAIL)).get(0).body();
 
-        assertTrue(body.contains("\n  TraceId W3C 128-bit"), "TraceId+Propagation is its own line, not split by the commas inside its own parens: " + body);
-        assertFalse(body.contains("\n  low-16-bits zero"), "a comma INSIDE a parenthetical must not become its own line: " + body);
-        assertFalse(body.contains("\n  allCodes() asserts exact frozen set"), "a semicolon inside a parenthetical must not split either: " + body);
-        assertTrue(body.contains("\n  StructuredLog JSON line carrying"), body);
-        assertTrue(body.contains("\n  35 new :common tests all pass"), "the verification sentence's two top-level clauses split on their semicolon: " + body);
-        assertTrue(body.contains("\n  :common:build green and full root"), body);
+        assertFalse(body.contains(":common kernel"), "the implementation narrative must be dropped entirely: " + body);
+        assertFalse(body.contains("TraceId W3C"), body);
+        assertFalse(body.contains("TraceContext"), body);
+        assertFalse(body.contains("StructuredLog"), body);
+        assertFalse(body.contains("ErrorEnvelope incl"), "the verbose per-suite test-count parenthetical must be stripped: " + body);
+        assertFalse(body.contains("TracePropagation incl"), body);
+        assertTrue(body.contains("\n  35 new :common tests all pass"), "the headline pass line survives, parenthetical stripped: " + body);
+        assertTrue(body.contains("\n  :common:build green and full root ./gradlew build green."),
+                "the build line survives too, its own parenthetical stripped and the trailing period reattached cleanly: " + body);
     }
 
-    /** the operator asked to lead with verification (did it work?) and keep implementation
-     *  detail (how?) secondary - found live on T3: the test-count/build-green lines were buried
-     *  at the bottom of the implementation narrative instead of answering that question first. */
+    /** a report with no verification signal at all has nothing to show - correct, not a bug:
+     *  there is genuinely no verification evidence in it to surface, so no bare "detail:" label
+     *  should appear with nothing underneath it. */
     @Test
-    void attemptSections_leadsWithVerificationLinesBeforeImplementationDetail() {
-        final var body = JobDetailView.attemptSections(statsWithOneAttemptDetail(T3_ATTEMPT_2_DETAIL)).get(0).body();
-
-        final int verificationLabelIdx = body.indexOf("verification:");
-        final int implementationLabelIdx = body.indexOf("implementation:");
-        final int testsLineIdx = body.indexOf("35 new :common tests all pass");
-        final int buildLineIdx = body.indexOf(":common:build green");
-        final int errorEnvelopeLineIdx = body.indexOf(":common kernel");
-        final int traceIdLineIdx = body.indexOf("TraceId W3C 128-bit");
-        assertTrue(verificationLabelIdx >= 0 && implementationLabelIdx >= 0, body);
-        assertTrue(verificationLabelIdx < implementationLabelIdx, "verification section must lead: " + body);
-        assertTrue(testsLineIdx > verificationLabelIdx && testsLineIdx < implementationLabelIdx, body);
-        assertTrue(buildLineIdx > verificationLabelIdx && buildLineIdx < implementationLabelIdx, body);
-        assertTrue(errorEnvelopeLineIdx > implementationLabelIdx, "implementation detail must come after verification: " + body);
-        assertTrue(traceIdLineIdx > implementationLabelIdx, body);
-    }
-
-    /** a report with no verification signal at all (or, symmetrically, one that's entirely
-     *  verification-flavored) has nothing meaningful to split - must render as a plain,
-     *  unlabeled list rather than wrapping a single uniform group in a label that adds nothing. */
-    @Test
-    void attemptSections_doesNotLabelOrSplitWhenEveryLineIsTheSameKind() {
+    void attemptSections_omitsTheDetailLineEntirelyWhenTheReportHasNoVerificationSignalAtAll() {
         final String allImplementation = "TraceId W3C 128-bit gen/parse. TraceContext ThreadLocal scope stack.";
         final var body = JobDetailView.attemptSections(statsWithOneAttemptDetail(allImplementation)).get(0).body();
 
-        assertFalse(body.contains("verification:"), body);
-        assertFalse(body.contains("implementation:"), body);
-        assertTrue(body.contains("TraceId W3C 128-bit gen/parse"), body);
+        assertFalse(body.contains("detail:"), body);
+        assertFalse(body.contains("TraceId"), body);
     }
 
     @Test
