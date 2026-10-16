@@ -628,4 +628,30 @@ class JobDetailViewTest {
     void attemptSections_isEmptyWhenStatsHasNoAttemptsField() {
         assertTrue(JobDetailView.attemptSections(Json.MAPPER.readTree("{\"state\": \"not_started\"}")).isEmpty());
     }
+
+    /** #355-followup-3: the Stats tab's new per-request prefill-speed chart - pure, tested
+     *  against BenchController.taskStats()'s own "request_speeds" shape, same convention as
+     *  RunDetailView.speedByContextRows(). A missing prefill figure (a failed/non-streamed call)
+     *  must read as a null data point, not a crash or a silently-dropped request. */
+    @Test
+    void requestSpeedPoints_readsSeqAndPrefillSpeedInOrder() {
+        final var stats = Json.MAPPER.readTree("""
+                {"request_speeds": [
+                    {"seq": 2, "prompt_tokens": 500, "prefill_tok_per_sec": 120.5},
+                    {"seq": 3, "prompt_tokens": 1069, "prefill_tok_per_sec": 89.93}
+                ]}""");
+
+        final var points = JobDetailView.requestSpeedPoints(stats);
+
+        assertEquals(2, points.size());
+        assertEquals(2, points.get(0).seq());
+        assertEquals(120.5, points.get(0).prefillTokPerSec());
+        assertEquals(3, points.get(1).seq());
+        assertEquals(89.93, points.get(1).prefillTokPerSec());
+    }
+
+    @Test
+    void requestSpeedPoints_isEmptyWhenStatsHasNoRequestSpeedsField() {
+        assertTrue(JobDetailView.requestSpeedPoints(Json.MAPPER.readTree("{\"state\": \"done\"}")).isEmpty());
+    }
 }
