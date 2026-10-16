@@ -502,8 +502,18 @@ public class BenchController {
      *  finished, or finished a while ago. found=false means no session file for this task exists
      *  AT ALL yet (genuinely not started); found=true with every count still 0 is a real, distinct
      *  state (started, nothing logged yet) - never confused with "not started". */
+    /** compactionsBeforeTurn: 1-based ordinals of the model's own assistant turns that were
+     *  immediately preceded by a compaction - e.g. [5, 23] means turns 5 and 23 each followed a
+     *  compaction. Assumed (not verified per-entry) to line up 1:1 with the SAME attempt's own
+     *  request_speeds list, oldest-first - both are built by walking the SAME underlying call
+     *  sequence for this session (the session file's own assistant turns, interactions.jsonl's
+     *  own entries for the same session_id), so the Nth turn here should be the Nth request
+     *  there. The one way this can drift: a request_speeds entry gets dropped for lacking a
+     *  usable usage block (parseRequestSpeedEntry - a failed/non-streamed call), shifting every
+     *  ordinal after it by one. Good enough for a chart annotation, not something to build a
+     *  stricter timestamp-based join for without real evidence this actually happens live. */
     record AttemptCounts(String sessionId, String sessionUuid, String startedIso, String endedIso, int turns, int compactions,
-                          int toolErrorsTotal, Map<String, Object> toolCalls, double wallSec) {
+                          int toolErrorsTotal, Map<String, Object> toolCalls, double wallSec, List<Integer> compactionsBeforeTurn) {
     }
 
     /** aggregate (summed across every attempt - a false-start-then-real-redo pair counts as the
@@ -582,6 +592,8 @@ public class BenchController {
         try { lines = Files.readAllLines(f); } catch (final Exception e) { return null; }
         int turns = 0, compactions = 0, toolErrorsTotal = 0;
         final Map<String, int[]> toolCounts = new LinkedHashMap<>();   // toolName -> [total, errors]
+        final List<Integer> compactionsBeforeTurn = new ArrayList<>();   // 1-based turn ordinals
+        boolean pendingCompaction = false;
         Instant firstTs = null, lastTs = null;
         String sessionUuid = null;
         for (final String line : lines) {
@@ -597,11 +609,13 @@ public class BenchController {
             }
             final String type = String.valueOf(e.get("type"));
             if ("session".equals(type)) { if (e.get("id") instanceof String id) sessionUuid = id; continue; }
-            if ("compaction".equals(type)) { compactions++; continue; }
+            if ("compaction".equals(type)) { compactions++; pendingCompaction = true; continue; }
             if (!"message".equals(type) || !(e.get("message") instanceof Map<?, ?> m)) continue;
             final Object role = m.get("role");
-            if ("assistant".equals(role)) turns++;
-            else if ("toolResult".equals(role)) {
+            if ("assistant".equals(role)) {
+                turns++;
+                if (pendingCompaction) { compactionsBeforeTurn.add(turns); pendingCompaction = false; }
+            } else if ("toolResult".equals(role)) {
                 final int[] c = toolCounts.computeIfAbsent(String.valueOf(m.get("toolName")), k -> new int[2]);
                 c[0]++;
                 if (Boolean.TRUE.equals(m.get("isError"))) { c[1]++; toolErrorsTotal++; }
@@ -611,7 +625,7 @@ public class BenchController {
         toolCounts.forEach((name, c) -> toolCallsOut.put(name, Map.of("count", c[0], "errors", c[1])));
         final double wallSec = firstTs == null ? 0.0 : Duration.between(firstTs, lastTs).toMillis() / 1000.0;
         return new AttemptCounts(f.getFileName().toString(), sessionUuid, firstTs == null ? null : firstTs.toString(),
-                lastTs == null ? null : lastTs.toString(), turns, compactions, toolErrorsTotal, toolCallsOut, wallSec);
+                lastTs == null ? null : lastTs.toString(), turns, compactions, toolErrorsTotal, toolCallsOut, wallSec, compactionsBeforeTurn);
     }
 
     /** #355-followup-2: each session-file attempt, enriched with the params the run actually used
@@ -633,11 +647,13 @@ public class BenchController {
      *  (minutes) is even considered. A session attempt with no match within 5 minutes just
      *  carries no params - correctly reflecting that the harness never got to record it. */
     private List<Map<String, Object>> attemptSections(final Path base, final String taskId, final List<AttemptCounts> attempts) throws Exception {
-        // #355-followup-4: the operator asked for a chart per attempt that actually made a
-        // request, not one combined chart for the whole task - one pass over interactions.jsonl,
-        // bucketed by session id, rather than a separate full-file scan per attempt
-        final Map<String, List<Map<String, Object>>> speedsBySession = requestSpeedsBySession(base,
-                attempts.stream().map(AttemptCounts::sessionUuid).filter(Objects::nonNull).collect(Collectors.toSet()));
+        // #355-followup-4/6: the operator asked for a chart per attempt that actually made a
+        // request, not one combined chart for the whole task - see requestSpeedsPerAttempt()'s
+        // own javadoc for why session id alone can't do this split (found live on T11: every
+        // attempt of the same task shares ONE deterministic session id, so a false start and the
+        // real redo's requests both landed in the same bucket and every attempt's chart showed
+        // the SAME combined data instead of its own).
+        final List<List<Map<String, Object>>> speedsPerAttempt = requestSpeedsPerAttempt(base, attempts);
         final List<Map<String, Object>> records = readTaskAttempts(base, taskId);   // chronological, oldest first
         final int[] matchedRecordIdx = new int[attempts.size()];
         Arrays.fill(matchedRecordIdx, -1);
@@ -681,7 +697,8 @@ public class BenchController {
                 am.put("reported_status", rec.get("reported_status"));
                 am.put("reported_detail", rec.get("reported_detail"));
             }
-            am.put("request_speeds", speedsBySession.getOrDefault(a.sessionUuid(), List.of()));
+            am.put("request_speeds", speedsPerAttempt.get(ai));
+            am.put("compactions_before_request", a.compactionsBeforeTurn());
             out.add(am);
         }
         return out;
@@ -730,6 +747,63 @@ public class BenchController {
         return bySession;
     }
 
+    /** #355-followup-6: found live on T11 - session_id alone cannot tell two attempts of the
+     *  SAME task apart. RunBenchSupport's own session-id scheme is deterministic, keyed only by
+     *  (runId, taskId) - UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + taskId)...) - so a
+     *  false start and its real redo, two entirely separate session FILES with their own distinct
+     *  [startedIso, endedIso] windows hours apart, still share the identical session_id in both
+     *  files' own header. A naive per-session bucket (requestSpeedsBySession() above) handed the
+     *  SAME combined list to every attempt sharing that id - attempt 1's own chart showed
+     *  attempt 2's 80+ requests despite attempt 1's own wall time being 13 seconds.
+     *
+     *  Attempts that DON'T share their session id with any other attempt (the common case - a
+     *  task's real attempt predating a since-retired continuation scheme, or simply the only
+     *  attempt) get their session's whole bucket directly, unchanged. Attempts that DO share one
+     *  get that bucket split by matching each request's own "ts" against which sharing attempt's
+     *  own [startedIso, endedIso] window it falls inside (or is nearest to, for a request logged
+     *  a moment before/after the session file's own first/last message - real skew, not an
+     *  error). "ts"/"session_id" are stripped from the final per-request maps - both were only
+     *  ever needed for this split, not part of the Stats tab's own response shape. */
+    private List<List<Map<String, Object>>> requestSpeedsPerAttempt(final Path base, final List<AttemptCounts> attempts) {
+        final Map<String, List<Map<String, Object>>> bySession = requestSpeedsBySession(base,
+                attempts.stream().map(AttemptCounts::sessionUuid).filter(Objects::nonNull).collect(Collectors.toSet()));
+        final List<List<Map<String, Object>>> perAttempt = new ArrayList<>();
+        for (int i = 0; i < attempts.size(); i++) perAttempt.add(new ArrayList<>());
+        final Map<String, List<Integer>> indicesBySessionUuid = new LinkedHashMap<>();
+        for (int i = 0; i < attempts.size(); i++) {
+            final String uuid = attempts.get(i).sessionUuid();
+            if (uuid != null) indicesBySessionUuid.computeIfAbsent(uuid, k -> new ArrayList<>()).add(i);
+        }
+        for (final var group : indicesBySessionUuid.entrySet()) {
+            final List<Map<String, Object>> sessionEntries = bySession.getOrDefault(group.getKey(), List.of());
+            final List<Integer> sharingIndices = group.getValue();
+            if (sharingIndices.size() == 1) {
+                perAttempt.set(sharingIndices.get(0), new ArrayList<>(sessionEntries));
+                continue;
+            }
+            for (final Map<String, Object> reqEntry : sessionEntries) {
+                final Instant reqTs = parseInstantOrNull((String) reqEntry.get("ts"));
+                int bestIdx = sharingIndices.get(0);
+                long bestDist = Long.MAX_VALUE;
+                for (final int idx : sharingIndices) {
+                    final AttemptCounts att = attempts.get(idx);
+                    final Instant start = parseInstantOrNull(att.startedIso());
+                    final Instant end = parseInstantOrNull(att.endedIso());
+                    if (reqTs == null || start == null || end == null) continue;
+                    final long dist = !reqTs.isBefore(start) && !reqTs.isAfter(end) ? 0
+                            : Math.min(Math.abs(Duration.between(start, reqTs).toMillis()), Math.abs(Duration.between(end, reqTs).toMillis()));
+                    if (dist < bestDist) { bestDist = dist; bestIdx = idx; }
+                }
+                perAttempt.get(bestIdx).add(reqEntry);
+            }
+        }
+        for (final List<Map<String, Object>> list : perAttempt) {
+            list.sort(Comparator.comparingLong(e -> ((Number) e.get("seq")).longValue()));
+            for (final Map<String, Object> e : list) { e.remove("ts"); e.remove("session_id"); }
+        }
+        return perAttempt;
+    }
+
     /** one interactions.jsonl line -> {seq, session_id, prompt_tokens, prefill_tok_per_sec}, or
      *  null when the line's own session_id doesn't match (the caller's substring pre-check is
      *  only a hint - this confirms it against the real field) or it carries no usable usage block
@@ -740,6 +814,7 @@ public class BenchController {
             if (p.nextToken() != com.fasterxml.jackson.core.JsonToken.START_OBJECT) return null;
             Long seq = null;
             String sessionId = null;
+            String ts = null;
             Integer promptTokens = null;
             Double prefillTps = null;
             while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
@@ -748,6 +823,7 @@ public class BenchController {
                 switch (field) {
                     case "seq" -> seq = p.getLongValue();
                     case "session_id" -> sessionId = p.getText();
+                    case "ts" -> ts = p.getText();
                     case "response" -> {
                         if (p.currentToken() == com.fasterxml.jackson.core.JsonToken.START_OBJECT) {
                             while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
@@ -772,6 +848,7 @@ public class BenchController {
             final Map<String, Object> out = new LinkedHashMap<>();
             out.put("seq", seq);
             out.put("session_id", sessionId);
+            out.put("ts", ts);
             out.put("prompt_tokens", promptTokens);
             out.put("prefill_tok_per_sec", prefillTps);
             return out;

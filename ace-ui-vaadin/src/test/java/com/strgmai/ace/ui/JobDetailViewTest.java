@@ -540,18 +540,21 @@ class JobDetailViewTest {
                 {"state": "done", "attempts": [
                     {"started_iso": "2026-10-16T10:00:00Z", "turns": 0, "compactions": 0, "tool_errors": 0, "tool_calls": {}, "seconds": 5.0,
                      "request_speeds": [{"seq": 2, "prompt_tokens": 200, "prefill_tok_per_sec": 75.0}]},
-                    {"started_iso": "2026-10-16T15:25:47Z", "turns": 117, "compactions": 0, "tool_errors": 0, "tool_calls": {}, "seconds": 21836.8,
+                    {"started_iso": "2026-10-16T15:25:47Z", "turns": 117, "compactions": 1, "tool_errors": 0, "tool_calls": {}, "seconds": 21836.8,
                      "request_speeds": [{"seq": 3, "prompt_tokens": 500, "prefill_tok_per_sec": 120.5},
-                                        {"seq": 4, "prompt_tokens": 1069, "prefill_tok_per_sec": 89.93}]}
+                                        {"seq": 4, "prompt_tokens": 1069, "prefill_tok_per_sec": 89.93}],
+                     "compactions_before_request": [2]}
                 ]}""");
 
         final var sections = JobDetailView.attemptSections(stats);
 
         assertEquals(1, sections.get(0).requestSpeeds().size(), "attempt 1 has only its own one request");
         assertEquals(75.0, sections.get(0).requestSpeeds().get(0).prefillTokPerSec());
+        assertTrue(sections.get(0).compactionsBeforeRequest().isEmpty());
         assertEquals(2, sections.get(1).requestSpeeds().size(), "attempt 2 has only its own two requests, not attempt 1's");
         assertEquals(120.5, sections.get(1).requestSpeeds().get(0).prefillTokPerSec());
         assertEquals(89.93, sections.get(1).requestSpeeds().get(1).prefillTokPerSec());
+        assertEquals(List.of(2), sections.get(1).compactionsBeforeRequest());
     }
 
     /** #355-followup-2: a session cut off before RunBench.logTaskAttempt() ever ran leaves no
@@ -680,23 +683,64 @@ class JobDetailViewTest {
         assertTrue(JobDetailView.requestSpeedPoints(Json.MAPPER.readTree("{\"state\": \"done\"}")).isEmpty());
     }
 
-    /** found live on T9 (117 requests) - a label under every single category prints as an
-     *  unreadable smear. Every point still gets its own slot (the series data is untouched); only
-     *  the label is blanked out except on every tenth request. */
+    /** categories stay real, unique numbers for every request - needed so a compaction
+     *  annotation (compactionAnnotations() below) can target an EXACT request by its own
+     *  category value; a blanked-out "" would be ambiguous (shared by every thinned position)
+     *  and the vertical line would land on the wrong request, or not render at all. Label
+     *  DENSITY thinning moved to the chart's own JS formatter - see
+     *  requestSpeedLabelFormatterJs_showsOnlyEveryTenthValue() below. */
     @Test
-    void requestSpeedCategories_labelsOnlyEveryTenthRequestLeavingTheRestBlank() {
+    void requestSpeedCategories_everyCategoryIsItsOwnUniqueRequestNumber() {
         final var categories = JobDetailView.requestSpeedCategories(25);
 
         assertEquals(25, categories.length);
-        for (int i = 0; i < 25; i++) {
-            final int requestNumber = i + 1;
-            if (requestNumber % 10 == 0) assertEquals(String.valueOf(requestNumber), categories[i], "request #" + requestNumber);
-            else assertEquals("", categories[i], "request #" + requestNumber + " must have no visible label");
-        }
+        for (int i = 0; i < 25; i++) assertEquals(String.valueOf(i + 1), categories[i]);
     }
 
     @Test
     void requestSpeedCategories_isEmptyArrayForZeroRequests() {
         assertEquals(0, JobDetailView.requestSpeedCategories(0).length);
+    }
+
+    /** found live on T9 (117 requests) - a label under every single category prints as an
+     *  unreadable smear. The categories themselves (above) stay unique; only the DRAWN label is
+     *  thinned, via this raw JS formatter function (no per-tick Java callback hook exists in this
+     *  ApexCharts wrapper - same limitation RunDetailView.speedByContextTooltipJs() already works
+     *  around for its own tooltip). Evaluated directly via the JVM's own Nashorn-less
+     *  ScriptEngine-free route is overkill here - asserting the function's own source text
+     *  contains the right modulus check is enough to pin its behavior without a JS runtime. */
+    @Test
+    void requestSpeedLabelFormatterJs_checksEveryTenthValue() {
+        final var js = JobDetailView.requestSpeedLabelFormatterJs();
+        assertTrue(js.contains("% 10 === 0"), js);
+    }
+
+    /** #355-followup-5: the operator asked for vertical lines marking where a compaction landed.
+     *  Each XAxisAnnotations' own `x` must be the category STRING itself (requestSpeedCategories()
+     *  keeps every one unique for exactly this reason) - that's how ApexCharts resolves an
+     *  annotation's position on a category axis, not a numeric index. A position past the
+     *  series' own length (the ordinal-alignment caveat BenchController's own javadoc notes: a
+     *  dropped request_speeds entry can shift later ordinals by one) is dropped rather than
+     *  pointing at a request that was never plotted. */
+    @Test
+    void compactionAnnotations_onePerPositionTargetingItsOwnCategoryString() {
+        final var annotations = JobDetailView.compactionAnnotations(List.of(5, 23), 30);
+
+        assertEquals(2, annotations.size());
+        assertEquals("5", annotations.get(0).getX());
+        assertEquals("23", annotations.get(1).getX());
+    }
+
+    @Test
+    void compactionAnnotations_dropsPositionsPastTheSeriesOwnLength() {
+        final var annotations = JobDetailView.compactionAnnotations(List.of(5, 999), 30);
+
+        assertEquals(1, annotations.size());
+        assertEquals("5", annotations.get(0).getX());
+    }
+
+    @Test
+    void compactionAnnotations_isEmptyWhenNoCompactionsHappened() {
+        assertTrue(JobDetailView.compactionAnnotations(List.of(), 30).isEmpty());
     }
 }

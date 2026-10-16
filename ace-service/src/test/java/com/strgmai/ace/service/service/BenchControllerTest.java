@@ -780,6 +780,78 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.attempts[1].request_speeds[1].prefill_tok_per_sec").value(89.93));
     }
 
+    /** #355-followup-6: found live on T11 - RunBenchSupport's own session-id scheme is
+     *  deterministic, keyed only by (runId, taskId), so a false start and its real redo (two
+     *  separate session FILES, hours apart) share the IDENTICAL session_id in both headers.
+     *  Before this fix, attempt 1's own chart showed attempt 2's requests too (session_id alone
+     *  can't tell them apart) - this reproduces exactly that: two attempts sharing one session
+     *  id, requests split by matching each one's own "ts" against which attempt's own
+     *  [started_iso, ended_iso] window it falls inside. */
+    @Test
+    void taskStatsSplitsSharedSessionIdRequestsByWhichAttemptsOwnTimeWindowTheyFallInto() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": []}");
+        // both files share the SAME session id - the deterministic (runId, taskId) scheme, not a
+        // fresh random one per attempt
+        Files.writeString(runDir.resolve("sessions/a_falsestart.jsonl"), String.join("\n",
+                "{\"type\":\"session\",\"id\":\"session-t11\",\"label\":\"T11\",\"ts\":\"2026-10-15T02:30:53Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"ts\":\"2026-10-15T02:31:05Z\"}") + "\n");
+        Files.writeString(runDir.resolve("sessions/b_real.jsonl"), String.join("\n",
+                "{\"type\":\"session\",\"id\":\"session-t11\",\"label\":\"T11\",\"ts\":\"2026-10-15T12:24:14Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"ts\":\"2026-10-15T12:25:00Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"ts\":\"2026-10-15T14:00:00Z\"}") + "\n");
+        Files.writeString(runDir.resolve("interactions.jsonl"), String.join("\n",
+                "{\"seq\":1,\"session_id\":\"session-t11\",\"ts\":\"2026-10-15T02:31:05Z\",\"response\":{\"usage\":{\"prompt_tokens\":100,\"prompt_tokens_per_second\":50.0}}}",
+                "{\"seq\":2,\"session_id\":\"session-t11\",\"ts\":\"2026-10-15T12:25:00Z\",\"response\":{\"usage\":{\"prompt_tokens\":200,\"prompt_tokens_per_second\":60.0}}}",
+                "{\"seq\":3,\"session_id\":\"session-t11\",\"ts\":\"2026-10-15T13:00:00Z\",\"response\":{\"usage\":{\"prompt_tokens\":300,\"prompt_tokens_per_second\":70.0}}}",
+                "{\"seq\":4,\"session_id\":\"session-t11\",\"ts\":\"2026-10-15T14:00:00Z\",\"response\":{\"usage\":{\"prompt_tokens\":400,\"prompt_tokens_per_second\":80.0}}}") + "\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T11/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attempts", hasSize(2)))
+                // attempt 1's own 13-second window gets only its own one request
+                .andExpect(jsonPath("$.attempts[0].request_speeds", hasSize(1)))
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].seq").value(1))
+                // attempt 2 gets the other three, not attempt 1's
+                .andExpect(jsonPath("$.attempts[1].request_speeds", hasSize(3)))
+                .andExpect(jsonPath("$.attempts[1].request_speeds[0].seq").value(2))
+                .andExpect(jsonPath("$.attempts[1].request_speeds[1].seq").value(3))
+                .andExpect(jsonPath("$.attempts[1].request_speeds[2].seq").value(4))
+                // internal-only fields, stripped from the response
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].session_id").doesNotExist())
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].ts").doesNotExist());
+    }
+
+    /** #355-followup-5: the operator asked for vertical lines on the chart marking which requests
+     *  landed right after a compaction. scanAttempt() must report the 1-based ordinal of every
+     *  assistant turn immediately preceded by a compaction (turn 2 here: compaction, then the
+     *  2nd assistant turn) - the same "pendingCompaction" technique Collect.compactionOverhead()
+     *  already uses, just reporting turn ordinals instead of wall-clock overhead. */
+    @Test
+    void taskStatsReportsWhichRequestOrdinalsWereImmediatelyPrecededByACompaction() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": []}");
+        Files.writeString(runDir.resolve("sessions/a.jsonl"), String.join("\n",
+                "{\"type\":\"session\",\"id\":\"session-t9\",\"label\":\"T9\",\"ts\":\"2026-10-16T10:00:00Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"ts\":\"2026-10-16T10:00:01Z\"}",
+                "{\"type\":\"compaction\",\"ts\":\"2026-10-16T10:00:02Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"ts\":\"2026-10-16T10:00:03Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"ts\":\"2026-10-16T10:00:04Z\"}") + "\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T9/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attempts[0].compactions_before_request", hasSize(1)))
+                .andExpect(jsonPath("$.attempts[0].compactions_before_request[0]").value(2));
+    }
+
     @Test
     void taskStatsReturnsEmptyRequestSpeedsPerAttemptWhenThereIsNoInteractionsFileAtAll() throws Exception {
         final var resultsDir = Files.createTempDirectory("results");
