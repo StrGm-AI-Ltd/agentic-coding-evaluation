@@ -223,4 +223,97 @@ class CollectTest {
         // base = 90 x (1 - 0.1 - 0.1 - 0.1 - 0) = 63.0, no efficiency term added
         assertEquals(63.0, ((Number) leaderboard.get("agent_result_pct")).doubleValue(), 0.001);
     }
+
+    private static void writeSession(final Path runDir, final String fileName, final String label, final String... lines) throws Exception {
+        final Path sessions = runDir.resolve("sessions");
+        Files.createDirectories(sessions);
+        final var all = new java.util.ArrayList<String>();
+        all.add("{\"label\":\"" + label + "\"}");
+        all.addAll(List.of(lines));
+        Files.writeString(sessions.resolve(fileName), String.join("\n", all) + "\n");
+    }
+
+    private static String turn(final String iso) {
+        return "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"ts\":\"" + iso + "\"}";
+    }
+
+    private static final String COMPACTION = "{\"type\":\"compaction\"}";
+
+    /** #353: found live on T7 (#351) - compaction exists to keep decode speed up by keeping
+     *  context size down, but a compaction's own re-prefill can cost more than it saves. "overhead"
+     *  is the EXCESS wall-clock time the turn right after a compaction took, beyond this session's
+     *  own baseline (median) gap between every OTHER turn - never the raw turn time itself, since
+     *  even an uncompacted turn still takes real time to do real work. */
+    @Test
+    void overheadIsTheExcessBeyondTheSessionsOwnNormalGapNotTheRawTurnTime(@TempDir final Path runDir) throws Exception {
+        // 3 normal gaps of 10s each (baseline = 10s median), then a compaction, then a turn 50s
+        // later - overhead = 50 - 10 = 40s
+        writeSession(runDir, "a.jsonl", "T1",
+                turn("2026-01-01T00:00:00Z"), turn("2026-01-01T00:00:10Z"),
+                turn("2026-01-01T00:00:20Z"), turn("2026-01-01T00:00:30Z"),
+                COMPACTION, turn("2026-01-01T00:01:20Z"));
+        final Map<String, Object> out = Collect.compactionOverhead(runDir);
+        assertEquals(40.0, ((Number) out.get("total_sec")).doubleValue(), 0.001);
+        final Map<String, Object> tasks = (Map<String, Object>) out.get("tasks");
+        final Map<String, Object> t1 = (Map<String, Object>) tasks.get("T1");
+        assertEquals(40.0, ((Number) t1.get("overhead_sec")).doubleValue(), 0.001);
+        assertEquals(1, t1.get("events"));
+        final List<Map<String, Object>> timeline = (List<Map<String, Object>>) out.get("timeline");
+        assertEquals(1, timeline.size());
+        assertEquals(40.0, ((Number) timeline.get(0).get("cumulative_sec")).doubleValue(), 0.001);
+    }
+
+    @Test
+    void aSessionWithNoCompactionsAtAllReportsZeroOverhead(@TempDir final Path runDir) throws Exception {
+        writeSession(runDir, "a.jsonl", "T1",
+                turn("2026-01-01T00:00:00Z"), turn("2026-01-01T00:00:10Z"), turn("2026-01-01T00:00:20Z"));
+        final Map<String, Object> out = Collect.compactionOverhead(runDir);
+        assertEquals(0.0, ((Number) out.get("total_sec")).doubleValue(), 0.001);
+        assertEquals(Map.of(), out.get("tasks"));
+        assertEquals(List.of(), out.get("timeline"));
+    }
+
+    /** #353: a session that compacts on literally every turn has no "normal" gap of its own to
+     *  compare against - must read as zero overhead, not crash or divide against an empty list. */
+    @Test
+    void aSessionCompactingOnEveryTurnHasNoBaselineAndReadsAsZeroRatherThanCrashing(@TempDir final Path runDir) throws Exception {
+        writeSession(runDir, "a.jsonl", "T1",
+                turn("2026-01-01T00:00:00Z"), COMPACTION, turn("2026-01-01T00:00:10Z"), COMPACTION, turn("2026-01-01T00:00:20Z"));
+        assertDoesNotThrow(() -> {
+            final Map<String, Object> out = Collect.compactionOverhead(runDir);
+            assertEquals(0.0, ((Number) out.get("total_sec")).doubleValue(), 0.001);
+        });
+    }
+
+    @Test
+    void aRunWithNoSessionsDirReadsAsZeroNeverThrows(@TempDir final Path runDir) {
+        assertDoesNotThrow(() -> {
+            final Map<String, Object> out = Collect.compactionOverhead(runDir);
+            assertEquals(0.0, ((Number) out.get("total_sec")).doubleValue(), 0.001);
+            assertEquals(List.of(), out.get("timeline"));
+        });
+    }
+
+    /** #353: the timeline pools EVERY task's own compaction events, sorted by absolute timestamp
+     *  regardless of which task's session they came from - this is what lets the chart show one
+     *  coherent "cumulative overhead over the whole run's wall-clock timeline" line even when
+     *  tasks ran sequentially (or in parallel waves) rather than needing one line per task. */
+    @Test
+    void theTimelinePoolsEveryTasksOwnEventsSortedByAbsoluteTimestamp(@TempDir final Path runDir) throws Exception {
+        // T2's own single compaction event happens chronologically BEFORE T1's, despite T1 being
+        // written first and alphabetically first - the timeline must still come out T2-then-T1
+        writeSession(runDir, "a.jsonl", "T1",
+                turn("2026-01-01T01:00:00Z"), turn("2026-01-01T01:00:10Z"), turn("2026-01-01T01:00:20Z"),
+                COMPACTION, turn("2026-01-01T01:01:20Z"));   // overhead = 60 - 10 = 50s, at 01:01:20
+        writeSession(runDir, "b.jsonl", "T2",
+                turn("2026-01-01T00:00:00Z"), turn("2026-01-01T00:00:10Z"), turn("2026-01-01T00:00:20Z"),
+                COMPACTION, turn("2026-01-01T00:00:50Z"));    // overhead = 30 - 10 = 20s, at 00:00:50
+        final Map<String, Object> out = Collect.compactionOverhead(runDir);
+        assertEquals(70.0, ((Number) out.get("total_sec")).doubleValue(), 0.001, "20 (T2) + 50 (T1)");
+        final List<Map<String, Object>> timeline = (List<Map<String, Object>>) out.get("timeline");
+        assertEquals(2, timeline.size());
+        assertEquals(0L, ((Number) timeline.get(0).get("elapsed_sec")).longValue(), "T2's event is the earliest - timeline starts at it");
+        assertEquals(20.0, ((Number) timeline.get(0).get("cumulative_sec")).doubleValue(), 0.001);
+        assertEquals(20.0 + 50.0, ((Number) timeline.get(1).get("cumulative_sec")).doubleValue(), 0.001, "T1's event adds on top, running total");
+    }
 }

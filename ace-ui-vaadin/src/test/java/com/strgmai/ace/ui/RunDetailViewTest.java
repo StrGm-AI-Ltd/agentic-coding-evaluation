@@ -198,6 +198,33 @@ class RunDetailViewTest {
         assertTrue(js.contains("struct.dataPointIndex"), "indexes into the embedded array by the hovered point");
     }
 
+    /** #353: metrics.compaction_overhead.timeline (Collect.compactionOverhead(), found live on T7
+     *  (#351)) - the chart plots this as a cumulative, running total over elapsed run time. */
+    @Test
+    void compactionOverheadPoints_readsTheTimelineArray() {
+        var metrics = Json.MAPPER.readTree("""
+                {"compaction_overhead": {"total_sec": 70.0, "tasks": {}, "timeline": [
+                    {"elapsed_sec": 0, "cumulative_sec": 20.0},
+                    {"elapsed_sec": 3600, "cumulative_sec": 70.0}
+                ]}}""");
+
+        var points = RunDetailView.compactionOverheadPoints(metrics);
+
+        assertEquals(2, points.size());
+        assertEquals(0L, points.get(0).elapsedSec());
+        assertEquals(20.0, points.get(0).cumulativeSec());
+        assertEquals(3600L, points.get(1).elapsedSec());
+        assertEquals(70.0, points.get(1).cumulativeSec());
+    }
+
+    @Test
+    void compactionOverheadPoints_emptyWhenAbsentOrNotAnArray() {
+        assertEquals(List.of(), RunDetailView.compactionOverheadPoints(null));
+        assertEquals(List.of(), RunDetailView.compactionOverheadPoints(Json.MAPPER.readTree("{}")));
+        assertEquals(List.of(), RunDetailView.compactionOverheadPoints(Json.MAPPER.readTree(
+                "{\"compaction_overhead\": {\"total_sec\": 0.0, \"tasks\": {}, \"timeline\": []}}")));
+    }
+
     @Test
     void metaLine_omitsLatencyAndTtftWhenAbsent() {
         var run = new Api.Run("r1", null, null, "L3p_point_in_time", "orchestrated", "m", null, 3, true,
