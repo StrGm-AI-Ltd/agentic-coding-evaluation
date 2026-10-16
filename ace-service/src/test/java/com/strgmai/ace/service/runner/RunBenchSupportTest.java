@@ -115,6 +115,53 @@ class RunBenchSupportTest {
         assertEquals(partial, result.sessionFile(), "a timed-out attempt's manifest entry must still point at its real, partial session file");
     }
 
+    /** found live via #355's Stats tab, on T7 (#351): a timed-out attempt reported turns/
+     *  toolErrors/compactions as hardcoded 0 even though its own session file already had 142
+     *  real turns, 51 compactions and 6 tool errors written to it before the cut. Future.cancel()
+     *  never hands back the interrupted thread's real final state, so these must be recovered by
+     *  reading the session's own partial file, not invented from nothing. */
+    @Test
+    void runBoundedOnTimeoutRecoversRealTurnCompactionAndToolErrorCountsFromThePartialSessionFile() throws Exception {
+        final Path sessionDir = track(Files.createTempDirectory("sessions"));
+        final Path partial = sessionDir.resolve("2026-09-25T10-00-00.000Z_the-real-session-id.jsonl");
+        Files.writeString(partial, String.join("\n",
+                "{\"type\":\"session\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"user\"}}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"}}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"isError\":false}}",
+                "{\"type\":\"compaction\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"}}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"isError\":true}}") + "\n");
+        final Callable<ReferenceAgent.SessionResult> call = () -> { Thread.sleep(5_000); return null; };
+
+        final var result = RunBenchSupport.runBounded(1, "T1", sessionDir, "the-real-session-id", reason -> {}, call);
+
+        assertEquals(2, result.turns(), "2 assistant messages, not the old hardcoded 0");
+        assertEquals(1, result.toolErrors(), "1 toolResult with isError:true, the OTHER toolResult must not count");
+        assertEquals(1, result.compactions());
+    }
+
+    @Test
+    void recoverCountsOnTimeoutReadsZeroWithoutThrowingWhenNoSessionFileExistsAtAll() {
+        assertEquals(RunBenchSupport.RecoveredCounts.NONE, RunBenchSupport.recoverCountsOnTimeout(null));
+        assertEquals(RunBenchSupport.RecoveredCounts.NONE, RunBenchSupport.recoverCountsOnTimeout(Path.of("/no/such/file.jsonl")));
+    }
+
+    /** one malformed line (e.g. a write caught mid-flush by the very moment of cancellation) must
+     *  not sink the whole recovery - every OTHER line's own count still has to land. */
+    @Test
+    void recoverCountsOnTimeoutSkipsOneMalformedLineRatherThanLosingTheWholeCount(@org.junit.jupiter.api.io.TempDir final Path dir) throws IOException {
+        final Path f = dir.resolve("s.jsonl");
+        Files.writeString(f, String.join("\n",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"}}",
+                "not even json",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"}}") + "\n");
+
+        final var recovered = RunBenchSupport.recoverCountsOnTimeout(f);
+
+        assertEquals(2, recovered.turns());
+    }
+
     @Test
     void runBoundedPropagatesARealExceptionFromTheCall() throws Exception {
         final Path sessionDir = track(Files.createTempDirectory("sessions"));
