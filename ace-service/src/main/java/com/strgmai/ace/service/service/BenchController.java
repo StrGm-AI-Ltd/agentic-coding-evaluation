@@ -18,6 +18,8 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.nio.file.*;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
 import java.util.regex.Pattern;
 
@@ -490,8 +492,8 @@ public class BenchController {
      *  finished, or finished a while ago. found=false means no session file for this task exists
      *  AT ALL yet (genuinely not started); found=true with every count still 0 is a real, distinct
      *  state (started, nothing logged yet) - never confused with "not started". */
-    record SessionCounts(boolean found, int turns, int compactions, int toolErrorsTotal, Map<String, Object> toolCalls) {
-        static final SessionCounts NOT_FOUND = new SessionCounts(false, 0, 0, 0, Map.of());
+    record SessionCounts(boolean found, int turns, int compactions, int toolErrorsTotal, Map<String, Object> toolCalls, double wallSec) {
+        static final SessionCounts NOT_FOUND = new SessionCounts(false, 0, 0, 0, Map.of(), 0.0);
     }
 
     /** #355: this task's own tool-call breakdown - counts (and each tool's own error count)
@@ -530,10 +532,18 @@ public class BenchController {
         try { lines = Files.readAllLines(latest); } catch (final Exception e) { return SessionCounts.NOT_FOUND; }
         int turns = 0, compactions = 0, toolErrorsTotal = 0;
         final Map<String, int[]> toolCounts = new LinkedHashMap<>();   // toolName -> [total, errors]
+        Instant firstTs = null, lastTs = null;
         for (final String line : lines) {
             if (line.isBlank()) continue;
             final Map<String, Object> e;
             try { e = mapper.readValue(line, Map.class); } catch (final Exception ignore) { continue; }
+            if (e.get("ts") instanceof String ts) {
+                try {
+                    final Instant parsed = Instant.parse(ts);
+                    if (firstTs == null) firstTs = parsed;
+                    lastTs = parsed;
+                } catch (final Exception ignore) { /* malformed ts must not sink the whole count */ }
+            }
             final String type = String.valueOf(e.get("type"));
             if ("compaction".equals(type)) { compactions++; continue; }
             if (!"message".equals(type) || !(e.get("message") instanceof Map<?, ?> m)) continue;
@@ -547,7 +557,8 @@ public class BenchController {
         }
         final Map<String, Object> toolCallsOut = new LinkedHashMap<>();
         toolCounts.forEach((name, c) -> toolCallsOut.put(name, Map.of("count", c[0], "errors", c[1])));
-        return new SessionCounts(true, turns, compactions, toolErrorsTotal, toolCallsOut);
+        final double wallSec = firstTs == null ? 0.0 : Duration.between(firstTs, lastTs).toMillis() / 1000.0;
+        return new SessionCounts(true, turns, compactions, toolErrorsTotal, toolCallsOut, wallSec);
     }
 
     /** #355/#355-followup: the task detail dialog's own Stats tab. Three states: "done"
@@ -588,6 +599,11 @@ public class BenchController {
             out.put("compactions", live.compactions());
             out.put("tool_errors", live.toolErrorsTotal());
             out.put("tool_calls", live.toolCalls());
+            // a task resumed past on a later attempt (RunBench finds its phase/<id> tag already
+            // committed and skips re-running it) gets a bare {id, rc, resumed} manifest entry with
+            // no "seconds" at all - fall back to the session file's own first-to-last ts span
+            // rather than showing nothing just because this one task happened to be skip-resumed
+            if (out.get("seconds") == null && live.found()) out.put("seconds", live.wallSec());
             if (entry != null) {
                 final Path metricsFile = base.resolve("metrics.json");
                 if (Files.isRegularFile(metricsFile) && isContainedEvenViaSymlinks(base, metricsFile)) {

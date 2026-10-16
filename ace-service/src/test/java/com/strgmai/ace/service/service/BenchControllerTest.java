@@ -603,6 +603,33 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.compactions").value(1));
     }
 
+    /** #355-followup: a task RunBench finds already committed on resume (its phase/<id> tag
+     *  already exists from a prior attempt) gets a bare {id, rc, resumed} manifest entry -
+     *  RunBench never carries the real seconds/turns/etc. forward for a skip-resumed task, see
+     *  sessionCounts()'s own javadoc. turns/compactions were already fixed to always read live
+     *  (previous test) - "seconds" must fall back to the session file's own first-to-last
+     *  timestamp span the same way, rather than showing nothing just because this one task
+     *  happened to be skip-resumed instead of freshly run. */
+    @Test
+    void taskStatsFallsBackToTheSessionFilesOwnTimestampSpanWhenTheManifestEntryHasNoSecondsField() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), """
+                {"tasks": [{"id": "T3", "rc": 0, "resumed": true}]}""");
+        Files.writeString(runDir.resolve("sessions/a.jsonl"), String.join("\n",
+                "{\"label\":\"T3\",\"ts\":\"2026-10-14T12:00:00Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"ts\":\"2026-10-14T12:00:10Z\"}",
+                "{\"type\":\"end\",\"turns\":1,\"ts\":\"2026-10-14T12:05:00Z\"}") + "\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T3/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("done"))
+                .andExpect(jsonPath("$.seconds").value(300.0));
+    }
+
     /** #355: once the WHOLE run finishes (not just this task), oracle.json/metrics.json also
      *  exist alongside manifest.json - this task's own check-score attribution (metrics.json's
      *  "steps" block, #337-adjacent) and compaction overhead (#353/#354) merge in too, read from
