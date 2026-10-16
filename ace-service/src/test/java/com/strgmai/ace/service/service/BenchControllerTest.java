@@ -574,11 +574,12 @@ class BenchControllerTest {
     /** #355-followup: a task that got a false start (e.g. interrupted by an operator pause right
      *  after it began) ends up with TWO session files sharing its label - an empty/near-empty
      *  stale one from the false start, and the real one from the attempt that actually ran.
-     *  sessionCounts() must pick the one with the latest mtime, not whichever Files.list() happens
-     *  to enumerate first (that order is filesystem-dependent, not chronological) - otherwise the
-     *  Stats tab can silently show zeros for a task that actually ran plenty of turns. */
+     *  sessionCounts() must aggregate across every matching file regardless of Files.list()'s
+     *  filesystem-dependent (not chronological) enumeration order - otherwise the Stats tab can
+     *  silently show zeros for a task that actually ran plenty of turns, if the empty false-start
+     *  file happens to be the one a first-match-wins read would have landed on. */
     @Test
-    void taskStatsUsesTheLatestSessionFileWhenMultipleFilesShareTheSameLabel() throws Exception {
+    void taskStatsAggregatesAcrossEveryMatchingSessionFileRegardlessOfFilesystemOrder() throws Exception {
         final var resultsDir = Files.createTempDirectory("results");
         final var runDir = resultsDir.resolve("run-1");
         Files.createDirectories(runDir.resolve("sessions"));
@@ -628,6 +629,76 @@ class BenchControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.state").value("done"))
                 .andExpect(jsonPath("$.seconds").value(300.0));
+    }
+
+    /** #355-followup-2: the operator asked for every attempt to show up as its own section in the
+     *  Stats tab, not just a collapsed total - this is the "attempts" array taskStats() now adds,
+     *  one entry per session file sharing the task's label, oldest first, each carrying its own
+     *  turns/compactions/seconds AND the params/outcome task_attempts.jsonl recorded for it
+     *  (matched by nearest attempt_started to the session's own first ts). */
+    @Test
+    void taskStatsListsEachAttemptAsItsOwnSectionWithItsOwnParamsAndOutcome() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": []}");
+        Files.writeString(runDir.resolve("sessions/a_falsestart.jsonl"), "{\"label\":\"T3\",\"ts\":\"2026-10-14T10:00:00Z\"}\n");
+        Files.writeString(runDir.resolve("sessions/b_real.jsonl"), String.join("\n",
+                "{\"label\":\"T3\",\"ts\":\"2026-10-14T12:00:00Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"ts\":\"2026-10-14T12:00:10Z\"}",
+                "{\"type\":\"end\",\"turns\":1,\"ts\":\"2026-10-14T12:05:00Z\"}") + "\n");
+        Files.writeString(runDir.resolve("task_attempts.jsonl"), String.join("\n",
+                "{\"task_id\": \"T3\", \"attempt_started\": \"2026-10-14T10:00:00Z\", \"attempt_ended\": \"2026-10-14T10:00:01Z\", "
+                        + "\"params\": {\"task_wall_sec\": 32400}, \"overridden\": true, \"rc\": 2, \"seconds\": 1.0, "
+                        + "\"reported_status\": \"crashed\", \"reported_detail\": \"transient infra error\"}",
+                "{\"task_id\": \"T3\", \"attempt_started\": \"2026-10-14T12:00:00Z\", \"attempt_ended\": \"2026-10-14T12:05:00Z\", "
+                        + "\"params\": {\"task_wall_sec\": 32400, \"task_tokens\": 180000}, \"overridden\": true, \"rc\": 0, \"seconds\": 300.0, "
+                        + "\"reported_status\": \"done\", \"reported_detail\": \"all good\"}") + "\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T3/stats"))
+                .andExpect(status().isOk())
+                // aggregate across both attempts
+                .andExpect(jsonPath("$.turns").value(1))
+                .andExpect(jsonPath("$.seconds").value(300.0))
+                // attempt 1: the false start - no turns, matched to its own crashed outcome
+                .andExpect(jsonPath("$.attempts", hasSize(2)))
+                .andExpect(jsonPath("$.attempts[0].turns").value(0))
+                .andExpect(jsonPath("$.attempts[0].seconds").value(0.0))
+                .andExpect(jsonPath("$.attempts[0].params.task_wall_sec").value(32400))
+                .andExpect(jsonPath("$.attempts[0].reported_status").value("crashed"))
+                // attempt 2: the real, successful redo
+                .andExpect(jsonPath("$.attempts[1].turns").value(1))
+                .andExpect(jsonPath("$.attempts[1].seconds").value(300.0))
+                .andExpect(jsonPath("$.attempts[1].params.task_tokens").value(180000))
+                .andExpect(jsonPath("$.attempts[1].reported_status").value("done"));
+    }
+
+    /** #355-followup-2: a session cut off before RunBench.logTaskAttempt() ever ran (an operator
+     *  pause landing mid-attempt, before the harness could log it) leaves a session file with no
+     *  corresponding task_attempts.jsonl row at all. That attempt must still show up as its own
+     *  section - just without params/outcome - rather than being silently paired with some OTHER
+     *  attempt's record merely because it's the only one on file. */
+    @Test
+    void taskStatsOmitsParamsForAnAttemptWithNoCorrespondingTaskAttemptsRecord() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": []}");
+        Files.writeString(runDir.resolve("sessions/a.jsonl"), "{\"label\":\"T3\",\"ts\":\"2026-10-14T10:00:00Z\"}\n");
+        // the one recorded attempt happened hours later - too far away to be this session's own record
+        Files.writeString(runDir.resolve("task_attempts.jsonl"),
+                "{\"task_id\": \"T3\", \"attempt_started\": \"2026-10-15T01:00:00Z\", \"attempt_ended\": \"2026-10-15T02:00:00Z\", "
+                        + "\"params\": {}, \"overridden\": false, \"rc\": 0, \"seconds\": 3600.0, \"reported_status\": \"done\"}\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T3/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attempts", hasSize(1)))
+                .andExpect(jsonPath("$.attempts[0].params").doesNotExist())
+                .andExpect(jsonPath("$.attempts[0].reported_status").doesNotExist());
     }
 
     /** #355: once the WHOLE run finishes (not just this task), oracle.json/metrics.json also

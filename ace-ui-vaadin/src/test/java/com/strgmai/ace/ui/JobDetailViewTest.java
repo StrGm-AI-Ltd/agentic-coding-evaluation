@@ -491,4 +491,62 @@ class JobDetailViewTest {
         for (int i = 0; i < lines.size(); i++) if (lines.get(i).contains(needle)) return i;
         return -1;
     }
+
+    /** #355-followup-2: the operator asked for every attempt (a false start plus the real redo,
+     *  seen live on T3) to show up as its own section, not collapsed into one summary - mirrors
+     *  BenchController.taskStats()'s own "attempts" array shape exactly, params/outcome included
+     *  when task_attempts.jsonl had a matching row for that attempt. */
+    @Test
+    void attemptSections_buildsOneNumberedSectionPerAttemptWithItsOwnParamsAndOutcome() {
+        final var stats = Json.MAPPER.readTree("""
+                {"state": "done", "attempts": [
+                    {"session_id": "a_falsestart.jsonl", "started_iso": "2026-10-14T10:00:00Z", "ended_iso": "2026-10-14T10:00:00Z",
+                     "turns": 0, "compactions": 0, "tool_errors": 0, "tool_calls": {}, "seconds": 0.0,
+                     "params": {"task_wall_sec": 32400}, "overridden": true, "attempt_rc": 2,
+                     "reported_status": "crashed", "reported_detail": "transient infra error"},
+                    {"session_id": "b_real.jsonl", "started_iso": "2026-10-14T12:00:00Z", "ended_iso": "2026-10-14T12:05:00Z",
+                     "turns": 1, "compactions": 0, "tool_errors": 0, "tool_calls": {"bash": {"count": 2, "errors": 0}}, "seconds": 300.0,
+                     "params": {"task_wall_sec": 32400, "task_tokens": 180000}, "overridden": true, "attempt_rc": 0,
+                     "reported_status": "done"}
+                ]}""");
+
+        final var sections = JobDetailView.attemptSections(stats);
+
+        assertEquals(2, sections.size());
+        assertTrue(sections.get(0).header().startsWith("Attempt 1"));
+        assertTrue(sections.get(0).header().contains("2026-10-14T10:00:00Z"));
+        assertTrue(sections.get(0).body().contains("params: ") && sections.get(0).body().contains("32400"), sections.get(0).body());
+        assertTrue(sections.get(0).body().contains("overridden"), sections.get(0).body());
+        assertTrue(sections.get(0).body().contains("rc: 2") && sections.get(0).body().contains("outcome: crashed")
+                && sections.get(0).body().contains("transient infra error"), sections.get(0).body());
+
+        assertTrue(sections.get(1).header().startsWith("Attempt 2"));
+        assertTrue(sections.get(1).body().contains("180000"), sections.get(1).body());
+        assertTrue(sections.get(1).body().contains("wall time: 300.0s   model turns: 1"), sections.get(1).body());
+        assertTrue(sections.get(1).body().contains("bash (run a shell command): 2"), sections.get(1).body());
+    }
+
+    /** #355-followup-2: a session cut off before RunBench.logTaskAttempt() ever ran leaves no
+     *  matching task_attempts.jsonl row - that attempt still gets its own section (turns/wall
+     *  time/compactions), just without the params/outcome lines, rather than showing nothing. */
+    @Test
+    void attemptSections_omitsParamsAndOutcomeLinesWhenTheBackendFoundNoMatchingAttemptRecord() {
+        final var stats = Json.MAPPER.readTree("""
+                {"state": "running", "attempts": [
+                    {"session_id": "a.jsonl", "started_iso": "2026-10-14T10:00:00Z", "ended_iso": "2026-10-14T10:00:00Z",
+                     "turns": 3, "compactions": 0, "tool_errors": 0, "tool_calls": {}, "seconds": 5.0}
+                ]}""");
+
+        final var sections = JobDetailView.attemptSections(stats);
+
+        assertEquals(1, sections.size());
+        assertFalse(sections.get(0).body().contains("params:"), sections.get(0).body());
+        assertFalse(sections.get(0).body().contains("outcome:"), sections.get(0).body());
+        assertTrue(sections.get(0).body().contains("wall time: 5.0s   model turns: 3"), sections.get(0).body());
+    }
+
+    @Test
+    void attemptSections_isEmptyWhenStatsHasNoAttemptsField() {
+        assertTrue(JobDetailView.attemptSections(Json.MAPPER.readTree("{\"state\": \"not_started\"}")).isEmpty());
+    }
 }
