@@ -501,6 +501,89 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.text").value(Packs.taskInstruction("T3")));
     }
 
+    /** #355: once a task finishes, manifest.json already carries its own full record (RunBench
+     *  writes it incrementally, not just at the end of the run) - the Stats tab endpoint reads it
+     *  straight, no new computation, plus the tool-call breakdown tallied from the task's own
+     *  session file. */
+    @Test
+    void taskStatsReadsTheTasksOwnManifestEntryAndToolCallBreakdownOnceItHasFinished() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), """
+                {"tasks": [{"id": "T1", "rc": 0, "seconds": 120.5, "turns": 7, "compactions": 1,
+                            "tool_errors": 0, "finish": "stop", "reported": "done"}]}""");
+        Files.writeString(runDir.resolve("sessions/a.jsonl"), String.join("\n",
+                "{\"label\":\"T1\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolName\":\"read\",\"isError\":false}}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolName\":\"bash\",\"isError\":true}}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolName\":\"bash\",\"isError\":false}}") + "\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T1/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("done"))
+                .andExpect(jsonPath("$.rc").value(0))
+                .andExpect(jsonPath("$.turns").value(7))
+                .andExpect(jsonPath("$.compactions").value(1))
+                .andExpect(jsonPath("$.tool_calls.read.count").value(1))
+                .andExpect(jsonPath("$.tool_calls.bash.count").value(2))
+                .andExpect(jsonPath("$.tool_calls.bash.errors").value(1));
+    }
+
+    /** #355: once the WHOLE run finishes (not just this task), oracle.json/metrics.json also
+     *  exist alongside manifest.json - this task's own check-score attribution (metrics.json's
+     *  "steps" block, #337-adjacent) and compaction overhead (#353/#354) merge in too, read from
+     *  the exact same directory, no job-to-run bridge needed at all. */
+    @Test
+    void taskStatsMergesInCheckScoreAndCompactionOverheadOnceTheWholeRunIsScored() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": [{\"id\": \"T1\", \"rc\": 0}]}");
+        Files.writeString(runDir.resolve("metrics.json"), """
+                {"steps": {"T1": {"score_pct": 100.0, "points": [3, 3]}},
+                 "compaction_overhead": {"total_sec": 40.0, "tasks": {"T1": {"overhead_sec": 40.0, "events": 1}}}}""");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T1/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.check_score.score_pct").value(100.0))
+                .andExpect(jsonPath("$.check_score.points[0]").value(3))
+                .andExpect(jsonPath("$.compaction_overhead.overhead_sec").value(40.0))
+                .andExpect(jsonPath("$.compaction_overhead.events").value(1));
+    }
+
+    /** #355: no manifest.tasks entry for this task yet - still running, or not started - the
+     *  frontend falls back to its own live JobLiveState lookup instead of a second round-trip;
+     *  this endpoint just needs to say so plainly rather than erroring. */
+    @Test
+    void taskStatsReportsNotFinishedWhenTheTaskHasNoManifestEntryYet() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        Files.createDirectories(resultsDir.resolve("run-1"));
+        Files.writeString(resultsDir.resolve("run-1/manifest.json"), "{\"tasks\": []}");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T9/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("not_finished"));
+    }
+
+    @Test
+    void taskStatsReportsNotFinishedWhenNoManifestExistsAtAll() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        Files.createDirectories(resultsDir.resolve("run-1"));
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T1/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("not_finished"));
+    }
+
     /** #259: a finished task's own net change is the diff between its phase tag and that tag's
      *  first parent - exactly what that task's own commit introduced, nothing from before it. */
     @Test
