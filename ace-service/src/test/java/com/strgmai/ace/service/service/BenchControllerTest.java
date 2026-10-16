@@ -701,6 +701,41 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.attempts[0].reported_status").doesNotExist());
     }
 
+    /** #355-followup-2, found live on T3: the false start sat only ~3 minutes before the real
+     *  attempt's own task_attempts.jsonl row (a near-exact, sub-second match for the REAL
+     *  attempt) - well inside the 5-minute tolerance. A naive "process attempts in order, first
+     *  record within tolerance wins" scan let the false start claim that record first, leaving
+     *  the real attempt with none. Matching must be global (smallest diff across every pair
+     *  wins first), not greedy by attempt order. */
+    @Test
+    void taskStatsMatchesEachAttemptToItsOwnClosestRecordEvenWhenAnEarlierAttemptIsAlsoWithinTolerance() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": []}");
+        // false start: 3 minutes before the real attempt - within the 5-minute tolerance of the
+        // one real record below, but a far worse match than the real attempt's own near-exact one
+        Files.writeString(runDir.resolve("sessions/a_falsestart.jsonl"), "{\"label\":\"T3\",\"ts\":\"2026-10-14T22:26:47.843657Z\"}\n");
+        Files.writeString(runDir.resolve("sessions/b_real.jsonl"), String.join("\n",
+                "{\"label\":\"T3\",\"ts\":\"2026-10-14T22:29:55.491411Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"ts\":\"2026-10-14T22:30:00Z\"}",
+                "{\"type\":\"end\",\"ts\":\"2026-10-15T00:17:50.655527Z\"}") + "\n");
+        Files.writeString(runDir.resolve("task_attempts.jsonl"),
+                "{\"task_id\": \"T3\", \"attempt_started\": \"2026-10-14T22:29:55.491153Z\", \"attempt_ended\": \"2026-10-15T00:17:50.655855Z\", "
+                        + "\"params\": {\"task_tokens\": 180000}, \"overridden\": true, \"rc\": 0, \"seconds\": 6475.2, \"reported_status\": \"done\"}\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T3/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attempts", hasSize(2)))
+                .andExpect(jsonPath("$.attempts[0].turns").value(0))
+                .andExpect(jsonPath("$.attempts[0].params").doesNotExist())
+                .andExpect(jsonPath("$.attempts[1].turns").value(1))
+                .andExpect(jsonPath("$.attempts[1].params.task_tokens").value(180000))
+                .andExpect(jsonPath("$.attempts[1].reported_status").value("done"));
+    }
+
     /** #355: once the WHOLE run finishes (not just this task), oracle.json/metrics.json also
      *  exist alongside manifest.json - this task's own check-score attribution (metrics.json's
      *  "steps" block, #337-adjacent) and compaction overhead (#353/#354) merge in too, read from
