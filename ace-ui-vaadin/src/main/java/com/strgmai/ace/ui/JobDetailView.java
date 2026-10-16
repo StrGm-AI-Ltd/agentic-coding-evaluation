@@ -21,10 +21,12 @@ import com.vaadin.flow.shared.Registration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.client.RestClientResponseException;
+import tools.jackson.databind.JsonNode;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
@@ -729,6 +731,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var judgeBody = new Div();
         judgeBody.getStyle().set("overflow", "auto");
         judgeBody.setVisible(false);
+        final var statsBody = new Div();
+        statsBody.getStyle().set("overflow", "auto");
+        statsBody.setVisible(false);
         // the operator-facing live transcript - see openTaskTranscriptTab() below for why this
         // is its own method rather than inlined like the bodies above (its content keeps
         // growing from a background thread for as long as the dialog stays open, unlike every
@@ -754,19 +759,21 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var restartTab = new com.vaadin.flow.component.tabs.Tab("Restart");
         final var historyTab = new com.vaadin.flow.component.tabs.Tab("History");
         final var judgeTab = new com.vaadin.flow.component.tabs.Tab("Judge");
+        final var statsTab = new com.vaadin.flow.component.tabs.Tab("Stats");
         final var transcriptTab = new com.vaadin.flow.component.tabs.Tab("Live");
-        final var tabs = new com.vaadin.flow.component.tabs.Tabs(promptTab, changesTab, restartTab, historyTab, judgeTab, transcriptTab);
+        final var tabs = new com.vaadin.flow.component.tabs.Tabs(promptTab, changesTab, restartTab, historyTab, judgeTab, statsTab, transcriptTab);
         tabs.addSelectedChangeListener(e -> {
             promptBody.setVisible(tabs.getSelectedTab() == promptTab);
             diffBody.setVisible(tabs.getSelectedTab() == changesTab);
             restartBody.setVisible(tabs.getSelectedTab() == restartTab);
             historyBody.setVisible(tabs.getSelectedTab() == historyTab);
             judgeBody.setVisible(tabs.getSelectedTab() == judgeTab);
+            statsBody.setVisible(tabs.getSelectedTab() == statsTab);
             transcriptBody.setVisible(tabs.getSelectedTab() == transcriptTab);
             interveneRow.setVisible(tabs.getSelectedTab() == transcriptTab);
         });
 
-        final var content = new VerticalLayout(tabs, promptBody, diffBody, restartBody, historyBody, judgeBody, transcriptBody, interveneRow);
+        final var content = new VerticalLayout(tabs, promptBody, diffBody, restartBody, historyBody, judgeBody, statsBody, transcriptBody, interveneRow);
         content.setPadding(false);
         content.setSpacing(false);
         content.setSizeFull();
@@ -892,11 +899,42 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 judgeBody.add(Panels.error(client.errorText(ex)));
             }
         };
+        // #355: full operator visibility into this task, active or completed - manifest.json
+        // already carries a finished task's own complete record (rc/turns/compactions/
+        // verification/wrap-up/rescue/handoff outcome/tool-call breakdown, and, once the whole
+        // run is scored, this task's own check score and compaction overhead), read straight by
+        // BenchController.taskStats() with no new computation. While the task is still running
+        // (no manifest entry yet - state="not_finished"), fall back to the SAME live
+        // JobLiveState this page's own Sessions grid already uses for its own time/token columns
+        // (taskStats(sessions, taskId, currentStep)/lastMatchingSession() above, NOT a fresh
+        // name()-based lookup) - it already sums correctly across a retried/continued task's
+        // several sessions and handles a still-running one's wall time (open-ended until "now" or
+        // the next task's own start), rather than reporting null until the session ends.
+        final Runnable loadStats = () -> {
+            try {
+                final var stats = client.taskStats(jobId, task.id());
+                statsBody.removeAll();
+                if ("done".equals(stats.path("state").asText(null))) {
+                    for (final var line : taskStatsLines(stats)) statsBody.add(Panels.mono(line));
+                    return;
+                }
+                if (lastMatchingSession(live.sessions(), task.id()) == null) {
+                    statsBody.add(Panels.mono("(not started yet)"));
+                    return;
+                }
+                for (final var line : liveTaskStatsLines(taskStats(live.sessions(), task.id(), live.currentStep())))
+                    statsBody.add(Panels.mono(line));
+            } catch (final Exception ex) {
+                statsBody.removeAll();
+                statsBody.add(Panels.error(client.errorText(ex)));
+            }
+        };
         final Runnable loadAll = () -> {
             loadPrompt.run();
             loadDiff.run();
             loadHistory.run();
             loadJudge.run();
+            loadStats.run();
             if (promptSettled[0] && diffSettled[0] && pollReg[0] != null) {
                 pollReg[0].remove();
                 pollReg[0] = null;
@@ -914,6 +952,66 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         dialog.open();
         loadAll.run();
         getUI().ifPresent(ui -> pollReg[0] = ui.addPollListener(e -> loadAll.run()));
+    }
+
+    /** #355: the Stats tab's own text for a FINISHED task (BenchController.taskStats() found a
+     *  manifest.tasks entry) - pure, tested against real-shape fixtures, same convention as
+     *  speedByContextRows()/compactionOverheadPoints() in RunDetailView. Every field beyond
+     *  rc/finish/seconds/turns/compactions/tool_errors is OPTIONAL and shown only when present -
+     *  wrap-up/rescue/handoff only ever fired for some tasks, and check_score/compaction_overhead
+     *  only exist once the whole run (not just this task) has finished scoring. */
+    static List<String> taskStatsLines(final JsonNode stats) {
+        final List<String> lines = new ArrayList<>();
+        lines.add("rc: " + stats.path("rc").asText("?") + "   finish: " + stats.path("finish").asText("?"));
+        lines.add("seconds: " + stats.path("seconds").asText("?") + "   turns: " + stats.path("turns").asText("?")
+                + "   compactions: " + stats.path("compactions").asText("0") + "   tool errors: " + stats.path("tool_errors").asText("0"));
+        final var v = stats.path("verification");
+        if (v.isObject()) {
+            final String verdict = v.path("green").isNull() ? "could not run" : v.path("green").asBoolean(false) ? "GREEN" : "RED";
+            lines.add("harness verification: " + verdict + " (" + v.path("executed").asInt(0) + " tests, " + v.path("failed").asInt(0) + " failed)");
+        }
+        if (stats.hasNonNull("rescue_seconds")) {
+            lines.add("rescue: rc=" + stats.path("rescue_rc").asText("?") + ", " + stats.path("rescue_seconds").asText("?") + "s"
+                    + (stats.path("rescue_succeeded").asBoolean(false) ? " (succeeded)" : ""));
+        }
+        if (stats.hasNonNull("wrapup_seconds")) {
+            lines.add("wrap-up: rc=" + stats.path("wrapup_rc").asText("?") + ", " + stats.path("wrapup_seconds").asText("?") + "s");
+        }
+        if (stats.hasNonNull("handoff_seconds")) {
+            lines.add("handoff: " + (stats.path("handoff_by_harness").asBoolean(false) ? "harness-authored fallback (#351)" : "written by the model")
+                    + ", " + stats.path("handoff_chars").asText("0") + " chars");
+        }
+        final var tc = stats.path("tool_calls");
+        if (tc.isObject() && tc.size() > 0) {
+            final var names = new ArrayList<>(tc.propertyNames());
+            Collections.sort(names);
+            for (final var name : names) {
+                final var c = tc.path(name);
+                final int errors = c.path("errors").asInt(0);
+                lines.add("  " + name + ": " + c.path("count").asInt(0) + (errors > 0 ? " (" + errors + " errors)" : ""));
+            }
+        }
+        final var cs = stats.path("check_score");
+        if (cs.isObject()) {
+            lines.add("check score: " + cs.path("score_pct").asText("?") + "% (" + cs.path("points").path(0).asText("?") + "/" + cs.path("points").path(1).asText("?") + ")");
+        }
+        final var co = stats.path("compaction_overhead");
+        if (co.isObject()) {
+            lines.add("compaction overhead: " + co.path("overhead_sec").asText("?") + "s across " + co.path("events").asText("0") + " event(s)");
+        }
+        return lines;
+    }
+
+    /** #355: the Stats tab's own text for a task still RUNNING (no manifest.tasks entry yet) -
+     *  taskStats(sessions, taskId, currentStep) above already sums correctly across every
+     *  session matching this task (a retried/continued task genuinely spent time/tokens in more
+     *  than one) and already knows how to report a still-open session's wall time (through "now",
+     *  or through the next task's own start) rather than leaving it null until the session ends. */
+    static List<String> liveTaskStatsLines(final TaskStats ts) {
+        return List.of("(still running - partial)",
+                "wall seconds so far: " + Math.round(ts.wallSec()),
+                "completion tokens so far: " + ts.completionTokens(),
+                "prompt tokens: " + ts.promptTokens());
     }
 
     /** The "Live" tab: a plain-text, operator-facing peek into the task's own coding session -

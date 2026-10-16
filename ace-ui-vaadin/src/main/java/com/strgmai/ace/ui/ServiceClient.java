@@ -200,6 +200,14 @@ public class ServiceClient implements Serializable {
                 });
     }
 
+    /** #355: the Stats tab's own data - a heterogeneous bag of mostly-optional fields (verification/
+     *  wrap-up/rescue/handoff only when they actually fired, check_score/compaction_overhead only
+     *  once the whole run is scored), read as a raw tree rather than a large, mostly-null record -
+     *  same reasoning Api.Run.metrics() already follows for the same kind of response shape. */
+    public JsonNode taskStats(final String jobId, final String taskId) {
+        return http.get().uri("/api/jobs/{id}/tasks/{taskId}/stats", jobId, taskId).retrieve().body(JsonNode.class);
+    }
+
     /** Sends an operator's own steering message for this task - queued, delivered at the agent's
      *  own next turn boundary (see BenchController.intervene()/RunBench.buildJudgeCheckpoint()). */
     public void sendIntervention(final String jobId, final String taskId, final String text) {
