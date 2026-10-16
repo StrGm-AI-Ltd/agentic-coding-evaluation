@@ -376,6 +376,18 @@ class JobDetailViewTest {
         assertTrue(JobDetailView.rcText(99, null).contains("rc=99"), "an unrecognized code still names itself, never silently blank");
     }
 
+    /** #355-followup: found live on T7's own real Stats tab - "bash: 99 (5 errors)" names the
+     *  tool but not what it does, the same gap rcText() closed for a bare rc number. Covers the
+     *  model's entire real tool surface (ReferenceAgent.toolSpecs()'s own four tools). */
+    @Test
+    void toolLabel_describesEachOfTheModelsFourRealTools() {
+        assertEquals("read (read a file)", JobDetailView.toolLabel("read"));
+        assertEquals("write (create or overwrite a file)", JobDetailView.toolLabel("write"));
+        assertEquals("edit (replace text within a file)", JobDetailView.toolLabel("edit"));
+        assertEquals("bash (run a shell command)", JobDetailView.toolLabel("bash"));
+        assertEquals("some_future_tool", JobDetailView.toolLabel("some_future_tool"), "an unrecognized name still shows itself, never blank");
+    }
+
     private static final JobDetailView.TaskStats NO_LIVE_WALL_TIME = new JobDetailView.TaskStats(0.0, 0, 0);
 
     /** #355/#355-followup: the Stats tab's own rendering for a FINISHED task - pure, tested
@@ -442,17 +454,21 @@ class JobDetailViewTest {
     }
 
     @Test
-    void taskStatsLines_showsToolCallBreakdownSortedByName() {
+    void taskStatsLines_showsToolCallBreakdownSortedByNameWithDescriptiveLabelsAndCorrectPluralization() {
         final var stats = Json.MAPPER.readTree("""
-                {"state": "done", "rc": 0, "finish": "stop", "seconds": 1, "turns": 1, "compactions": 0, "tool_errors": 1,
-                 "tool_calls": {"write": {"count": 3, "errors": 0}, "bash": {"count": 5, "errors": 1}}}""");
+                {"state": "done", "rc": 0, "finish": "stop", "seconds": 1, "turns": 1, "compactions": 0, "tool_errors": 2,
+                 "tool_calls": {"write": {"count": 3, "errors": 0}, "bash": {"count": 5, "errors": 1}, "edit": {"count": 2, "errors": 2}}}""");
 
         final var lines = JobDetailView.taskStatsLines(stats, NO_LIVE_WALL_TIME);
 
-        final int bashIdx = indexOfContaining(lines, "bash:");
-        final int writeIdx = indexOfContaining(lines, "write:");
-        assertTrue(bashIdx >= 0 && writeIdx >= 0 && bashIdx < writeIdx, "alphabetical: bash before write");
-        assertTrue(lines.get(bashIdx).contains("5") && lines.get(bashIdx).contains("1 errors"), lines.get(bashIdx));
+        final int bashIdx = indexOfContaining(lines, "bash (");
+        final int editIdx = indexOfContaining(lines, "edit (");
+        final int writeIdx = indexOfContaining(lines, "write (");
+        assertTrue(bashIdx >= 0 && editIdx >= 0 && writeIdx >= 0 && bashIdx < editIdx && editIdx < writeIdx,
+                "alphabetical: bash before edit before write");
+        assertTrue(lines.get(bashIdx).contains("run a shell command") && lines.get(bashIdx).contains(": 5") && lines.get(bashIdx).contains("1 error)"),
+                "a bare tool name is not enough - found live via T7's own Stats tab: " + lines.get(bashIdx));
+        assertTrue(lines.get(editIdx).contains("2 errors)"), "plural when >1, singular when ==1: " + lines.get(editIdx));
     }
 
     /** #353/#354 + the oracle's own per-task check attribution - only ever present once the WHOLE

@@ -971,6 +971,22 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         };
     }
 
+    /** #355-followup: found live - "bash: 99 (5 errors)" names the tool but not what it DOES,
+     *  the same gap rcText() closed for a bare rc number. The model's own four tools (see
+     *  ReferenceAgent.toolSpecs() for the full, verbatim descriptions it is actually given) in
+     *  one short phrase each - plain enough to read inline next to a count, not the full
+     *  tool-call description. An unrecognized name (should not happen - these four are the
+     *  model's entire tool surface) still shows itself rather than going blank. */
+    static String toolLabel(final String name) {
+        return switch (name) {
+            case "read" -> "read (read a file)";
+            case "write" -> "write (create or overwrite a file)";
+            case "edit" -> "edit (replace text within a file)";
+            case "bash" -> "bash (run a shell command)";
+            default -> name;
+        };
+    }
+
     /** #355: the Stats tab's own text for a FINISHED task (BenchController.taskStats() found a
      *  manifest.tasks entry - "done") or still running/mid-tail ("running") - pure, tested
      *  against real-shape fixtures, same convention as speedByContextRows()/
@@ -1016,12 +1032,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         }
         final var tc = stats.path("tool_calls");
         if (tc.isObject() && tc.size() > 0) {
+            lines.add("tool calls (the four actions the model can take in its own coding session):");
             final var names = new ArrayList<>(tc.propertyNames());
             Collections.sort(names);
             for (final var name : names) {
                 final var c = tc.path(name);
                 final int errors = c.path("errors").asInt(0);
-                lines.add("  " + name + ": " + c.path("count").asInt(0) + (errors > 0 ? " (" + errors + " errors)" : ""));
+                lines.add("  " + toolLabel(name) + ": " + c.path("count").asInt(0) + (errors > 0 ? " (" + errors + (errors == 1 ? " error" : " errors") + ")" : ""));
             }
         }
         final var cs = stats.path("check_score");
