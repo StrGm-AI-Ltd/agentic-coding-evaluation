@@ -10,11 +10,10 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** `RunOracle.score()`'s own orchestration - every rung in tasks/ladder.json includes at least one
- *  Docker-gated check, so these plain (non-`@Tag("docker")`) tests exercise it the ONLY way possible
- *  without a live daemon: assuming Docker is NOT running, matching this project's own convention
- *  that the default `test` task never depends on it (SelftestIT needs `@Tag("docker")` precisely
- *  because it does). If Docker happens to be running locally when these run, the SKIPPED-vs-real
- *  assertions below would legitimately fail - that is an environment mismatch, not a logic bug. */
+ *  Docker-gated check, so these plain (non-`@Tag("docker")`) tests exercise it without requiring a
+ *  live daemon (SelftestIT needs `@Tag("docker")` precisely because it does). Whether a real Docker
+ *  daemon happens to be running on the machine executing these tests is read back from `rep`'s own
+ *  "docker_available" flag rather than assumed, so the gated-vs-skipped assertions hold either way. */
 class RunOracleTest {
 
     @Test
@@ -25,21 +24,29 @@ class RunOracleTest {
     }
 
     /** L1_migration_entity: the smallest rung with both offline (S6,S9,M1,M2,M3) and Docker-gated
-     *  (B1,B2) ids - without Docker, the gated ones must be SKIPPED (never silently dropped, never
-     *  charged as a FAIL to the agent) while the offline ones still run for real and count. */
+     *  (B1,B2) ids. Without Docker, the gated ones must be SKIPPED (never silently dropped, never
+     *  charged as a FAIL to the agent); with a real daemon reachable, they instead run for real
+     *  against the empty workspace and come back a genuine FAIL (nothing to build) - either way
+     *  never SKIPPED, since RunOracle.java only skips a gated id when the daemon is unreachable.
+     *  The offline ones run for real and count regardless of Docker's availability. */
     @Test
     void offlineChecksRunForRealWhileGatedOnesAreSkippedWithoutDocker() throws Exception {
         final Path ws = Files.createTempDirectory("run-oracle-test");
         final Map<String, Object> rep = new RunOracle().score(ws, "L1_migration_entity", null);
 
-        assertEquals(false, rep.get("docker_available"), "no real Docker daemon is assumed for this test");
+        final boolean dockerAvailable = Boolean.TRUE.equals(rep.get("docker_available"));
         @SuppressWarnings("unchecked")
         final List<Map<String, Object>> results = (List<Map<String, Object>>) rep.get("results");
         assertEquals(7, results.size(), "every id in the rung's checks list gets exactly one record");
 
         final var byId = results.stream().collect(java.util.stream.Collectors.toMap(r -> r.get("id"), r -> r.get("status")));
-        assertEquals("SKIPPED", byId.get("B1"), "Docker-gated, unavailable - skipped, never a FAIL charged to the agent");
-        assertEquals("SKIPPED", byId.get("B2"));
+        if (dockerAvailable) {
+            assertNotEquals("SKIPPED", byId.get("B1"), "a real daemon is reachable - B1 must run for real, not be skipped");
+            assertNotEquals("SKIPPED", byId.get("B2"), "a real daemon is reachable - B2 must run for real, not be skipped");
+        } else {
+            assertEquals("SKIPPED", byId.get("B1"), "Docker-gated, unavailable - skipped, never a FAIL charged to the agent");
+            assertEquals("SKIPPED", byId.get("B2"));
+        }
         // offline checks ran for real against an empty workspace - they FAIL (nothing to find), but
         // that is a real, scored FAIL, not SKIPPED - the distinction this test actually cares about
         for (String offlineId : List.of("S6", "S9", "M1", "M2", "M3"))
