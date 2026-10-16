@@ -1343,10 +1343,15 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 .withChart(ChartBuilder.get().withType(Type.LINE).build())
                 .withColors("#008FFB", "#e74c3c")
                 .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get()
-                        .withWidthArray(1.5, 2.0).build())
+                        // the bar's own stroke paints OUTSIDE its fill too, so even a 2px stroke
+                        // on a 1px-wide column nearly triples its visual footprint - 0 here lets
+                        // columnWidth below be the only thing controlling how wide it reads
+                        .withWidthArray(1.5, 0.0).build())
                 .withPlotOptions(com.github.appreciated.apexcharts.config.builder.PlotOptionsBuilder.get()
                         .withBar(com.github.appreciated.apexcharts.config.plotoptions.builder.BarBuilder.get()
-                                .withColumnWidth("6%").build())
+                                // 16% of this chart's own per-category slot renders at ~1.5px wide,
+                                // matching the main line's own 1.5px stroke (measured live)
+                                .withColumnWidth("16%").build())
                         .build())
                 .withLegend(com.github.appreciated.apexcharts.config.builder.LegendBuilder.get().withShow(false).build())
                 .withTooltip(com.github.appreciated.apexcharts.config.builder.TooltipBuilder.get()
