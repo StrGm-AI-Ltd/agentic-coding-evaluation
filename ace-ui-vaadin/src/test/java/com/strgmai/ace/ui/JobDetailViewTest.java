@@ -388,7 +388,9 @@ class JobDetailViewTest {
         final var lines = JobDetailView.taskStatsLines(stats);
 
         assertEquals("outcome: finished normally", lines.get(0));
-        assertTrue(lines.get(1).contains("turns: 7") && lines.get(1).contains("compactions: 1"), lines.get(1));
+        assertEquals("wall time: 120.5s   model turns: 7", lines.get(1));
+        assertTrue(lines.get(2).contains("context compactions") && lines.get(2).contains(": 1")
+                && lines.get(2).contains("failed tool calls") && lines.get(2).contains(": 0"), lines.get(2));
     }
 
     @Test

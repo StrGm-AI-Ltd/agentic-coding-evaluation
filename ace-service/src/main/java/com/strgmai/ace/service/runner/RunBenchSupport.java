@@ -222,8 +222,10 @@ public final class RunBenchSupport {
             } catch (TimeoutException te) {
                 abortProxy.accept("task-wall budget exceeded (" + wallSec + "s)");
                 future.cancel(true);
-                return new ReferenceAgent.SessionResult(name, 124, wallSec, null, 0, 0, 0,
-                        findSessionFile(sessionDir, sessionId), start, Instant.now());
+                final Path sessionFile = findSessionFile(sessionDir, sessionId);
+                final RecoveredCounts recovered = recoverCountsOnTimeout(sessionFile);
+                return new ReferenceAgent.SessionResult(name, 124, wallSec, null, recovered.turns(), recovered.toolErrors(),
+                        recovered.compactions(), sessionFile, start, Instant.now());
             } catch (InterruptedException ie) {
                 abortProxy.accept("cancelled");
                 future.cancel(true);
@@ -249,5 +251,42 @@ public final class RunBenchSupport {
 
     private static java.nio.file.attribute.FileTime lastModifiedOrEpoch(final Path p) {
         try { return Files.getLastModifiedTime(p); } catch (IOException e) { return java.nio.file.attribute.FileTime.fromMillis(0); }
+    }
+
+    /** found live via #355's Stats tab: a timed-out attempt used to report turns/toolErrors/
+     *  compactions as hardcoded 0 below - Future.cancel(true) gives no real final state back from
+     *  the interrupted thread, so those three fields were always synthetic placeholders, never a
+     *  real measurement, even on a session that genuinely ran for hours (T7, #351: 142 turns, 51
+     *  compactions, 6 tool errors, all reported as 0). The session's own file already has
+     *  everything genuinely written before the cut (AgentSession.write() appends per turn, not
+     *  buffered) - recovered the same way Collect.compactionOverhead()/BenchController.
+     *  toolCallCounts() already read a session file directly rather than trusting a summary field. */
+    record RecoveredCounts(int turns, int toolErrors, int compactions) {
+        static final RecoveredCounts NONE = new RecoveredCounts(0, 0, 0);
+    }
+
+    /** Best-effort: a missing/unreadable session file (a timeout before the very first write ever
+     *  happened, or an I/O failure) falls back to RecoveredCounts.NONE - no worse than the old
+     *  hardcoded-zero behavior, just no longer wrong whenever a real session file exists to
+     *  recover from. One bad line is skipped, not fatal to the whole count (same resilience
+     *  convention as every other best-effort session-file reader in this codebase). */
+    static RecoveredCounts recoverCountsOnTimeout(final Path sessionFile) {
+        if (sessionFile == null || !Files.isRegularFile(sessionFile)) return RecoveredCounts.NONE;
+        final var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        int turns = 0, toolErrors = 0, compactions = 0;
+        try {
+            for (final String line : Files.readAllLines(sessionFile)) {
+                if (line.isBlank()) continue;
+                final Map<String, Object> e;
+                try { e = mapper.readValue(line, Map.class); } catch (final Exception ignore) { continue; }
+                final String type = String.valueOf(e.get("type"));
+                if ("compaction".equals(type)) { compactions++; continue; }
+                if (!"message".equals(type) || !(e.get("message") instanceof Map<?, ?> m)) continue;
+                final Object role = m.get("role");
+                if ("assistant".equals(role)) turns++;
+                else if ("toolResult".equals(role) && Boolean.TRUE.equals(m.get("isError"))) toolErrors++;
+            }
+        } catch (final Exception e) { return RecoveredCounts.NONE; }
+        return new RecoveredCounts(turns, toolErrors, compactions);
     }
 }

@@ -984,8 +984,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     static List<String> taskStatsLines(final JsonNode stats) {
         final List<String> lines = new ArrayList<>();
         lines.add("outcome: " + rcText(stats.path("rc").asInt(Integer.MIN_VALUE), stats.path("finish").asText(null)));
-        lines.add("seconds: " + stats.path("seconds").asText("?") + "   turns: " + stats.path("turns").asText("?")
-                + "   compactions: " + stats.path("compactions").asText("0") + "   tool errors: " + stats.path("tool_errors").asText("0"));
+        lines.add("wall time: " + stats.path("seconds").asText("?") + "s   model turns: " + stats.path("turns").asText("?"));
+        lines.add("context compactions (history trims to control context size): " + stats.path("compactions").asText("0")
+                + "   failed tool calls: " + stats.path("tool_errors").asText("0"));
         final var v = stats.path("verification");
         if (v.isObject()) {
             final String verdict = v.path("green").isNull() ? "could not run" : v.path("green").asBoolean(false) ? "GREEN" : "RED";
