@@ -376,16 +376,18 @@ class JobDetailViewTest {
         assertTrue(JobDetailView.rcText(99, null).contains("rc=99"), "an unrecognized code still names itself, never silently blank");
     }
 
-    /** #355: the Stats tab's own rendering for a FINISHED task - pure, tested against the exact
-     *  shape BenchController.taskStats() returns (manifest.tasks' own entry, plus whatever
-     *  optional fields actually fired). */
+    private static final JobDetailView.TaskStats NO_LIVE_WALL_TIME = new JobDetailView.TaskStats(0.0, 0, 0);
+
+    /** #355/#355-followup: the Stats tab's own rendering for a FINISHED task - pure, tested
+     *  against the exact shape BenchController.taskStats() returns (manifest.tasks' own entry,
+     *  plus whatever optional fields actually fired). */
     @Test
     void taskStatsLines_rendersTheCoreFieldsAlwaysPresent() {
         final var stats = Json.MAPPER.readTree("""
                 {"state": "done", "rc": 0, "finish": "stop", "seconds": 120.5, "turns": 7,
                  "compactions": 1, "tool_errors": 0}""");
 
-        final var lines = JobDetailView.taskStatsLines(stats);
+        final var lines = JobDetailView.taskStatsLines(stats, NO_LIVE_WALL_TIME);
 
         assertEquals("outcome: finished normally", lines.get(0));
         assertEquals("wall time: 120.5s   model turns: 7", lines.get(1));
@@ -393,17 +395,33 @@ class JobDetailViewTest {
                 && lines.get(2).contains("failed tool calls") && lines.get(2).contains(": 0"), lines.get(2));
     }
 
+    /** #355-followup: turns/compactions/tool_calls are now always populated LIVE by the backend
+     *  (BenchController.taskStats()), even with no manifest.tasks entry yet - "running" shows
+     *  them straight from the response, using the dialog's own frontend-side live wall-time
+     *  aggregation only for the one figure the backend cannot report for an unfinished task. */
+    @Test
+    void taskStatsLines_rendersLiveCountsAndTheFrontendsOwnWallTimeWhenStillRunning() {
+        final var stats = Json.MAPPER.readTree("""
+                {"state": "running", "turns": 42, "compactions": 3, "tool_errors": 1}""");
+
+        final var lines = JobDetailView.taskStatsLines(stats, new JobDetailView.TaskStats(99.0, 1000, 500));
+
+        assertEquals("outcome: still running", lines.get(0));
+        assertEquals("wall time so far: 99s   model turns so far: 42", lines.get(1));
+        assertTrue(lines.get(2).contains(": 3") && lines.get(2).contains(": 1"), lines.get(2));
+    }
+
     @Test
     void taskStatsLines_showsTheHarnessVerificationVerdictWhenPresent() {
         final var greenStats = Json.MAPPER.readTree(
-                "{\"rc\":0,\"finish\":\"stop\",\"seconds\":1,\"turns\":1,\"compactions\":0,\"tool_errors\":0,"
+                "{\"state\":\"done\",\"rc\":0,\"finish\":\"stop\",\"seconds\":1,\"turns\":1,\"compactions\":0,\"tool_errors\":0,"
                         + "\"verification\":{\"green\":true,\"executed\":9,\"failed\":0}}");
-        assertTrue(JobDetailView.taskStatsLines(greenStats).stream().anyMatch(l -> l.contains("GREEN") && l.contains("9 tests")));
+        assertTrue(JobDetailView.taskStatsLines(greenStats, NO_LIVE_WALL_TIME).stream().anyMatch(l -> l.contains("GREEN") && l.contains("9 tests")));
 
         final var couldNotRun = Json.MAPPER.readTree(
-                "{\"rc\":124,\"finish\":null,\"seconds\":1,\"turns\":1,\"compactions\":0,\"tool_errors\":0,"
+                "{\"state\":\"done\",\"rc\":124,\"finish\":null,\"seconds\":1,\"turns\":1,\"compactions\":0,\"tool_errors\":0,"
                         + "\"verification\":{\"green\":null,\"executed\":0,\"failed\":0}}");
-        assertTrue(JobDetailView.taskStatsLines(couldNotRun).stream().anyMatch(l -> l.contains("could not run")));
+        assertTrue(JobDetailView.taskStatsLines(couldNotRun, NO_LIVE_WALL_TIME).stream().anyMatch(l -> l.contains("could not run")));
     }
 
     /** #351: a task rescued via the task-wall-timeout path, then the harness's own fallback
@@ -413,11 +431,11 @@ class JobDetailViewTest {
     @Test
     void taskStatsLines_showsRescueAndHarnessAuthoredHandoffWhenTheyFired() {
         final var stats = Json.MAPPER.readTree("""
-                {"rc": 0, "finish": "stop", "seconds": 1, "turns": 1, "compactions": 0, "tool_errors": 0,
+                {"state": "done", "rc": 0, "finish": "stop", "seconds": 1, "turns": 1, "compactions": 0, "tool_errors": 0,
                  "rescue_rc": 0, "rescue_seconds": 300.0, "rescue_succeeded": true,
                  "handoff_seconds": 0.0, "handoff_chars": 240, "handoff_by_harness": true}""");
 
-        final var lines = JobDetailView.taskStatsLines(stats);
+        final var lines = JobDetailView.taskStatsLines(stats, NO_LIVE_WALL_TIME);
 
         assertTrue(lines.stream().anyMatch(l -> l.contains("rescue") && l.contains("succeeded")));
         assertTrue(lines.stream().anyMatch(l -> l.contains("handoff") && l.contains("harness-authored fallback")));
@@ -426,10 +444,10 @@ class JobDetailViewTest {
     @Test
     void taskStatsLines_showsToolCallBreakdownSortedByName() {
         final var stats = Json.MAPPER.readTree("""
-                {"rc": 0, "finish": "stop", "seconds": 1, "turns": 1, "compactions": 0, "tool_errors": 1,
+                {"state": "done", "rc": 0, "finish": "stop", "seconds": 1, "turns": 1, "compactions": 0, "tool_errors": 1,
                  "tool_calls": {"write": {"count": 3, "errors": 0}, "bash": {"count": 5, "errors": 1}}}""");
 
-        final var lines = JobDetailView.taskStatsLines(stats);
+        final var lines = JobDetailView.taskStatsLines(stats, NO_LIVE_WALL_TIME);
 
         final int bashIdx = indexOfContaining(lines, "bash:");
         final int writeIdx = indexOfContaining(lines, "write:");
@@ -443,11 +461,11 @@ class JobDetailViewTest {
     @Test
     void taskStatsLines_showsCheckScoreAndCompactionOverheadWhenTheRunIsFullyScored() {
         final var stats = Json.MAPPER.readTree("""
-                {"rc": 0, "finish": "stop", "seconds": 1, "turns": 1, "compactions": 0, "tool_errors": 0,
+                {"state": "done", "rc": 0, "finish": "stop", "seconds": 1, "turns": 1, "compactions": 0, "tool_errors": 0,
                  "check_score": {"score_pct": 66.7, "points": [2, 3]},
                  "compaction_overhead": {"overhead_sec": 40.0, "events": 1}}""");
 
-        final var lines = JobDetailView.taskStatsLines(stats);
+        final var lines = JobDetailView.taskStatsLines(stats, NO_LIVE_WALL_TIME);
 
         assertTrue(lines.stream().anyMatch(l -> l.contains("check score") && l.contains("66.7") && l.contains("2/3")));
         assertTrue(lines.stream().anyMatch(l -> l.contains("compaction overhead") && l.contains("40.0")));
@@ -456,18 +474,5 @@ class JobDetailViewTest {
     private static int indexOfContaining(final List<String> lines, final String needle) {
         for (int i = 0; i < lines.size(); i++) if (lines.get(i).contains(needle)) return i;
         return -1;
-    }
-
-    /** #355: a task still running - no manifest.tasks entry yet, so the Stats tab falls back to
-     *  the existing taskStats(sessions, taskId, currentStep) aggregation (reused, not
-     *  reimplemented) rather than a raw, still-null wallSec straight off one SessionRow. */
-    @Test
-    void liveTaskStatsLines_rendersTheAggregatedLiveFigures() {
-        final var lines = JobDetailView.liveTaskStatsLines(new JobDetailView.TaskStats(42.0, 1000, 500));
-
-        assertEquals("(still running - partial)", lines.get(0));
-        assertTrue(lines.stream().anyMatch(l -> l.contains("42")));
-        assertTrue(lines.stream().anyMatch(l -> l.contains("1000")));
-        assertTrue(lines.stream().anyMatch(l -> l.contains("500")));
     }
 }

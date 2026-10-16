@@ -501,21 +501,28 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.text").value(Packs.taskInstruction("T3")));
     }
 
-    /** #355: once a task finishes, manifest.json already carries its own full record (RunBench
-     *  writes it incrementally, not just at the end of the run) - the Stats tab endpoint reads it
-     *  straight, no new computation, plus the tool-call breakdown tallied from the task's own
-     *  session file. */
+    /** #355/#355-followup: once a task finishes, manifest.json carries its OWN rc/seconds/finish/
+     *  etc. (RunBench writes it incrementally, not just at the end of the run) - but turns/
+     *  compactions/tool_errors must come from the session file's own live count, NEVER from
+     *  manifest's own copies of those three fields (#358 found manifest's own copy can be flat
+     *  wrong - a timed-out attempt's result is partly synthetic). This fixture's manifest entry
+     *  deliberately carries DIFFERENT turns/compactions/tool_errors values than the session file
+     *  actually has, so a test that passed by accident (reading the manifest's own stale numbers)
+     *  cannot happen here - the live session-file numbers must win. */
     @Test
-    void taskStatsReadsTheTasksOwnManifestEntryAndToolCallBreakdownOnceItHasFinished() throws Exception {
+    void taskStatsReadsTheTasksOwnManifestFieldsButAlwaysLiveCountsTurnsCompactionsAndToolErrors() throws Exception {
         final var resultsDir = Files.createTempDirectory("results");
         final var runDir = resultsDir.resolve("run-1");
         Files.createDirectories(runDir.resolve("sessions"));
         Files.writeString(runDir.resolve("manifest.json"), """
-                {"tasks": [{"id": "T1", "rc": 0, "seconds": 120.5, "turns": 7, "compactions": 1,
+                {"tasks": [{"id": "T1", "rc": 0, "seconds": 120.5, "turns": 0, "compactions": 0,
                             "tool_errors": 0, "finish": "stop", "reported": "done"}]}""");
         Files.writeString(runDir.resolve("sessions/a.jsonl"), String.join("\n",
                 "{\"label\":\"T1\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"}}",
                 "{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolName\":\"read\",\"isError\":false}}",
+                "{\"type\":\"compaction\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"}}",
                 "{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolName\":\"bash\",\"isError\":true}}",
                 "{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolName\":\"bash\",\"isError\":false}}") + "\n");
         when(props.resultsDir()).thenReturn(resultsDir.toString());
@@ -525,11 +532,41 @@ class BenchControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.state").value("done"))
                 .andExpect(jsonPath("$.rc").value(0))
-                .andExpect(jsonPath("$.turns").value(7))
+                .andExpect(jsonPath("$.seconds").value(120.5))
+                .andExpect(jsonPath("$.turns").value(2))
                 .andExpect(jsonPath("$.compactions").value(1))
+                .andExpect(jsonPath("$.tool_errors").value(1))
                 .andExpect(jsonPath("$.tool_calls.read.count").value(1))
                 .andExpect(jsonPath("$.tool_calls.bash.count").value(2))
                 .andExpect(jsonPath("$.tool_calls.bash.errors").value(1));
+    }
+
+    /** #355-followup: no manifest.tasks entry yet (the task hasn't finished), but its own session
+     *  file already exists - genuinely still running, or already past its main session and into
+     *  its own wrap-up/rescue/handoff tail (which run AFTER the main session but BEFORE the
+     *  manifest.tasks entry is written). Either way, live turns/compactions/tool_calls must be
+     *  available WHILE the task is still in flight, not only once it is done - this is the whole
+     *  point of reading the session file instead of a one-time snapshot. */
+    @Test
+    void taskStatsReportsRunningWithLiveCountsWhenASessionFileExistsButNoManifestEntryYet() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": []}");
+        Files.writeString(runDir.resolve("sessions/a.jsonl"), String.join("\n",
+                "{\"label\":\"T1\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"}}",
+                "{\"type\":\"compaction\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"}}") + "\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T1/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("running"))
+                .andExpect(jsonPath("$.turns").value(2))
+                .andExpect(jsonPath("$.compactions").value(1))
+                .andExpect(jsonPath("$.rc").doesNotExist());
     }
 
     /** #355: once the WHOLE run finishes (not just this task), oracle.json/metrics.json also
@@ -556,11 +593,11 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.compaction_overhead.events").value(1));
     }
 
-    /** #355: no manifest.tasks entry for this task yet - still running, or not started - the
-     *  frontend falls back to its own live JobLiveState lookup instead of a second round-trip;
-     *  this endpoint just needs to say so plainly rather than erroring. */
+    /** #355-followup: no manifest.tasks entry AND no session file for this task at all - genuinely
+     *  hasn't started yet, distinct from "running" (a session file exists but no manifest entry
+     *  yet - see taskStatsReportsRunningWithLiveCountsWhenASessionFileExistsButNoManifestEntryYet). */
     @Test
-    void taskStatsReportsNotFinishedWhenTheTaskHasNoManifestEntryYet() throws Exception {
+    void taskStatsReportsNotStartedWhenNeitherAManifestEntryNorASessionFileExistsYet() throws Exception {
         final var resultsDir = Files.createTempDirectory("results");
         Files.createDirectories(resultsDir.resolve("run-1"));
         Files.writeString(resultsDir.resolve("run-1/manifest.json"), "{\"tasks\": []}");
@@ -569,11 +606,11 @@ class BenchControllerTest {
 
         mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T9/stats"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.state").value("not_finished"));
+                .andExpect(jsonPath("$.state").value("not_started"));
     }
 
     @Test
-    void taskStatsReportsNotFinishedWhenNoManifestExistsAtAll() throws Exception {
+    void taskStatsReportsNotStartedWhenNoManifestExistsAtAll() throws Exception {
         final var resultsDir = Files.createTempDirectory("results");
         Files.createDirectories(resultsDir.resolve("run-1"));
         when(props.resultsDir()).thenReturn(resultsDir.toString());
@@ -581,7 +618,7 @@ class BenchControllerTest {
 
         mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T1/stats"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.state").value("not_finished"));
+                .andExpect(jsonPath("$.state").value("not_started"));
     }
 
     /** #259: a finished task's own net change is the diff between its phase tag and that tag's
