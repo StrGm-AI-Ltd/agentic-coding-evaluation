@@ -954,6 +954,27 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         getUI().ifPresent(ui -> pollReg[0] = ui.addPollListener(e -> loadAll.run()));
     }
 
+    /** #355-followup: rc is the harness's own internal exit code (ReferenceAgent/RunBenchSupport,
+     *  see their own javadoc for the full reasoning) - a fixed, small set of values meaningful to
+     *  someone who already knows the harness's own control flow, not to an operator reading the
+     *  Stats tab cold. Translates every value a task's own rc can actually take; the raw code
+     *  still rides along parenthetically for cross-referencing task_attempts.jsonl or the session
+     *  log directly. `finish` (the model's own last-turn finish reason) only changes the rc=0
+     *  text - "length" there means the session's last visible turn was cut off at the per-call
+     *  output limit, worth knowing even though the task itself still reports success overall;
+     *  null/absent (the common case) or any other value reads as a plain, unqualified success. */
+    static String rcText(final int rc, final String finish) {
+        return switch (rc) {
+            case 0 -> "length".equals(finish) ? "finished, but its last turn was cut off at the output limit" : "finished normally";
+            case 1 -> "hit its turn limit without finishing (rc=1)";
+            case 2 -> "a transient infrastructure error, retries exhausted (rc=2)";
+            case 3 -> "ran out of its own token budget (rc=3)";
+            case 4 -> "its conversation history grew too large for the context window (rc=4)";
+            case 124 -> "ran out of its own wall-clock time budget - a task-wall timeout (rc=124)";
+            default -> "stopped with an unrecognized exit code (rc=" + rc + ")";
+        };
+    }
+
     /** #355: the Stats tab's own text for a FINISHED task (BenchController.taskStats() found a
      *  manifest.tasks entry) - pure, tested against real-shape fixtures, same convention as
      *  speedByContextRows()/compactionOverheadPoints() in RunDetailView. Every field beyond
@@ -962,7 +983,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  only exist once the whole run (not just this task) has finished scoring. */
     static List<String> taskStatsLines(final JsonNode stats) {
         final List<String> lines = new ArrayList<>();
-        lines.add("rc: " + stats.path("rc").asText("?") + "   finish: " + stats.path("finish").asText("?"));
+        lines.add("outcome: " + rcText(stats.path("rc").asInt(Integer.MIN_VALUE), stats.path("finish").asText(null)));
         lines.add("seconds: " + stats.path("seconds").asText("?") + "   turns: " + stats.path("turns").asText("?")
                 + "   compactions: " + stats.path("compactions").asText("0") + "   tool errors: " + stats.path("tool_errors").asText("0"));
         final var v = stats.path("verification");
@@ -971,11 +992,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             lines.add("harness verification: " + verdict + " (" + v.path("executed").asInt(0) + " tests, " + v.path("failed").asInt(0) + " failed)");
         }
         if (stats.hasNonNull("rescue_seconds")) {
-            lines.add("rescue: rc=" + stats.path("rescue_rc").asText("?") + ", " + stats.path("rescue_seconds").asText("?") + "s"
-                    + (stats.path("rescue_succeeded").asBoolean(false) ? " (succeeded)" : ""));
+            final boolean succeeded = stats.path("rescue_succeeded").asBoolean(false);
+            lines.add("rescue attempt (" + stats.path("rescue_seconds").asText("?") + "s): "
+                    + (succeeded ? "succeeded" : rcText(stats.path("rescue_rc").asInt(Integer.MIN_VALUE), null)));
         }
         if (stats.hasNonNull("wrapup_seconds")) {
-            lines.add("wrap-up: rc=" + stats.path("wrapup_rc").asText("?") + ", " + stats.path("wrapup_seconds").asText("?") + "s");
+            lines.add("wrap-up attempt (" + stats.path("wrapup_seconds").asText("?") + "s): "
+                    + rcText(stats.path("wrapup_rc").asInt(Integer.MIN_VALUE), null));
         }
         if (stats.hasNonNull("handoff_seconds")) {
             lines.add("handoff: " + (stats.path("handoff_by_harness").asBoolean(false) ? "harness-authored fallback (#351)" : "written by the model")
