@@ -1316,6 +1316,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get().withWidth(1.5).build())
                 .withAnnotations(annotations)
                 .withXaxis(XAxisBuilder.get().withCategories(categories).withLabels(xaxisLabels)
+                        .withType(com.github.appreciated.apexcharts.config.xaxis.XAxisType.CATEGORIES)
                         .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
                                 .withText("request # (dashed line: a compaction landed right before it)").build())
                         .build())
