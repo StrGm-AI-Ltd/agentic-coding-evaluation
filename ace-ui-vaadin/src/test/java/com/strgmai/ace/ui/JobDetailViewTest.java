@@ -713,34 +713,48 @@ class JobDetailViewTest {
         assertTrue(js.contains("% 10 === 0"), js);
     }
 
-    /** #355-followup-5: the operator asked for vertical lines marking where a compaction landed.
-     *  Each XAxisAnnotations' own `x` must be a NUMBER matching the request ordinal, not the
-     *  category string - even though requestSpeedCategories() labels the axis with digit strings,
-     *  ApexCharts auto-detects an all-numeric category array as a numeric axis (confirmed live: a
-     *  string "x" silently fails to resolve any position - the annotation's own SVG group renders
-     *  with zero children), so annotations must resolve by numeric x position instead. A position
-     *  past the series' own length (the ordinal-alignment caveat BenchController's own javadoc
-     *  notes: a dropped request_speeds entry can shift later ordinals by one) is dropped rather
-     *  than pointing at a request that was never plotted. */
+    /** #355-followup-5: the operator asked for a marker where a compaction landed. Realized as a
+     *  SECOND series (a thin column) sharing the main series' own category axis, not an
+     *  ApexCharts x-axis annotation - this ApexCharts version's own annotation-resolution code
+     *  only engages for a category axis when xaxis.type is the literal string "category", and
+     *  this addon's own XAxisType.CATEGORIES enum constant serializes to "categories" instead, so
+     *  that path is unreachable through this addon (confirmed live: the annotation's own SVG
+     *  group mounted with zero children). A marked position's value is the series' own peak, so
+     *  the column reaches (near enough) the full plot height. A position past the series' own
+     *  length (the ordinal-alignment caveat BenchController's own javadoc notes: a dropped
+     *  request_speeds entry can shift later ordinals by one) is dropped rather than pointing at a
+     *  request that was never plotted. */
     @Test
-    void compactionAnnotations_onePerPositionTargetingItsOwnNumericXPosition() {
-        final var annotations = JobDetailView.compactionAnnotations(List.of(5, 23), 30);
+    void compactionColumnData_onePerPositionSetToTheSeriesOwnPeak() {
+        final var points = List.of(
+                new JobDetailView.RequestSpeedPoint(1, 10.0),
+                new JobDetailView.RequestSpeedPoint(2, 40.0),
+                new JobDetailView.RequestSpeedPoint(3, 25.0));
+        final var data = JobDetailView.compactionColumnData(List.of(1, 3), points);
 
-        assertEquals(2, annotations.size());
-        assertEquals(5.0, annotations.get(0).getX());
-        assertEquals(23.0, annotations.get(1).getX());
+        assertEquals(3, data.length);
+        assertEquals(40.0, data[0]);
+        assertNull(data[1]);
+        assertEquals(40.0, data[2]);
     }
 
     @Test
-    void compactionAnnotations_dropsPositionsPastTheSeriesOwnLength() {
-        final var annotations = JobDetailView.compactionAnnotations(List.of(5, 999), 30);
+    void compactionColumnData_dropsPositionsPastTheSeriesOwnLength() {
+        final var points = List.of(new JobDetailView.RequestSpeedPoint(1, 10.0), new JobDetailView.RequestSpeedPoint(2, 20.0));
+        final var data = JobDetailView.compactionColumnData(List.of(1, 999), points);
 
-        assertEquals(1, annotations.size());
-        assertEquals(5.0, annotations.get(0).getX());
+        assertEquals(2, data.length);
+        assertEquals(20.0, data[0]);
+        assertNull(data[1]);
     }
 
     @Test
-    void compactionAnnotations_isEmptyWhenNoCompactionsHappened() {
-        assertTrue(JobDetailView.compactionAnnotations(List.of(), 30).isEmpty());
+    void compactionColumnData_isAllNullWhenNoCompactionsHappened() {
+        final var points = List.of(new JobDetailView.RequestSpeedPoint(1, 10.0), new JobDetailView.RequestSpeedPoint(2, 20.0));
+        final var data = JobDetailView.compactionColumnData(List.of(), points);
+
+        assertEquals(2, data.length);
+        assertNull(data[0]);
+        assertNull(data[1]);
     }
 }
