@@ -1218,7 +1218,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         return lines;
     }
 
-    record RequestSpeedPoint(int seq, Double prefillTokPerSec) {
+    record RequestSpeedPoint(int seq, Double prefillTokPerSec, Double generationTokPerSec) {
     }
 
     /** One attempt's own "request_speeds" array (BenchController.taskStats()'s "attempts[].
@@ -1226,13 +1226,18 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  testable, same convention as RunDetailView.speedByContextRows(). Takes the array node
      *  directly (not the whole stats object) so it works the same whether called per-attempt
      *  (the normal case - the operator asked for a chart per attempt, not one combined chart for
-     *  the whole task) or against any other array of this same shape. */
+     *  the whole task) or against any other array of this same shape. generation_tok_per_sec is
+     *  optional on the backend (a line can carry prefill speed without it) - null here too when
+     *  absent, same as a missing prefill_tok_per_sec. */
     static List<RequestSpeedPoint> requestSpeedPoints(final JsonNode arr) {
         if (!arr.isArray() || arr.isEmpty()) return List.of();
         final List<RequestSpeedPoint> points = new ArrayList<>();
         for (final var r : arr) {
-            final var tps = r.path("prefill_tok_per_sec");
-            points.add(new RequestSpeedPoint(r.path("seq").asInt(0), tps.isNumber() ? tps.doubleValue() : null));
+            final var prefillTps = r.path("prefill_tok_per_sec");
+            final var generationTps = r.path("generation_tok_per_sec");
+            points.add(new RequestSpeedPoint(r.path("seq").asInt(0),
+                    prefillTps.isNumber() ? prefillTps.doubleValue() : null,
+                    generationTps.isNumber() ? generationTps.doubleValue() : null));
         }
         return points;
     }
@@ -1296,37 +1301,54 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         return data;
     }
 
-    /** This chart's own tooltip, read only from series[0] (prefill tok/s) - the addon's Tooltip
-     *  bean has no "enabledOnSeries" (the real ApexCharts.js option for this), so a raw JS
-     *  function is the only way to leave the compaction column (series[1]) out of the tooltip
-     *  entirely, same pattern as RunDetailView.speedByContextTooltipJs(). `shared`/`intersect`
-     *  stay at their defaults (shared, not intersect) so hovering anywhere near a category still
-     *  shows it - the compaction series' own invisible-until-marked columns would otherwise need
-     *  a literal hover to trigger anything. */
+    /** This chart's own tooltip, read only from series[0] (prefill tok/s) and series[2]
+     *  (generation tok/s) - the addon's Tooltip bean has no "enabledOnSeries" (the real
+     *  ApexCharts.js option for this), so a raw JS function is the only way to leave the
+     *  compaction column (series[1]) out of the tooltip entirely, same pattern as
+     *  RunDetailView.speedByContextTooltipJs(). `shared`/`intersect` stay at their defaults
+     *  (shared, not intersect) so hovering anywhere near a category still shows it - the
+     *  compaction series' own invisible-until-marked columns would otherwise need a literal
+     *  hover to trigger anything. generation tok/s is optional per request (see
+     *  RequestSpeedPoint's own javadoc) - its line is left out of the tooltip when absent rather
+     *  than printing a bare "null". */
     static String requestSpeedTooltipJs() {
         return """
                 function(struct) {
                   var i = struct.dataPointIndex;
-                  var v = struct.series[0][i];
-                  if (v === null || v === undefined) return '';
-                  return '<div style="padding:8px 12px">' +
+                  var prefill = struct.series[0][i];
+                  var generation = struct.series[2][i];
+                  if (prefill === null || prefill === undefined) return '';
+                  var html = '<div style="padding:8px 12px">' +
                     '<div style="font-weight:600;margin-bottom:4px">request #' + (i + 1) + '</div>' +
-                    '<div>prefill tok/s: ' + v + '</div></div>';
+                    '<div>prefill tok/s: ' + prefill + '</div>';
+                  if (generation !== null && generation !== undefined) {
+                    html += '<div>generation tok/s: ' + generation + '</div>';
+                  }
+                  html += '</div>';
+                  return html;
                 }
                 """;
     }
 
-    /** Prefill tok/s for every request ONE attempt's own session made, in order - the operator
-     *  asked for a chart per attempt that actually made a request, not one chart combining every
-     *  attempt's requests together (a false start and the real redo read as two different
-     *  sessions with their own separate stories, not one continuous timeline). x-axis is this
-     *  attempt's own 1st/2nd/3rd/... request, not the request's run-wide seq number, which would
-     *  read as an arbitrary large offset for a task that ran late in the run. A thin (1.5px)
-     *  stroke - the default width reads as a solid blob once 100+ points are packed into one
-     *  chart. A request a compaction landed right before is marked by a thin red column (a real
-     *  second series - see compactionColumnData() above for why, not an annotation), so the
-     *  operator can see whether prefill speed actually dips there. Added to `container` directly,
-     *  same as every other Stats-tab element. */
+    /** Prefill AND generation tok/s for every request ONE attempt's own session made, in order -
+     *  the operator asked for a chart per attempt that actually made a request, not one chart
+     *  combining every attempt's requests together (a false start and the real redo read as two
+     *  different sessions with their own separate stories, not one continuous timeline). x-axis
+     *  is this attempt's own 1st/2nd/3rd/... request, not the request's run-wide seq number,
+     *  which would read as an arbitrary large offset for a task that ran late in the run. A thin
+     *  (1.5px) stroke on both line series - the default width reads as a solid blob once 100+
+     *  points are packed into one chart. A request a compaction landed right before is marked by
+     *  a thin red column (a real second series - see compactionColumnData() above for why, not an
+     *  annotation), so the operator can see whether prefill speed actually dips there. Generation
+     *  speed runs an order of magnitude slower than prefill (decode vs. prompt processing) - on
+     *  the SAME y-axis it would read as a flat line pinned near zero, so it gets its own axis on
+     *  the right (yaxis[2], opposite=true). yaxis[1] (the compaction column) points its own
+     *  seriesName at "prefill tok/s" rather than carrying a title/scale of its own - ApexCharts'
+     *  own yaxis.seriesName mechanism (confirmed via its source, modules/CoreUtils.js's
+     *  setSeriesYAxisMappings()) merges any two yaxis entries that share one seriesName into a
+     *  single scale, which is exactly what lets the column reach the line's own full height
+     *  without a separate min/max guess. Added to `container` directly, same as every other
+     *  Stats-tab element. */
     private void addRequestSpeedChart(final List<RequestSpeedPoint> points, final List<Integer> compactionsBeforeRequest,
                                        final Div container, final String title) {
         if (points.isEmpty()) return;
@@ -1339,14 +1361,16 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var compactionSeries = SeriesBuilder.get().withName("compaction")
                 .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
                 .withData(compactionColumnData(compactionsBeforeRequest, points)).build();
+        final var generationSeries = SeriesBuilder.get().withName("generation tok/s")
+                .withData(points.stream().map(RequestSpeedPoint::generationTokPerSec).toArray(Double[]::new)).build();
         final var chart = ApexChartsBuilder.get()
                 .withChart(ChartBuilder.get().withType(Type.LINE).build())
-                .withColors("#008FFB", "#e74c3c")
+                .withColors("#008FFB", "#e74c3c", "#00E396")
                 .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get()
                         // the bar's own stroke paints OUTSIDE its fill too, so even a 2px stroke
                         // on a 1px-wide column nearly triples its visual footprint - 0 here lets
                         // columnWidth below be the only thing controlling how wide it reads
-                        .withWidthArray(1.5, 0.0).build())
+                        .withWidthArray(1.5, 0.0, 1.5).build())
                 .withPlotOptions(com.github.appreciated.apexcharts.config.builder.PlotOptionsBuilder.get()
                         .withBar(com.github.appreciated.apexcharts.config.plotoptions.builder.BarBuilder.get()
                                 // 16% of this chart's own per-category slot renders at ~1.5px wide,
@@ -1360,8 +1384,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
                                 .withText("request # (red column: a compaction landed right before it)").build())
                         .build())
-                .withYaxis(YAxisBuilder.get().withTitle(TitleBuilder.get().withText("prefill tok/s").build()).build())
-                .withSeries(speedSeries, compactionSeries)
+                .withYaxis(
+                        YAxisBuilder.get().withSeriesName("prefill tok/s")
+                                .withTitle(TitleBuilder.get().withText("prefill tok/s").build()).build(),
+                        YAxisBuilder.get().withSeriesName("prefill tok/s").withShow(false).build(),
+                        YAxisBuilder.get().withSeriesName("generation tok/s").withOpposite(true)
+                                .withTitle(TitleBuilder.get().withText("generation tok/s").build()).build())
+                .withSeries(speedSeries, compactionSeries, generationSeries)
                 .build();
         chart.setHeight("220px");
         container.add(chart);
