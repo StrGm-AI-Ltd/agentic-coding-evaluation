@@ -654,4 +654,24 @@ class JobDetailViewTest {
     void requestSpeedPoints_isEmptyWhenStatsHasNoRequestSpeedsField() {
         assertTrue(JobDetailView.requestSpeedPoints(Json.MAPPER.readTree("{\"state\": \"done\"}")).isEmpty());
     }
+
+    /** found live on T9 (117 requests) - a label under every single category prints as an
+     *  unreadable smear. Every point still gets its own slot (the series data is untouched); only
+     *  the label is blanked out except on every tenth request. */
+    @Test
+    void requestSpeedCategories_labelsOnlyEveryTenthRequestLeavingTheRestBlank() {
+        final var categories = JobDetailView.requestSpeedCategories(25);
+
+        assertEquals(25, categories.length);
+        for (int i = 0; i < 25; i++) {
+            final int requestNumber = i + 1;
+            if (requestNumber % 10 == 0) assertEquals(String.valueOf(requestNumber), categories[i], "request #" + requestNumber);
+            else assertEquals("", categories[i], "request #" + requestNumber + " must have no visible label");
+        }
+    }
+
+    @Test
+    void requestSpeedCategories_isEmptyArrayForZeroRequests() {
+        assertEquals(0, JobDetailView.requestSpeedCategories(0).length);
+    }
 }

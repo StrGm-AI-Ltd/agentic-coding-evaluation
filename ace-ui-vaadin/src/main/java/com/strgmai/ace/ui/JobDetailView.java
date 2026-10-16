@@ -1226,6 +1226,18 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         return points;
     }
 
+    /** The x-axis is one category per request (points.size() can run past 100+ on a long task,
+     *  found live on T9) - a label under every single one prints as an unreadable smear. Every
+     *  data point still gets plotted; only the LABEL is blanked out except on every tenth request
+     *  (#10, #20, ...), same trick a plain string-category axis (not a true numeric one, so
+     *  ApexCharts' own tick-thinning options don't apply here) always supports: an empty string
+     *  category still occupies its slot on the axis, it just draws no tick text under it. */
+    static String[] requestSpeedCategories(final int count) {
+        final var categories = new String[count];
+        for (int i = 0; i < count; i++) categories[i] = (i + 1) % 10 == 0 ? String.valueOf(i + 1) : "";
+        return categories;
+    }
+
     /** Prefill tok/s for every request this task's own session(s) made, in order - the operator
      *  asked for this specifically: RunDetailView's own "speed vs context size" chart buckets and
      *  averages across the WHOLE run, which hides a single slow request inside this one task.
@@ -1236,8 +1248,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var points = requestSpeedPoints(stats);
         if (points.isEmpty()) return;
         container.add(Panels.sectionTitle("Prefill speed by request"));
-        final var categories = new String[points.size()];
-        for (int i = 0; i < points.size(); i++) categories[i] = String.valueOf(i + 1);
+        final var categories = requestSpeedCategories(points.size());
         final var chart = ApexChartsBuilder.get()
                 .withChart(ChartBuilder.get().withType(Type.LINE).build())
                 .withXaxis(XAxisBuilder.get().withCategories(categories)
