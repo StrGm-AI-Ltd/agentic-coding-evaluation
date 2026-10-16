@@ -683,12 +683,10 @@ class JobDetailViewTest {
         assertTrue(JobDetailView.requestSpeedPoints(Json.MAPPER.readTree("{\"state\": \"done\"}")).isEmpty());
     }
 
-    /** categories stay real, unique numbers for every request - needed so a compaction
-     *  annotation (compactionAnnotations() below) can target an EXACT request by its own
-     *  category value; a blanked-out "" would be ambiguous (shared by every thinned position)
-     *  and the vertical line would land on the wrong request, or not render at all. Label
-     *  DENSITY thinning moved to the chart's own JS formatter - see
-     *  requestSpeedLabelFormatterJs_showsOnlyEveryTenthValue() below. */
+    /** categories stay real, unique numbers for every request - a blanked-out "" would be
+     *  ambiguous (shared by every thinned position) on hover/tooltip. Label DENSITY thinning
+     *  moved to the chart's own JS formatter - see requestSpeedLabelFormatterJs_showsOnlyEveryTenthValue()
+     *  below. */
     @Test
     void requestSpeedCategories_everyCategoryIsItsOwnUniqueRequestNumber() {
         final var categories = JobDetailView.requestSpeedCategories(25);
@@ -716,19 +714,21 @@ class JobDetailViewTest {
     }
 
     /** #355-followup-5: the operator asked for vertical lines marking where a compaction landed.
-     *  Each XAxisAnnotations' own `x` must be the category STRING itself (requestSpeedCategories()
-     *  keeps every one unique for exactly this reason) - that's how ApexCharts resolves an
-     *  annotation's position on a category axis, not a numeric index. A position past the
-     *  series' own length (the ordinal-alignment caveat BenchController's own javadoc notes: a
-     *  dropped request_speeds entry can shift later ordinals by one) is dropped rather than
-     *  pointing at a request that was never plotted. */
+     *  Each XAxisAnnotations' own `x` must be a NUMBER matching the request ordinal, not the
+     *  category string - even though requestSpeedCategories() labels the axis with digit strings,
+     *  ApexCharts auto-detects an all-numeric category array as a numeric axis (confirmed live: a
+     *  string "x" silently fails to resolve any position - the annotation's own SVG group renders
+     *  with zero children), so annotations must resolve by numeric x position instead. A position
+     *  past the series' own length (the ordinal-alignment caveat BenchController's own javadoc
+     *  notes: a dropped request_speeds entry can shift later ordinals by one) is dropped rather
+     *  than pointing at a request that was never plotted. */
     @Test
-    void compactionAnnotations_onePerPositionTargetingItsOwnCategoryString() {
+    void compactionAnnotations_onePerPositionTargetingItsOwnNumericXPosition() {
         final var annotations = JobDetailView.compactionAnnotations(List.of(5, 23), 30);
 
         assertEquals(2, annotations.size());
-        assertEquals("5", annotations.get(0).getX());
-        assertEquals("23", annotations.get(1).getX());
+        assertEquals(5.0, annotations.get(0).getX());
+        assertEquals(23.0, annotations.get(1).getX());
     }
 
     @Test
@@ -736,7 +736,7 @@ class JobDetailViewTest {
         final var annotations = JobDetailView.compactionAnnotations(List.of(5, 999), 30);
 
         assertEquals(1, annotations.size());
-        assertEquals("5", annotations.get(0).getX());
+        assertEquals(5.0, annotations.get(0).getX());
     }
 
     @Test

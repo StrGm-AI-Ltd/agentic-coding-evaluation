@@ -1272,19 +1272,22 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     /** One XAxisAnnotations vertical line per request ordinal a compaction landed immediately
      *  before (BenchController.taskStats()'s "attempts[].compactions_before_request") - the
      *  operator asked to see where compactions fall relative to the prefill-speed trend, not just
-     *  the running count already in the text summary above. `x` must be the category STRING
-     *  itself (requestSpeedCategories() keeps every one unique for exactly this reason), not a
-     *  numeric index - that's how ApexCharts resolves an annotation's position on a category
-     *  axis. Positions past the series' own length are dropped rather than pointing at a request
-     *  that was never plotted (the ordinal-alignment caveat BenchController's own javadoc notes:
-     *  a dropped request_speeds entry can shift later ordinals by one). */
+     *  the running count already in the text summary above. `x` must be a NUMBER matching the
+     *  request ordinal, not the category string - even though requestSpeedCategories() labels
+     *  the axis with digit strings, ApexCharts auto-detects an all-numeric category array as a
+     *  numeric axis (confirmed live: the addon's own XAxisType.CATEGORIES enum serializes to the
+     *  non-standard value "categories", which ApexCharts.js doesn't recognize and silently
+     *  ignores), so annotations resolve by numeric x position, not by string label match.
+     *  Positions past the series' own length are dropped rather than pointing at a request that
+     *  was never plotted (the ordinal-alignment caveat BenchController's own javadoc notes: a
+     *  dropped request_speeds entry can shift later ordinals by one). */
     static List<com.github.appreciated.apexcharts.config.annotations.XAxisAnnotations> compactionAnnotations(
             final List<Integer> compactionsBeforeRequest, final int requestCount) {
         final List<com.github.appreciated.apexcharts.config.annotations.XAxisAnnotations> out = new ArrayList<>();
         for (final Integer position : compactionsBeforeRequest) {
             if (position == null || position < 1 || position > requestCount) continue;
             out.add(com.github.appreciated.apexcharts.config.annotations.builder.XAxisAnnotationsBuilder.get()
-                    .withX((Object) String.valueOf(position))
+                    .withX(Double.valueOf(position))
                     .withBorderColor("#e74c3c")
                     .withStrokeDashArray(4.0)
                     .build());
@@ -1316,7 +1319,6 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get().withWidth(1.5).build())
                 .withAnnotations(annotations)
                 .withXaxis(XAxisBuilder.get().withCategories(categories).withLabels(xaxisLabels)
-                        .withType(com.github.appreciated.apexcharts.config.xaxis.XAxisType.CATEGORIES)
                         .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
                                 .withText("request # (dashed line: a compaction landed right before it)").build())
                         .build())
