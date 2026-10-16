@@ -475,87 +475,126 @@ public class BenchController {
         } catch (final Exception e) { return List.of(); }
     }
 
-    /** #355: the task detail dialog's own Stats tab - everything the harness already knows about
-     *  this task, in one place, read straight from files every other job-side endpoint already
-     *  resolves. manifest.json carries this task's own completed record (RunBench.
-     *  snapshotRunProgress() writes it incrementally after EVERY task, not just at the end of the
-     *  run) - rc, seconds, turns, tool_errors, compactions, verification, done_verified, reported,
-     *  finish, the wrapup_*, rescue_* and handoff_* fields, requests, and the budget flags, with
-     *  zero new computation. oracle.json/metrics.json only exist once the WHOLE run finishes (not
-     *  per task) - when they
-     *  do, this also merges in this task's own check-score attribution (metrics.json's own "steps"
-     *  block, by task id) and compaction overhead (#353/#354's "compaction_overhead.tasks", also
-     *  by task id). The tool-call breakdown is the one genuinely new read here - see
-     *  toolCallCounts() below. No manifest.tasks entry yet means the task hasn't finished (still
-     *  running, or not started) - the frontend falls back to its own live JobLiveState lookup
-     *  instead of a second round-trip. */
+    /** #355-followup: turns/compactions/tool_errors must be LIVE - calculated from the task's own
+     *  session file on every call, not trusted from manifest.json's one-time snapshot. Two
+     *  concrete reasons found live: (1) manifest.tasks' own entry doesn't exist at all until the
+     *  task finishes, so a still-running task had nothing to show here before; (2) even once
+     *  written, that snapshot can be flat wrong - #358 found manifest.tasks reporting turns=0/
+     *  compactions=0/tool_errors=0 for a task (T7) that had genuinely run 142 turns/51
+     *  compactions/6 tool errors, because a timed-out attempt's result is partly SYNTHETIC
+     *  (Future.cancel(true) never hands back the interrupted thread's real final state - see
+     *  RunBenchSupport.runBounded's own fix for the manifest-write side of this). Reading the
+     *  session file directly - the same technique Collect.compactionOverhead() (#354) and this
+     *  method's own prior, narrower form already used - sidesteps both problems at once: it is
+     *  unconditionally the task's own ground truth, whether the task is still running, just
+     *  finished, or finished a while ago. found=false means no session file for this task exists
+     *  AT ALL yet (genuinely not started); found=true with every count still 0 is a real, distinct
+     *  state (started, nothing logged yet) - never confused with "not started". */
+    record SessionCounts(boolean found, int turns, int compactions, int toolErrorsTotal, Map<String, Object> toolCalls) {
+        static final SessionCounts NOT_FOUND = new SessionCounts(false, 0, 0, 0, Map.of());
+    }
+
+    /** #355: this task's own tool-call breakdown - counts (and each tool's own error count)
+     *  tallied from its session file's own "toolResult" messages (AgentSession.toolResult() -
+     *  one per actual tool invocation, already carrying toolName/isError directly, no need to
+     *  parse the assistant's own "toolCall" request parts instead) - alongside turns ("message"
+     *  entries with role "assistant") and compactions ("compaction" type entries), all three
+     *  tallied in the SAME single pass over the file rather than three separate reads. The
+     *  session file is found by its JSONL header's "label" field (written once, on the task's
+     *  first - non-continued - session; a later wrap-up/rescue continuation reuses the SAME file
+     *  and never rewrites the header), same technique Collect.compactionOverhead() (#354) already
+     *  uses from a different package, rather than recomputing RunBench's own session-id UUID
+     *  scheme here too. Best-effort: a missing/unreadable session reads as SessionCounts.NOT_FOUND,
+     *  never throws. */
+    private SessionCounts sessionCounts(final Path base, final String taskId) {
+        final Path dir = base.resolve("sessions");
+        if (!Files.isDirectory(dir)) return SessionCounts.NOT_FOUND;
+        final var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        try (var stream = Files.list(dir)) {
+            for (final Path f : stream.filter(p -> p.getFileName().toString().endsWith(".jsonl")).toList()) {
+                final List<String> lines;
+                try { lines = Files.readAllLines(f); } catch (final Exception ignore) { continue; }
+                if (lines.isEmpty()) continue;
+                final Map<String, Object> header;
+                try { header = mapper.readValue(lines.get(0), Map.class); } catch (final Exception ignore) { continue; }
+                if (!taskId.equals(header.get("label"))) continue;
+                int turns = 0, compactions = 0, toolErrorsTotal = 0;
+                final Map<String, int[]> toolCounts = new LinkedHashMap<>();   // toolName -> [total, errors]
+                for (final String line : lines) {
+                    if (line.isBlank()) continue;
+                    final Map<String, Object> e;
+                    try { e = mapper.readValue(line, Map.class); } catch (final Exception ignore) { continue; }
+                    final String type = String.valueOf(e.get("type"));
+                    if ("compaction".equals(type)) { compactions++; continue; }
+                    if (!"message".equals(type) || !(e.get("message") instanceof Map<?, ?> m)) continue;
+                    final Object role = m.get("role");
+                    if ("assistant".equals(role)) turns++;
+                    else if ("toolResult".equals(role)) {
+                        final int[] c = toolCounts.computeIfAbsent(String.valueOf(m.get("toolName")), k -> new int[2]);
+                        c[0]++;
+                        if (Boolean.TRUE.equals(m.get("isError"))) { c[1]++; toolErrorsTotal++; }
+                    }
+                }
+                final Map<String, Object> toolCallsOut = new LinkedHashMap<>();
+                toolCounts.forEach((name, c) -> toolCallsOut.put(name, Map.of("count", c[0], "errors", c[1])));
+                return new SessionCounts(true, turns, compactions, toolErrorsTotal, toolCallsOut);
+            }
+        } catch (final Exception e) { return SessionCounts.NOT_FOUND; }
+        return SessionCounts.NOT_FOUND;
+    }
+
+    /** #355/#355-followup: the task detail dialog's own Stats tab. Three states: "done"
+     *  (manifest.tasks has this task's own completed record - RunBench.snapshotRunProgress()
+     *  writes it incrementally after EVERY task, not just at the end of the run - carrying rc,
+     *  seconds, finish, verification, done_verified, reported, the wrapup_, rescue_ and handoff_
+     *  prefixed fields, requests, and the budget flags, with zero new computation for those); "running"
+     *  (no manifest entry yet, but a session file for this task already exists - e.g. still
+     *  mid-session, or already past it but still in its own wrap-up/rescue/handoff tail, which
+     *  run AFTER the main session ends but BEFORE the task's manifest.tasks entry is written);
+     *  "not_started" (neither exists yet). turns/compactions/tool_errors/tool_calls are ALWAYS
+     *  read live from the session file via sessionCounts() regardless of state - see its own
+     *  javadoc for why trusting manifest.tasks' own copies of these three fields is wrong, not
+     *  just stale. oracle.json/metrics.json only exist once the WHOLE run finishes (not per
+     *  task) - when they do (and only once "done"), this also merges in this task's own
+     *  check-score attribution (metrics.json's own "steps" block, by task id) and compaction
+     *  overhead (#353/#354's "compaction_overhead.tasks", also by task id). */
     @GetMapping("/api/jobs/{id}/tasks/{taskId}/stats")
     public Map<String, Object> taskStats(@PathVariable UUID id, @PathVariable String taskId) {
         final Map<String, Object> job = queue.get(id);
         try {
             final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
             final var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            final Path manifestFile = base.resolve("manifest.json");
-            if (!Files.isRegularFile(manifestFile) || !isContainedEvenViaSymlinks(base, manifestFile))
-                return Map.of("state", "not_finished");
-            final Map<String, Object> manifest = mapper.readValue(manifestFile.toFile(), Map.class);
             Map<String, Object> entry = null;
-            for (final Object o : (List<?>) manifest.getOrDefault("tasks", List.of()))
-                if (o instanceof Map<?, ?> t && taskId.equals(t.get("id"))) entry = (Map<String, Object>) t;
-            if (entry == null) return Map.of("state", "not_finished");
-            final Map<String, Object> out = new LinkedHashMap<>(entry);
-            out.put("state", "done");
-            out.put("tool_calls", toolCallCounts(base, taskId));
-            final Path metricsFile = base.resolve("metrics.json");
-            if (Files.isRegularFile(metricsFile) && isContainedEvenViaSymlinks(base, metricsFile)) {
-                final Map<String, Object> metrics = mapper.readValue(metricsFile.toFile(), Map.class);
-                if (metrics.get("steps") instanceof Map<?, ?> steps && steps.get(taskId) != null) out.put("check_score", steps.get(taskId));
-                if (metrics.get("compaction_overhead") instanceof Map<?, ?> co && co.get("tasks") instanceof Map<?, ?> tasks && tasks.get(taskId) != null)
-                    out.put("compaction_overhead", tasks.get(taskId));
+            final Path manifestFile = base.resolve("manifest.json");
+            if (Files.isRegularFile(manifestFile) && isContainedEvenViaSymlinks(base, manifestFile)) {
+                final Map<String, Object> manifest = mapper.readValue(manifestFile.toFile(), Map.class);
+                for (final Object o : (List<?>) manifest.getOrDefault("tasks", List.of()))
+                    if (o instanceof Map<?, ?> t && taskId.equals(t.get("id"))) entry = (Map<String, Object>) t;
+            }
+            final SessionCounts live = sessionCounts(base, taskId);
+            if (entry == null && !live.found()) return Map.of("state", "not_started");
+            final Map<String, Object> out = entry == null ? new LinkedHashMap<>() : new LinkedHashMap<>(entry);
+            out.put("state", entry == null ? "running" : "done");
+            // overrides whatever entry may have carried for these three keys - never the stale/
+            // synthetic manifest.json snapshot, always this call's own fresh read
+            out.put("turns", live.turns());
+            out.put("compactions", live.compactions());
+            out.put("tool_errors", live.toolErrorsTotal());
+            out.put("tool_calls", live.toolCalls());
+            if (entry != null) {
+                final Path metricsFile = base.resolve("metrics.json");
+                if (Files.isRegularFile(metricsFile) && isContainedEvenViaSymlinks(base, metricsFile)) {
+                    final Map<String, Object> metrics = mapper.readValue(metricsFile.toFile(), Map.class);
+                    if (metrics.get("steps") instanceof Map<?, ?> steps && steps.get(taskId) != null) out.put("check_score", steps.get(taskId));
+                    if (metrics.get("compaction_overhead") instanceof Map<?, ?> co && co.get("tasks") instanceof Map<?, ?> tasks && tasks.get(taskId) != null)
+                        out.put("compaction_overhead", tasks.get(taskId));
+                }
             }
             return out;
         } catch (final Exception e) {
             log.warn("could not read stats for job {} task {}: {}", id, taskId, e.toString());
-            return Map.of("state", "not_finished");
+            return Map.of("state", "not_started");
         }
-    }
-
-    /** #355: this task's own tool-call breakdown - counts (and each tool's own error count)
-     *  tallied from its session file's own "toolResult" messages (AgentSession.toolResult() -
-     *  one per actual tool invocation, already carrying toolName/isError directly, no need to
-     *  parse the assistant's own "toolCall" request parts instead). The session file is found by
-     *  its JSONL header's "label" field (written once, on the task's first - non-continued -
-     *  session; a later wrap-up/rescue continuation reuses the SAME file and never rewrites the
-     *  header), same technique Collect.compactionOverhead() (#354) already uses from a different
-     *  package, rather than recomputing RunBench's own session-id UUID scheme here too.
-     *  Best-effort: a missing/unreadable session reads as an empty breakdown, never throws. */
-    private Map<String, Object> toolCallCounts(final Path base, final String taskId) {
-        final Path dir = base.resolve("sessions");
-        if (!Files.isDirectory(dir)) return Map.of();
-        final var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-        try (var stream = Files.list(dir)) {
-            for (final Path f : stream.filter(p -> p.getFileName().toString().endsWith(".jsonl")).toList()) {
-                final List<String> lines = Files.readAllLines(f);
-                if (lines.isEmpty()) continue;
-                final Map<String, Object> header;
-                try { header = mapper.readValue(lines.get(0), Map.class); } catch (final Exception ignore) { continue; }
-                if (!taskId.equals(header.get("label"))) continue;
-                final Map<String, int[]> counts = new LinkedHashMap<>();   // toolName -> [total, errors]
-                for (final String line : lines) {
-                    if (line.isBlank()) continue;
-                    final Map<String, Object> e;
-                    try { e = mapper.readValue(line, Map.class); } catch (final Exception ignore) { continue; }
-                    if (!(e.get("message") instanceof Map<?, ?> m) || !"toolResult".equals(m.get("role"))) continue;
-                    final int[] c = counts.computeIfAbsent(String.valueOf(m.get("toolName")), k -> new int[2]);
-                    c[0]++;
-                    if (Boolean.TRUE.equals(m.get("isError"))) c[1]++;
-                }
-                final Map<String, Object> out = new LinkedHashMap<>();
-                counts.forEach((name, c) -> out.put(name, Map.of("count", c[0], "errors", c[1])));
-                return out;
-            }
-        } catch (final Exception e) { return Map.of(); }
-        return Map.of();
     }
 
     /** #265: this task's own mid-task judge checkpoints (see Judge.java) - one per turn the judge

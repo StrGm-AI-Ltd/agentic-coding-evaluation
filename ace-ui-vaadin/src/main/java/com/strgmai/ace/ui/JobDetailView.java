@@ -899,30 +899,26 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 judgeBody.add(Panels.error(client.errorText(ex)));
             }
         };
-        // #355: full operator visibility into this task, active or completed - manifest.json
-        // already carries a finished task's own complete record (rc/turns/compactions/
-        // verification/wrap-up/rescue/handoff outcome/tool-call breakdown, and, once the whole
-        // run is scored, this task's own check score and compaction overhead), read straight by
-        // BenchController.taskStats() with no new computation. While the task is still running
-        // (no manifest entry yet - state="not_finished"), fall back to the SAME live
-        // JobLiveState this page's own Sessions grid already uses for its own time/token columns
-        // (taskStats(sessions, taskId, currentStep)/lastMatchingSession() above, NOT a fresh
-        // name()-based lookup) - it already sums correctly across a retried/continued task's
+        // #355/#355-followup: full operator visibility into this task, active or completed -
+        // turns/compactions/tool_errors/tool_calls are now ALWAYS read live from the task's own
+        // session file by BenchController.taskStats() (never a one-time manifest.json snapshot,
+        // which #358 found can be flat wrong for a timed-out attempt) - whether the task is still
+        // running, in its own post-session wrap-up/rescue/handoff tail, or long since done. Only
+        // the still-live WALL TIME figure for a not-yet-finished task needs a frontend-side
+        // fallback at all now (state != "done"): the SAME live JobLiveState this page's own
+        // Sessions grid already uses for its own time/token columns (taskStats(sessions, taskId,
+        // currentStep) above) - it already sums correctly across a retried/continued task's
         // several sessions and handles a still-running one's wall time (open-ended until "now" or
         // the next task's own start), rather than reporting null until the session ends.
         final Runnable loadStats = () -> {
             try {
                 final var stats = client.taskStats(jobId, task.id());
                 statsBody.removeAll();
-                if ("done".equals(stats.path("state").asText(null))) {
-                    for (final var line : taskStatsLines(stats)) statsBody.add(Panels.mono(line));
-                    return;
-                }
-                if (lastMatchingSession(live.sessions(), task.id()) == null) {
+                if ("not_started".equals(stats.path("state").asText(null))) {
                     statsBody.add(Panels.mono("(not started yet)"));
                     return;
                 }
-                for (final var line : liveTaskStatsLines(taskStats(live.sessions(), task.id(), live.currentStep())))
+                for (final var line : taskStatsLines(stats, taskStats(live.sessions(), task.id(), live.currentStep())))
                     statsBody.add(Panels.mono(line));
             } catch (final Exception ex) {
                 statsBody.removeAll();
@@ -976,15 +972,28 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     /** #355: the Stats tab's own text for a FINISHED task (BenchController.taskStats() found a
-     *  manifest.tasks entry) - pure, tested against real-shape fixtures, same convention as
-     *  speedByContextRows()/compactionOverheadPoints() in RunDetailView. Every field beyond
-     *  rc/finish/seconds/turns/compactions/tool_errors is OPTIONAL and shown only when present -
-     *  wrap-up/rescue/handoff only ever fired for some tasks, and check_score/compaction_overhead
-     *  only exist once the whole run (not just this task) has finished scoring. */
-    static List<String> taskStatsLines(final JsonNode stats) {
+     *  manifest.tasks entry - "done") or still running/mid-tail ("running") - pure, tested
+     *  against real-shape fixtures, same convention as speedByContextRows()/
+     *  compactionOverheadPoints() in RunDetailView. turns/compactions/tool_errors/tool_calls are
+     *  ALWAYS populated (BenchController.taskStats() reads them live from the session file
+     *  regardless of state - see its own javadoc); everything else beyond those - rc/finish/
+     *  seconds/verification/wrap-up/rescue/handoff/check_score/compaction_overhead - is OPTIONAL
+     *  and only ever present once "done" (wrap-up/rescue/handoff only for some tasks even then;
+     *  check_score/compaction_overhead only once the whole run has finished scoring).
+     *  `liveWallTime` is this dialog's own frontend-side live aggregation (JobDetailView.
+     *  taskStats(sessions, taskId, currentStep), reused from the Plan grid) - the one figure the
+     *  backend has no way to report for a task that hasn't finished yet, since it has no
+     *  "elapsed so far" concept of its own. */
+    static List<String> taskStatsLines(final JsonNode stats, final TaskStats liveWallTime) {
         final List<String> lines = new ArrayList<>();
-        lines.add("outcome: " + rcText(stats.path("rc").asInt(Integer.MIN_VALUE), stats.path("finish").asText(null)));
-        lines.add("wall time: " + stats.path("seconds").asText("?") + "s   model turns: " + stats.path("turns").asText("?"));
+        final boolean done = "done".equals(stats.path("state").asText(null));
+        if (done) {
+            lines.add("outcome: " + rcText(stats.path("rc").asInt(Integer.MIN_VALUE), stats.path("finish").asText(null)));
+            lines.add("wall time: " + stats.path("seconds").asText("?") + "s   model turns: " + stats.path("turns").asText("0"));
+        } else {
+            lines.add("outcome: still running");
+            lines.add("wall time so far: " + Math.round(liveWallTime.wallSec()) + "s   model turns so far: " + stats.path("turns").asText("0"));
+        }
         lines.add("context compactions (history trims to control context size): " + stats.path("compactions").asText("0")
                 + "   failed tool calls: " + stats.path("tool_errors").asText("0"));
         final var v = stats.path("verification");
@@ -1024,18 +1033,6 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             lines.add("compaction overhead: " + co.path("overhead_sec").asText("?") + "s across " + co.path("events").asText("0") + " event(s)");
         }
         return lines;
-    }
-
-    /** #355: the Stats tab's own text for a task still RUNNING (no manifest.tasks entry yet) -
-     *  taskStats(sessions, taskId, currentStep) above already sums correctly across every
-     *  session matching this task (a retried/continued task genuinely spent time/tokens in more
-     *  than one) and already knows how to report a still-open session's wall time (through "now",
-     *  or through the next task's own start) rather than leaving it null until the session ends. */
-    static List<String> liveTaskStatsLines(final TaskStats ts) {
-        return List.of("(still running - partial)",
-                "wall seconds so far: " + Math.round(ts.wallSec()),
-                "completion tokens so far: " + ts.completionTokens(),
-                "prompt tokens: " + ts.promptTokens());
     }
 
     /** The "Live" tab: a plain-text, operator-facing peek into the task's own coding session -
