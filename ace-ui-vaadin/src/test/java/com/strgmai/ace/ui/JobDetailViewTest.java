@@ -357,6 +357,25 @@ class JobDetailViewTest {
                 "a genuinely running session must suppress a tooltip left over from a past attempt");
     }
 
+    /** #355-followup: found live on T7's own real Stats tab - a bare "rc: 124" means nothing to
+     *  an operator who hasn't read the harness's own source. rcText() is the one, pure source of
+     *  truth every raw rc shown on the tab (the task's own, rescue_rc, wrapup_rc) now goes
+     *  through, covering the full, fixed set of values ReferenceAgent/RunBenchSupport actually
+     *  produce. */
+    @Test
+    void rcText_translatesEveryRealRcValueIntoPlainEnglish() {
+        assertEquals("finished normally", JobDetailView.rcText(0, "stop"));
+        assertEquals("finished normally", JobDetailView.rcText(0, null), "no finish reason at all still reads as a plain success");
+        assertEquals("finished, but its last turn was cut off at the output limit", JobDetailView.rcText(0, "length"));
+        assertTrue(JobDetailView.rcText(1, null).contains("turn limit"));
+        assertTrue(JobDetailView.rcText(2, null).contains("infrastructure"));
+        assertTrue(JobDetailView.rcText(3, null).contains("token budget"));
+        assertTrue(JobDetailView.rcText(4, null).contains("context window"));
+        assertTrue(JobDetailView.rcText(124, null).contains("wall-clock time") && JobDetailView.rcText(124, null).contains("rc=124"),
+                "T7's own real case - the number alone was the whole bug report");
+        assertTrue(JobDetailView.rcText(99, null).contains("rc=99"), "an unrecognized code still names itself, never silently blank");
+    }
+
     /** #355: the Stats tab's own rendering for a FINISHED task - pure, tested against the exact
      *  shape BenchController.taskStats() returns (manifest.tasks' own entry, plus whatever
      *  optional fields actually fired). */
@@ -368,7 +387,7 @@ class JobDetailViewTest {
 
         final var lines = JobDetailView.taskStatsLines(stats);
 
-        assertTrue(lines.get(0).contains("rc: 0") && lines.get(0).contains("finish: stop"), lines.get(0));
+        assertEquals("outcome: finished normally", lines.get(0));
         assertTrue(lines.get(1).contains("turns: 7") && lines.get(1).contains("compactions: 1"), lines.get(1));
     }
 
