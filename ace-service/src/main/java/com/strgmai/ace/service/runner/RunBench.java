@@ -372,6 +372,12 @@ public class RunBench {
             params.put("task_wall_sec", effTaskWall);
             params.put("task_tokens", effTaskTokens);
             params.put("max_turns", effMaxTurns);
+            // #337-followup: override can carry any of RESTART_OVERRIDE_KEYS (compaction_trigger,
+            // judge_*, budget_rescue_enabled, sampler knobs, rescue_*, wrapup_*,
+            // first_token_timeout_sec) - every one of them was genuinely in effect for THIS
+            // attempt, not just the three hardcoded above (task_wall_sec/task_tokens/max_turns
+            // redundantly repeat whatever override already set, since eff* already resolved it)
+            params.putAll(override);
             final ReportedStatus reported = reportedStatus(ws, taskId);
             final Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("task_id", taskId);
