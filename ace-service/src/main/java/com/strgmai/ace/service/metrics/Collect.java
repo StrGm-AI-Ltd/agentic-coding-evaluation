@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.InputStream;
 import java.nio.file.*;
+import java.time.Instant;
 import java.util.*;
 
 /** Port of metrics/collect.py: cost/efficiency metrics for ONE run, from the run's OWN journal.
@@ -80,6 +81,15 @@ public final class Collect {
         final Map<String, Object> effort = taskEffortCounts(runDir);
         leaderboard.put("tasks_with_retries", effort.get("tasks_with_retries"));
         leaderboard.put("tasks_rescued", effort.get("tasks_rescued"));
+
+        // #353: compaction exists to keep decode speed up by keeping context size down - found
+        // live on T7 (#351) that it can do the opposite (51 compactions ate ~half its 9h wall
+        // budget on cold re-prefills). compactionOverhead() turns that from something only found
+        // by hand into a real, visible figure; the full per-event timeline (not just the total)
+        // is what RunDetailView's own chart plots.
+        final Map<String, Object> compaction = compactionOverhead(runDir);
+        leaderboard.put("compaction_overhead_sec", compaction.get("total_sec"));
+        out.put("compaction_overhead", compaction);
 
         // ---- agent_result_pct: the composite blended with the calibration terms ----
         final Map<String, Object> review = (Map<String, Object>) manifest.getOrDefault("review_config", Map.of());
@@ -160,6 +170,94 @@ public final class Collect {
             final long rescued = byTask.values().stream().filter(l -> l.stream().anyMatch(e -> e.path("rescue_succeeded").asBoolean(false))).count();
             return Map.of("tasks_with_retries", (int) withRetries, "tasks_rescued", (int) rescued);
         } catch (Exception e) { return Map.of("tasks_with_retries", 0, "tasks_rescued", 0); }
+    }
+
+    /** #353: per-task, per-run compaction overhead - the EXCESS wall-clock time a compaction's own
+     *  cold re-prefill cost, beyond what a normal (non-post-compaction) turn in the SAME session
+     *  took. Found live on T7 (#351): 51 compactions ate ~half its 9h wall budget. Computed
+     *  directly from each task's own session file (compaction markers + per-message timestamps
+     *  AgentSession already records) - no new instrumentation needed. A task's own session file is
+     *  found by its JSONL header's "label" field (written once, on the task's first - non-continued
+     *  - session; a later wrap-up/rescue continuation reuses the SAME file via continueSession=true
+     *  and never rewrites the header), not by recomputing RunBench's own session-id UUID scheme
+     *  from a different package. Best-effort: a missing/unreadable/malformed session reads as zero
+     *  overhead for that task, never throws - same convention as taskEffortCounts() above.
+     *
+     *  "overhead" per compaction = max(0, the very next assistant turn's own wall-clock gap - the
+     *  session's own baseline gap, i.e. the median gap of every OTHER (non-post-compaction) turn in
+     *  the same session). Only a session with at least one "normal" gap to compare against counts -
+     *  one compacting on literally every turn has no baseline of its own and reads as zero overhead,
+     *  not a crash. The `timeline` series (every task's compaction events, pooled and sorted by
+     *  absolute timestamp, with a running cumulative sum) is what RunDetailView's own chart plots -
+     *  see its addCompactionOverheadChart(). */
+    static Map<String, Object> compactionOverhead(final Path runDir) {
+        final Map<String, Object> empty = Map.of("total_sec", 0.0, "tasks", Map.of(), "timeline", List.of());
+        final Path dir = runDir.resolve("sessions");
+        if (!Files.isDirectory(dir)) return empty;
+        try {
+            final Map<String, Object> tasks = new LinkedHashMap<>();
+            final List<double[]> events = new ArrayList<>();   // [epochMillis, overheadSec]
+            double total = 0.0;
+            try (var stream = Files.list(dir)) {
+                for (final Path f : stream.filter(p -> p.getFileName().toString().endsWith(".jsonl")).toList()) {
+                    final List<JsonNode> lines = new ArrayList<>();
+                    for (final String line : Files.readAllLines(f)) {
+                        if (line.isBlank()) continue;
+                        try { lines.add(JSON.readTree(line)); } catch (Exception ignore) { /* one bad line must not sink the whole file */ }
+                    }
+                    if (lines.isEmpty()) continue;
+                    final String label = lines.get(0).path("label").asText(null);
+                    if (label == null) continue;
+                    final List<Long> turnMs = new ArrayList<>();            // epoch millis, one per assistant turn, in file order
+                    final Set<Integer> compactedBeforeTurn = new HashSet<>();   // turnMs indices a compaction immediately preceded
+                    boolean pendingCompaction = false;
+                    for (final JsonNode e : lines) {
+                        final String type = e.path("type").asText("");
+                        if ("compaction".equals(type)) { pendingCompaction = true; continue; }
+                        if (!"message".equals(type) || !"assistant".equals(e.path("message").path("role").asText(""))) continue;
+                        if (pendingCompaction) compactedBeforeTurn.add(turnMs.size());
+                        turnMs.add(Instant.parse(e.path("ts").asText()).toEpochMilli());
+                        pendingCompaction = false;
+                    }
+                    if (turnMs.size() < 2) continue;
+                    // gaps.get(i) is the wall-clock time between turn i and turn i+1; a compaction
+                    // "before turn i+1" means gaps.get(i) is the post-compaction one
+                    final List<Double> gaps = new ArrayList<>();
+                    final Set<Integer> postCompactionGapIdx = new HashSet<>();
+                    for (int i = 1; i < turnMs.size(); i++) {
+                        gaps.add((turnMs.get(i) - turnMs.get(i - 1)) / 1000.0);
+                        if (compactedBeforeTurn.contains(i)) postCompactionGapIdx.add(i - 1);
+                    }
+                    final List<Double> normalGaps = new ArrayList<>();
+                    for (int i = 0; i < gaps.size(); i++) if (!postCompactionGapIdx.contains(i)) normalGaps.add(gaps.get(i));
+                    if (normalGaps.isEmpty()) continue;   // nothing to compare the post-compaction gaps against
+                    Collections.sort(normalGaps);
+                    final double baseline = normalGaps.get(normalGaps.size() / 2);   // median
+                    double taskTotal = 0.0; int taskEvents = 0;
+                    for (final int gi : postCompactionGapIdx) {
+                        final double overhead = gaps.get(gi) - baseline;
+                        if (overhead <= 0) continue;
+                        taskTotal += overhead;
+                        taskEvents++;
+                        events.add(new double[]{turnMs.get(gi + 1), overhead});
+                    }
+                    if (taskEvents > 0) {
+                        tasks.put(label, Map.of("overhead_sec", round1(taskTotal), "events", taskEvents));
+                        total += taskTotal;
+                    }
+                }
+            }
+            if (events.isEmpty()) return empty;
+            events.sort(Comparator.comparingDouble(ev -> ev[0]));
+            final long startMs = (long) events.get(0)[0];
+            final List<Map<String, Object>> timeline = new ArrayList<>();
+            double cumulative = 0.0;
+            for (final double[] ev : events) {
+                cumulative += ev[1];
+                timeline.add(Map.of("elapsed_sec", Math.round((ev[0] - startMs) / 1000.0), "cumulative_sec", round1(cumulative)));
+            }
+            return Map.of("total_sec", round1(total), "tasks", tasks, "timeline", timeline);
+        } catch (Exception e) { return empty; }
     }
 
     /** How much of the rung's own declared wall-clock budget (ladder.json's budget_sec - the SAME

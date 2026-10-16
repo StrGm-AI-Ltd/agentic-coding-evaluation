@@ -163,6 +163,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         addPlanTasks(run.metrics());
         addStepScores(run.metrics());
         addSpeedByContextChart(run.metrics());
+        addCompactionOverheadChart(run.metrics());
         addProvenance(run);
 
         add(new FilesBrowser(client, runId));
@@ -479,6 +480,50 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
                   return html;
                 }
                 """.formatted(labels, reqCounts);
+    }
+
+    record CompactionOverheadPoint(long elapsedSec, double cumulativeSec) {
+    }
+
+    /** #353: metrics.compaction_overhead.timeline (Collect.compactionOverhead(), found live on T7
+     * (#351) — compaction exists to keep decode speed up by keeping context size down, but its own
+     * re-prefill can cost more than it saves). Pure, tested against real-shape fixtures, same
+     * convention as speedByContextRows() above. */
+    static List<CompactionOverheadPoint> compactionOverheadPoints(final JsonNode metrics) {
+        final var timeline = metrics == null ? null : metrics.path("compaction_overhead").get("timeline");
+        if (timeline == null || !timeline.isArray() || timeline.isEmpty()) {
+            return List.of();
+        }
+        final List<CompactionOverheadPoint> points = new ArrayList<>();
+        for (final var p : timeline) {
+            points.add(new CompactionOverheadPoint(p.path("elapsed_sec").asLong(0), p.path("cumulative_sec").asDouble(0)));
+        }
+        return points;
+    }
+
+    /** Cumulative compaction overhead over the run's own elapsed wall-clock time — a step function
+     * that climbs every time a compaction's re-prefill cost more than this session's own normal
+     * turn. A flat line is the healthy case; a steepening climb (T7's own shape, found live in
+     * #351) is where compacting started costing more than it saved. */
+    private void addCompactionOverheadChart(final JsonNode metrics) {
+        final var points = compactionOverheadPoints(metrics);
+        if (points.isEmpty()) {
+            return;
+        }
+        add(Panels.sectionTitle("Compaction overhead over time"));
+        final var chart = ApexChartsBuilder.get()
+                .withChart(ChartBuilder.get().withType(Type.LINE).build())
+                .withXaxis(XAxisBuilder.get()
+                        .withCategories(points.stream().map(p -> String.valueOf(p.elapsedSec() / 60)).toArray(String[]::new))
+                        .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
+                                .withText("elapsed time (min)").build())
+                        .build())
+                .withYaxis(YAxisBuilder.get().withTitle(TitleBuilder.get().withText("cumulative overhead (s)").build()).build())
+                .withSeries(SeriesBuilder.get().withName("cumulative overhead (s)")
+                        .withData(points.stream().map(CompactionOverheadPoint::cumulativeSec).toArray(Double[]::new)).build())
+                .build();
+        chart.setHeight("300px");
+        add(chart);
     }
 
     /** The provenance block from the Jinja2 run page (V-4) — values may be objects
