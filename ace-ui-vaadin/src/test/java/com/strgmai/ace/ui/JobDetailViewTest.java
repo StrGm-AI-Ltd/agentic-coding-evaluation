@@ -741,24 +741,33 @@ class JobDetailViewTest {
         assertFalse(js.contains("compaction"), js);
     }
 
+    /** The timing chart's own compaction column sits at series[2] (ttft is 0, total time is 1) -
+     *  same reasoning as requestSpeedTooltipJs() above applies here too. */
+    @Test
+    void requestTimingTooltipJs_readsTheTwoRealSeriesNeverTheCompactionColumn() {
+        final var js = JobDetailView.requestTimingTooltipJs();
+        assertTrue(js.contains("struct.series[0]"), js);
+        assertTrue(js.contains("struct.series[1]"), js);
+        assertFalse(js.contains("series[2]"), js);
+        assertFalse(js.contains("compaction"), js);
+    }
+
     /** #355-followup-5: the operator asked for a marker where a compaction landed. Realized as a
      *  SECOND series (a thin column) sharing the main series' own category axis, not an
      *  ApexCharts x-axis annotation - this ApexCharts version's own annotation-resolution code
      *  only engages for a category axis when xaxis.type is the literal string "category", and
      *  this addon's own XAxisType.CATEGORIES enum constant serializes to "categories" instead, so
      *  that path is unreachable through this addon (confirmed live: the annotation's own SVG
-     *  group mounted with zero children). A marked position's value is the series' own peak, so
-     *  the column reaches (near enough) the full plot height. A position past the series' own
-     *  length (the ordinal-alignment caveat BenchController's own javadoc notes: a dropped
-     *  request_speeds entry can shift later ordinals by one) is dropped rather than pointing at a
-     *  request that was never plotted. */
+     *  group mounted with zero children). `peak` is the caller's own choice of column height
+     *  (that chart's own series max, across ALL of its series when it has more than one) - kept
+     *  a plain parameter rather than reading a fixed RequestSpeedPoint field, since
+     *  addRequestSpeedChart() and addRequestTimingChart() each plot different fields. A position
+     *  past requestCount (the ordinal-alignment caveat BenchController's own javadoc notes: a
+     *  dropped request_speeds entry can shift later ordinals by one) is dropped rather than
+     *  pointing at a request that was never plotted. */
     @Test
-    void compactionColumnData_onePerPositionSetToTheSeriesOwnPeak() {
-        final var points = List.of(
-                new JobDetailView.RequestSpeedPoint(1, 10.0, null, null, null),
-                new JobDetailView.RequestSpeedPoint(2, 40.0, null, null, null),
-                new JobDetailView.RequestSpeedPoint(3, 25.0, null, null, null));
-        final var data = JobDetailView.compactionColumnData(List.of(1, 3), points);
+    void compactionColumnData_onePerPositionSetToTheGivenPeak() {
+        final var data = JobDetailView.compactionColumnData(List.of(1, 3), 3, 40.0);
 
         assertEquals(3, data.length);
         assertEquals(40.0, data[0]);
@@ -767,9 +776,8 @@ class JobDetailViewTest {
     }
 
     @Test
-    void compactionColumnData_dropsPositionsPastTheSeriesOwnLength() {
-        final var points = List.of(new JobDetailView.RequestSpeedPoint(1, 10.0, null, null, null), new JobDetailView.RequestSpeedPoint(2, 20.0, null, null, null));
-        final var data = JobDetailView.compactionColumnData(List.of(1, 999), points);
+    void compactionColumnData_dropsPositionsPastTheGivenRequestCount() {
+        final var data = JobDetailView.compactionColumnData(List.of(1, 999), 2, 20.0);
 
         assertEquals(2, data.length);
         assertEquals(20.0, data[0]);
@@ -778,8 +786,7 @@ class JobDetailViewTest {
 
     @Test
     void compactionColumnData_isAllNullWhenNoCompactionsHappened() {
-        final var points = List.of(new JobDetailView.RequestSpeedPoint(1, 10.0, null, null, null), new JobDetailView.RequestSpeedPoint(2, 20.0, null, null, null));
-        final var data = JobDetailView.compactionColumnData(List.of(), points);
+        final var data = JobDetailView.compactionColumnData(List.of(), 2, 20.0);
 
         assertEquals(2, data.length);
         assertNull(data[0]);
