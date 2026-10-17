@@ -533,7 +533,10 @@ class JobDetailViewTest {
     /** #355-followup-4: the operator asked for a chart per attempt that actually made a request,
      *  not one combined chart for the whole task - each AttemptSection carries only ITS OWN
      *  attempt's "request_speeds", read straight from BenchController.taskStats()'s own
-     *  per-attempt array (already filtered server-side by that attempt's own session id). */
+     *  per-attempt array (already filtered server-side by that attempt's own session id). Judge
+     *  checkpoints ride along the same way, already split by verdict server-side into two
+     *  separate arrays - attemptSections() just reads each straight through, same as
+     *  compactions_before_request. */
     @Test
     void attemptSections_carriesEachAttemptsOwnRequestSpeedsSeparately() {
         final var stats = Json.MAPPER.readTree("""
@@ -543,7 +546,9 @@ class JobDetailViewTest {
                     {"started_iso": "2026-10-16T15:25:47Z", "turns": 117, "compactions": 1, "tool_errors": 0, "tool_calls": {}, "seconds": 21836.8,
                      "request_speeds": [{"seq": 3, "prompt_tokens": 500, "prefill_tok_per_sec": 120.5},
                                         {"seq": 4, "prompt_tokens": 1069, "prefill_tok_per_sec": 89.93}],
-                     "compactions_before_request": [2]}
+                     "compactions_before_request": [2],
+                     "judge_on_track_requests": [1],
+                     "judge_off_track_requests": [2]}
                 ]}""");
 
         final var sections = JobDetailView.attemptSections(stats);
@@ -551,10 +556,14 @@ class JobDetailViewTest {
         assertEquals(1, sections.get(0).requestSpeeds().size(), "attempt 1 has only its own one request");
         assertEquals(75.0, sections.get(0).requestSpeeds().get(0).prefillTokPerSec());
         assertTrue(sections.get(0).compactionsBeforeRequest().isEmpty());
+        assertTrue(sections.get(0).judgeOnTrackRequests().isEmpty());
+        assertTrue(sections.get(0).judgeOffTrackRequests().isEmpty());
         assertEquals(2, sections.get(1).requestSpeeds().size(), "attempt 2 has only its own two requests, not attempt 1's");
         assertEquals(120.5, sections.get(1).requestSpeeds().get(0).prefillTokPerSec());
         assertEquals(89.93, sections.get(1).requestSpeeds().get(1).prefillTokPerSec());
         assertEquals(List.of(2), sections.get(1).compactionsBeforeRequest());
+        assertEquals(List.of(1), sections.get(1).judgeOnTrackRequests());
+        assertEquals(List.of(2), sections.get(1).judgeOffTrackRequests());
     }
 
     /** #355-followup-2: a session cut off before RunBench.logTaskAttempt() ever ran leaves no
@@ -755,28 +764,35 @@ class JobDetailViewTest {
      *  marker to show anything. A custom JS tooltip reading series[0] (prefill), series[2]
      *  (generation) and series[3] (context tokens, added later) is the only way to leave the
      *  compaction series out while keeping hover-anywhere-near-x working for the real three -
-     *  pinned by asserting its source reads series[0]/[2]/[3], never series[1] or the word
-     *  "compaction". */
+     *  pinned by asserting its source reads series[0]/[2]/[3], never series[1] (compaction) or
+     *  series[4]/[5] (the two judge columns, added later), nor the words "compaction"/"judge". */
     @Test
-    void requestSpeedTooltipJs_readsTheThreeRealSeriesNeverTheCompactionColumn() {
+    void requestSpeedTooltipJs_readsTheThreeRealSeriesNeverTheColumnMarkers() {
         final var js = JobDetailView.requestSpeedTooltipJs();
         assertTrue(js.contains("struct.series[0]"), js);
         assertTrue(js.contains("struct.series[2]"), js);
         assertTrue(js.contains("struct.series[3]"), js);
         assertFalse(js.contains("series[1]"), js);
+        assertFalse(js.contains("series[4]"), js);
+        assertFalse(js.contains("series[5]"), js);
         assertFalse(js.contains("compaction"), js);
+        assertFalse(js.contains("judge"), js);
     }
 
     /** The timing chart's own compaction column sits at series[2] (ttft is 0, total time is 1,
-     *  context tokens is 3) - same reasoning as requestSpeedTooltipJs() above applies here too. */
+     *  context tokens is 3) - same reasoning as requestSpeedTooltipJs() above applies here too,
+     *  including the two judge columns at series[4]/[5] (added later). */
     @Test
-    void requestTimingTooltipJs_readsTheThreeRealSeriesNeverTheCompactionColumn() {
+    void requestTimingTooltipJs_readsTheThreeRealSeriesNeverTheColumnMarkers() {
         final var js = JobDetailView.requestTimingTooltipJs();
         assertTrue(js.contains("struct.series[0]"), js);
         assertTrue(js.contains("struct.series[1]"), js);
         assertTrue(js.contains("struct.series[3]"), js);
         assertFalse(js.contains("series[2]"), js);
+        assertFalse(js.contains("series[4]"), js);
+        assertFalse(js.contains("series[5]"), js);
         assertFalse(js.contains("compaction"), js);
+        assertFalse(js.contains("judge"), js);
     }
 
     /** #355-followup-5: the operator asked for a marker where a compaction landed. Realized as a

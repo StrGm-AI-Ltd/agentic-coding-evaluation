@@ -882,6 +882,40 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.attempts[0].compactions_before_request[0]").value(2));
     }
 
+    /** The operator asked for the same kind of marker for judge checkpoints, colored by verdict.
+     *  judge/&lt;taskId&gt;-&lt;attemptStamp&gt;-turn&lt;N&gt;.md's own attempt stamp (Judge.attemptStamp() -
+     *  the exact same filesystem-safe format as a session file's own leading timestamp) is matched
+     *  to this attempt's own startedIso the same nearest-timestamp way task_attempts.jsonl records
+     *  already are - here the stamp lands 1 second after the session's own first line, well inside
+     *  the 5-minute tolerance. A verdict is its own checkpoint file's leading
+     *  "## Recommendation" line: ON TRACK (turn 2) vs. OFF TRACK (turn 4, case-insensitive,
+     *  confirming Judge.isOffTrack()'s own case-folding is mirrored correctly) - split into two
+     *  separate ordinal lists rather than one combined list so the chart can give each its own
+     *  column color. */
+    @Test
+    void taskStatsSplitsJudgeCheckpointsByVerdictAndMatchesThemToTheRightAttempt() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.createDirectories(runDir.resolve("judge"));
+        Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": []}");
+        Files.writeString(runDir.resolve("sessions/a.jsonl"),
+                "{\"type\":\"session\",\"id\":\"session-t9\",\"label\":\"T9\",\"ts\":\"2026-10-16T10:00:00Z\"}\n");
+        Files.writeString(runDir.resolve("judge/T9-2026-10-16T10-00-01.000Z-turn2.md"),
+                "# Judge checkpoint\n\n## Prompt\n\nsome prompt\n\n## Recommendation\n\nON TRACK - keep going\n");
+        Files.writeString(runDir.resolve("judge/T9-2026-10-16T10-00-01.000Z-turn4.md"),
+                "# Judge checkpoint\n\n## Prompt\n\nsome prompt\n\n## Recommendation\n\noff track - reconsider the approach\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T9/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attempts[0].judge_on_track_requests", hasSize(1)))
+                .andExpect(jsonPath("$.attempts[0].judge_on_track_requests[0]").value(2))
+                .andExpect(jsonPath("$.attempts[0].judge_off_track_requests", hasSize(1)))
+                .andExpect(jsonPath("$.attempts[0].judge_off_track_requests[0]").value(4));
+    }
+
     @Test
     void taskStatsReturnsEmptyRequestSpeedsPerAttemptWhenThereIsNoInteractionsFileAtAll() throws Exception {
         final var resultsDir = Files.createTempDirectory("results");
