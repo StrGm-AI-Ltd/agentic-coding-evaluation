@@ -157,6 +157,23 @@ class PacksTest {
         assertFalse(tp.contains("Lessons learned"));
     }
 
+    /** #403 idea 2: dead/speculative scaffolding (unused stub methods, an extra "test seam" no
+     *  test needed) was found live, repeatedly, as its own judge-off-track pattern - see #402. */
+    @Test
+    void hygieneWarnsAgainstDeadAndSpeculativeCode() {
+        assertTrue(Packs.hygiene().contains("Delete exploratory stubs"));
+    }
+
+    /** #403 idea 3: "stuck in reconnaissance with zero code produced" was found live, repeatedly,
+     *  as its own judge-off-track pattern (see #402) - this is the proactive nudge, rather than
+     *  only catching it reactively once a judge checkpoint happens to fire. */
+    @Test
+    void taskInstructionNudgesAgainstReReadingWhatIsAlreadyThere() {
+        final String instr = Packs.taskInstruction("T9");
+        assertTrue(instr.contains("prefer writing code over re-reading"));
+        assertTrue(instr.contains("Implement task T9 only"), "the original instruction must still be intact");
+    }
+
     @Test
     void theHygieneRulesNameTheRunsWindow() {
         Packs.setWindow(79872);

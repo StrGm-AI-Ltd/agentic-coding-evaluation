@@ -52,7 +52,8 @@ public final class Packs {
             - Java compiler errors are `path:line: error:`; Kotlin's are `e: path:line:col`.
             - Money: `BigDecimal` only, explicit scale + `RoundingMode`, compare with `compareTo`.
             - Spring: slice tests over `@SpringBootTest` where a DB is not needed; for a full HTTP integration test use `@SpringBootTest(webEnvironment=RANDOM_PORT)` with an injected `TestRestTemplate` (already on the test classpath via `spring-boot-starter-test`) or a plain `RestTemplate` to `http://localhost:${port}` - do NOT remove `spring-boot-starter-test` or its autoconfigure.
-            - Do not re-run a command whose output you already have; do not `cat` a file you just wrote.""";
+            - Do not re-run a command whose output you already have; do not `cat` a file you just wrote.
+            - Delete exploratory stubs, dead helpers, and unused scaffolding before considering a file done - a method that returns null/does nothing and is never called is not finished work. It is a real, found-live cost (wasted turns at best, a compile risk at worst), not a harmless leftover.""";
 
     private static String HYGIENE = HYGIENE_TEMPLATE.replace("{window}", "65");
 
@@ -348,7 +349,10 @@ public final class Packs {
 
     // ---- the instruction texts (verbatim ports)
     public static String taskInstruction(final String id) {
-        return "Implement task " + id + " only. Do not start other tasks. Write tests that prove its acceptance criterion and run them; "
+        return "You already have this task's own goal, acceptance criterion, dependency interfaces, and any prior tasks' handoff notes "
+                + "right below - prefer writing code over re-reading them again; re-exploring what you already have in front of you is a "
+                + "real, found-live cost, not a safe way to start. "
+                + "Implement task " + id + " only. Do not start other tasks. Write tests that prove its acceptance criterion and run them; "
                 + "your tests must use DISCRIMINATING inputs - non-default values a hardcoded or ignored-input implementation would get "
                 + "wrong (e.g., POST a non-USD currency and assert THAT currency echoes back, not the default; assert a non-zero, "
                 + "non-default quantity round-trips) - happy-path defaults prove nothing. "
