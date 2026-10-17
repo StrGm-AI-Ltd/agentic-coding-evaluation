@@ -805,12 +805,13 @@ public class BenchController {
     }
 
     /** one interactions.jsonl line -> {seq, session_id, prompt_tokens, prefill_tok_per_sec,
-     *  generation_tok_per_sec}, or null when the line's own session_id doesn't match (the
-     *  caller's substring pre-check is only a hint - this confirms it against the real field) or
-     *  it carries no usable usage block (a non-streamed or failed call). response.usage's own
-     *  prompt_tokens_per_second/generation_tokens_per_second are oMLX's own reported figures -
-     *  never re-derived from prompt_tokens/time_to_first_token here. generation_tok_per_sec is
-     *  optional (null when absent) - unlike prefill speed, it isn't required for a line to count. */
+     *  generation_tok_per_sec, time_to_first_token_sec, total_time_sec}, or null when the line's
+     *  own session_id doesn't match (the caller's substring pre-check is only a hint - this
+     *  confirms it against the real field) or it carries no usable usage block (a non-streamed or
+     *  failed call). response.usage's own prompt_tokens_per_second/generation_tokens_per_second/
+     *  time_to_first_token/total_time are oMLX's own reported figures - never re-derived here.
+     *  generation_tok_per_sec, time_to_first_token_sec and total_time_sec are all optional (null
+     *  when absent) - unlike prefill speed, none of them is required for a line to count. */
     private static Map<String, Object> parseRequestSpeedEntry(final com.fasterxml.jackson.core.JsonFactory factory, final String line, final Set<String> sessionIds) {
         try (var p = factory.createParser(line)) {
             if (p.nextToken() != com.fasterxml.jackson.core.JsonToken.START_OBJECT) return null;
@@ -820,6 +821,8 @@ public class BenchController {
             Integer promptTokens = null;
             Double prefillTps = null;
             Double generationTps = null;
+            Double timeToFirstToken = null;
+            Double totalTime = null;
             while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
                 final String field = p.currentName();
                 p.nextToken();
@@ -839,6 +842,8 @@ public class BenchController {
                                         if ("prompt_tokens".equals(uf)) promptTokens = p.getIntValue();
                                         else if ("prompt_tokens_per_second".equals(uf)) prefillTps = p.getDoubleValue();
                                         else if ("generation_tokens_per_second".equals(uf)) generationTps = p.getDoubleValue();
+                                        else if ("time_to_first_token".equals(uf)) timeToFirstToken = p.getDoubleValue();
+                                        else if ("total_time".equals(uf)) totalTime = p.getDoubleValue();
                                         else p.skipChildren();
                                     }
                                 } else p.skipChildren();
@@ -856,6 +861,8 @@ public class BenchController {
             out.put("prompt_tokens", promptTokens);
             out.put("prefill_tok_per_sec", prefillTps);
             out.put("generation_tok_per_sec", generationTps);
+            out.put("time_to_first_token_sec", timeToFirstToken);
+            out.put("total_time_sec", totalTime);
             return out;
         } catch (final Exception e) { return null; }
     }

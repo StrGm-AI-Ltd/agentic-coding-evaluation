@@ -781,11 +781,12 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.attempts[1].request_speeds[1].prefill_tok_per_sec").value(89.93));
     }
 
-    /** generation_tok_per_sec (response.usage.generation_tokens_per_second) rides along next to
-     *  prefill_tok_per_sec - unlike prefill speed, it's optional: a line still counts with it
-     *  missing, and the field comes through as JSON null rather than being omitted. */
+    /** generation_tok_per_sec, time_to_first_token_sec and total_time_sec (response.usage's own
+     *  generation_tokens_per_second/time_to_first_token/total_time) ride along next to
+     *  prefill_tok_per_sec - unlike prefill speed, all three are optional: a line still counts
+     *  with any of them missing, and each comes through as JSON null rather than being omitted. */
     @Test
-    void taskStatsIncludesGenerationSpeedWhenPresentAndNullWhenAbsent() throws Exception {
+    void taskStatsIncludesGenerationSpeedAndTimingWhenPresentAndNullWhenAbsent() throws Exception {
         final var resultsDir = Files.createTempDirectory("results");
         final var runDir = resultsDir.resolve("run-1");
         Files.createDirectories(runDir.resolve("sessions"));
@@ -793,7 +794,8 @@ class BenchControllerTest {
         Files.writeString(runDir.resolve("sessions/a.jsonl"),
                 "{\"type\":\"session\",\"id\":\"session-gen\",\"label\":\"T9\",\"ts\":\"2026-10-16T10:00:00Z\"}\n");
         Files.writeString(runDir.resolve("interactions.jsonl"), String.join("\n",
-                "{\"seq\":1,\"session_id\":\"session-gen\",\"response\":{\"usage\":{\"prompt_tokens\":100,\"prompt_tokens_per_second\":50.0,\"generation_tokens_per_second\":30.5}}}",
+                "{\"seq\":1,\"session_id\":\"session-gen\",\"response\":{\"usage\":{\"prompt_tokens\":100,\"prompt_tokens_per_second\":50.0,"
+                        + "\"generation_tokens_per_second\":30.5,\"time_to_first_token\":11.89,\"total_time\":15.63}}}",
                 "{\"seq\":2,\"session_id\":\"session-gen\",\"response\":{\"usage\":{\"prompt_tokens\":200,\"prompt_tokens_per_second\":60.0}}}") + "\n");
         when(props.resultsDir()).thenReturn(resultsDir.toString());
         when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
@@ -801,7 +803,11 @@ class BenchControllerTest {
         mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T9/stats"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.attempts[0].request_speeds[0].generation_tok_per_sec").value(30.5))
-                .andExpect(jsonPath("$.attempts[0].request_speeds[1].generation_tok_per_sec").value(nullValue()));
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].time_to_first_token_sec").value(11.89))
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].total_time_sec").value(15.63))
+                .andExpect(jsonPath("$.attempts[0].request_speeds[1].generation_tok_per_sec").value(nullValue()))
+                .andExpect(jsonPath("$.attempts[0].request_speeds[1].time_to_first_token_sec").value(nullValue()))
+                .andExpect(jsonPath("$.attempts[0].request_speeds[1].total_time_sec").value(nullValue()));
     }
 
     /** #355-followup-6: found live on T11 - RunBenchSupport's own session-id scheme is
