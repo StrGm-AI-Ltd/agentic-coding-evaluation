@@ -176,8 +176,17 @@ public final class Tailer {
             } catch (Exception e) { log.debug("could not parse a session line for end-detection, skipping it: {}", e.toString()); }
         }
         if (last != null) {
+            // found live on T14: a rescue attempt that itself made zero further turns before also
+            // ending wrote "finish":"" (present and textual, so the old check let it straight
+            // through) rather than omitting the field - the Stats-tab status column has no other
+            // fallback for an EMPTY string the way it does for a genuinely missing one, so the
+            // operator just saw a blank cell where a status word belongs. isBlank(), not just
+            // isTextual(), so an empty/whitespace-only finish gets the same "?" placeholder a
+            // missing one already does.
+            final var finishNode = last.path("finish");
+            final var finish = finishNode.isTextual() && !finishNode.asText().isBlank() ? finishNode.asText() : "?";
             events.add(Map.of("type", "session_done", "session_id", sessionIdByFile.getOrDefault(key, ""),
-                    "finish", last.path("finish").isTextual() ? last.path("finish").asText() : "?",
+                    "finish", finish,
                     "ts", last.path("ts").isTextual() ? last.path("ts").asText() : ""));
         }
     }
