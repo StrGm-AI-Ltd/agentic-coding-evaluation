@@ -1268,7 +1268,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     record RequestSpeedPoint(int seq, Double prefillTokPerSec, Double generationTokPerSec,
-                              Double timeToFirstTokenSec, Double totalTimeSec) {
+                              Double timeToFirstTokenSec, Double totalTimeSec, Integer contextTokens) {
     }
 
     /** One attempt's own "request_speeds" array (BenchController.taskStats()'s "attempts[].
@@ -1279,7 +1279,11 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  the whole task) or against any other array of this same shape. generation_tok_per_sec,
      *  time_to_first_token_sec and total_time_sec are all optional on the backend (a line can
      *  carry prefill speed without any of them) - null here too when absent, same as a missing
-     *  prefill_tok_per_sec. */
+     *  prefill_tok_per_sec. contextTokens (the request's own "prompt_tokens" - how much context
+     *  was occupied for this one request) is NOT optional on the backend - parseRequestSpeedEntry()
+     *  already requires it to be present for a line to count at all - but is still read via the
+     *  same isNumber()-guarded pattern as the others for consistency, not because it can be null
+     *  in practice. */
     static List<RequestSpeedPoint> requestSpeedPoints(final JsonNode arr) {
         if (!arr.isArray() || arr.isEmpty()) return List.of();
         final List<RequestSpeedPoint> points = new ArrayList<>();
@@ -1288,11 +1292,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             final var generationTps = r.path("generation_tok_per_sec");
             final var ttft = r.path("time_to_first_token_sec");
             final var totalTime = r.path("total_time_sec");
+            final var contextTokens = r.path("prompt_tokens");
             points.add(new RequestSpeedPoint(r.path("seq").asInt(0),
                     prefillTps.isNumber() ? prefillTps.doubleValue() : null,
                     generationTps.isNumber() ? generationTps.doubleValue() : null,
                     ttft.isNumber() ? ttft.doubleValue() : null,
-                    totalTime.isNumber() ? totalTime.doubleValue() : null));
+                    totalTime.isNumber() ? totalTime.doubleValue() : null,
+                    contextTokens.isNumber() ? contextTokens.intValue() : null));
         }
         return points;
     }
@@ -1456,17 +1462,18 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         container.add(chart);
     }
 
-    /** This chart's own tooltip, read only from series[0] (time to first token) and series[1]
-     *  (total time) - same reason as requestSpeedTooltipJs() above: the compaction column
-     *  (series[2] here) has nothing meaningful to show (its value is just this chart's own peak -
-     *  see compactionColumnData()'s javadoc), so a custom tooltip is the only way to leave it out
-     *  via this addon's Tooltip bean (no "enabledOnSeries"). */
+    /** This chart's own tooltip, read from series[0] (time to first token), series[1] (total
+     *  time) and series[3] (context tokens) - same reason as requestSpeedTooltipJs() above: the
+     *  compaction column (series[2] here) has nothing meaningful to show (its value is just this
+     *  chart's own peak - see compactionColumnData()'s javadoc), so a custom tooltip is the only
+     *  way to leave it out via this addon's Tooltip bean (no "enabledOnSeries"). */
     static String requestTimingTooltipJs() {
         return """
                 function(struct) {
                   var i = struct.dataPointIndex;
                   var ttft = struct.series[0][i];
                   var total = struct.series[1][i];
+                  var context = struct.series[3][i];
                   if (ttft === null || ttft === undefined) return '';
                   var html = '<div style="padding:8px 12px">' +
                     '<div style="font-weight:600;margin-bottom:4px">request #' + (i + 1) + '</div>' +
@@ -1474,24 +1481,32 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                   if (total !== null && total !== undefined) {
                     html += '<div>total time (s): ' + total + '</div>';
                   }
+                  if (context !== null && context !== undefined) {
+                    html += '<div>context tokens: ' + context + '</div>';
+                  }
                   html += '</div>';
                   return html;
                 }
                 """;
     }
 
-    /** Time to first token AND total request time, same per-attempt x-axis (request #) as
-     *  addRequestSpeedChart() above - a separate chart, not a third/fourth series on that one
-     *  (the operator asked for "a second chart", not more series on the first). Both real series
-     *  are already in the same unit (seconds) and total time always includes time-to-first-token
-     *  as its own first leg, so - unlike prefill vs. generation tok/s above - there's no
-     *  rate-vs-rate scale mismatch here that would call for a second y-axis; ONE shared axis
-     *  (a single YAxisBuilder, not an array - ApexCharts applies a lone yaxis to every series by
-     *  default, the same fallback the original 2-series version of this chart already relied on)
-     *  covers the compaction column too, so it reaches this chart's own peak exactly like the
-     *  real series do. Compaction marked the same way as addRequestSpeedChart() - a thin column
-     *  series, not an annotation (see compactionColumnData()'s own javadoc for why), legend
-     *  hidden and tooltip custom for the same reason that chart's is. */
+    /** Time to first token, total request time, AND context size (prompt_tokens - how much
+     *  context was occupied for that one request), same per-attempt x-axis (request #) as
+     *  addRequestSpeedChart() above - a separate chart, not more series on that one (the operator
+     *  asked for "a second chart", not more series on the first). Time-to-first-token and total
+     *  time are already in the same unit (seconds) and total time always includes
+     *  time-to-first-token as its own first leg, so there's no rate-vs-rate scale mismatch between
+     *  THOSE two; context tokens is a wholly different unit and typically a much larger raw number
+     *  (growing into the tens of thousands), so it gets its own axis on the right (yaxis[3],
+     *  opposite=true) - same reason generation tok/s got its own axis on the prefill-speed chart.
+     *  yaxis[1] (total time) and yaxis[2] (the compaction column) both point their own seriesName
+     *  back at "time to first token (s)" so ApexCharts merges all three onto one shared "seconds"
+     *  scale (confirmed via its own source, modules/CoreUtils.js's setSeriesYAxisMappings() - same
+     *  mechanism the prefill-speed chart's own compaction column already relies on), rather than
+     *  each getting an independent auto-scaled axis of its own. Compaction marked the same way as
+     *  addRequestSpeedChart() - a thin column series, not an annotation (see
+     *  compactionColumnData()'s own javadoc for why), legend hidden and tooltip custom for the
+     *  same reason that chart's is. */
     private void addRequestTimingChart(final List<RequestSpeedPoint> points, final List<Integer> compactionsBeforeRequest,
                                         final Div container, final String title) {
         if (points.isEmpty()) return;
@@ -1508,11 +1523,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var compactionSeries = SeriesBuilder.get().withName("compaction")
                 .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
                 .withData(compactionColumnData(compactionsBeforeRequest, points.size(), timingPeak)).build();
+        final var contextSeries = SeriesBuilder.get().withName("context tokens")
+                .withData(points.stream().map(RequestSpeedPoint::contextTokens).toArray(Integer[]::new)).build();
         final var chart = ApexChartsBuilder.get()
                 .withChart(ChartBuilder.get().withType(Type.LINE).build())
-                .withColors("#775DD0", "#FEB019", "#e74c3c")
+                .withColors("#775DD0", "#FEB019", "#e74c3c", "#546E7A")
                 .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get()
-                        .withWidthArray(1.5, 1.5, 0.0).build())
+                        .withWidthArray(1.5, 1.5, 0.0, 1.5).build())
                 .withPlotOptions(com.github.appreciated.apexcharts.config.builder.PlotOptionsBuilder.get()
                         .withBar(com.github.appreciated.apexcharts.config.plotoptions.builder.BarBuilder.get()
                                 .withColumnWidth("16%").build())
@@ -1524,8 +1541,14 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
                                 .withText("request # (red column: a compaction landed right before it)").build())
                         .build())
-                .withYaxis(YAxisBuilder.get().withTitle(TitleBuilder.get().withText("seconds").build()).build())
-                .withSeries(ttftSeries, totalTimeSeries, compactionSeries)
+                .withYaxis(
+                        YAxisBuilder.get().withSeriesName("time to first token (s)")
+                                .withTitle(TitleBuilder.get().withText("seconds").build()).build(),
+                        YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build(),
+                        YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build(),
+                        YAxisBuilder.get().withSeriesName("context tokens").withOpposite(true)
+                                .withTitle(TitleBuilder.get().withText("tokens").build()).build())
+                .withSeries(ttftSeries, totalTimeSeries, compactionSeries, contextSeries)
                 .build();
         chart.setHeight("220px");
         container.add(chart);
