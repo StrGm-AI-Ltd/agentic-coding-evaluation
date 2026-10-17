@@ -680,11 +680,13 @@ class JobDetailViewTest {
         assertEquals(12.3, points.get(0).generationTokPerSec());
         assertEquals(11.89, points.get(0).timeToFirstTokenSec());
         assertEquals(15.63, points.get(0).totalTimeSec());
+        assertEquals(500, points.get(0).contextTokens());
         assertEquals(3, points.get(1).seq());
         assertEquals(89.93, points.get(1).prefillTokPerSec());
         assertNull(points.get(1).generationTokPerSec());
         assertNull(points.get(1).timeToFirstTokenSec());
         assertNull(points.get(1).totalTimeSec());
+        assertEquals(1069, points.get(1).contextTokens());
     }
 
     @Test
@@ -741,13 +743,14 @@ class JobDetailViewTest {
         assertFalse(js.contains("compaction"), js);
     }
 
-    /** The timing chart's own compaction column sits at series[2] (ttft is 0, total time is 1) -
-     *  same reasoning as requestSpeedTooltipJs() above applies here too. */
+    /** The timing chart's own compaction column sits at series[2] (ttft is 0, total time is 1,
+     *  context tokens is 3) - same reasoning as requestSpeedTooltipJs() above applies here too. */
     @Test
-    void requestTimingTooltipJs_readsTheTwoRealSeriesNeverTheCompactionColumn() {
+    void requestTimingTooltipJs_readsTheThreeRealSeriesNeverTheCompactionColumn() {
         final var js = JobDetailView.requestTimingTooltipJs();
         assertTrue(js.contains("struct.series[0]"), js);
         assertTrue(js.contains("struct.series[1]"), js);
+        assertTrue(js.contains("struct.series[3]"), js);
         assertFalse(js.contains("series[2]"), js);
         assertFalse(js.contains("compaction"), js);
     }
