@@ -58,6 +58,36 @@ class JudgeTest {
         assertFalse(Judge.isOffTrack(""), "blank - no verdict detected");
     }
 
+    /** #402/#405: a consistent, budget-driven triage nudge rather than depending on the judge's
+     *  own per-checkpoint phrasing, which does this informally and inconsistently today. Appended
+     *  AFTER the recommendation's own first line, never before it, so isOffTrack()'s own parsing
+     *  of that first line is unaffected either way. */
+    @Test
+    void withTriageNoticeFiresOnceLessThan20PercentOfTheWallBudgetRemains() {
+        final String onTrack = "ON TRACK\n\nKeep going.";
+        assertEquals(onTrack, Judge.withTriageNotice(onTrack, 7999, 10000), "79.99% elapsed, just under the threshold - no notice yet");
+        final String withNotice = Judge.withTriageNotice(onTrack, 8000, 10000);
+        assertTrue(withNotice.startsWith(onTrack), "the original recommendation's own first line must be untouched");
+        assertTrue(withNotice.contains("TRIAGE MODE"));
+        assertFalse(Judge.isOffTrack(withNotice), "appending the notice to an ON TRACK verdict must not flip it off-track");
+
+        final String offTrack = "OFF TRACK\n\nStop re-editing the same line.";
+        assertTrue(Judge.isOffTrack(Judge.withTriageNotice(offTrack, 8000, 10000)),
+                "appending the notice to an OFF TRACK verdict must not lose that verdict either");
+    }
+
+    @Test
+    void withTriageNoticeNeverFiresOnAnUnlimitedWallBudget() {
+        assertEquals("ON TRACK", Judge.withTriageNotice("ON TRACK", 999_999, 0), "0 means unlimited - no threshold to cross");
+    }
+
+    @Test
+    void withTriageNoticeStandsAloneWhenTheRecommendationItselfWasBlank() {
+        final String notice = Judge.withTriageNotice("", 9000, 10000);
+        assertTrue(notice.contains("TRIAGE MODE"));
+        assertFalse(notice.startsWith("\n"), "no leading blank line when there was nothing to prepend it to");
+    }
+
     /** Found live: a restarted task's judge checkpoints used to collide with its earlier,
      *  abandoned attempt's own files (same taskId-turn&lt;N&gt;.md either time) - this is the
      *  disambiguator BenchController.taskJudge() groups by, so it must be a plain, lexicographically

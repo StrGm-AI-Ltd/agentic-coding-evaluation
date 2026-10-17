@@ -53,7 +53,8 @@ public final class Packs {
             - Money: `BigDecimal` only, explicit scale + `RoundingMode`, compare with `compareTo`.
             - Spring: slice tests over `@SpringBootTest` where a DB is not needed; for a full HTTP integration test use `@SpringBootTest(webEnvironment=RANDOM_PORT)` with an injected `TestRestTemplate` (already on the test classpath via `spring-boot-starter-test`) or a plain `RestTemplate` to `http://localhost:${port}` - do NOT remove `spring-boot-starter-test` or its autoconfigure.
             - Do not re-run a command whose output you already have; do not `cat` a file you just wrote.
-            - Delete exploratory stubs, dead helpers, and unused scaffolding before considering a file done - a method that returns null/does nothing and is never called is not finished work. It is a real, found-live cost (wasted turns at best, a compile risk at worst), not a harmless leftover.""";
+            - Delete exploratory stubs, dead helpers, and unused scaffolding before considering a file done - a method that returns null/does nothing and is never called is not finished work. It is a real, found-live cost (wasted turns at best, a compile risk at worst), not a harmless leftover.
+            - During iterative debugging, run a SCOPED test (`./gradlew :module:test --tests 'SpecificClass'`), not the full suite - a full-suite run recompiles and re-resolves everything else too, and most of that result is unrelated to the one failure you are chasing. Reserve a full `./gradlew build`/`test` run for final verification, once the specific test you are fixing is already green on its own.""";
 
     private static String HYGIENE = HYGIENE_TEMPLATE.replace("{window}", "65");
 

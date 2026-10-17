@@ -127,7 +127,7 @@ public class Judge {
                     () -> agent.run(name, prompt, wallSec, tokens, rd.resolve("sessions"), sid, false, SYSTEM, ws.toString(),
                             proxy == null ? externalBase(reviewer, cfg) : proxy.base(), abort, firstTokenTimeoutMs, compactionTrigger,
                             JUDGE_MAX_TURNS, model, extraEnv, null, true));
-            final String recommendation = AgentSession.lastAssistantText(res.sessionFile()).strip();
+            final String recommendation = withTriageNotice(AgentSession.lastAssistantText(res.sessionFile()).strip(), elapsedSec, taskWallSec);
             Files.createDirectories(rd.resolve("judge"));
             final String stamp = attemptStamp(taskStartMs);
             Files.writeString(rd.resolve("judge").resolve(taskId + "-" + stamp + "-turn" + turn + ".md"),
@@ -199,6 +199,25 @@ public class Judge {
         if (recommendation == null) return false;
         final String firstLine = recommendation.strip().lines().findFirst().orElse("");
         return firstLine.strip().toUpperCase(Locale.ROOT).startsWith("OFF TRACK");
+    }
+
+    /** #402/#405: a consistent, budget-driven nudge rather than depending on the judge's own
+     *  per-checkpoint phrasing to reliably communicate this - the judge already does this
+     *  informally, inconsistently, in its own prose ("ample, but only if you stop now"), found
+     *  live on more than one task this run. Appended AFTER the LLM's own recommendation text,
+     *  never before it, so isOffTrack()'s own first-line parsing is unaffected either way - it
+     *  only ever looks at the recommendation's own first line, which this never touches.
+     *  taskWallSec&lt;=0 means unlimited (the system-wide "0 = no budget" convention) - never
+     *  triggers, there is no threshold to cross. */
+    static final double TRIAGE_REMAINING_FRACTION = 0.2;
+
+    static String withTriageNotice(final String recommendation, final long elapsedSec, final long taskWallSec) {
+        if (taskWallSec <= 0 || elapsedSec < (long) (taskWallSec * (1 - TRIAGE_REMAINING_FRACTION))) return recommendation;
+        final String notice = "TRIAGE MODE: under " + Math.round(TRIAGE_REMAINING_FRACTION * 100) + "% of this task's own wall-clock budget "
+                + "remains. Stop refining, polishing, or exploring alternative designs - focus ONLY on making the acceptance criterion's own "
+                + "tests pass with the simplest correct change you can make right now. Write the docs/PROGRESS.md status line as soon as it "
+                + "passes, or as soon as you accept it will not, rather than continuing to iterate.";
+        return recommendation == null || recommendation.isBlank() ? notice : recommendation + "\n\n" + notice;
     }
 
     // package-private (not private): tested directly, same reasoning as RunBench's own
