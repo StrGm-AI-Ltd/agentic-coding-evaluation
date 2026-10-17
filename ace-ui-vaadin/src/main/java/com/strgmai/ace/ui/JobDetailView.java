@@ -1492,8 +1492,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         YAxisBuilder.get().withSeriesName("generation tok/s")
                                 .withTitle(TitleBuilder.get().withText("generation tok/s").build()).build(),
                         YAxisBuilder.get().withSeriesName("context tokens").withOpposite(true)
-                                .withLabels(tokenCountLabels())
-                                .withTitle(TitleBuilder.get().withText("tokens").build()).build())
+                                .withLabels(tokenCountLabels()).build())
                 .withSeries(speedSeries, compactionSeries, generationSeries, contextSeries)
                 .build();
         chart.setHeight("220px");
@@ -1589,8 +1588,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                                 .withTitle(TitleBuilder.get().withText("total time (s)").build()).build(),
                         YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build(),
                         YAxisBuilder.get().withSeriesName("context tokens").withOpposite(true)
-                                .withLabels(tokenCountLabels())
-                                .withTitle(TitleBuilder.get().withText("tokens").build()).build())
+                                .withLabels(tokenCountLabels()).build())
                 .withSeries(ttftSeries, totalTimeSeries, compactionSeries, contextSeries)
                 .build();
         chart.setHeight("220px");
