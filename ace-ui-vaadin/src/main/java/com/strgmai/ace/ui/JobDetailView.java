@@ -1407,19 +1407,22 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  points are packed into one chart. A request a compaction landed right before is marked by
      *  a thin red column (a real second series - see compactionColumnData() above for why, not an
      *  annotation), so the operator can see whether speed actually dips there. Prefill and
-     *  generation share ONE left-hand "tok/s" axis - both are rate figures in the same unit, even
-     *  though generation typically runs well below prefill (decode vs. prompt processing).
-     *  Context tokens is a wholly different unit and a much larger raw number (growing into the
-     *  tens of thousands) - it gets its own axis on the right (yaxis[3], opposite=true), same
-     *  reason it got its own axis on the request-timing chart. yaxis[1] (the compaction column)
-     *  and yaxis[2] (generation tok/s) both point their own seriesName at "prefill tok/s" rather
-     *  than carrying a scale of their own - ApexCharts' own yaxis.seriesName mechanism (confirmed
-     *  via its source, modules/CoreUtils.js's setSeriesYAxisMappings()) merges any yaxis entries
-     *  that share one seriesName into a single scale. The compaction column's own height is sized
-     *  off the LARGER of the two left-axis series' own peaks (prefill almost always dominates in
-     *  practice, but computing it from both keeps the column reaching the true top of the shared
-     *  scale rather than assuming which series wins). Added to `container` directly, same as
-     *  every other Stats-tab element. */
+     *  generation each get their OWN left-hand axis, not a shared one - the operator found
+     *  generation's own dynamics unreadable once squeezed onto prefill's much larger scale (it
+     *  typically runs well below prefill - decode vs. prompt processing). ApexCharts supports any
+     *  number of independent y-axes stacked on one side, not just one per side (confirmed via its
+     *  own source, dimensions/YAxis.js's getTotalYAxisWidth(): every yaxis entry adds its own
+     *  width to yAxisWidthLeft or yAxisWidthRight purely based on its own `opposite` flag, with no
+     *  cap on how many share a side) - two visible, independently-scaled axes with `opposite`
+     *  left unset (false) is exactly that, both landing on the left. Context tokens is a wholly
+     *  different unit and a much larger raw number (growing into the tens of thousands) - it
+     *  keeps its own axis on the right (yaxis[3], opposite=true), same reason it got its own axis
+     *  on the request-timing chart. yaxis[1] (the compaction column) points its own seriesName
+     *  back at "prefill tok/s" so it merges onto prefill's own scale and reaches that line's own
+     *  peak - ApexCharts' own yaxis.seriesName mechanism (confirmed via its source,
+     *  modules/CoreUtils.js's setSeriesYAxisMappings()) merges any yaxis entries that share one
+     *  seriesName into a single scale. Added to `container` directly, same as every other
+     *  Stats-tab element. */
     private void addRequestSpeedChart(final List<RequestSpeedPoint> points, final List<Integer> compactionsBeforeRequest,
                                        final Div container, final String title) {
         if (points.isEmpty()) return;
@@ -1429,11 +1432,11 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         xaxisLabels.setFormatter(requestSpeedLabelFormatterJs());
         final var speedSeries = SeriesBuilder.get().withName("prefill tok/s")
                 .withData(points.stream().map(RequestSpeedPoint::prefillTokPerSec).toArray(Double[]::new)).build();
-        final var speedPeak = points.stream().flatMap(p -> java.util.stream.Stream.of(p.prefillTokPerSec(), p.generationTokPerSec()))
-                .filter(Objects::nonNull).mapToDouble(Double::doubleValue).max().orElse(0);
+        final var prefillPeak = points.stream().map(RequestSpeedPoint::prefillTokPerSec).filter(Objects::nonNull)
+                .mapToDouble(Double::doubleValue).max().orElse(0);
         final var compactionSeries = SeriesBuilder.get().withName("compaction")
                 .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
-                .withData(compactionColumnData(compactionsBeforeRequest, points.size(), speedPeak)).build();
+                .withData(compactionColumnData(compactionsBeforeRequest, points.size(), prefillPeak)).build();
         final var generationSeries = SeriesBuilder.get().withName("generation tok/s")
                 .withData(points.stream().map(RequestSpeedPoint::generationTokPerSec).toArray(Double[]::new)).build();
         final var contextSeries = SeriesBuilder.get().withName("context tokens")
@@ -1461,9 +1464,10 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         .build())
                 .withYaxis(
                         YAxisBuilder.get().withSeriesName("prefill tok/s")
-                                .withTitle(TitleBuilder.get().withText("tok/s").build()).build(),
+                                .withTitle(TitleBuilder.get().withText("prefill tok/s").build()).build(),
                         YAxisBuilder.get().withSeriesName("prefill tok/s").withShow(false).build(),
-                        YAxisBuilder.get().withSeriesName("prefill tok/s").withShow(false).build(),
+                        YAxisBuilder.get().withSeriesName("generation tok/s")
+                                .withTitle(TitleBuilder.get().withText("generation tok/s").build()).build(),
                         YAxisBuilder.get().withSeriesName("context tokens").withOpposite(true)
                                 .withTitle(TitleBuilder.get().withText("tokens").build()).build())
                 .withSeries(speedSeries, compactionSeries, generationSeries, contextSeries)
