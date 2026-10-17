@@ -1508,16 +1508,19 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  context was occupied for that one request), same per-attempt x-axis (request #) as
      *  addRequestSpeedChart() above - a separate chart, not more series on that one (the operator
      *  asked for "a second chart", not more series on the first). Time-to-first-token and total
-     *  time are already in the same unit (seconds) and total time always includes
-     *  time-to-first-token as its own first leg, so there's no rate-vs-rate scale mismatch between
-     *  THOSE two; context tokens is a wholly different unit and typically a much larger raw number
-     *  (growing into the tens of thousands), so it gets its own axis on the right (yaxis[3],
-     *  opposite=true) - same reason generation tok/s got its own axis on the prefill-speed chart.
-     *  yaxis[1] (total time) and yaxis[2] (the compaction column) both point their own seriesName
-     *  back at "time to first token (s)" so ApexCharts merges all three onto one shared "seconds"
-     *  scale (confirmed via its own source, modules/CoreUtils.js's setSeriesYAxisMappings() - same
-     *  mechanism the prefill-speed chart's own compaction column already relies on), rather than
-     *  each getting an independent auto-scaled axis of its own. Compaction marked the same way as
+     *  time each get their OWN left-hand axis, not a shared one - same reason the prefill-speed
+     *  chart's two tok/s series do (#389): total time can run well above time-to-first-token (it
+     *  includes the whole generation phase too), so sharing one scale squashed
+     *  time-to-first-token's own dynamics down near zero. ApexCharts supports any number of
+     *  independent y-axes stacked on one side, not just one per side (confirmed via its own
+     *  source, dimensions/YAxis.js's getTotalYAxisWidth() - see addRequestSpeedChart()'s own
+     *  javadoc for the exact mechanism) - two visible axes with `opposite` left unset both land on
+     *  the left. Context tokens is a wholly different unit and typically a much larger raw number
+     *  (growing into the tens of thousands), so it keeps its own axis on the right (yaxis[3],
+     *  opposite=true). yaxis[2] (the compaction column) points its own seriesName back at "time to
+     *  first token (s)" so it merges onto that line's own scale and reaches its own peak -
+     *  ApexCharts' own yaxis.seriesName mechanism (confirmed via its source,
+     *  modules/CoreUtils.js's setSeriesYAxisMappings()). Compaction marked the same way as
      *  addRequestSpeedChart() - a thin column series, not an annotation (see
      *  compactionColumnData()'s own javadoc for why), legend hidden and tooltip custom for the
      *  same reason that chart's is. */
@@ -1532,11 +1535,11 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 .withData(points.stream().map(RequestSpeedPoint::timeToFirstTokenSec).toArray(Double[]::new)).build();
         final var totalTimeSeries = SeriesBuilder.get().withName("total time (s)")
                 .withData(points.stream().map(RequestSpeedPoint::totalTimeSec).toArray(Double[]::new)).build();
-        final var timingPeak = points.stream().flatMap(p -> java.util.stream.Stream.of(p.timeToFirstTokenSec(), p.totalTimeSec()))
-                .filter(Objects::nonNull).mapToDouble(Double::doubleValue).max().orElse(0);
+        final var ttftPeak = points.stream().map(RequestSpeedPoint::timeToFirstTokenSec).filter(Objects::nonNull)
+                .mapToDouble(Double::doubleValue).max().orElse(0);
         final var compactionSeries = SeriesBuilder.get().withName("compaction")
                 .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
-                .withData(compactionColumnData(compactionsBeforeRequest, points.size(), timingPeak)).build();
+                .withData(compactionColumnData(compactionsBeforeRequest, points.size(), ttftPeak)).build();
         final var contextSeries = SeriesBuilder.get().withName("context tokens")
                 .withData(points.stream().map(RequestSpeedPoint::contextTokens).toArray(Integer[]::new)).build();
         final var chart = ApexChartsBuilder.get()
@@ -1557,8 +1560,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         .build())
                 .withYaxis(
                         YAxisBuilder.get().withSeriesName("time to first token (s)")
-                                .withTitle(TitleBuilder.get().withText("seconds").build()).build(),
-                        YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build(),
+                                .withTitle(TitleBuilder.get().withText("time to first token (s)").build()).build(),
+                        YAxisBuilder.get().withSeriesName("total time (s)")
+                                .withTitle(TitleBuilder.get().withText("total time (s)").build()).build(),
                         YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build(),
                         YAxisBuilder.get().withSeriesName("context tokens").withOpposite(true)
                                 .withTitle(TitleBuilder.get().withText("tokens").build()).build())
