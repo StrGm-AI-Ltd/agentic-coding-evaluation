@@ -730,15 +730,17 @@ class JobDetailViewTest {
      *  missing entirely. Root cause: the addon's Tooltip bean has no "enabledOnSeries" (the real
      *  ApexCharts.js option for excluding a series from the tooltip), and the earlier
      *  `shared(false)` setting required a literal hover over a point's own (invisible, 0-radius)
-     *  marker to show anything. A custom JS tooltip reading series[0] (prefill) and series[2]
-     *  (generation, added later) is the only way to leave the compaction series out while keeping
-     *  hover-anywhere-near-x working for the real two - pinned by asserting its source reads
-     *  series[0] and series[2], never series[1] or the word "compaction". */
+     *  marker to show anything. A custom JS tooltip reading series[0] (prefill), series[2]
+     *  (generation) and series[3] (context tokens, added later) is the only way to leave the
+     *  compaction series out while keeping hover-anywhere-near-x working for the real three -
+     *  pinned by asserting its source reads series[0]/[2]/[3], never series[1] or the word
+     *  "compaction". */
     @Test
-    void requestSpeedTooltipJs_readsTheTwoRealSeriesNeverTheCompactionColumn() {
+    void requestSpeedTooltipJs_readsTheThreeRealSeriesNeverTheCompactionColumn() {
         final var js = JobDetailView.requestSpeedTooltipJs();
         assertTrue(js.contains("struct.series[0]"), js);
         assertTrue(js.contains("struct.series[2]"), js);
+        assertTrue(js.contains("struct.series[3]"), js);
         assertFalse(js.contains("series[1]"), js);
         assertFalse(js.contains("compaction"), js);
     }
