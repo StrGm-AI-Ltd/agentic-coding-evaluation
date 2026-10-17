@@ -303,6 +303,24 @@ class TailerTest {
         assertEquals("stop", done.get("finish"));
     }
 
+    /** Found live on T14: a rescue attempt that itself made zero further turns before also ending
+     *  wrote a trailing {"type":"end","finish":""} line - present and textual, so the old check
+     *  ("isTextual() ? asText() : \"?\"") let the empty string straight through as the reported
+     *  finish reason, and the Stats-tab status column (which only has a fallback for a NULL
+     *  endedStage, not a blank one) rendered as an empty cell with no status word at all. An empty
+     *  or whitespace-only finish must get the same "?" placeholder a genuinely missing one already
+     *  does. */
+    @Test
+    void sessionEndWithABlankFinishReasonFallsBackToUnknownRatherThanAnEmptyString() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"),
+                SESSION_HEADER + "{\"type\": \"end\", \"finish\": \"\", \"turns\": 0}\n");
+        final var events = new Tailer().poll(runDir);
+        final var done = events.stream().filter(e -> "session_done".equals(e.get("type"))).findFirst().orElseThrow();
+        assertEquals("?", done.get("finish"));
+    }
+
     /** Paired with the session's own start ts (sessionStartedForwardsItsTimestamp) to compute the
      *  sessions grid's "wall time" column. */
     @Test
