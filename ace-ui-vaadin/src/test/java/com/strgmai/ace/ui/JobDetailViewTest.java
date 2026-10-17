@@ -736,6 +736,16 @@ class JobDetailViewTest {
         assertTrue(js.contains("'k'"), js);
     }
 
+    /** The prefill/generation tok/s and time-to-first-token/total-time axes read "92.20"/"45.67"
+     *  (ApexCharts' own default 2-decimal numeric format) - the operator asked for the whole-number
+     *  trend only, the exact figure already being available in each chart's own tooltip. Same
+     *  source-text-only pinning as the formatters above. */
+    @Test
+    void integerLabelFormatterJs_roundsToTheNearestWholeNumber() {
+        final var js = JobDetailView.integerLabelFormatterJs();
+        assertTrue(js.contains("Math.round(val)"), js);
+    }
+
     /** The operator reported the compaction column's own tooltip showing a meaningless
      *  "compaction: 92.20" (its data value is just the series' own peak - see
      *  compactionColumnData() above - not a real reading), while the main line's tooltip had gone
