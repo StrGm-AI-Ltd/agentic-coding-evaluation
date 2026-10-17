@@ -409,4 +409,41 @@ class TailerTest {
         final var events = new Tailer().poll(Files.createTempDirectory("tailer"));
         assertTrue(events.stream().noneMatch(e -> "execution_order".equals(e.get("type"))));
     }
+
+    @Test
+    void rescueStartMarkerEmitsRescueStartedWithItsOwnReasonText() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("rescue"));
+        Files.writeString(runDir.resolve("rescue/T14.start"), "ran out of its own token budget");
+        final var events = new Tailer().poll(runDir);
+        final var started = events.stream().filter(e -> "rescue_started".equals(e.get("type"))).findFirst().orElseThrow();
+        assertEquals("T14", started.get("task"));
+        assertEquals("ran out of its own token budget", started.get("reason"));
+    }
+
+    @Test
+    void rescueDoneMarkerEmitsRescueDone() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("rescue"));
+        Files.writeString(runDir.resolve("rescue/T14.start"), "ran out of its own token budget");
+        Files.writeString(runDir.resolve("rescue/T14.done"), "");
+        final var events = new Tailer().poll(runDir);
+        assertTrue(events.stream().anyMatch(e -> "rescue_done".equals(e.get("type")) && "T14".equals(e.get("task"))));
+    }
+
+    @Test
+    void rescueMarkersAreNotReportedTwice() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.createDirectories(runDir.resolve("rescue"));
+        Files.writeString(runDir.resolve("rescue/T14.start"), "ran out of its own token budget");
+        final var tailer = new Tailer();
+        tailer.poll(runDir);
+        assertTrue(tailer.poll(runDir).stream().noneMatch(e -> "rescue_started".equals(e.get("type"))));
+    }
+
+    @Test
+    void aRunWithNoRescueDirectoryReportsNoRescueEvents() throws Exception {
+        final var events = new Tailer().poll(Files.createTempDirectory("tailer"));
+        assertTrue(events.stream().noneMatch(e -> "rescue_started".equals(e.get("type")) || "rescue_done".equals(e.get("type"))));
+    }
 }

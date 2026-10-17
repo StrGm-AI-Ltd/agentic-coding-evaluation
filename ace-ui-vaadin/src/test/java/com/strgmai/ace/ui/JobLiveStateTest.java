@@ -142,6 +142,36 @@ class JobLiveStateTest {
         assertEquals(List.of(), JobLiveState.parseExecutionOrder(Json.MAPPER.readTree("{\"waves\": \"bogus\"}")));
     }
 
+    @Test
+    void rescueStartedMakesTheTaskReportARescuingReason() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: rescue_started
+                data: {"type": "rescue_started", "task": "T14", "reason": "ran out of its own token budget"}
+
+                """).forEach(state::apply);
+        assertEquals("ran out of its own token budget", state.rescuingReason("T14"));
+    }
+
+    @Test
+    void rescueDoneClearsTheRescuingReason() {
+        final var state = new JobLiveState();
+        SseParser.parseAll("""
+                event: rescue_started
+                data: {"type": "rescue_started", "task": "T14", "reason": "ran out of its own token budget"}
+
+                event: rescue_done
+                data: {"type": "rescue_done", "task": "T14"}
+
+                """).forEach(state::apply);
+        assertNull(state.rescuingReason("T14"));
+    }
+
+    @Test
+    void rescuingReasonIsNullForATaskThatNeverHadARescue() {
+        assertNull(new JobLiveState().rescuingReason("T14"));
+    }
+
     /** session_done now carries the real session_id (Tailer reads it from the session file's own
      *  header) and the finish reason from its trailing {"type":"end"} line - matched exactly, not
      *  guessed as "the oldest still-open session". */

@@ -254,15 +254,15 @@ class JobDetailViewTest {
 
     @Test
     void taskStatus_noMatchingSessionIsNotStartedUnlessTerminal() {
-        assertEquals("not started", JobDetailView.taskStatus(List.of(), planTask("T2", false, false), false, null));
-        assertEquals("see Run detail", JobDetailView.taskStatus(List.of(), planTask("T2", false, false), true, null),
+        assertEquals("not started", JobDetailView.taskStatus(List.of(), planTask("T2", false, false), false, null, null));
+        assertEquals("see Run detail", JobDetailView.taskStatus(List.of(), planTask("T2", false, false), true, null, null),
                 "a terminal job with no live session for this task must not claim it was never started");
     }
 
     @Test
     void taskStatus_runningWhileItsSessionHasNoEndedStageYetAndItIsTheCurrentStep() {
         final var sessions = List.of(sessionRow("Task T2", null));
-        assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T2", false, false), false, "T2"));
+        assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T2", false, false), false, "T2", null));
     }
 
     /** #335, found live: an unclosed session for a task that is NOT the current step was
@@ -271,13 +271,13 @@ class JobDetailViewTest {
     @Test
     void taskStatus_anUnclosedSessionForANonCurrentTaskIsInterruptedNotRunning() {
         final var sessions = List.of(sessionRow("Task T21", null));
-        assertEquals("interrupted", JobDetailView.taskStatus(sessions, planTask("T21", false, false), false, "T11"));
+        assertEquals("interrupted", JobDetailView.taskStatus(sessions, planTask("T21", false, false), false, "T11", null));
     }
 
     @Test
     void taskStatus_reportsTheSessionsOwnFinishReasonOnceEnded() {
         final var sessions = List.of(sessionRow("Task T2 — implement the API", "stop"));
-        assertEquals("stop", JobDetailView.taskStatus(sessions, planTask("T2", false, false), false, null));
+        assertEquals("stop", JobDetailView.taskStatus(sessions, planTask("T2", false, false), false, null, null));
     }
 
     /** "T1" must never match a session actually for "T10"/"T11" - both share "Task T1" as a string
@@ -285,7 +285,7 @@ class JobDetailViewTest {
     @Test
     void taskStatus_doesNotFalseMatchATaskIdThatIsAPrefixOfAnothersId() {
         final var sessions = List.of(sessionRow("Task T10 (handoff)", "stop"));
-        assertEquals("not started", JobDetailView.taskStatus(sessions, planTask("T1", false, false), false, null));
+        assertEquals("not started", JobDetailView.taskStatus(sessions, planTask("T1", false, false), false, null, null));
     }
 
     /** a resumed/retried task gets a fresh session sharing the same description prefix - the LAST
@@ -293,7 +293,7 @@ class JobDetailViewTest {
     @Test
     void taskStatus_theLastMatchingSessionWinsOverAnEarlierAbandonedAttempt() {
         final var sessions = List.of(sessionRow("Task T3 (handoff)", "interrupted"), sessionRow("Task T3 (handoff)", null));
-        assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T3", false, false), false, "T3"));
+        assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T3", false, false), false, "T3", null));
     }
 
     /** #254, found live: a task finished in a PRIOR attempt is resumed straight past (R18) and so
@@ -301,9 +301,9 @@ class JobDetailViewTest {
      *  genuinely-finished task as "not started". Falls back to the workspace's own git tags. */
     @Test
     void taskStatus_fallsBackToTheWorkspacesOwnTagsWhenThereIsNoLiveSessionAtAll() {
-        assertEquals("done", JobDetailView.taskStatus(List.of(), planTask("T1", true, true), false, null));
-        assertEquals("implemented (handoff pending)", JobDetailView.taskStatus(List.of(), planTask("T1", true, false), false, null));
-        assertEquals("not started", JobDetailView.taskStatus(List.of(), planTask("T1", false, false), false, null));
+        assertEquals("done", JobDetailView.taskStatus(List.of(), planTask("T1", true, true), false, null, null));
+        assertEquals("implemented (handoff pending)", JobDetailView.taskStatus(List.of(), planTask("T1", true, false), false, null, null));
+        assertEquals("not started", JobDetailView.taskStatus(List.of(), planTask("T1", false, false), false, null, null));
     }
 
     /** A genuinely LIVE session (no endedStage yet) for the CURRENT step outranks the tag fallback
@@ -313,7 +313,7 @@ class JobDetailViewTest {
     @Test
     void taskStatus_aLiveRunningSessionOutranksTheTagFallback() {
         final var sessions = List.of(sessionRow("Task T2", null));
-        assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T2", true, true), false, "T2"),
+        assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T2", true, true), false, "T2", null),
                 "a currently-running session must win even if the tags also say done");
     }
 
@@ -323,11 +323,11 @@ class JobDetailViewTest {
      *  implemented, in preference to a flat "done". */
     @Test
     void taskStatus_showsTheReportedOutcomeOnceImplemented() {
-        assertEquals("partial", JobDetailView.taskStatus(List.of(), planTask("T1", true, true, "partial"), false, null));
-        assertEquals("blocked", JobDetailView.taskStatus(List.of(), planTask("T1", true, true, "blocked"), false, null));
-        assertEquals("unfinished", JobDetailView.taskStatus(List.of(), planTask("T1", true, true, "unfinished"), false, null));
+        assertEquals("partial", JobDetailView.taskStatus(List.of(), planTask("T1", true, true, "partial"), false, null, null));
+        assertEquals("blocked", JobDetailView.taskStatus(List.of(), planTask("T1", true, true, "blocked"), false, null, null));
+        assertEquals("unfinished", JobDetailView.taskStatus(List.of(), planTask("T1", true, true, "unfinished"), false, null, null));
         assertEquals("partial (handoff pending)",
-                JobDetailView.taskStatus(List.of(), planTask("T1", true, false, "partial"), false, null),
+                JobDetailView.taskStatus(List.of(), planTask("T1", true, false, "partial"), false, null, null),
                 "handoff pending is still worth flagging alongside the real self-reported outcome");
     }
 
@@ -339,7 +339,7 @@ class JobDetailViewTest {
     @Test
     void taskStatus_reportedOutcomeOutranksAStaleEndedSessionOnceImplemented() {
         final var sessions = List.of(sessionRow("Task T7", "tool_execution"));
-        assertEquals("unfinished", JobDetailView.taskStatus(sessions, planTask("T7", true, true, "unfinished"), false, null),
+        assertEquals("unfinished", JobDetailView.taskStatus(sessions, planTask("T7", true, true, "unfinished"), false, null, null),
                 "the task's own real, persistent verdict must win over a stale ended-session row");
     }
 
@@ -349,15 +349,39 @@ class JobDetailViewTest {
     @Test
     void taskStatusReason_mirrorsTaskStatussOwnPrecedence() {
         assertEquals("budget exhausted before a status was written",
-                JobDetailView.taskStatusReason(List.of(), planTask("T7", true, true, "unfinished", "budget exhausted before a status was written")));
-        assertNull(JobDetailView.taskStatusReason(List.of(), planTask("T1", false, false)),
+                JobDetailView.taskStatusReason(List.of(), planTask("T7", true, true, "unfinished", "budget exhausted before a status was written"), null));
+        assertNull(JobDetailView.taskStatusReason(List.of(), planTask("T1", false, false), null),
                 "nothing to explain yet for a task that hasn't even started");
-        assertNull(JobDetailView.taskStatusReason(List.of(), planTask("T1", true, true, "done", null)),
+        assertNull(JobDetailView.taskStatusReason(List.of(), planTask("T1", true, true, "done", null), null),
                 "no detail was ever written - nothing to show, not an empty tooltip");
 
         final var running = List.of(sessionRow("Task T7", null));
-        assertNull(JobDetailView.taskStatusReason(running, planTask("T7", true, true, "unfinished", "stale - from a prior attempt")),
+        assertNull(JobDetailView.taskStatusReason(running, planTask("T7", true, true, "unfinished", "stale - from a prior attempt"), null),
                 "a genuinely running session must suppress a tooltip left over from a past attempt");
+    }
+
+    /** Found live on T14: a budget-rescue attempt reuses the task's own canonical session id, so a
+     *  stray failed wrap-up sub-call's own "end" record can leave endedStage non-null (reading as
+     *  "?", or even as the task's real reported outcome once implemented) while the rescue is
+     *  genuinely still working for hours afterward. A non-null rescuingReason must outrank every
+     *  other branch, including a session that looks ended and a task that already looks implemented. */
+    @Test
+    void taskStatus_aRescueInProgressOutranksEveryOtherBranch() {
+        assertEquals("budget rescue in progress",
+                JobDetailView.taskStatus(List.of(), planTask("T14", false, false), false, null, "ran out of its own token budget"));
+        final var ended = List.of(sessionRow("Task T14", "?"));
+        assertEquals("budget rescue in progress",
+                JobDetailView.taskStatus(ended, planTask("T14", false, false), false, null, "ran out of its own token budget"),
+                "a stray failed wrap-up's own misleading endedStage must not win over a genuinely in-progress rescue");
+        assertEquals("budget rescue in progress",
+                JobDetailView.taskStatus(ended, planTask("T14", true, true, "partial"), false, null, "ran out of its own token budget"),
+                "even a task that already looks implemented must defer to an in-progress rescue");
+    }
+
+    @Test
+    void taskStatusReason_showsTheRescuesOwnReasonWhileOneIsInProgress() {
+        assertEquals("ran out of its own token budget",
+                JobDetailView.taskStatusReason(List.of(), planTask("T14", false, false), "ran out of its own token budget"));
     }
 
     /** #355-followup: found live on T7's own real Stats tab - a bare "rc: 124" means nothing to

@@ -95,6 +95,12 @@ public final class JobLiveState implements Serializable {
     // the run's declared task waves (RunBench writes execution_order.json before any task session
     // starts) - one entry per wave, each a list of task ids; empty until that one-shot event lands
     private List<List<String>> executionOrder = List.of();
+    // task id -> the rescue's own stated reason (RunBench.rescueReason()'s text) while a budget-
+    // rescue attempt is in progress for that task; absent once rescue_done arrives. The only live
+    // signal distinguishing "a rescue is genuinely still working" from "nothing is happening" when a
+    // stray wrap-up sub-call's own "end" record already made the session look finished (see
+    // JobDetailView.taskStatus()).
+    private final Map<String, String> rescuingTasks = new LinkedHashMap<>();
 
     public synchronized void apply(final SseEvent event) {
         final var data = event.data();
@@ -120,6 +126,8 @@ public final class JobLiveState implements Serializable {
             }
             case "session_done" -> markSessionDone(data);
             case "execution_order" -> executionOrder = parseExecutionOrder(data);
+            case "rescue_started" -> rescuingTasks.put(Fmt.textOr(data.path("task"), ""), Fmt.textOr(data.path("reason"), ""));
+            case "rescue_done" -> rescuingTasks.remove(Fmt.textOr(data.path("task"), ""));
             case "request" -> {
                 // #333: skip a replayed delivery of a request already folded in - see
                 // seenRequestKeys' own field comment. A request with no session_id/seq (shouldn't
@@ -351,6 +359,13 @@ public final class JobLiveState implements Serializable {
 
     public synchronized String currentStep() {
         return steps.isEmpty() ? null : steps.get(steps.size() - 1);
+    }
+
+    /** Null unless a budget-rescue attempt is currently in progress for this task id, in which case
+     *  this is the rescue's own stated reason (RunBench.rescueReason()'s text, e.g. "ran out of
+     *  context window space (its own conversation history grew too large to fit)"). */
+    public synchronized String rescuingReason(final String taskId) {
+        return rescuingTasks.get(taskId);
     }
 
     /** A snapshot copy — never the live list. */

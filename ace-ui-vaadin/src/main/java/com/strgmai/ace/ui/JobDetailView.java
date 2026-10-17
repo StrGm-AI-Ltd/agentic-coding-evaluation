@@ -537,11 +537,11 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         ? (t.title() == null ? "" : t.title()) : t.goal())
                 .setHeader("description").setFlexGrow(1);
         grid.addColumn(t -> taskStatus(live.sessions(), t,
-                        currentJob != null && JobStatuses.isTerminal(currentJob.status()), live.currentStep()))
+                        currentJob != null && JobStatuses.isTerminal(currentJob.status()), live.currentStep(), live.rescuingReason(t.id())))
                 .setHeader("status").setAutoWidth(true).setFlexGrow(0)
                 // #262: the status word alone doesn't say WHY a task didn't just succeed - hover
                 // for the agent's own self-reported detail (or the harness fallback's explanation).
-                .setTooltipGenerator(t -> taskStatusReason(live.sessions(), t));
+                .setTooltipGenerator(t -> taskStatusReason(live.sessions(), t, live.rescuingReason(t.id())));
         grid.addColumn(t -> Fmt.daysHoursMinutes(taskStats(live.sessions(), t.id(), live.currentStep()).wallSec()))
                 .setHeader("time").setAutoWidth(true).setFlexGrow(0);
         grid.addColumn(t -> Fmt.count(taskStats(live.sessions(), t.id(), live.currentStep()).completionTokens()))
@@ -611,8 +611,16 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  unclosed, and closeAbandonedAttempt() only fires when THIS SAME task is retried, which can
      *  be many tasks away. currentStep is the one live signal that's always current regardless of
      *  which task it names - an unclosed session only still counts as "running" when it's also the
-     *  current step; otherwise it's treated exactly like an already-recognized abandoned attempt. */
-    static String taskStatus(final List<JobLiveState.SessionRow> sessions, final Api.PlanTask task, final boolean terminal, final String currentStep) {
+     *  current step; otherwise it's treated exactly like an already-recognized abandoned attempt.
+     *
+     *  Found live on T14: a budget-rescue attempt reuses the task's own canonical session id, so a
+     *  stray failed wrap-up sub-call's own "end" record can make endedStage non-null (and the task
+     *  look finished, or "?" once #396 fixed the blank-string case) while the rescue is genuinely
+     *  still working for hours afterward. rescuingReason (non-null only while RunBench.rescueStep()
+     *  has a "<taskId>.start" marker written and no ".done" yet - see JobLiveState.rescuingReason())
+     *  takes priority over every other branch, including "implemented", for exactly that reason. */
+    static String taskStatus(final List<JobLiveState.SessionRow> sessions, final Api.PlanTask task, final boolean terminal, final String currentStep, final String rescuingReason) {
+        if (rescuingReason != null) return "budget rescue in progress";
         final var last = lastMatchingSession(sessions, task.id());
         if (last != null && last.endedStage() == null && task.id().equals(currentStep)) return "running";
         final var endedStage = last == null ? null : (last.endedStage() != null ? last.endedStage() : "interrupted");
@@ -631,8 +639,10 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  (unfinished) - shown as a tooltip on the status cell. Mirrors taskStatus()'s own precedence
      *  exactly: null whenever that method isn't actually showing a reported outcome (still running,
      *  or not started at all), so hovering a transient state never surfaces stale detail text left
-     *  over from a past, unrelated attempt. */
-    static String taskStatusReason(final List<JobLiveState.SessionRow> sessions, final Api.PlanTask task) {
+     *  over from a past, unrelated attempt. rescuingReason (see taskStatus()'s own javadoc) takes
+     *  the same top priority there, naming the real reason the rescue fired in the first place. */
+    static String taskStatusReason(final List<JobLiveState.SessionRow> sessions, final Api.PlanTask task, final String rescuingReason) {
+        if (rescuingReason != null) return rescuingReason;
         final var last = lastMatchingSession(sessions, task.id());
         if (last != null && last.endedStage() == null) return null;
         if (!task.implemented()) return null;
