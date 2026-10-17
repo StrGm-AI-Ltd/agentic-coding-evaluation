@@ -724,6 +724,18 @@ class JobDetailViewTest {
         assertTrue(js.contains("% 10 === 0"), js);
     }
 
+    /** The context-tokens axis on both charts reads "50000.00" (ApexCharts' own default
+     *  2-decimal numeric format) once context grows into the tens of thousands - this raw JS
+     *  formatter compacts it to "50k" (or "52.3k" when the thousands aren't round). Same
+     *  source-text-only pinning as the formatter above - see its own javadoc for why no JS
+     *  runtime is used here. */
+    @Test
+    void tokenCountLabelFormatterJs_compactsThousandsWithAKSuffix() {
+        final var js = JobDetailView.tokenCountLabelFormatterJs();
+        assertTrue(js.contains(">= 1000"), js);
+        assertTrue(js.contains("'k'"), js);
+    }
+
     /** The operator reported the compaction column's own tooltip showing a meaningless
      *  "compaction: 92.20" (its data value is just the series' own peak - see
      *  compactionColumnData() above - not a real reading), while the main line's tooltip had gone
