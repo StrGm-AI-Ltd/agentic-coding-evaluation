@@ -660,13 +660,15 @@ class JobDetailViewTest {
      *  one attempt's own "request_speeds" array shape (BenchController.taskStats()'s
      *  "attempts[].request_speeds"), same convention as RunDetailView.speedByContextRows(). A
      *  missing prefill figure (a failed/non-streamed call) must read as a null data point, not a
-     *  crash or a silently-dropped request - generation_tok_per_sec is optional on the backend
-     *  the same way, so it gets the same null-when-absent treatment here (seq 3). */
+     *  crash or a silently-dropped request - generation_tok_per_sec, time_to_first_token_sec and
+     *  total_time_sec are all optional on the backend the same way, so they get the same
+     *  null-when-absent treatment here (seq 3). */
     @Test
-    void requestSpeedPoints_readsSeqAndPrefillAndGenerationSpeedInOrder() {
+    void requestSpeedPoints_readsSeqPrefillGenerationAndTimingInOrder() {
         final var arr = Json.MAPPER.readTree("""
                 [
-                    {"seq": 2, "prompt_tokens": 500, "prefill_tok_per_sec": 120.5, "generation_tok_per_sec": 12.3},
+                    {"seq": 2, "prompt_tokens": 500, "prefill_tok_per_sec": 120.5, "generation_tok_per_sec": 12.3,
+                     "time_to_first_token_sec": 11.89, "total_time_sec": 15.63},
                     {"seq": 3, "prompt_tokens": 1069, "prefill_tok_per_sec": 89.93}
                 ]""");
 
@@ -676,9 +678,13 @@ class JobDetailViewTest {
         assertEquals(2, points.get(0).seq());
         assertEquals(120.5, points.get(0).prefillTokPerSec());
         assertEquals(12.3, points.get(0).generationTokPerSec());
+        assertEquals(11.89, points.get(0).timeToFirstTokenSec());
+        assertEquals(15.63, points.get(0).totalTimeSec());
         assertEquals(3, points.get(1).seq());
         assertEquals(89.93, points.get(1).prefillTokPerSec());
         assertNull(points.get(1).generationTokPerSec());
+        assertNull(points.get(1).timeToFirstTokenSec());
+        assertNull(points.get(1).totalTimeSec());
     }
 
     @Test
@@ -749,9 +755,9 @@ class JobDetailViewTest {
     @Test
     void compactionColumnData_onePerPositionSetToTheSeriesOwnPeak() {
         final var points = List.of(
-                new JobDetailView.RequestSpeedPoint(1, 10.0, null),
-                new JobDetailView.RequestSpeedPoint(2, 40.0, null),
-                new JobDetailView.RequestSpeedPoint(3, 25.0, null));
+                new JobDetailView.RequestSpeedPoint(1, 10.0, null, null, null),
+                new JobDetailView.RequestSpeedPoint(2, 40.0, null, null, null),
+                new JobDetailView.RequestSpeedPoint(3, 25.0, null, null, null));
         final var data = JobDetailView.compactionColumnData(List.of(1, 3), points);
 
         assertEquals(3, data.length);
@@ -762,7 +768,7 @@ class JobDetailViewTest {
 
     @Test
     void compactionColumnData_dropsPositionsPastTheSeriesOwnLength() {
-        final var points = List.of(new JobDetailView.RequestSpeedPoint(1, 10.0, null), new JobDetailView.RequestSpeedPoint(2, 20.0, null));
+        final var points = List.of(new JobDetailView.RequestSpeedPoint(1, 10.0, null, null, null), new JobDetailView.RequestSpeedPoint(2, 20.0, null, null, null));
         final var data = JobDetailView.compactionColumnData(List.of(1, 999), points);
 
         assertEquals(2, data.length);
@@ -772,7 +778,7 @@ class JobDetailViewTest {
 
     @Test
     void compactionColumnData_isAllNullWhenNoCompactionsHappened() {
-        final var points = List.of(new JobDetailView.RequestSpeedPoint(1, 10.0, null), new JobDetailView.RequestSpeedPoint(2, 20.0, null));
+        final var points = List.of(new JobDetailView.RequestSpeedPoint(1, 10.0, null, null, null), new JobDetailView.RequestSpeedPoint(2, 20.0, null, null, null));
         final var data = JobDetailView.compactionColumnData(List.of(), points);
 
         assertEquals(2, data.length);

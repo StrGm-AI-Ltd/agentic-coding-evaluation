@@ -950,10 +950,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         statsBody.add(Panels.mono(section.body()));
                         addRequestSpeedChart(section.requestSpeeds(), section.compactionsBeforeRequest(), statsBody,
                                 "Prefill speed by request — Attempt " + (i + 1));
+                        addRequestTimingChart(section.requestSpeeds(), statsBody,
+                                "Request timing — Attempt " + (i + 1));
                     }
                 } else if (sections.size() == 1) {
                     addRequestSpeedChart(sections.get(0).requestSpeeds(), sections.get(0).compactionsBeforeRequest(), statsBody,
                             "Prefill speed by request");
+                    addRequestTimingChart(sections.get(0).requestSpeeds(), statsBody, "Request timing");
                 }
             } catch (final Exception ex) {
                 statsBody.removeAll();
@@ -1218,7 +1221,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         return lines;
     }
 
-    record RequestSpeedPoint(int seq, Double prefillTokPerSec, Double generationTokPerSec) {
+    record RequestSpeedPoint(int seq, Double prefillTokPerSec, Double generationTokPerSec,
+                              Double timeToFirstTokenSec, Double totalTimeSec) {
     }
 
     /** One attempt's own "request_speeds" array (BenchController.taskStats()'s "attempts[].
@@ -1226,18 +1230,23 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  testable, same convention as RunDetailView.speedByContextRows(). Takes the array node
      *  directly (not the whole stats object) so it works the same whether called per-attempt
      *  (the normal case - the operator asked for a chart per attempt, not one combined chart for
-     *  the whole task) or against any other array of this same shape. generation_tok_per_sec is
-     *  optional on the backend (a line can carry prefill speed without it) - null here too when
-     *  absent, same as a missing prefill_tok_per_sec. */
+     *  the whole task) or against any other array of this same shape. generation_tok_per_sec,
+     *  time_to_first_token_sec and total_time_sec are all optional on the backend (a line can
+     *  carry prefill speed without any of them) - null here too when absent, same as a missing
+     *  prefill_tok_per_sec. */
     static List<RequestSpeedPoint> requestSpeedPoints(final JsonNode arr) {
         if (!arr.isArray() || arr.isEmpty()) return List.of();
         final List<RequestSpeedPoint> points = new ArrayList<>();
         for (final var r : arr) {
             final var prefillTps = r.path("prefill_tok_per_sec");
             final var generationTps = r.path("generation_tok_per_sec");
+            final var ttft = r.path("time_to_first_token_sec");
+            final var totalTime = r.path("total_time_sec");
             points.add(new RequestSpeedPoint(r.path("seq").asInt(0),
                     prefillTps.isNumber() ? prefillTps.doubleValue() : null,
-                    generationTps.isNumber() ? generationTps.doubleValue() : null));
+                    generationTps.isNumber() ? generationTps.doubleValue() : null,
+                    ttft.isNumber() ? ttft.doubleValue() : null,
+                    totalTime.isNumber() ? totalTime.doubleValue() : null));
         }
         return points;
     }
@@ -1391,6 +1400,40 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         YAxisBuilder.get().withSeriesName("generation tok/s").withOpposite(true)
                                 .withTitle(TitleBuilder.get().withText("generation tok/s").build()).build())
                 .withSeries(speedSeries, compactionSeries, generationSeries)
+                .build();
+        chart.setHeight("220px");
+        container.add(chart);
+    }
+
+    /** Time to first token AND total request time, same per-attempt x-axis (request #) as
+     *  addRequestSpeedChart() above - a separate chart, not a third/fourth series on that one
+     *  (the operator asked for "a second chart", not more series on the first). Both series are
+     *  already in the same unit (seconds) and total time always includes time-to-first-token as
+     *  its own first leg, so - unlike prefill vs. generation tok/s above - there's no rate-vs-rate
+     *  scale mismatch here that would call for a second y-axis; one shared axis lets the gap
+     *  between the two lines read directly as "how long the generation phase itself took". No
+     *  compaction marker, no custom tooltip - neither was asked for here, and with only two plain
+     *  line series ApexCharts' own default (shared) tooltip already does the job. */
+    private void addRequestTimingChart(final List<RequestSpeedPoint> points, final Div container, final String title) {
+        if (points.isEmpty()) return;
+        container.add(Panels.sectionTitle(title));
+        final var categories = requestSpeedCategories(points.size());
+        final var xaxisLabels = new com.github.appreciated.apexcharts.config.xaxis.Labels();
+        xaxisLabels.setFormatter(requestSpeedLabelFormatterJs());
+        final var ttftSeries = SeriesBuilder.get().withName("time to first token (s)")
+                .withData(points.stream().map(RequestSpeedPoint::timeToFirstTokenSec).toArray(Double[]::new)).build();
+        final var totalTimeSeries = SeriesBuilder.get().withName("total time (s)")
+                .withData(points.stream().map(RequestSpeedPoint::totalTimeSec).toArray(Double[]::new)).build();
+        final var chart = ApexChartsBuilder.get()
+                .withChart(ChartBuilder.get().withType(Type.LINE).build())
+                .withColors("#775DD0", "#FEB019")
+                .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get().withWidth(1.5).build())
+                .withXaxis(XAxisBuilder.get().withCategories(categories).withLabels(xaxisLabels)
+                        .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
+                                .withText("request #").build())
+                        .build())
+                .withYaxis(YAxisBuilder.get().withTitle(TitleBuilder.get().withText("seconds").build()).build())
+                .withSeries(ttftSeries, totalTimeSeries)
                 .build();
         chart.setHeight("220px");
         container.add(chart);
