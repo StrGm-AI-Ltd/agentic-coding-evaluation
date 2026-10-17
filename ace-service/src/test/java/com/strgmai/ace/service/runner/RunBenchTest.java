@@ -633,6 +633,17 @@ class RunBenchTest {
         assertTrue(RunBench.dueForJudgeCheck(7, 0, -3), "a negative override is the same degenerate case as 0");
     }
 
+    /** #402/#404: the first judge check fires earlier than the operator's own steady-state everyN
+     *  - a reconnaissance-only start or dead-scaffolding pattern, both found live repeatedly as
+     *  their own judge-off-track incident, would otherwise burn the whole default cadence (10
+     *  turns) before anything catches them at all. */
+    @Test
+    void firstJudgeIntervalTightensTheFirstCheckButNeverWidensTheOperatorsOwnEveryN() {
+        assertEquals(5, RunBench.firstJudgeInterval(10), "the operator's default (10) is loosened for the first check only");
+        assertEquals(3, RunBench.firstJudgeInterval(3), "already tighter than 5 - never widened");
+        assertEquals(0, RunBench.firstJudgeInterval(0), "0 ('every turn') stays 0, not widened to 5");
+    }
+
     /** #299: the judge checks more often the longer a task stays off track, and recovers once it
      *  reports on track again - symmetric (halve down / double up), not a hard snap back to
      *  everyN on the first good verdict, to avoid flapping right at the boundary. */
@@ -785,6 +796,25 @@ class RunBenchTest {
         final String lessons = RunBench.readLessons(rd);
         assertTrue(lessons.contains("First lesson."));
         assertTrue(lessons.contains("Second lesson."));
+    }
+
+    /** #404 idea 1: rescueStep() calls this once a rescue concludes, win or lose - a weaker signal
+     *  than a judge's own specific diagnosis, but still worth knowing (several unrelated tasks
+     *  needing the same kind of rescue in one run is itself informative). */
+    @Test
+    void appendRescueLessonNamesTheReasonAndWhetherItSucceeded(@org.junit.jupiter.api.io.TempDir final Path rd) {
+        RunBench.appendRescueLesson(rd, "T7", "ran out of its own wall-clock time budget", true);
+        final String lessons = RunBench.readLessons(rd);
+        assertTrue(lessons.contains("T7"));
+        assertTrue(lessons.contains("budget rescue"));
+        assertTrue(lessons.contains("ran out of its own wall-clock time budget"));
+        assertTrue(lessons.contains("succeeded"));
+    }
+
+    @Test
+    void appendRescueLessonNamesAFailedRescueDifferently(@org.junit.jupiter.api.io.TempDir final Path rd) {
+        RunBench.appendRescueLesson(rd, "T14", "ran out of its own token budget", false);
+        assertTrue(RunBench.readLessons(rd).contains("did not recover a working result"));
     }
 
     /** #402/#403: found live that nearly every task on this host independently rediscovered the

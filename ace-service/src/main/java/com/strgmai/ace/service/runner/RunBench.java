@@ -261,6 +261,16 @@ public class RunBench {
         return interval <= 0 || turn - lastCheckedTurn >= interval;
     }
 
+    /** #402/#404: the first judge check fires at whichever is smaller, this or the operator's own
+     *  everyN - a reconnaissance-only start or dead-scaffolding pattern, both found live
+     *  repeatedly, would otherwise burn the whole default cadence before anything catches them at
+     *  all. Never WIDENS the operator's own everyN (Math.min) - and interval<=0 ("every turn",
+     *  see dueForJudgeCheck's own degenerate-input handling) still wins outright either way. #299's
+     *  own adaptive doubling (nextJudgeInterval) already grows it back to everyN on the first ON
+     *  TRACK verdict, so there's no separate "back to normal" step needed. */
+    static final int FIRST_JUDGE_CHECK_TURN = 5;
+    static int firstJudgeInterval(final int everyN) { return Math.min(FIRST_JUDGE_CHECK_TURN, everyN); }
+
     /** #299: the next interval after a check - halved (floor 1) the moment the judge calls the
      *  task off track, so a drifting session gets re-checked sooner and sooner the longer it
      *  stays off track; doubled back up (capped at the run's own configured everyN - never looser
@@ -288,7 +298,7 @@ public class RunBench {
         final ReferenceAgent.JudgeCheckpoint raw = judgeEnabled
                 ? judge.checkpoint(cfg, runId, ws, rd, proxies, taskId, goal, effWall, effTokens, System.currentTimeMillis(), judgeCfg) : null;
         final int[] lastCheckedTurn = {0};
-        final int[] interval = {everyN};
+        final int[] interval = {firstJudgeInterval(everyN)};   // #402/#404: see its own javadoc
         return (turn, trajectory) -> {
             final String intervention = intervene.poll(runId, taskId);
             if (intervention != null) return intervention;
@@ -1680,6 +1690,7 @@ public class RunBench {
                 rec.put("rescue_succeeded", true);
                 rec.put("verification", VerifyTask.verify(ws, cfg, rd.resolve("verify/" + t.id + "-rescue.log")));
             }
+            appendRescueLesson(rd, t.id, reason, h.rc() == 0);
         } finally {
             proxy.stop();
             Files.writeString(rd.resolve("rescue/" + t.id + ".done"), "");
@@ -1730,22 +1741,38 @@ public class RunBench {
         catch (IOException e) { log.warn("could not read {}: {}", lp, e.toString()); return null; }
     }
 
+    /** Shared by appendLesson()/appendRescueLesson() below - appends are safe under concurrency
+     *  (a parallel wave can have more than one task's judge or rescue firing at once):
+     *  StandardOpenOption.APPEND opens with O_APPEND, and POSIX guarantees a single write() of
+     *  this size lands atomically, never interleaved with a concurrent one. */
+    private static void writeLesson(final Path rd, final String heading, final String body) {
+        try {
+            Files.writeString(rd.resolve("lessons.md"), "## " + heading + "\n" + body.strip() + "\n\n",
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (IOException e) {
+            log.warn("could not append a lesson ({}): {}", heading, e.toString());
+        }
+    }
+
     /** #404: called from buildJudgeCheckpoint() the moment a checkpoint comes back OFF TRACK -
      *  appends the judge's own recommendation (the richest, most specific signal already in hand;
      *  no extra summarising LLM call) so later, unrelated tasks in this same run get the same
      *  course-correction the current task just needed. A future harness feature (tracked
      *  separately) can later mine this file at job-end to promote durable facts into #403's
-     *  static, cross-run gotchas list - this method only captures the raw material for that.
-     *  Appends are safe under concurrency (a parallel wave can have more than one task's judge
-     *  firing at once): StandardOpenOption.APPEND opens with O_APPEND, and POSIX guarantees a
-     *  single write() of this size lands atomically, never interleaved with a concurrent one. */
+     *  static, cross-run gotchas list - this method only captures the raw material for that. */
     static void appendLesson(final Path rd, final String taskId, final int turn, final String recommendation) {
-        try {
-            Files.writeString(rd.resolve("lessons.md"), "## " + taskId + " (turn " + turn + ")\n" + recommendation.strip() + "\n\n",
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        } catch (IOException e) {
-            log.warn("could not append a lesson for {} turn {}: {}", taskId, turn, e.toString());
-        }
+        writeLesson(rd, taskId + " (turn " + turn + ")", recommendation);
+    }
+
+    /** #404: called from rescueStep() once a rescue attempt concludes, win or lose. Weaker signal
+     *  than a judge's own specific diagnosis (there's no comparably rich text to carry forward -
+     *  just which budget ran out and whether the reconnect recovered a working result), but still
+     *  worth knowing: several unrelated tasks needing the same KIND of rescue in one run is itself
+     *  informative, the same way a cluster of judge interventions would be. */
+    static void appendRescueLesson(final Path rd, final String taskId, final String reason, final boolean succeeded) {
+        writeLesson(rd, taskId + " (budget rescue)", "Needed a budget-rescue reconnect because it " + reason + ". Rescue "
+                + (succeeded ? "succeeded - a compacted reconnect recovered a working result."
+                             : "did not recover a working result - the task is still short of its acceptance criteria."));
     }
 
     /** Extracted from a `javac -version` (or equivalent) invocation's own output - `javac 21.0.12.1`
