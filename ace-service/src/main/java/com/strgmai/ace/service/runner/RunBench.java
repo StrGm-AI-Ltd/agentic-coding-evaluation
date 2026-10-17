@@ -55,10 +55,11 @@ public class RunBench {
     private final ContextProbe probe;
     private final Judge judge;
     private final Intervene intervene;
+    private final PauseAfterTask pauseAfterTask;
     private final ObjectMapper json = new ObjectMapper();
 
-    public RunBench(BenchProperties props, ReferenceAgent agent, PiAgent piAgent, RecordingProxyFactory proxies, RunOracle oracle, Reviews reviews, ContextProbe probe, Judge judge, Intervene intervene) {
-        this.props = props; this.agent = agent; this.piAgent = piAgent; this.proxies = proxies; this.oracle = oracle; this.reviews = reviews; this.probe = probe; this.judge = judge; this.intervene = intervene;
+    public RunBench(BenchProperties props, ReferenceAgent agent, PiAgent piAgent, RecordingProxyFactory proxies, RunOracle oracle, Reviews reviews, ContextProbe probe, Judge judge, Intervene intervene, PauseAfterTask pauseAfterTask) {
+        this.props = props; this.agent = agent; this.piAgent = piAgent; this.proxies = proxies; this.oracle = oracle; this.reviews = reviews; this.probe = probe; this.judge = judge; this.intervene = intervene; this.pauseAfterTask = pauseAfterTask;
     }
 
     //todo phases should not be hardcoded
@@ -1345,6 +1346,12 @@ public class RunBench {
                     prev = t.id;
                     prevSession = agentSessionFile(rd, runId, t.id);
                     prevVerified = VerifyTask.verifyText(VerifyTask.verify(ws, cfg, rd.resolve("verify/" + t.id + ".log")));
+                    // this task is now fully committed (phase tag, manifest, handoff, snapshot) -
+                    // the safe, between-tasks moment a "pause after the current task" request
+                    // (distinct from the immediate /pause, which can land mid-task and discard
+                    // real in-progress work) actually takes effect, via the exact same pause()
+                    // machinery that endpoint already uses.
+                    pauseAfterTask.checkAndPauseIfRequested(runId);
                 }
                 continue;
             }
@@ -1355,6 +1362,10 @@ public class RunBench {
             prev = null; prevSession = null;
             prevVerified = "after the merged wave " + w.stream().map(t -> t.id).toList() + ": " + wave.get("verification_text");
             mergeConflicts = (List<String[]>) wave.get("merge_conflicts");
+            // the whole wave is now fully committed and merged - the safe, between-waves moment
+            // a "pause after the current task" request takes effect (see the sequential loop's
+            // own identical call above for why).
+            pauseAfterTask.checkAndPauseIfRequested(runId);
         }
         // ---- integration: the fixed final task ----
         Map<String, Object> rec;

@@ -333,6 +333,21 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                     Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
                 }
             }));
+            // the gentler alternative: for a running job, takes effect once the task currently in
+            // progress actually finishes rather than immediately - "Pause" above can discard real,
+            // in-progress agent work if it lands mid-task.
+            final var pauseAfterTask = new Button("Pause after task", e -> {
+                try {
+                    client.pauseAfterTask(job.id());
+                    refresh();
+                    Notification.show("Will pause once the current task finishes.", 4000, Notification.Position.BOTTOM_END);
+                } catch (final Exception ex) {
+                    log.warn("could not request a pause-after-task for job {}: {}", job.id(), ex.toString());
+                    Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
+                }
+            });
+            pauseAfterTask.setTooltipText("Pause once the currently running task finishes, instead of interrupting it now.");
+            actions.add(pauseAfterTask);
         }
         if (JobStatuses.canRequeue(job.status())) {
             // "paused" reads as Resume - same requeue endpoint either way, R18's own git-tag resume

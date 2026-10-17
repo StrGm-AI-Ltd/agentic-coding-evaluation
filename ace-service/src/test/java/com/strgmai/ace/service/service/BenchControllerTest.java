@@ -61,6 +61,7 @@ class BenchControllerTest {
     private BenchProperties props;
     private Intervene intervene;
     private com.strgmai.ace.service.runner.TaskMatcher taskMatcher;
+    private com.strgmai.ace.service.runner.PauseAfterTask pauseAfterTask;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -78,7 +79,8 @@ class BenchControllerTest {
         final TreatmentPin pin = mock(TreatmentPin.class);
         intervene = new Intervene();
         taskMatcher = mock(com.strgmai.ace.service.runner.TaskMatcher.class);
-        final var controller = new BenchController(dsl, queue, importer, experiments, stats, worker, props, preflight, pin, intervene, taskMatcher);
+        pauseAfterTask = new com.strgmai.ace.service.runner.PauseAfterTask(queue);
+        final var controller = new BenchController(dsl, queue, importer, experiments, stats, worker, props, preflight, pin, intervene, taskMatcher, pauseAfterTask);
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ApiExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter())
@@ -1270,6 +1272,35 @@ class BenchControllerTest {
         mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/intervene").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"text\": \"  \"}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    /** The gentler alternative to the immediate /pause: for a RUNNING job, it only queues the
+     *  request - queue.pause() itself must not be called yet, only once RunBench's own
+     *  orchestration loop reaches a safe, between-tasks checkpoint and triggers it. */
+    @Test
+    void pauseAfterTaskQueuesTheRequestForARunningJobWithoutPausingItYet() throws Exception {
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "running"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/pause-after-task"))
+                .andExpect(status().isOk());
+
+        assertTrue(pauseAfterTask.isRequested("run-1"));
+        verify(queue, never()).pause(JOB_1);
+    }
+
+    /** A job that is not currently running has no "current task" to defer to - falls back to
+     *  pausing it outright, the same as the immediate endpoint already does. */
+    @Test
+    void pauseAfterTaskFallsBackToPausingOutrightWhenTheJobIsNotRunning() throws Exception {
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "queued"));
+        when(queue.pause(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "status", "paused"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/pause-after-task"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("paused"));
+
+        verify(queue).pause(JOB_1);
+        assertFalse(pauseAfterTask.isRequested("run-1"));
     }
 
     @Test

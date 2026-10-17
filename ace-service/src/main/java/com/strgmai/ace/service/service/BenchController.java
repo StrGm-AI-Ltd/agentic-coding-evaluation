@@ -9,6 +9,7 @@ import com.strgmai.ace.service.pack.Packs;
 import com.strgmai.ace.service.plan.PlanParser;
 import com.strgmai.ace.service.plan.PlanTask;
 import com.strgmai.ace.service.runner.Intervene;
+import com.strgmai.ace.service.runner.PauseAfterTask;
 import com.strgmai.ace.service.runner.TaskMatcher;
 import org.jooq.DSLContext;
 import org.slf4j.Logger;
@@ -50,13 +51,14 @@ public class BenchController {
     private final TreatmentPin pin;
     private final Intervene intervene;
     private final TaskMatcher taskMatcher;
+    private final PauseAfterTask pauseAfterTask;
 
     public BenchController(DSLContext dsl, JobQueue queue, ImporterService importer, ExperimentsService experiments,
                            StatsService stats, WorkerService worker, BenchProperties props, Preflight preflight,
-                           TreatmentPin pin, Intervene intervene, TaskMatcher taskMatcher) {
+                           TreatmentPin pin, Intervene intervene, TaskMatcher taskMatcher, PauseAfterTask pauseAfterTask) {
         this.dsl = dsl; this.queue = queue; this.importer = importer; this.experiments = experiments;
         this.stats = stats; this.worker = worker; this.props = props; this.preflight = preflight; this.pin = pin;
-        this.intervene = intervene; this.taskMatcher = taskMatcher;
+        this.intervene = intervene; this.taskMatcher = taskMatcher; this.pauseAfterTask = pauseAfterTask;
     }
 
     @GetMapping("/api/preflight")
@@ -1234,6 +1236,17 @@ public class BenchController {
     // unlike cancel just above, a still-queued job pauses outright as a non-terminal state (not
     // finished for its arm) - no finalizeIfDone here
     @PostMapping("/api/jobs/{id}/pause") public Map<String, Object> pause(@PathVariable UUID id) { return queue.pause(id); }
+    // the gentler alternative to the immediate pause above: queues the request rather than acting
+    // on it now, so RunBench's own orchestration loop can trigger the EXACT same queue.pause(id)
+    // once the task currently in progress actually finishes, instead of mid-task where it can
+    // discard real work. A job that is not currently running has no "current task" to wait for, so
+    // this just falls back to pausing it outright, the same as the immediate endpoint would.
+    @PostMapping("/api/jobs/{id}/pause-after-task") public Map<String, Object> pauseAfterTask(@PathVariable UUID id) {
+        final Map<String, Object> job = queue.get(id);
+        if (!"running".equals(job.get("status"))) return queue.pause(id);
+        pauseAfterTask.request(String.valueOf(job.get("run_id")), id);
+        return job;
+    }
     @PostMapping("/api/jobs/{id}/requeue") public Map<String, Object> requeue(@PathVariable UUID id) { return queue.requeue(id, props.resultsDir()); }
     @PostMapping("/api/jobs/{id}/priority") public Map<String, Object> priority(final @PathVariable UUID id, final @RequestBody Map<String, Object> body) {
         // a missing or non-numeric priority would NPE/CCE into a 500 on the raw (int) cast

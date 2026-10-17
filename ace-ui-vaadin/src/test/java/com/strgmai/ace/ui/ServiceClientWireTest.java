@@ -171,6 +171,7 @@ class ServiceClientWireTest {
         if ("POST /api/jobs/5/priority".equals(method + " " + uri)) return JOB_JSON;
         if ("GET /api/jobs/5".equals(method + " " + uri)) return JOB_JSON;
         if ("POST /api/jobs/5/pause".equals(method + " " + uri)) return JOB_JSON.replace("queued", "paused");
+        if ("POST /api/jobs/5/pause-after-task".equals(method + " " + uri)) return JOB_JSON;
         if ("GET /api/jobs/5/plan".equals(method + " " + uri))
             return "{\"tasks\":[{\"order\":0,\"id\":\"T1\",\"title\":\"model the schema\",\"goal\":\"create the entities\","
                     + "\"deps\":[],\"implemented\":true,\"handoff_done\":false,\"reported_status\":\"partial\","
@@ -328,6 +329,12 @@ class ServiceClientWireTest {
     void pause_postsToTheDedicatedPausePath() {
         assertEquals("paused", client.pause("5").status());
         assertEquals("POST /api/jobs/5/pause", last().method() + " " + last().uri());
+    }
+
+    @Test
+    void pauseAfterTask_postsToItsOwnDedicatedPath() {
+        client.pauseAfterTask("5");
+        assertEquals("POST /api/jobs/5/pause-after-task", last().method() + " " + last().uri());
     }
 
     @Test
