@@ -165,6 +165,14 @@ class PacksTest {
         assertTrue(Packs.hygiene().contains("Delete exploratory stubs"));
     }
 
+    /** #405: the judge already recommends scoped test runs ad hoc, in its own per-checkpoint
+     *  notes - this makes it a standing instruction from turn one, not something a task only
+     *  learns once a checkpoint happens to suggest it. */
+    @Test
+    void hygieneEncouragesScopedTestRunsOverFullSuiteRunsWhileDebugging() {
+        assertTrue(Packs.hygiene().contains("SCOPED test"));
+    }
+
     /** #403 idea 3: "stuck in reconnaissance with zero code produced" was found live, repeatedly,
      *  as its own judge-off-track pattern (see #402) - this is the proactive nudge, rather than
      *  only catching it reactively once a judge checkpoint happens to fire. */
