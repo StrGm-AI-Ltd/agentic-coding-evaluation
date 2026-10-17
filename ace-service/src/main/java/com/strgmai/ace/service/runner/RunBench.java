@@ -450,9 +450,10 @@ public class RunBench {
         final String promptText = setUpTaskPrompt(ws, task);
         // #228: --java-home (JobCfgFactory -> cfg's "java_home") is a per-run override and must win
         // over the operator-wide BenchProperties default - this used to always overwrite it unconditionally
-        if (!(cfg.get("java_home") instanceof String jh) || jh.isBlank())
-            cfg.put("java_home", props.javaHome() == null || props.javaHome().isBlank()
-                    ? DockerService.sh(20, "/usr/libexec/java_home", "-v", String.valueOf(cfg.getOrDefault("java_major", 21))).out().strip() : props.javaHome());
+        if (!(cfg.get("java_home") instanceof String jh) || jh.isBlank()) {
+            final int javaMajor = cfg.get("java_major") instanceof Number n ? n.intValue() : Integer.parseInt(String.valueOf(cfg.getOrDefault("java_major", 21)));
+            cfg.put("java_home", props.javaHome() == null || props.javaHome().isBlank() ? discoverJavaHome(javaMajor) : props.javaHome());
+        }
         Map<String, Object> capInfo = null;
         try {
             // ---- step 0: probe the window this setup offers, derive every knob (ports apply_context) ----
@@ -1745,6 +1746,57 @@ public class RunBench {
         } catch (IOException e) {
             log.warn("could not append a lesson for {} turn {}: {}", taskId, turn, e.toString());
         }
+    }
+
+    /** Extracted from a `javac -version` (or equivalent) invocation's own output - `javac 21.0.12.1`
+     *  on 9+, `javac 1.8.0_292` pre-9 - so pure and independently testable, unlike the subprocess
+     *  calls around it. Null when the text doesn't look like a javac version line at all (the
+     *  binary doesn't exist, the path is wrong, a permissions error, ...). */
+    static Integer parseJavacMajor(final String javacVersionOutput) {
+        if (javacVersionOutput == null) return null;
+        final var m = Pattern.compile("javac\\s+(?:1\\.)?(\\d+)").matcher(javacVersionOutput);
+        return m.find() ? Integer.parseInt(m.group(1)) : null;
+    }
+
+    /** Actually runs the candidate's own `bin/javac -version` rather than trusting a path or a
+     *  tool's own claim about what it points at - see discoverJavaHome()'s own javadoc for why
+     *  that trust would be misplaced here. */
+    private static boolean javacReportsMajor(final String javaHome, final int major) {
+        if (javaHome == null || javaHome.isBlank()) return false;
+        final var r = DockerService.sh(10, javaHome + "/bin/javac", "-version");
+        return r.rc() == 0 && Integer.valueOf(major).equals(parseJavacMajor(r.out()));
+    }
+
+    /** #398/#402/#403, found live: nearly every task across both runs independently rediscovered
+     *  this host's JDK mismatch from scratch, each paying real wall-clock time to do so - this is
+     *  the harness-side fix, not just a stable.md hint (#403 still carries one as a fallback for
+     *  hosts this doesn't cover). The macOS canonical lookup (`/usr/libexec/java_home -v <major>`,
+     *  already tried before this method is ever called) turned out to be the actual culprit: found
+     *  live that it returns exit 0 and a JVM of the WRONG major version with no error at all when
+     *  the host has no matching entry in its own registry - this host has only JDK 26 registered
+     *  there, so "-v 21" simply hands back 26's own home. Homebrew's and SDKMAN's own JDK installs
+     *  are invisible to that registry entirely (neither registers itself with it), even when a
+     *  real, working install of the requested major version exists right there on disk.
+     *
+     *  Deliberately never a single hardcoded version-specific path - only the conventional PARENT
+     *  directories different installers already use (Homebrew's `opt/openjdk@<major>` on both
+     *  Apple Silicon and Intel prefixes, SDKMAN's own candidates directory) - and every candidate,
+     *  including the java_home utility's own answer, is validated by actually running ITS javac
+     *  and checking what major version IT reports, never assumed correct from a path or name match
+     *  alone. Falls back to the (unvalidated) java_home utility result if nothing else checks out -
+     *  never worse than this method's own caller's previous behavior. */
+    static String discoverJavaHome(final int major) {
+        final String fromUtil = DockerService.sh(10, "/usr/libexec/java_home", "-v", String.valueOf(major)).out().strip();
+        if (javacReportsMajor(fromUtil, major)) return fromUtil;
+        final List<String> candidates = new ArrayList<>(List.of(
+                "/opt/homebrew/opt/openjdk@" + major,   // Homebrew, Apple Silicon
+                "/usr/local/opt/openjdk@" + major));    // Homebrew, Intel
+        try (var sdk = Files.list(Path.of(System.getProperty("user.home"), ".sdkman/candidates/java"))) {
+            sdk.filter(p -> p.getFileName().toString().contains(String.valueOf(major))).forEach(p -> candidates.add(p.toString()));
+        } catch (IOException e) { log.debug("no sdkman java candidates to probe for JDK {}: {}", major, e.toString()); }
+        for (final String candidate : candidates) if (javacReportsMajor(candidate, major)) return candidate;
+        log.warn("could not find a validated JDK {} install on this host; falling back to the unvalidated java_home utility result ({})", major, fromUtil);
+        return fromUtil;
     }
 
     /** the agent's parallelisation-plan step; the harness evaluates the schedule and uses it when valid */
