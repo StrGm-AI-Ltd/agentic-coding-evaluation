@@ -2,6 +2,7 @@ package com.strgmai.ace.service.service;
 
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.runner.ContextProbe;
+import com.strgmai.ace.service.runner.RecordingProxyFactory;
 import com.strgmai.ace.service.runner.RunBench;
 import org.junit.jupiter.api.Test;
 
@@ -29,7 +30,7 @@ class WorkerServiceTest {
         when(queue.list()).thenReturn(List.of());   // reconcile() runs in the constructor
         final BenchProperties props = mock(BenchProperties.class);
         return new WorkerService(queue, mock(RunBench.class), mock(ImporterService.class),
-                mock(ExperimentsService.class), preflight, pin, props, mock(ContextProbe.class));
+                mock(ExperimentsService.class), preflight, pin, props, mock(ContextProbe.class), mock(RecordingProxyFactory.class));
     }
 
     private static final UUID JOB_1 = UUID.fromString("00000000-0000-0000-0000-000000000001");
@@ -60,7 +61,7 @@ class WorkerServiceTest {
         final ExperimentsService experiments = mock(ExperimentsService.class);
         final BenchProperties props = mock(BenchProperties.class);
         final WorkerService ws = new WorkerService(queue, mock(RunBench.class), mock(ImporterService.class),
-                experiments, mock(Preflight.class), mock(TreatmentPin.class), props, mock(ContextProbe.class));
+                experiments, mock(Preflight.class), mock(TreatmentPin.class), props, mock(ContextProbe.class), mock(RecordingProxyFactory.class));
 
         ws.poll();
 
@@ -142,7 +143,7 @@ class WorkerServiceTest {
         when(queue.get(JOB_1)).thenReturn(Map.of("cancel_requested", false));
 
         WorkerService ws = new WorkerService(queue, mock(RunBench.class), mock(ImporterService.class),
-                mock(ExperimentsService.class), preflight, pin, props, mock(ContextProbe.class));
+                mock(ExperimentsService.class), preflight, pin, props, mock(ContextProbe.class), mock(RecordingProxyFactory.class));
         withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
 
         verify(queue, timeout(3000)).finish(eq(JOB_1), eq("succeeded"), eq(0), anyString());
@@ -193,7 +194,7 @@ class WorkerServiceTest {
         when(queue.get(JOB_1)).thenAnswer(inv -> Map.of("cancel_requested", cancelRequested.get()));
 
         final WorkerService ws = new WorkerService(queue, runBench, mock(ImporterService.class),
-                mock(ExperimentsService.class), preflight, pin, props, probe);
+                mock(ExperimentsService.class), preflight, pin, props, probe, mock(RecordingProxyFactory.class));
 
         withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
         Thread.sleep(500);           // let the job actually start running first
@@ -224,6 +225,7 @@ class WorkerServiceTest {
         when(props.model()).thenReturn("m");
         final RunBench runBench = mock(RunBench.class);
         final ContextProbe probe = mock(ContextProbe.class);
+        final RecordingProxyFactory proxies = mock(RecordingProxyFactory.class);
         // interruptible, unlike the R14 stand-in in the cancel-watch test above: a real aborted HTTP
         // call unblocks promptly (proven live, repeatedly, elsewhere this session), so this models
         // THAT common case - Future.cancel(true) delivers the interrupt straight into this sleep.
@@ -240,13 +242,18 @@ class WorkerServiceTest {
         when(queue.get(JOB_1)).thenAnswer(inv -> Map.of("cancel_requested", false, "pause_requested", pauseRequested.get()));
 
         final WorkerService ws = new WorkerService(queue, runBench, mock(ImporterService.class),
-                mock(ExperimentsService.class), preflight, pin, props, probe);
+                mock(ExperimentsService.class), preflight, pin, props, probe, proxies);
 
         withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
         Thread.sleep(500);
         pauseRequested.set(true);   // simulate the user clicking Pause mid-run
 
         verify(probe, timeout(6000).atLeast(1)).abortInflight();
+        // found live on T17: Future.cancel(true) alone only interrupts the WAITING thread blocked
+        // in runBounded()'s future.get() - the WORKING thread actually streaming the model's
+        // response can still be stuck in a non-interruptible read. abortAllInflight() must be
+        // called too, the same proactive way probe.abortInflight() already is.
+        verify(proxies, timeout(6000).atLeast(1)).abortAllInflight("paused");
         verify(queue, timeout(6000)).paused(JOB_1);
         // #289: the interrupted runOnce() throws, but the catch block now recognises pauseCurrent
         // and stays out of finish()'s way entirely (it used to call finish(..., "failed", ...)
@@ -283,6 +290,7 @@ class WorkerServiceTest {
         when(props.model()).thenReturn("m");
         final RunBench runBench = mock(RunBench.class);
         final ContextProbe probe = mock(ContextProbe.class);
+        final RecordingProxyFactory proxies = mock(RecordingProxyFactory.class);
         when(runBench.runOnce(any(), any(), any(), any(), any())).thenAnswer(inv -> {
             Thread.sleep(7000);   // interruptible, same reasoning as the pause test above
             return Map.of();
@@ -296,13 +304,14 @@ class WorkerServiceTest {
         when(queue.get(JOB_1)).thenAnswer(inv -> Map.of("cancel_requested", cancelRequested.get(), "pause_requested", false, "status", "running"));
 
         final WorkerService ws = new WorkerService(queue, runBench, mock(ImporterService.class),
-                mock(ExperimentsService.class), preflight, pin, props, probe);
+                mock(ExperimentsService.class), preflight, pin, props, probe, proxies);
 
         withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
         Thread.sleep(500);
         cancelRequested.set(true);   // simulate the user clicking Cancel mid-run
 
         verify(probe, timeout(6000).atLeast(1)).abortInflight();
+        verify(proxies, timeout(6000).atLeast(1)).abortAllInflight("cancelled");
         verify(queue, timeout(6000)).finish(eq(JOB_1), eq("cancelled"), any(), any());
         verify(queue, never()).finish(eq(JOB_1), eq("failed"), any(), any());
     }

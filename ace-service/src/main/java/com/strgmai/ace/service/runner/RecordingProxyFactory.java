@@ -7,6 +7,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /** The factory RunBench uses for per-session recording proxies (one proxy per phase/task with
@@ -17,6 +19,12 @@ import java.util.function.Consumer;
 public class RecordingProxyFactory {
     private static final Logger log = LoggerFactory.getLogger(RecordingProxyFactory.class);
     private final BenchProperties props;
+    // every currently-active session's own abort callback - WorkerService's cancel-watch thread
+    // calls abortAllInflight() proactively on a pause/cancel, the moment it notices the flag,
+    // rather than relying solely on Thread.interrupt() to reach whatever is actually blocking (a
+    // raw blocking HTTP read does not reliably honor it - see abortAllInflight()'s own javadoc). A
+    // Set, not a single field: a parallel wave can have more than one session running at once.
+    private final Set<Consumer<String>> active = ConcurrentHashMap.newKeySet();
 
     public RecordingProxyFactory(BenchProperties props) { this.props = props; }
 
@@ -42,8 +50,23 @@ public class RecordingProxyFactory {
             try { proxy.stop(); } catch (Exception cleanupEx) { log.warn("failed to release a partially-started proxy: {}", cleanupEx.toString()); }
             throw new IllegalStateException("cannot start the recording proxy", e);
         }
-        return new ProxySession(base[0], proxy::abortInflight, () -> {
+        final Consumer<String> abort = proxy::abortInflight;
+        active.add(abort);
+        return new ProxySession(base[0], abort, () -> {
+            active.remove(abort);
             try { proxy.stop(); } catch (Exception e) { log.warn("failed to stop the recording proxy for tag {}: {}", tag, e.toString()); }
         });
+    }
+
+    /** Proactively severs every currently-active session's own in-flight connection - the same
+     *  abortInflight() mechanism each ProxySession's own abort() already exposes, generalized to
+     *  every session live right now (a parallel wave can have more than one). Called by
+     *  WorkerService's cancel-watch thread the instant it notices a pause/cancel request, instead
+     *  of only reactively after RunBenchSupport.runBounded()'s own Future.get() has already given
+     *  up on the WAITING thread - closing the gap where the waiting side reports the job stopped
+     *  while the WORKING thread (blocked in a non-interruptible read, same class of bug as #R14/
+     *  pre-R12) is still genuinely running and still writing real turns to the session file. */
+    public void abortAllInflight(final String reason) {
+        for (final Consumer<String> abort : active) abort.accept(reason);
     }
 }
