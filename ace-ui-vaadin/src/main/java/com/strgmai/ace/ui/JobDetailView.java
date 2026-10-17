@@ -1334,6 +1334,29 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         return "function(val) { return (parseInt(val, 10) % 10 === 0) ? val : ''; }";
     }
 
+    /** The context-tokens axis on both charts below - raw counts read as "50000.00" (ApexCharts'
+     *  own default 2-decimal numeric format) once context grows into the tens of thousands;
+     *  "50k" (1 decimal only when the thousands aren't round, e.g. "52.3k") reads at a glance the
+     *  same way token-budget figures already do everywhere else in this UI. */
+    static String tokenCountLabelFormatterJs() {
+        return """
+                function(val) {
+                  if (val === null || val === undefined) return '';
+                  var v = Math.round(val);
+                  if (Math.abs(v) >= 1000) return (Math.round(v / 100) / 10) + 'k';
+                  return v.toString();
+                }
+                """;
+    }
+
+    /** tokenCountLabelFormatterJs() wrapped as a yaxis.Labels - a small builder-less helper since
+     *  (unlike the xaxis.Labels used elsewhere here) nothing else on this Labels needs setting. */
+    private static com.github.appreciated.apexcharts.config.yaxis.Labels tokenCountLabels() {
+        final var labels = new com.github.appreciated.apexcharts.config.yaxis.Labels();
+        labels.setFormatter(tokenCountLabelFormatterJs());
+        return labels;
+    }
+
     /** One value per request ordinal (null everywhere except where a compaction landed
      *  immediately before - BenchController.taskStats()'s own "attempts[].compactions_before_request")
      *  for a SECOND, thin-column series plotted on the exact same category axis as whichever
@@ -1469,6 +1492,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         YAxisBuilder.get().withSeriesName("generation tok/s")
                                 .withTitle(TitleBuilder.get().withText("generation tok/s").build()).build(),
                         YAxisBuilder.get().withSeriesName("context tokens").withOpposite(true)
+                                .withLabels(tokenCountLabels())
                                 .withTitle(TitleBuilder.get().withText("tokens").build()).build())
                 .withSeries(speedSeries, compactionSeries, generationSeries, contextSeries)
                 .build();
@@ -1565,6 +1589,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                                 .withTitle(TitleBuilder.get().withText("total time (s)").build()).build(),
                         YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build(),
                         YAxisBuilder.get().withSeriesName("context tokens").withOpposite(true)
+                                .withLabels(tokenCountLabels())
                                 .withTitle(TitleBuilder.get().withText("tokens").build()).build())
                 .withSeries(ttftSeries, totalTimeSeries, compactionSeries, contextSeries)
                 .build();
