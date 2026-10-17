@@ -1357,6 +1357,28 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         return labels;
     }
 
+    /** The prefill/generation tok/s and time-to-first-token/total-time axes on both charts below -
+     *  ApexCharts' own default 2-decimal numeric format reads as "92.20"/"45.67" even where the
+     *  operator only needs the whole-number trend at a glance (the exact figure already rides
+     *  along in the tooltip, see requestSpeedTooltipJs()/requestTimingTooltipJs()); dropping the
+     *  decimal places declutters a 220px-tall chart already carrying two independent left axes. */
+    static String integerLabelFormatterJs() {
+        return """
+                function(val) {
+                  if (val === null || val === undefined) return '';
+                  return Math.round(val).toString();
+                }
+                """;
+    }
+
+    /** integerLabelFormatterJs() wrapped as a yaxis.Labels - same convention as tokenCountLabels()
+     *  above. */
+    private static com.github.appreciated.apexcharts.config.yaxis.Labels integerLabels() {
+        final var labels = new com.github.appreciated.apexcharts.config.yaxis.Labels();
+        labels.setFormatter(integerLabelFormatterJs());
+        return labels;
+    }
+
     /** One value per request ordinal (null everywhere except where a compaction landed
      *  immediately before - BenchController.taskStats()'s own "attempts[].compactions_before_request")
      *  for a SECOND, thin-column series plotted on the exact same category axis as whichever
@@ -1486,10 +1508,10 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                                 .withText("request # (red column: a compaction landed right before it)").build())
                         .build())
                 .withYaxis(
-                        YAxisBuilder.get().withSeriesName("prefill tok/s")
+                        YAxisBuilder.get().withSeriesName("prefill tok/s").withLabels(integerLabels())
                                 .withTitle(TitleBuilder.get().withText("prefill tok/s").build()).build(),
                         YAxisBuilder.get().withSeriesName("prefill tok/s").withShow(false).build(),
-                        YAxisBuilder.get().withSeriesName("generation tok/s")
+                        YAxisBuilder.get().withSeriesName("generation tok/s").withLabels(integerLabels())
                                 .withTitle(TitleBuilder.get().withText("generation tok/s").build()).build(),
                         YAxisBuilder.get().withSeriesName("context tokens").withOpposite(true)
                                 .withLabels(tokenCountLabels()).build())
@@ -1582,9 +1604,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                                 .withText("request # (red column: a compaction landed right before it)").build())
                         .build())
                 .withYaxis(
-                        YAxisBuilder.get().withSeriesName("time to first token (s)")
+                        YAxisBuilder.get().withSeriesName("time to first token (s)").withLabels(integerLabels())
                                 .withTitle(TitleBuilder.get().withText("time to first token (s)").build()).build(),
-                        YAxisBuilder.get().withSeriesName("total time (s)")
+                        YAxisBuilder.get().withSeriesName("total time (s)").withLabels(integerLabels())
                                 .withTitle(TitleBuilder.get().withText("total time (s)").build()).build(),
                         YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build(),
                         YAxisBuilder.get().withSeriesName("context tokens").withOpposite(true)
