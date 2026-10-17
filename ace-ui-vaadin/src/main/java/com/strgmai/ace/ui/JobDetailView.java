@@ -6,7 +6,6 @@ import com.github.appreciated.apexcharts.config.builder.SeriesBuilder;
 import com.github.appreciated.apexcharts.config.builder.XAxisBuilder;
 import com.github.appreciated.apexcharts.config.builder.YAxisBuilder;
 import com.github.appreciated.apexcharts.config.chart.Type;
-import com.github.appreciated.apexcharts.config.yaxis.builder.TitleBuilder;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
@@ -1508,11 +1507,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                                 .withText("request # (red column: a compaction landed right before it)").build())
                         .build())
                 .withYaxis(
-                        YAxisBuilder.get().withSeriesName("prefill tok/s").withLabels(integerLabels())
-                                .withTitle(TitleBuilder.get().withText("prefill tok/s").build()).build(),
+                        YAxisBuilder.get().withSeriesName("prefill tok/s").withLabels(integerLabels()).build(),
                         YAxisBuilder.get().withSeriesName("prefill tok/s").withShow(false).build(),
-                        YAxisBuilder.get().withSeriesName("generation tok/s").withLabels(integerLabels())
-                                .withTitle(TitleBuilder.get().withText("generation tok/s").build()).build(),
+                        YAxisBuilder.get().withSeriesName("generation tok/s").withLabels(integerLabels()).build(),
                         YAxisBuilder.get().withSeriesName("context tokens").withOpposite(true)
                                 .withLabels(tokenCountLabels()).build())
                 .withSeries(speedSeries, compactionSeries, generationSeries, contextSeries)
@@ -1604,10 +1601,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                                 .withText("request # (red column: a compaction landed right before it)").build())
                         .build())
                 .withYaxis(
-                        YAxisBuilder.get().withSeriesName("time to first token (s)").withLabels(integerLabels())
-                                .withTitle(TitleBuilder.get().withText("time to first token (s)").build()).build(),
-                        YAxisBuilder.get().withSeriesName("total time (s)").withLabels(integerLabels())
-                                .withTitle(TitleBuilder.get().withText("total time (s)").build()).build(),
+                        YAxisBuilder.get().withSeriesName("time to first token (s)").withLabels(integerLabels()).build(),
+                        YAxisBuilder.get().withSeriesName("total time (s)").withLabels(integerLabels()).build(),
                         YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build(),
                         YAxisBuilder.get().withSeriesName("context tokens").withOpposite(true)
                                 .withLabels(tokenCountLabels()).build())
