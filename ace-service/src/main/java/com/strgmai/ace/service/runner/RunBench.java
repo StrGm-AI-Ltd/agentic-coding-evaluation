@@ -301,6 +301,7 @@ public class RunBench {
                 if (next != interval[0])
                     log.info("run {}: judge interval for task {} {} {} -> {} turns", runId, taskId, offTrack ? "tightened" : "relaxed", interval[0], next);
                 interval[0] = next;
+                if (offTrack) appendLesson(rd, taskId, turn, recommendation);
             }
             return recommendation;
         };
@@ -1289,7 +1290,7 @@ public class RunBench {
                         mergeConflicts.clear();
                     } else {
                         RunBenchSupport.clearStaleProgressLine(ws, t.id);
-                        final String tp = Packs.taskPack(ws, t, tasks, snapshots, doneSet(snapshots), prev, prevSession, handoffs, prevVerified, mergeConflicts.isEmpty() ? null : mergeConflicts, null);
+                        final String tp = Packs.taskPack(ws, t, tasks, snapshots, doneSet(snapshots), prev, prevSession, handoffs, readLessons(rd), prevVerified, mergeConflicts.isEmpty() ? null : mergeConflicts, null);
                         Files.writeString(rd.resolve("packs/" + t.id + ".md"), tp);
                         // #263: a restarted task's own task_wall_sec/task_tokens override (set via
                         // the restart-task endpoint) takes effect right here, since the proxy's own
@@ -1352,7 +1353,7 @@ public class RunBench {
             rec = new LinkedHashMap<>(Map.of("id", "INTEGRATION", "rc", 0, "resumed", true));
             after = RunBenchSupport.gitOut(ws, "rev-parse", "phase/INTEGRATION");
         } else {
-            final String tp = Packs.taskPack(ws, new PlanTask("INTEGRATION", "integrate and verify"), tasks, snapshots, doneSet(snapshots), prev, prevSession, handoffs, prevVerified, mergeConflicts.isEmpty() ? null : mergeConflicts, null);
+            final String tp = Packs.taskPack(ws, new PlanTask("INTEGRATION", "integrate and verify"), tasks, snapshots, doneSet(snapshots), prev, prevSession, handoffs, readLessons(rd), prevVerified, mergeConflicts.isEmpty() ? null : mergeConflicts, null);
             Files.writeString(rd.resolve("packs/INTEGRATION.md"), tp);
             final var proxy = proxies.start(journal, taskTokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
             try {
@@ -1714,6 +1715,38 @@ public class RunBench {
         return handoffs;
     }
 
+    /** #404: a run-wide, dynamically-populated counterpart to #403's static stable.md gotchas -
+     *  every time the judge catches a DIFFERENT task off track (see appendLesson() below), it's
+     *  worth knowing regardless of the dependency graph (unlike handoffs, deliberately scoped to
+     *  direct deps - see Packs.taskPack()'s own javadoc on this). Lives directly under the run's
+     *  own results dir, so (a) it persists after the job ends, same as manifest.json/task_attempts.
+     *  jsonl/judge/*, and (b) it's read fresh at the start of every later task in the SAME run,
+     *  never mutated by that read. */
+    static String readLessons(final Path rd) {
+        final Path lp = rd.resolve("lessons.md");
+        if (!Files.isRegularFile(lp)) return null;
+        try { return Files.readString(lp); }
+        catch (IOException e) { log.warn("could not read {}: {}", lp, e.toString()); return null; }
+    }
+
+    /** #404: called from buildJudgeCheckpoint() the moment a checkpoint comes back OFF TRACK -
+     *  appends the judge's own recommendation (the richest, most specific signal already in hand;
+     *  no extra summarising LLM call) so later, unrelated tasks in this same run get the same
+     *  course-correction the current task just needed. A future harness feature (tracked
+     *  separately) can later mine this file at job-end to promote durable facts into #403's
+     *  static, cross-run gotchas list - this method only captures the raw material for that.
+     *  Appends are safe under concurrency (a parallel wave can have more than one task's judge
+     *  firing at once): StandardOpenOption.APPEND opens with O_APPEND, and POSIX guarantees a
+     *  single write() of this size lands atomically, never interleaved with a concurrent one. */
+    static void appendLesson(final Path rd, final String taskId, final int turn, final String recommendation) {
+        try {
+            Files.writeString(rd.resolve("lessons.md"), "## " + taskId + " (turn " + turn + ")\n" + recommendation.strip() + "\n\n",
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (IOException e) {
+            log.warn("could not append a lesson for {} turn {}: {}", taskId, turn, e.toString());
+        }
+    }
+
     /** the agent's parallelisation-plan step; the harness evaluates the schedule and uses it when valid */
     private Map<String, Object> parallelPlanStep(final Map<String, Object> cfg, final String runId, final Path rd, final Path ws, final Path journal, final Map<String, Object> manifest, final List<PlanTask> tasks, final String stable) throws Exception {
         Files.writeString(rd.resolve("packs/PARALLEL_PLAN.md"), Packs.parallelPlanPack(tasks));
@@ -1834,7 +1867,7 @@ public class RunBench {
             copyTree(home, homeT);
             DockerService.dockerTools(homeT.toString());   // each HOME copy gets the shim + plugins too
             taskJournals.put(t.id, rd.resolve("interactions-" + t.id + ".jsonl"));
-            packs.put(t.id, Packs.taskPack(ws, t, tasks, snapshots, doneSet(snapshots), null, null, handoffs, prevVerified,
+            packs.put(t.id, Packs.taskPack(ws, t, tasks, snapshots, doneSet(snapshots), null, null, handoffs, readLessons(rd), prevVerified,
                     mergeConflicts.isEmpty() ? null : mergeConflicts, waveIds.stream().filter(x -> !x.equals(t.id)).toList()));
             Files.writeString(rd.resolve("packs/" + t.id + ".md"), packs.get(t.id));
         }

@@ -127,6 +127,34 @@ class PacksTest {
     }
 
     @Test
+    void stablePackIncludesTheKnownGotchasForEveryTask() {
+        final String stable = Packs.stablePack("# Task", List.of());
+        assertTrue(stable.contains("Known gotchas"));
+        assertTrue(stable.contains("java.sql.Timestamp"), "the Instant/Timestamp JDBC gotcha must be present");
+        assertTrue(stable.contains("port 0"), "the ephemeral mock-port gotcha must be present");
+    }
+
+    /** #404: lessons are a run-wide, dependency-independent counterpart to handoffs - unlike
+     *  relevantHandoffs() above, taskPack() must never filter them by t.deps. */
+    @Test
+    void taskPackIncludesLessonsUnfilteredByDependency() throws IOException {
+        final Path ws = Files.createTempDirectory("packs-test-ws");
+        final var t = new com.strgmai.ace.service.plan.PlanTask("T9", "settlement");
+        final String tp = Packs.taskPack(ws, t, List.of(t), Map.of(), Set.of(), null, null, null,
+                "## T7 (turn 30)\nStop writing unused test stubs.", null, null, null);
+        assertTrue(tp.contains("Lessons learned earlier in this run"));
+        assertTrue(tp.contains("Stop writing unused test stubs."), "T9 has no dependency on T7 at all - lessons must still show");
+    }
+
+    @Test
+    void taskPackOmitsTheLessonsSectionWhenThereAreNoneYet() throws IOException {
+        final Path ws = Files.createTempDirectory("packs-test-ws");
+        final var t = new com.strgmai.ace.service.plan.PlanTask("T1", "scaffold");
+        final String tp = Packs.taskPack(ws, t, List.of(t), Map.of(), Set.of(), null, null, null, null, null, null, null);
+        assertFalse(tp.contains("Lessons learned"));
+    }
+
+    @Test
     void theHygieneRulesNameTheRunsWindow() {
         Packs.setWindow(79872);
         assertTrue(Packs.hygiene().contains("79k context"));

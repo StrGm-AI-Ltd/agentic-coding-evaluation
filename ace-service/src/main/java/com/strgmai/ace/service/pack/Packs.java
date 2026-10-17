@@ -29,7 +29,7 @@ public final class Packs {
             Map.entry("contract", 12000), Map.entry("plan", 4000), Map.entry("task", 2500), Map.entry("iface_file", 6000),
             Map.entry("iface_total", 14000), Map.entry("tree", 120), Map.entry("diffstat", 40), Map.entry("test_tail", 40),
             Map.entry("progress", 3000), Map.entry("handoff_each", 4000), Map.entry("handoff_total", 12000),
-            Map.entry("transcript_head", 24000)));
+            Map.entry("transcript_head", 24000), Map.entry("lessons", 6000)));
     public static final Map<String, Integer> CAPS = new LinkedHashMap<>();
     static { setScale(1.0, Map.of()); }
 
@@ -62,6 +62,19 @@ public final class Packs {
         return HYGIENE;
     }
     public static String hygiene() { return HYGIENE; }
+
+    /** #403: operator-curated, cross-run gotchas - found live, repeatedly, on this task suite -
+     *  that cost a judge intervention (or worse) to catch after the fact. Unlike the per-run
+     *  lessons file (#404, dynamically populated by the judge DURING a run and scoped to that run
+     *  only), this is static and ships in every run from the moment it's added here; a developer
+     *  adds an entry when a new gotcha is found, the same way HYGIENE_TEMPLATE above is maintained. */
+    static final String KNOWN_GOTCHAS = """
+            ## Known gotchas (apply proactively - found live, repeatedly, on this task suite)
+            - PostgreSQL JDBC + `Instant`: a bare `Instant` passed to `JdbcTemplate`'s untyped `setObject` fails on real PostgreSQL ("Bad value for type timestamp") even though it works on the H2 fallback. Convert with `java.sql.Timestamp.from(instant)` before binding.
+            - `JdbcTemplate` insert + generated key: use the `update(PreparedStatementCreator, KeyHolder)` two-argument overload, not the varargs `update(String, Object...)` overload with a `KeyHolder` appended as if it were a bind parameter - the varargs form silently binds the `KeyHolder` itself and throws `NotSerializableException` on H2.
+            - H2 database triggers: H2's embedded-Java trigger syntax (`CREATE TRIGGER ... AS 'void fire(...)'`) is fragile and version-sensitive. Prefer enforcing invariants (e.g. append-only/immutable tables) at the application layer instead of a cross-database DDL trigger, unless you have already confirmed the exact working syntax against this project's own H2 version.
+            - In-process test mock servers: never hardcode a port for a mock HTTP server used in tests. Bind to port 0 (an OS-assigned ephemeral port) and read back the actual bound port - a hardcoded port collides with any other test class doing the same thing once tests run in parallel.
+            - macOS shell tools: `cat -A` is a GNU coreutils flag and fails on macOS's BSD `cat`; use `cat -v` instead, which both support.""";
 
     static final List<String> SKIP = List.of(".git", "build", "node_modules", ".gradle", ".gradle-cache", "target", ".idea", "dist", "out");
 
@@ -107,6 +120,7 @@ public final class Packs {
                 "You are implementing ONE task of a multi-task plan at a time. Other tasks are done in separate sessions; do not start them. The plan in docs/IMPLEMENTATION_PLAN.md already exists and is READ-ONLY: do not rewrite it. Everything you need to know about the system is below; the current task follows in the user message.",
                 "## Specification and frozen contract\n" + contractSection(promptText),
                 "## The whole plan (ids and goals only)\n" + planOutline(tasks),
+                KNOWN_GOTCHAS,
                 HYGIENE));
     }
 
@@ -272,9 +286,10 @@ public final class Packs {
     }
 
     /** the per-task pack: entry, dependency interfaces, tree, parallel-with notes, merge conflicts,
-     *  previous task's diffstat + harness verification + last test run, handoffs, PROGRESS.md tail. */
+     *  previous task's diffstat + harness verification + last test run, handoffs, lessons,
+     *  PROGRESS.md tail. */
     public static String taskPack(Path ws, PlanTask t, List<PlanTask> tasks, Map<String, String[]> snapshots, Set<String> done,
-                                  String prevTask, Path prevSession, List<String[]> handoffs, String verified,
+                                  String prevTask, Path prevSession, List<String[]> handoffs, String lessons, String verified,
                                   List<String[]> mergeConflicts, List<String> parallelWith) {
         final var entry = new StringBuilder();
         for (String k : List.of("id", "title", "goal", "services", "acceptance"))
@@ -305,6 +320,13 @@ public final class Packs {
             final String blocks = handoffBlocks(relevantHandoffs(handoffs, t.deps));
             if (!blocks.isBlank()) parts.add("## Notes left by earlier tasks\n" + blocks);
         }
+        // #404: unlike handoffs (scoped to this task's own declared deps), lessons are NOT
+        // filtered by dependency - a judge catching a different, unrelated task off track found
+        // a fact worth knowing regardless of the dependency graph (see #398/#402: three separate
+        // tasks with no dependency relationship to each other each independently rediscovered the
+        // same JDBC binding bug this run).
+        if (lessons != null && !lessons.isBlank())
+            parts.add("## Lessons learned earlier in this run (apply proactively - the judge caught another task off track on this)\n" + cap(lessons, CAPS.get("lessons")));
         final Path pp = ws.resolve("docs/PROGRESS.md");
         if (Files.exists(pp)) { try { parts.add("## docs/PROGRESS.md\n" + capTail(Files.readString(pp), CAPS.get("progress"))); } catch (IOException e) { log.debug("could not read {} for the pack: {}", pp, e.toString()); } }
         return String.join("\n\n", parts);

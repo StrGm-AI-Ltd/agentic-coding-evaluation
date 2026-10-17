@@ -760,6 +760,33 @@ class RunBenchTest {
         return RunBench.manifestHandoffs(manifest);
     }
 
+    /** #404: readLessons()/appendLesson() - the run-wide, dependency-independent counterpart to
+     *  handoffs. appendLesson() is what buildJudgeCheckpoint() calls the moment a checkpoint comes
+     *  back OFF TRACK; readLessons() is what every later Packs.taskPack() call reads fresh. */
+    @Test
+    void readLessonsIsNullWhenNoLessonHasEverBeenAppended(@org.junit.jupiter.api.io.TempDir final Path rd) {
+        assertNull(RunBench.readLessons(rd));
+    }
+
+    @Test
+    void appendLessonIsReadBackByReadLessons(@org.junit.jupiter.api.io.TempDir final Path rd) {
+        RunBench.appendLesson(rd, "T7", 30, "OFF TRACK\nStop writing unused test stubs.");
+        final String lessons = RunBench.readLessons(rd);
+        assertNotNull(lessons);
+        assertTrue(lessons.contains("T7"));
+        assertTrue(lessons.contains("turn 30"));
+        assertTrue(lessons.contains("Stop writing unused test stubs."));
+    }
+
+    @Test
+    void appendLessonAccumulatesRatherThanOverwritingEarlierOnes(@org.junit.jupiter.api.io.TempDir final Path rd) {
+        RunBench.appendLesson(rd, "T7", 30, "OFF TRACK\nFirst lesson.");
+        RunBench.appendLesson(rd, "T9", 60, "OFF TRACK\nSecond lesson.");
+        final String lessons = RunBench.readLessons(rd);
+        assertTrue(lessons.contains("First lesson."));
+        assertTrue(lessons.contains("Second lesson."));
+    }
+
     /** #303: a RESUMED run's in-memory manifest starts fresh (rebuilt each orchestratedPhase() call,
      *  same as every other R18 resume case), but the tags/files on disk are the real record - a task
      *  already tagged phase/{id}-handoff must have its note backfilled into the list before the task
