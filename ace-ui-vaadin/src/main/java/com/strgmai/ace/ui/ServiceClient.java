@@ -176,6 +176,13 @@ public class ServiceClient implements Serializable {
         return http.post().uri("/api/jobs/{id}/pause", jobId).retrieve().body(Api.Job.class);
     }
 
+    /** The gentler alternative to pause() above: for a running job, the pause only takes effect
+     *  once the task currently in progress actually finishes, rather than immediately - which can
+     *  discard real, in-progress agent work. */
+    public Api.Job pauseAfterTask(final String jobId) {
+        return http.post().uri("/api/jobs/{id}/pause-after-task", jobId).retrieve().body(Api.Job.class);
+    }
+
     public Api.PlanResponse jobPlan(final String jobId) {
         return http.get().uri("/api/jobs/{id}/plan", jobId).retrieve().body(Api.PlanResponse.class);
     }

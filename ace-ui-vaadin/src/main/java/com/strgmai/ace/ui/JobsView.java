@@ -123,6 +123,11 @@ public class JobsView extends VerticalLayout {
         }
         if (JobStatuses.canPause(job.status(), job.cancel_requested(), job.pause_requested())) {
             layout.add(new Button("Pause", e -> act(() -> client.pause(job.id()), job)));
+            // the gentler alternative: for a running job, takes effect once the current task
+            // finishes rather than immediately - "Pause" above can discard real, in-progress work.
+            final var pauseAfterTask = new Button("Pause after task", e -> act(() -> client.pauseAfterTask(job.id()), job));
+            pauseAfterTask.setTooltipText("Pause once the currently running task finishes, instead of interrupting it now.");
+            layout.add(pauseAfterTask);
         }
         if (JobStatuses.canRequeue(job.status())) {
             // "paused" reads as Resume - same requeue endpoint either way

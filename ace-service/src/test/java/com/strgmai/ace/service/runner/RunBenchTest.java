@@ -57,7 +57,7 @@ class RunBenchTest {
 
     private static RunBench runBench(BenchProperties props) {
         return new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class),
-                mock(RunOracle.class), mock(Reviews.class), mock(ContextProbe.class), mock(Judge.class), new Intervene());
+                mock(RunOracle.class), mock(Reviews.class), mock(ContextProbe.class), mock(Judge.class), new Intervene(), mock(PauseAfterTask.class));
     }
 
     @Test
