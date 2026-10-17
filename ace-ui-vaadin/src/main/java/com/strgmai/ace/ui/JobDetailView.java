@@ -748,6 +748,16 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var statsBody = new Div();
         statsBody.getStyle().set("overflow", "auto").set("width", "100%").set("box-sizing", "border-box");
         statsBody.setVisible(false);
+        // statsSummaryBody (the top text lines) is cleared and rebuilt every poll, same as before -
+        // statsAttemptsBody is a SIBLING, same reason transcriptBody/interveneRow are siblings below:
+        // a chart inside it must survive statsSummaryBody's own removeAll() every 2s, or every chart
+        // gets torn down and rebuilt from scratch on every poll tick even when no new data exists -
+        // the operator asked for a running task's own graphs to redraw only when a request actually
+        // finishes, not on a fixed clock. See loadStats below for how each attempt's own chart area
+        // is gated.
+        final var statsSummaryBody = new Div();
+        final var statsAttemptsBody = new Div();
+        statsBody.add(statsSummaryBody, statsAttemptsBody);
         // the operator-facing live transcript - see openTaskTranscriptTab() below for why this
         // is its own method rather than inlined like the bodies above (its content keeps
         // growing from a background thread for as long as the dialog stays open, unlike every
@@ -925,43 +935,78 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         // currentStep) above) - it already sums correctly across a retried/continued task's
         // several sessions and handles a still-running one's wall time (open-ended until "now" or
         // the next task's own start), rather than reporting null until the session ends.
+        // one persistent UI slot per attempt (textBody: header+body, refreshed every poll like the
+        // summary lines; chartsBody: gated separately below, never touched for an already-finished
+        // attempt once rendered).
+        record AttemptChartUi(Div textBody, Div chartsBody) {
+        }
+        final List<AttemptChartUi> attemptUis = new ArrayList<>();
+        // identifies which attempt owns the currently-charted data and how many requests it had
+        // last time its chart was drawn - the ONLY attempt still eligible to redraw is the current
+        // LAST one (every earlier attempt is already finished, so its own chart never changes once
+        // drawn), and even that one redraws only when a new request has actually completed (its
+        // own request_speeds array grew), never on a bare poll tick with nothing new to show.
+        final int[] lastChartedAttemptIndex = {-1};
+        final int[] lastChartedPointCount = {-1};
         final Runnable loadStats = () -> {
             try {
                 final var stats = client.taskStats(jobId, task.id());
-                statsBody.removeAll();
+                statsSummaryBody.removeAll();
                 if ("not_started".equals(stats.path("state").asText(null))) {
-                    statsBody.add(Panels.mono("(not started yet)"));
+                    statsSummaryBody.add(Panels.mono("(not started yet)"));
+                    statsAttemptsBody.removeAll();
+                    attemptUis.clear();
+                    lastChartedAttemptIndex[0] = -1;
+                    lastChartedPointCount[0] = -1;
                     return;
                 }
                 for (final var line : taskStatsLines(stats, taskStats(live.sessions(), task.id(), live.currentStep())))
-                    statsBody.add(Panels.mono(line));
+                    statsSummaryBody.add(Panels.mono(line));
                 // only worth its own text breakdown once there's more than one attempt to tell
                 // apart - a single-attempt task would just duplicate the summary lines just added
                 // above. Every attempt that actually made a request still gets its own chart
                 // regardless (the operator asked for one per attempt, not one for the whole task) -
                 // a single-attempt task's own chart just doesn't need an "Attempt N" label on it.
                 final var sections = attemptSections(stats);
-                if (sections.size() > 1) {
-                    for (int i = 0; i < sections.size(); i++) {
-                        final var section = sections.get(i);
+                final var multiAttempt = sections.size() > 1;
+                while (attemptUis.size() < sections.size()) {
+                    final var ui = new AttemptChartUi(new Div(), new Div());
+                    attemptUis.add(ui);
+                    statsAttemptsBody.add(ui.textBody(), ui.chartsBody());
+                }
+                for (int i = 0; i < sections.size(); i++) {
+                    final var section = sections.get(i);
+                    final var ui = attemptUis.get(i);
+                    if (multiAttempt) {
+                        ui.textBody().removeAll();
                         final var header = new com.vaadin.flow.component.html.H4(section.header());
                         header.getStyle().set("margin", "12px 0 4px 0").set("font-size", "0.95em");
-                        statsBody.add(header);
-                        statsBody.add(Panels.mono(section.body()));
-                        addRequestSpeedChart(section.requestSpeeds(), section.compactionsBeforeRequest(), statsBody,
-                                "Prefill speed by request — Attempt " + (i + 1));
-                        addRequestTimingChart(section.requestSpeeds(), section.compactionsBeforeRequest(), statsBody,
-                                "Request timing — Attempt " + (i + 1));
+                        ui.textBody().add(header);
+                        ui.textBody().add(Panels.mono(section.body()));
                     }
-                } else if (sections.size() == 1) {
-                    addRequestSpeedChart(sections.get(0).requestSpeeds(), sections.get(0).compactionsBeforeRequest(), statsBody,
-                            "Prefill speed by request");
-                    addRequestTimingChart(sections.get(0).requestSpeeds(), sections.get(0).compactionsBeforeRequest(), statsBody,
-                            "Request timing");
+                    final var isLast = i == sections.size() - 1;
+                    final var pointCount = section.requestSpeeds().size();
+                    final var alreadyCharted = ui.chartsBody().getChildren().findAny().isPresent();
+                    final var lastNeedsRedraw = isLast && (i != lastChartedAttemptIndex[0] || pointCount != lastChartedPointCount[0]);
+                    if (alreadyCharted && !lastNeedsRedraw) continue;
+                    ui.chartsBody().removeAll();
+                    final var attemptLabel = multiAttempt ? " — Attempt " + (i + 1) : "";
+                    addRequestSpeedChart(section.requestSpeeds(), section.compactionsBeforeRequest(), ui.chartsBody(),
+                            "Prefill speed by request" + attemptLabel);
+                    addRequestTimingChart(section.requestSpeeds(), section.compactionsBeforeRequest(), ui.chartsBody(),
+                            "Request timing" + attemptLabel);
+                    if (isLast) {
+                        lastChartedAttemptIndex[0] = i;
+                        lastChartedPointCount[0] = pointCount;
+                    }
                 }
             } catch (final Exception ex) {
-                statsBody.removeAll();
-                statsBody.add(Panels.error(client.errorText(ex)));
+                statsSummaryBody.removeAll();
+                statsAttemptsBody.removeAll();
+                attemptUis.clear();
+                lastChartedAttemptIndex[0] = -1;
+                lastChartedPointCount[0] = -1;
+                statsSummaryBody.add(Panels.error(client.errorText(ex)));
             }
         };
         final Runnable loadAll = () -> {
