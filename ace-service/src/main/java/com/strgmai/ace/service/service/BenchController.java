@@ -20,6 +20,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.nio.file.*;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -677,6 +678,31 @@ public class BenchController {
             matchedRecordIdx[ai] = ri;
             recordConsumed[ri] = true;
         }
+        // same nearest-timestamp, greedy-consume match as records above, just against each judge
+        // attempt-stamp's own parsed Instant instead of a task_attempts.jsonl record's "attempt_started"
+        final Map<String, List<JudgeCheckpoint>> judgeByStamp = judgeCheckpointsByAttemptStamp(base, taskId);
+        final List<String> judgeStamps = new ArrayList<>(judgeByStamp.keySet());
+        final String[] matchedJudgeStamp = new String[attempts.size()];
+        final List<long[]> judgeCandidates = new ArrayList<>();   // [attemptIdx, stampIdx, diffMs]
+        for (int ai = 0; ai < attempts.size(); ai++) {
+            final Instant sessionStart = parseInstantOrNull(attempts.get(ai).startedIso());
+            if (sessionStart == null) continue;
+            for (int si = 0; si < judgeStamps.size(); si++) {
+                final Instant stampInstant;
+                try { stampInstant = Instant.from(JUDGE_ATTEMPT_STAMP_FORMAT.parse(judgeStamps.get(si))); }
+                catch (final Exception e) { continue; }
+                judgeCandidates.add(new long[]{ai, si, Math.abs(Duration.between(sessionStart, stampInstant).toMillis())});
+            }
+        }
+        judgeCandidates.sort(Comparator.comparingLong(c -> c[2]));
+        final boolean[] stampConsumed = new boolean[judgeStamps.size()];
+        for (final long[] c : judgeCandidates) {
+            if (c[2] > 300_000) break;   // same 5-minute tolerance as the records match above
+            final int ai = (int) c[0], si = (int) c[1];
+            if (matchedJudgeStamp[ai] != null || stampConsumed[si]) continue;
+            matchedJudgeStamp[ai] = judgeStamps.get(si);
+            stampConsumed[si] = true;
+        }
         final List<Map<String, Object>> out = new ArrayList<>();
         for (int ai = 0; ai < attempts.size(); ai++) {
             final AttemptCounts a = attempts.get(ai);
@@ -699,6 +725,13 @@ public class BenchController {
             }
             am.put("request_speeds", speedsPerAttempt.get(ai));
             am.put("compactions_before_request", a.compactionsBeforeTurn());
+            final List<JudgeCheckpoint> checkpoints = matchedJudgeStamp[ai] != null
+                    ? judgeByStamp.getOrDefault(matchedJudgeStamp[ai], List.of()) : List.of();
+            final List<Integer> judgeOnTrack = new ArrayList<>();
+            final List<Integer> judgeOffTrack = new ArrayList<>();
+            for (final JudgeCheckpoint c : checkpoints) (c.offTrack() ? judgeOffTrack : judgeOnTrack).add(c.turn());
+            am.put("judge_on_track_requests", judgeOnTrack);
+            am.put("judge_off_track_requests", judgeOffTrack);
             out.add(am);
         }
         return out;
@@ -974,6 +1007,51 @@ public class BenchController {
             out.sort(Comparator.comparingInt(m -> (Integer) m.get("turn")));
             return out;
         } catch (final Exception e) { return List.of(); }
+    }
+
+    private record JudgeCheckpoint(int turn, boolean offTrack) {
+    }
+
+    /** matches Judge.ATTEMPT_STAMP_FORMAT exactly (hyphens, not colons, in the time portion - a
+     *  colon-free, filesystem-safe stamp, per that class's own javadoc) - needed here to parse a
+     *  judge checkpoint filename's own stamp back into an Instant for the nearest-attempt match
+     *  below; judgeTurnsByAttemptStamp() reads the raw stamp string, this turns it back into
+     *  something comparable against an attempt's own startedIso(). */
+    private static final DateTimeFormatter JUDGE_ATTEMPT_STAMP_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH-mm-ss.SSS'Z'").withZone(java.time.ZoneOffset.UTC);
+
+    /** Judge checkpoint verdicts (judge/&lt;taskId&gt;[-&lt;attemptStamp&gt;]-turn&lt;N&gt;.md), grouped
+     *  by their own attempt stamp - unlike taskJudge() above, every attempt's own checkpoints are
+     *  kept here, not just the latest, so attemptSections() below can mark each attempt's own
+     *  chart with its own judge markers rather than only the task's most recent attempt. Each
+     *  checkpoint's verdict is its own leading ON TRACK/OFF TRACK line, same check as
+     *  Judge.isOffTrack() (package-private, a different package, so mirrored rather than reused -
+     *  same fail-safe default: unparseable/missing reads as on track, never off track on noise
+     *  alone). "" (the legacy, unstamped shape) groups together too but has no real timestamp to
+     *  match against an attempt's own start time, so those checkpoints are never attributed to
+     *  any one attempt - an acceptable gap for pre-#307 runs, not this one. */
+    private static Map<String, List<JudgeCheckpoint>> judgeCheckpointsByAttemptStamp(final Path base, final String taskId) {
+        final Path dir = base.resolve("judge");
+        if (!Files.isDirectory(dir) || !isContainedEvenViaSymlinks(base, dir)) return Map.of();
+        final Pattern pattern = Pattern.compile(Pattern.quote(taskId) + "-(?:(.+)-)?turn(\\d+)\\.md");
+        final Map<String, List<JudgeCheckpoint>> byStamp = new LinkedHashMap<>();
+        try (var stream = Files.list(dir)) {
+            for (final Path f : stream.toList()) {
+                final var m = pattern.matcher(f.getFileName().toString());
+                if (!m.matches()) continue;
+                final String stamp = m.group(1);
+                if (stamp == null || stamp.isEmpty()) continue;
+                final int turn = Integer.parseInt(m.group(2));
+                final String content = Files.readString(f);
+                final int recIdx = content.indexOf("## Recommendation");
+                final String recommendation = recIdx >= 0 ? content.substring(recIdx + "## Recommendation".length()).strip() : null;
+                final String firstLine = recommendation == null ? "" : recommendation.lines().findFirst().orElse("");
+                final boolean offTrack = firstLine.strip().toUpperCase(Locale.ROOT).startsWith("OFF TRACK");
+                byStamp.computeIfAbsent(stamp, k -> new ArrayList<>()).add(new JudgeCheckpoint(turn, offTrack));
+            }
+        } catch (final Exception e) { return Map.of(); }
+        byStamp.values().forEach(list -> list.sort(Comparator.comparingInt(JudgeCheckpoint::turn)));
+        return byStamp;
     }
 
     /** An operator's own mid-task steering message - delivered through the exact same per-turn

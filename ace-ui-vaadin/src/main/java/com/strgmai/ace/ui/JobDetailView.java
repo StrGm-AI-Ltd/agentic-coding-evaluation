@@ -990,9 +990,11 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                     if (alreadyCharted && !lastNeedsRedraw) continue;
                     ui.chartsBody().removeAll();
                     final var attemptLabel = multiAttempt ? " — Attempt " + (i + 1) : "";
-                    addRequestSpeedChart(section.requestSpeeds(), section.compactionsBeforeRequest(), ui.chartsBody(),
+                    addRequestSpeedChart(section.requestSpeeds(), section.compactionsBeforeRequest(),
+                            section.judgeOnTrackRequests(), section.judgeOffTrackRequests(), ui.chartsBody(),
                             "Prefill speed by request" + attemptLabel);
-                    addRequestTimingChart(section.requestSpeeds(), section.compactionsBeforeRequest(), ui.chartsBody(),
+                    addRequestTimingChart(section.requestSpeeds(), section.compactionsBeforeRequest(),
+                            section.judgeOnTrackRequests(), section.judgeOffTrackRequests(), ui.chartsBody(),
                             "Request timing" + attemptLabel);
                     if (isLast) {
                         lastChartedAttemptIndex[0] = i;
@@ -1304,7 +1306,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
     /** BenchController.taskStats()'s own "attempts[].compactions_before_request" - the 1-based
      *  request ordinals a compaction landed immediately before, for this one attempt. Pure,
-     *  same convention as requestSpeedPoints() just above. */
+     *  same convention as requestSpeedPoints() just above. Generic enough (just a JSON array of
+     *  numbers -> a List<Integer>) that attemptSections() below reuses it as-is for
+     *  "judge_on_track_requests"/"judge_off_track_requests" too - same shape, different field. */
     static List<Integer> compactionsBeforeRequest(final JsonNode arr) {
         if (!arr.isArray() || arr.isEmpty()) return List.of();
         final List<Integer> positions = new ArrayList<>();
@@ -1410,13 +1414,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     /** This chart's own tooltip, read from series[0] (prefill tok/s), series[2] (generation
      *  tok/s) and series[3] (context tokens) - the addon's Tooltip bean has no "enabledOnSeries"
      *  (the real ApexCharts.js option for this), so a raw JS function is the only way to leave
-     *  the compaction column (series[1]) out of the tooltip entirely, same pattern as
-     *  RunDetailView.speedByContextTooltipJs(). `shared`/`intersect` stay at their defaults
-     *  (shared, not intersect) so hovering anywhere near a category still shows it - the
-     *  compaction series' own invisible-until-marked columns would otherwise need a literal
-     *  hover to trigger anything. generation tok/s is optional per request (see
-     *  RequestSpeedPoint's own javadoc) - its line is left out of the tooltip when absent rather
-     *  than printing a bare "null". */
+     *  the compaction column (series[1]) and the two judge columns (series[4]/[5], added later)
+     *  out of the tooltip entirely, same pattern as RunDetailView.speedByContextTooltipJs().
+     *  `shared`/`intersect` stay at their defaults (shared, not intersect) so hovering anywhere
+     *  near a category still shows it - these column series' own invisible-until-marked columns
+     *  would otherwise need a literal hover to trigger anything. generation tok/s is optional per
+     *  request (see RequestSpeedPoint's own javadoc) - its line is left out of the tooltip when
+     *  absent rather than printing a bare "null". */
     static String requestSpeedTooltipJs() {
         return """
                 function(struct) {
@@ -1448,26 +1452,29 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  is this attempt's own 1st/2nd/3rd/... request, not the request's run-wide seq number,
      *  which would read as an arbitrary large offset for a task that ran late in the run. A thin
      *  (1.5px) stroke on every line series - the default width reads as a solid blob once 100+
-     *  points are packed into one chart. A request a compaction landed right before is marked by
-     *  a thin red column (a real second series - see compactionColumnData() above for why, not an
-     *  annotation), so the operator can see whether speed actually dips there. Prefill and
-     *  generation each get their OWN left-hand axis, not a shared one - the operator found
-     *  generation's own dynamics unreadable once squeezed onto prefill's much larger scale (it
-     *  typically runs well below prefill - decode vs. prompt processing). ApexCharts supports any
-     *  number of independent y-axes stacked on one side, not just one per side (confirmed via its
-     *  own source, dimensions/YAxis.js's getTotalYAxisWidth(): every yaxis entry adds its own
-     *  width to yAxisWidthLeft or yAxisWidthRight purely based on its own `opposite` flag, with no
-     *  cap on how many share a side) - two visible, independently-scaled axes with `opposite`
-     *  left unset (false) is exactly that, both landing on the left. Context tokens is a wholly
-     *  different unit and a much larger raw number (growing into the tens of thousands) - it
-     *  keeps its own axis on the right (yaxis[3], opposite=true), same reason it got its own axis
-     *  on the request-timing chart. yaxis[1] (the compaction column) points its own seriesName
-     *  back at "prefill tok/s" so it merges onto prefill's own scale and reaches that line's own
-     *  peak - ApexCharts' own yaxis.seriesName mechanism (confirmed via its source,
-     *  modules/CoreUtils.js's setSeriesYAxisMappings()) merges any yaxis entries that share one
-     *  seriesName into a single scale. Added to `container` directly, same as every other
-     *  Stats-tab element. */
+     *  points are packed into one chart. A request a compaction landed right before, or a judge
+     *  checkpoint landed at, is marked by a thin column (real series - see
+     *  compactionColumnData() above for why, not an annotation) - compaction red, judge green for
+     *  ON TRACK and amber for OFF TRACK, so the operator can see whether speed actually dips
+     *  there or correlates with the judge's own verdict. Prefill and generation each get their
+     *  OWN left-hand axis, not a shared one - the operator found generation's own dynamics
+     *  unreadable once squeezed onto prefill's much larger scale (it typically runs well below
+     *  prefill - decode vs. prompt processing). ApexCharts supports any number of independent
+     *  y-axes stacked on one side, not just one per side (confirmed via its own source,
+     *  dimensions/YAxis.js's getTotalYAxisWidth(): every yaxis entry adds its own width to
+     *  yAxisWidthLeft or yAxisWidthRight purely based on its own `opposite` flag, with no cap on
+     *  how many share a side) - two visible, independently-scaled axes with `opposite` left unset
+     *  (false) is exactly that, both landing on the left. Context tokens is a wholly different
+     *  unit and a much larger raw number (growing into the tens of thousands) - it keeps its own
+     *  axis on the right (yaxis[3], opposite=true), same reason it got its own axis on the
+     *  request-timing chart. yaxis[1] (compaction), yaxis[4] and yaxis[5] (the two judge columns)
+     *  all point their own seriesName back at "prefill tok/s" so they merge onto prefill's own
+     *  scale and reach that line's own peak - ApexCharts' own yaxis.seriesName mechanism
+     *  (confirmed via its source, modules/CoreUtils.js's setSeriesYAxisMappings()) merges any
+     *  yaxis entries that share one seriesName into a single scale. Added to `container`
+     *  directly, same as every other Stats-tab element. */
     private void addRequestSpeedChart(final List<RequestSpeedPoint> points, final List<Integer> compactionsBeforeRequest,
+                                       final List<Integer> judgeOnTrackRequests, final List<Integer> judgeOffTrackRequests,
                                        final Div container, final String title) {
         if (points.isEmpty()) return;
         container.add(Panels.sectionTitle(title));
@@ -1485,14 +1492,20 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 .withData(points.stream().map(RequestSpeedPoint::generationTokPerSec).toArray(Double[]::new)).build();
         final var contextSeries = SeriesBuilder.get().withName("context tokens")
                 .withData(points.stream().map(RequestSpeedPoint::contextTokens).toArray(Integer[]::new)).build();
+        final var judgeOnTrackSeries = SeriesBuilder.get().withName("judge on track")
+                .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
+                .withData(compactionColumnData(judgeOnTrackRequests, points.size(), prefillPeak)).build();
+        final var judgeOffTrackSeries = SeriesBuilder.get().withName("judge off track")
+                .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
+                .withData(compactionColumnData(judgeOffTrackRequests, points.size(), prefillPeak)).build();
         final var chart = ApexChartsBuilder.get()
                 .withChart(ChartBuilder.get().withType(Type.LINE).build())
-                .withColors("#008FFB", "#e74c3c", "#00E396", "#546E7A")
+                .withColors("#008FFB", "#e74c3c", "#00E396", "#546E7A", "#27ae60", "#e67e22")
                 .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get()
                         // the bar's own stroke paints OUTSIDE its fill too, so even a 2px stroke
                         // on a 1px-wide column nearly triples its visual footprint - 0 here lets
                         // columnWidth below be the only thing controlling how wide it reads
-                        .withWidthArray(1.5, 0.0, 1.5, 1.5).build())
+                        .withWidthArray(1.5, 0.0, 1.5, 1.5, 0.0, 0.0).build())
                 .withPlotOptions(com.github.appreciated.apexcharts.config.builder.PlotOptionsBuilder.get()
                         .withBar(com.github.appreciated.apexcharts.config.plotoptions.builder.BarBuilder.get()
                                 // 16% of this chart's own per-category slot renders at ~1.5px wide,
@@ -1504,15 +1517,17 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         .withCustom(requestSpeedTooltipJs()).build())
                 .withXaxis(XAxisBuilder.get().withCategories(categories).withLabels(xaxisLabels)
                         .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
-                                .withText("request # (red column: a compaction landed right before it)").build())
+                                .withText("request # (red: a compaction landed right before it; green/amber: a judge checkpoint landed on track/off track)").build())
                         .build())
                 .withYaxis(
                         YAxisBuilder.get().withSeriesName("prefill tok/s").withLabels(integerLabels()).build(),
                         YAxisBuilder.get().withSeriesName("prefill tok/s").withShow(false).build(),
                         YAxisBuilder.get().withSeriesName("generation tok/s").withLabels(integerLabels()).build(),
                         YAxisBuilder.get().withSeriesName("context tokens").withOpposite(true)
-                                .withLabels(tokenCountLabels()).build())
-                .withSeries(speedSeries, compactionSeries, generationSeries, contextSeries)
+                                .withLabels(tokenCountLabels()).build(),
+                        YAxisBuilder.get().withSeriesName("prefill tok/s").withShow(false).build(),
+                        YAxisBuilder.get().withSeriesName("prefill tok/s").withShow(false).build())
+                .withSeries(speedSeries, compactionSeries, generationSeries, contextSeries, judgeOnTrackSeries, judgeOffTrackSeries)
                 .build();
         chart.setHeight("220px");
         container.add(chart);
@@ -1520,9 +1535,10 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
     /** This chart's own tooltip, read from series[0] (time to first token), series[1] (total
      *  time) and series[3] (context tokens) - same reason as requestSpeedTooltipJs() above: the
-     *  compaction column (series[2] here) has nothing meaningful to show (its value is just this
-     *  chart's own peak - see compactionColumnData()'s javadoc), so a custom tooltip is the only
-     *  way to leave it out via this addon's Tooltip bean (no "enabledOnSeries"). */
+     *  compaction column (series[2] here) and the two judge columns (series[4]/[5], added later)
+     *  have nothing meaningful to show (their value is just this chart's own peak - see
+     *  compactionColumnData()'s javadoc), so a custom tooltip is the only way to leave them out
+     *  via this addon's Tooltip bean (no "enabledOnSeries"). */
     static String requestTimingTooltipJs() {
         return """
                 function(struct) {
@@ -1559,14 +1575,15 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  javadoc for the exact mechanism) - two visible axes with `opposite` left unset both land on
      *  the left. Context tokens is a wholly different unit and typically a much larger raw number
      *  (growing into the tens of thousands), so it keeps its own axis on the right (yaxis[3],
-     *  opposite=true). yaxis[2] (the compaction column) points its own seriesName back at "time to
-     *  first token (s)" so it merges onto that line's own scale and reaches its own peak -
-     *  ApexCharts' own yaxis.seriesName mechanism (confirmed via its source,
-     *  modules/CoreUtils.js's setSeriesYAxisMappings()). Compaction marked the same way as
-     *  addRequestSpeedChart() - a thin column series, not an annotation (see
-     *  compactionColumnData()'s own javadoc for why), legend hidden and tooltip custom for the
-     *  same reason that chart's is. */
+     *  opposite=true). yaxis[2] (compaction), yaxis[4] and yaxis[5] (the two judge columns) all
+     *  point their own seriesName back at "time to first token (s)" so they merge onto that
+     *  line's own scale and reach its own peak - ApexCharts' own yaxis.seriesName mechanism
+     *  (confirmed via its source, modules/CoreUtils.js's setSeriesYAxisMappings()). Compaction and
+     *  judge both marked the same way as addRequestSpeedChart() - real column series, not
+     *  annotations (see compactionColumnData()'s own javadoc for why), legend hidden and tooltip
+     *  custom for the same reason that chart's is. */
     private void addRequestTimingChart(final List<RequestSpeedPoint> points, final List<Integer> compactionsBeforeRequest,
+                                        final List<Integer> judgeOnTrackRequests, final List<Integer> judgeOffTrackRequests,
                                         final Div container, final String title) {
         if (points.isEmpty()) return;
         container.add(Panels.sectionTitle(title));
@@ -1584,11 +1601,17 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 .withData(compactionColumnData(compactionsBeforeRequest, points.size(), ttftPeak)).build();
         final var contextSeries = SeriesBuilder.get().withName("context tokens")
                 .withData(points.stream().map(RequestSpeedPoint::contextTokens).toArray(Integer[]::new)).build();
+        final var judgeOnTrackSeries = SeriesBuilder.get().withName("judge on track")
+                .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
+                .withData(compactionColumnData(judgeOnTrackRequests, points.size(), ttftPeak)).build();
+        final var judgeOffTrackSeries = SeriesBuilder.get().withName("judge off track")
+                .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
+                .withData(compactionColumnData(judgeOffTrackRequests, points.size(), ttftPeak)).build();
         final var chart = ApexChartsBuilder.get()
                 .withChart(ChartBuilder.get().withType(Type.LINE).build())
-                .withColors("#775DD0", "#FEB019", "#e74c3c", "#546E7A")
+                .withColors("#775DD0", "#FEB019", "#e74c3c", "#546E7A", "#27ae60", "#e67e22")
                 .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get()
-                        .withWidthArray(1.5, 1.5, 0.0, 1.5).build())
+                        .withWidthArray(1.5, 1.5, 0.0, 1.5, 0.0, 0.0).build())
                 .withPlotOptions(com.github.appreciated.apexcharts.config.builder.PlotOptionsBuilder.get()
                         .withBar(com.github.appreciated.apexcharts.config.plotoptions.builder.BarBuilder.get()
                                 .withColumnWidth("16%").build())
@@ -1598,21 +1621,24 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         .withCustom(requestTimingTooltipJs()).build())
                 .withXaxis(XAxisBuilder.get().withCategories(categories).withLabels(xaxisLabels)
                         .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
-                                .withText("request # (red column: a compaction landed right before it)").build())
+                                .withText("request # (red: a compaction landed right before it; green/amber: a judge checkpoint landed on track/off track)").build())
                         .build())
                 .withYaxis(
                         YAxisBuilder.get().withSeriesName("time to first token (s)").withLabels(integerLabels()).build(),
                         YAxisBuilder.get().withSeriesName("total time (s)").withLabels(integerLabels()).build(),
                         YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build(),
                         YAxisBuilder.get().withSeriesName("context tokens").withOpposite(true)
-                                .withLabels(tokenCountLabels()).build())
-                .withSeries(ttftSeries, totalTimeSeries, compactionSeries, contextSeries)
+                                .withLabels(tokenCountLabels()).build(),
+                        YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build(),
+                        YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build())
+                .withSeries(ttftSeries, totalTimeSeries, compactionSeries, contextSeries, judgeOnTrackSeries, judgeOffTrackSeries)
                 .build();
         chart.setHeight("220px");
         container.add(chart);
     }
 
-    record AttemptSection(String header, String body, List<RequestSpeedPoint> requestSpeeds, List<Integer> compactionsBeforeRequest) {
+    record AttemptSection(String header, String body, List<RequestSpeedPoint> requestSpeeds, List<Integer> compactionsBeforeRequest,
+                           List<Integer> judgeOnTrackRequests, List<Integer> judgeOffTrackRequests) {
     }
 
     /** #355-followup-2: one section per session file sharing a task's label, oldest first,
@@ -1654,7 +1680,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             final var tc = a.path("tool_calls");
             if (tc.isObject() && tc.size() > 0) for (final var line : toolCallLines(tc)) body.append('\n').append(line);
             sections.add(new AttemptSection(header.toString(), body.toString(), requestSpeedPoints(a.path("request_speeds")),
-                    compactionsBeforeRequest(a.path("compactions_before_request"))));
+                    compactionsBeforeRequest(a.path("compactions_before_request")),
+                    compactionsBeforeRequest(a.path("judge_on_track_requests")),
+                    compactionsBeforeRequest(a.path("judge_off_track_requests"))));
         }
         return sections;
     }
