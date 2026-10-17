@@ -36,7 +36,38 @@ public final class Tailer {
         newSessions(runDir.resolve("sessions"), events);
         newExecutionOrder(runDir.resolve("execution_order.json"), events);
         tailRequests(runDir.resolve("interactions.jsonl"), events);
+        newRescueMarkers(runDir.resolve("rescue"), events);
         return events;
+    }
+
+    /** RunBench.rescueStep() writes a plain "<taskId>.start" file the moment a budget-rescue attempt
+     *  begins for that task, and a "<taskId>.done" file once it's over (succeeded or not) - the only
+     *  live signal that a rescue is in progress, since the rescue call itself reuses the task's own
+     *  canonical session id with continueSession=true and so never writes a distinguishing session
+     *  header (see rescueStep()'s own javadoc). Same seenFiles-by-filename dedup as newFiles(), but
+     *  with its own event shape (rescue_started/rescue_done, keyed by task id) rather than
+     *  step_started - a rescue is never a new "step", it's a continuation of the SAME task. */
+    private void newRescueMarkers(final Path dir, final List<Map<String, Object>> events) {
+        if (!Files.isDirectory(dir)) return;
+        List<Path> paths;
+        try (java.util.stream.Stream<Path> stream = Files.list(dir)) {   // the stream holds a directory FD - it must be closed
+            paths = stream.filter(Files::isRegularFile).sorted(Comparator.comparing(p -> p.getFileName().toString())).toList();
+        } catch (IOException e) { log.debug("could not list {}: {}", dir, e.toString()); return; }
+        for (Path p : paths) {
+            final String key = "rescue/" + p.getFileName();
+            if (seenFiles.contains(key)) continue;
+            seenFiles.add(key);
+            final String name = p.getFileName().toString();
+            if (name.endsWith(".start")) {
+                final String taskId = name.substring(0, name.length() - ".start".length());
+                String reason;
+                try { reason = Files.readString(p, StandardCharsets.UTF_8); } catch (IOException e) { reason = ""; }
+                events.add(Map.of("type", "rescue_started", "task", taskId, "reason", reason));
+            } else if (name.endsWith(".done")) {
+                final String taskId = name.substring(0, name.length() - ".done".length());
+                events.add(Map.of("type", "rescue_done", "task", taskId));
+            }
+        }
     }
 
     /** RunBench writes this once, before any task session starts: the real planned task order

@@ -1650,6 +1650,17 @@ public class RunBench {
                 cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger());
         final int maxTurns = cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS;
         final int keepRecentTurns = rescueKeepRecentTurnsFor(rescueCfg, rescuingWallTimeout, props.keepRecentTurns());
+        // the only live signal that a rescue is in progress for this task: the call below reuses the
+        // task's own canonical session id with continueSession=true, which never writes a new session
+        // header (see ReferenceAgent.run()'s own continueSession branch) - so nothing in the session
+        // file itself distinguishes "a rescue is working" from "more of the same already-ended
+        // session" (found live on T14: a stray failed wrap-up sub-call's own "end" record made the
+        // task look finished while the rescue below was still genuinely running for another ~2h).
+        // Tailer picks this up the same way it already watches packs/instructions - a plain file's
+        // existence - so the live view can say "budget rescue in progress" instead of guessing from a
+        // misleading endedStage.
+        Files.createDirectories(rd.resolve("rescue"));
+        Files.writeString(rd.resolve("rescue/" + t.id + ".start"), reason);
         try {
             // the SAME canonical id as the task's own main session - continueSession=true must find
             // and compact THAT task's own history, not a separate one
@@ -1667,7 +1678,10 @@ public class RunBench {
                 rec.put("rescue_succeeded", true);
                 rec.put("verification", VerifyTask.verify(ws, cfg, rd.resolve("verify/" + t.id + "-rescue.log")));
             }
-        } finally { proxy.stop(); }
+        } finally {
+            proxy.stop();
+            Files.writeString(rd.resolve("rescue/" + t.id + ".done"), "");
+        }
     }
 
     static List<String[]> manifestHandoffs(final Map<String, Object> manifest) {
