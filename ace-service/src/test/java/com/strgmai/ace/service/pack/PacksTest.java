@@ -132,6 +132,9 @@ class PacksTest {
         assertTrue(stable.contains("Known gotchas"));
         assertTrue(stable.contains("java.sql.Timestamp"), "the Instant/Timestamp JDBC gotcha must be present");
         assertTrue(stable.contains("port 0"), "the ephemeral mock-port gotcha must be present");
+        assertTrue(stable.contains("NullNode"), "the Jackson null-handling gotcha must be present");
+        assertTrue(stable.contains("--write-locks"), "the Gradle dependency-lock gotcha must be present");
+        assertTrue(stable.contains("allow-bean-definition-overriding"), "the Spring TestConfiguration gotcha must be present");
     }
 
     /** #404: lessons are a run-wide, dependency-independent counterpart to handoffs - unlike

@@ -787,6 +787,43 @@ class RunBenchTest {
         assertTrue(lessons.contains("Second lesson."));
     }
 
+    /** #402/#403: found live that nearly every task on this host independently rediscovered the
+     *  same JDK mismatch - discoverJavaHome() is the harness-side fix. parseJavacMajor() is its
+     *  one pure, independently-testable piece; the subprocess-probing orchestration around it
+     *  (javacReportsMajor()/discoverJavaHome() themselves) is heavy, host-filesystem-dependent
+     *  orchestration with no direct test, same reasoning rescueStep()/handoffStep() already
+     *  follow - exercised live instead, below. */
+    @Test
+    void parseJavacMajorReadsThePost9VersionScheme() {
+        assertEquals(21, RunBench.parseJavacMajor("javac 21.0.12.1"));
+        assertEquals(26, RunBench.parseJavacMajor("javac 26\n"));
+    }
+
+    @Test
+    void parseJavacMajorReadsThePre9VersionScheme() {
+        assertEquals(8, RunBench.parseJavacMajor("javac 1.8.0_292"));
+    }
+
+    @Test
+    void parseJavacMajorIsNullForAnythingThatIsNotAJavacVersionLine() {
+        assertNull(RunBench.parseJavacMajor(null));
+        assertNull(RunBench.parseJavacMajor(""));
+        assertNull(RunBench.parseJavacMajor("zsh: command not found: javac"));
+    }
+
+    /** Live, not mocked: this is exactly the scenario #402 found - this host's own
+     *  /usr/libexec/java_home -v 21 returns JDK 26's home with exit 0 and no error (only JDK 26
+     *  is registered there at all), while a real, working JDK 21 sits under Homebrew's own
+     *  install convention, invisible to that registry. Skips itself if this dev machine's own
+     *  environment ever changes shape, rather than asserting a path that may no longer exist. */
+    @Test
+    void discoverJavaHomeFindsARealInstallWhenTheMacOsUtilityPointsAtTheWrongMajorVersion() {
+        final String found = RunBench.discoverJavaHome(21);
+        org.junit.jupiter.api.Assumptions.assumeTrue(found != null, "no JDK 21 install found on this machine at all - nothing to assert");
+        assertTrue(RunBench.parseJavacMajor(com.strgmai.ace.service.docker.DockerService.sh(10, found + "/bin/javac", "-version").out()) == 21,
+                "discoverJavaHome() must only ever return a candidate whose OWN javac actually reports 21");
+    }
+
     /** #303: a RESUMED run's in-memory manifest starts fresh (rebuilt each orchestratedPhase() call,
      *  same as every other R18 resume case), but the tags/files on disk are the real record - a task
      *  already tagged phase/{id}-handoff must have its note backfilled into the list before the task
