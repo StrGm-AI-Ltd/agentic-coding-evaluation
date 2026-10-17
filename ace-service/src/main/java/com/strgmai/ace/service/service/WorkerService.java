@@ -2,6 +2,7 @@ package com.strgmai.ace.service.service;
 
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.runner.ContextProbe;
+import com.strgmai.ace.service.runner.RecordingProxyFactory;
 import com.strgmai.ace.service.runner.RunBench;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,11 +40,12 @@ public class WorkerService {
     private final Preflight preflight;
     private final TreatmentPin pin;
     private final ContextProbe probe;
+    private final RecordingProxyFactory proxies;
 
     public WorkerService(JobQueue queue, RunBench runBench, ImporterService importer, ExperimentsService experiments,
-                         Preflight preflight, TreatmentPin pin, BenchProperties props, ContextProbe probe) {
+                         Preflight preflight, TreatmentPin pin, BenchProperties props, ContextProbe probe, RecordingProxyFactory proxies) {
         this.queue = queue; this.runBench = runBench; this.importer = importer; this.experiments = experiments;
-        this.preflight = preflight; this.pin = pin; this.props = props; this.probe = probe;
+        this.preflight = preflight; this.pin = pin; this.props = props; this.probe = probe; this.proxies = proxies;
         reconcile();
     }
 
@@ -127,7 +129,14 @@ public class WorkerService {
                 // interrupt the worker thread: a blocking model-server call or Thread.sleep must
                 // unwind NOW, not wait out the rest of the run's budget for the flag to be noticed.
                 // interrupt() alone does not reach a blocking HttpResponseInputStream.read() (R14,
-                // same class of bug as RecordingProxy pre-R12) - probe.abortInflight() closes it directly.
+                // same class of bug as RecordingProxy pre-R12) - probe.abortInflight() closes it
+                // directly, and proxies.abortAllInflight() does the same for every currently-active
+                // task session's own connection (found live on T17, #396-adjacent: without this,
+                // currentJobFuture.cancel(true) only interrupts the WAITING thread blocked in
+                // runBounded()'s future.get() - the WORKING thread actually streaming the model's
+                // response can still be stuck in that same non-interruptible read, so the job's own
+                // status flips to "paused" via the finally block below while real turns are still
+                // being written to the session file underneath it).
                 // Found live: a single one-shot abort here only closes whatever request happens to
                 // be in flight AT THAT INSTANT. ContextProbe.askRetry() opens a brand new request
                 // right after an aborted one fails (so does probe()'s own loop across context
@@ -141,10 +150,12 @@ public class WorkerService {
                     cancelCurrent = true;
                     if (currentJobFuture != null) currentJobFuture.cancel(true);
                     probe.abortInflight();
+                    proxies.abortAllInflight("cancelled");
                 } else if (Boolean.TRUE.equals(row.get("pause_requested"))) {
                     pauseCurrent = true;
                     if (currentJobFuture != null) currentJobFuture.cancel(true);
                     probe.abortInflight();
+                    proxies.abortAllInflight("paused");
                 }
                 try { Thread.sleep(2000); } catch (InterruptedException e) { return; }
             }
