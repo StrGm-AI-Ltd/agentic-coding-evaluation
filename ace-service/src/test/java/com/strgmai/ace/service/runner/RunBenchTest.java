@@ -942,11 +942,38 @@ class RunBenchTest {
         assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 124), "pi"), "same, for the wall-timeout rc");
     }
 
-    /** #351: the reason text rescueStep() names must match what actually happened - distinguishing
-     *  all three rescue-eligible rc values matters because the wrong reason would be misleading
-     *  (e.g. "ran out of token budget" for a task that was, like T7, nowhere near its token
-     *  budget). Exercised directly rather than only through rescueStep()'s own heavier
-     *  orchestration, same reasoning as shouldRescue()'s own extraction. */
+    /** #413: found live on T19 (run svc-20261013-opt) - the session returned normally (rc=0, never
+     *  threw BudgetExhausted/ContextWindowExceeded) but its own main session, length-retry,
+     *  re-engage call, AND wrap-up call all failed to produce a self-reported status (the model/oMLX
+     *  stalled outright), so sessionWithPolicy() had to synthesize the "unfinished" fallback status
+     *  itself and set status_by_harness=true - a real, rescue-eligible failure that every existing
+     *  rc check (3/4/124) missed entirely, since rc stayed 0. Checked rc-independently: the flag
+     *  alone must be enough, regardless of whichever rc the stall happened to leave behind. */
+    @Test
+    void shouldRescueAlsoFiresWhenTheHarnessHadToSynthesizeTheStatusLineItself() {
+        final var enabled = Map.<String, Object>of("enabled", true);
+        assertTrue(RunBench.shouldRescue(enabled, Map.of("rc", 0, "status_by_harness", true), "ref"),
+                "#413: rc=0 but the harness had nothing else to go on - a real stall, not a success");
+        assertTrue(RunBench.shouldRescue(enabled, Map.of("rc", 2, "status_by_harness", true), "ref"),
+                "#413: same flag, a different rc - the flag is what matters, not which rc it arrived under");
+        assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 0, "status_by_harness", false), "ref"),
+                "the flag explicitly false - a normal, real success, never rescue-eligible");
+        assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 0), "ref"),
+                "no status_by_harness key at all - unchanged behavior, still not rescue-eligible");
+
+        final var disabled = Map.<String, Object>of("enabled", false);
+        assertFalse(RunBench.shouldRescue(disabled, Map.of("rc", 0, "status_by_harness", true), "ref"),
+                "the flag alone never bypasses the run's own opt-in");
+        assertFalse(RunBench.shouldRescue(enabled, Map.of("rc", 0, "status_by_harness", true), "pi"),
+                "the flag alone never bypasses the ref-harness-only scope");
+    }
+
+    /** #351/#413: the reason text rescueStep() names must match what actually happened -
+     *  distinguishing every rescue-eligible rc/flag combination matters because the wrong reason
+     *  would be misleading (e.g. "ran out of token budget" for a task that was, like T7, nowhere
+     *  near its token budget - or for T19, which never ran out of anything at all). Exercised
+     *  directly rather than only through rescueStep()'s own heavier orchestration, same reasoning as
+     *  shouldRescue()'s own extraction. */
     @Test
     void rescueReasonNamesTheActualCauseForEachEligibleRc() {
         assertEquals("ran out of context window space (its own conversation history grew too large to fit)",
@@ -955,6 +982,10 @@ class RunBenchTest {
                 RunBench.rescueReason(Map.of("rc", 124)), "#351: rc=124: wall-clock time, not tokens or context space");
         assertEquals("ran out of its own token budget",
                 RunBench.rescueReason(Map.of("rc", 3)), "rc=3: the proxy's own token-budget refusal");
+        assertEquals("stalled - its own session ended without producing any further output or a status "
+                + "report (not a budget or time limit being reached)",
+                RunBench.rescueReason(Map.of("rc", 0, "status_by_harness", true)),
+                "#413: rc=0, a harness-synthesized status - nothing was actually exhausted");
     }
 
     /** #351: a wall-timeout rescue must never fall back to "unlimited" wall time or the operator-
