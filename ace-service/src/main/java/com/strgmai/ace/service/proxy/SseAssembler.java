@@ -15,12 +15,27 @@ public final class SseAssembler {
 
     private SseAssembler() {}
 
-    public record Assembled(String content, String reasoning, List<Map<String, Object>> toolCalls, String finishReason, JsonNode usage) {}
+    public record Assembled(String content, String reasoning, List<Map<String, Object>> toolCalls, String finishReason, JsonNode usage, String error) {}
+
+    /** #415: a top-level `"error"` key - the OpenAI-API shape an upstream can send even on a 200
+     *  streamed response (distinct from a transport-level failure, RecordingProxy's own
+     *  `upstream_error` flag) - was never read anywhere in this file before: parse() only ever
+     *  checked `usage`/`choices`, so an upstream error chunk parsed as valid JSON, contributed
+     *  nothing, and was silently dropped. Found live (2026-10-18) investigating a T19 stall whose
+     *  real cause (oMLX's own memory-pressure abort, "process memory limit exceeded...") lived only
+     *  in oMLX's own local server.log, invisible to this journal - this is the fix. Handles both
+     *  the nested OpenAI shape ({"error": {"message": "...", ...}}) and a bare string one
+     *  defensively, in case a provider sends the simpler form. */
+    public static String errorText(final JsonNode node) {
+        final JsonNode err = node.path("error");
+        if (err.isMissingNode() || err.isNull()) return null;
+        return err.isTextual() ? err.asText() : err.path("message").asText(err.toString());
+    }
 
     public static Assembled parse(final List<byte[]> chunks) {
         final StringBuilder text = new StringBuilder(), reasoning = new StringBuilder();
         final Map<Integer, Map<String, Object>> tools = new TreeMap<>();
-        String finish = null; JsonNode usage = null;
+        String finish = null; JsonNode usage = null; String error = null;
         for (byte[] raw : chunks) {
             for (String line : new String(raw, java.nio.charset.StandardCharsets.UTF_8).split("\n")) {
                 if (!line.startsWith("data:")) continue;
@@ -32,6 +47,8 @@ public final class SseAssembler {
                 try { obj = JSON.readTree(data); }
                 catch (Exception e) { log.warn("could not parse SSE data chunk, dropping it: {}", e.toString()); continue; }
                 if (obj.hasNonNull("usage")) usage = obj.get("usage");
+                final String chunkError = errorText(obj);
+                if (chunkError != null) error = chunkError;
                 for (JsonNode ch : obj.path("choices")) {
                     final JsonNode d = ch.path("delta");
                     if (!d.path("content").isMissingNode() && !d.path("content").isNull() && !d.path("content").asText("").isEmpty()) text.append(d.path("content").asText());
@@ -49,6 +66,6 @@ public final class SseAssembler {
                 }
             }
         }
-        return new Assembled(text.toString(), reasoning.toString(), new ArrayList<>(tools.values()), finish, usage);
+        return new Assembled(text.toString(), reasoning.toString(), new ArrayList<>(tools.values()), finish, usage, error);
     }
 }

@@ -45,7 +45,7 @@ public final class JournalFacts {
     record Entry(long off, String task, OffsetDateTime ts, int status, boolean budget, boolean upstream,
                  boolean clientAbort, boolean drainAbort, boolean truncated, long ct, boolean est, Object pt,
                  String fin, String effort, boolean reqDict, List<String> ws,
-                 double latencySec, Long firstByteMs, Double prefillTps, Double decodeTps) {}
+                 double latencySec, Long firstByteMs, Double prefillTps, Double decodeTps, String error) {}
 
     /** context-size buckets for speed_by_context: a fixed 1024-token width - fine enough to show real
      *  texture in the prefill/decode-vs-context trend across the range typical runs actually span. */
@@ -244,7 +244,12 @@ public final class JournalFacts {
                 r.path("latency_sec").asDouble(0.0),
                 r.path("first_byte_ms").isMissingNode() ? null : r.path("first_byte_ms").asLong(),
                 u == null || !u.path("prompt_tokens_per_second").isNumber() ? null : u.path("prompt_tokens_per_second").asDouble(),
-                u == null || !u.path("generation_tokens_per_second").isNumber() ? null : u.path("generation_tokens_per_second").asDouble());
+                u == null || !u.path("generation_tokens_per_second").isNumber() ? null : u.path("generation_tokens_per_second").asDouble(),
+                // #415: resp carries the upstream's own "error" either way - the raw upstream body
+                // for a non-streamed response, or SseAssembler's already-extracted string for a
+                // streamed one (RecordingProxy.streamSse()) - com.strgmai.ace.service.proxy.SseAssembler.errorText()
+                // reads both shapes uniformly
+                resp == null || !resp.isObject() ? null : com.strgmai.ace.service.proxy.SseAssembler.errorText(resp));
     }
 
     static JsonNode requestAt(final Path p, final long off) {
@@ -279,6 +284,20 @@ public final class JournalFacts {
         for (Entry e : entries(Path.of(journal)))
             if (e.ts() != null && !e.ts().isBefore(since) && e.pt() instanceof Long l) pt = l;
         return pt;
+    }
+
+    /** #415: the text of the last chat-completion response that carried an explicit upstream
+     *  "error" (the OpenAI-API shape an upstream can send even on a 200 streamed response, distinct
+     *  from this proxy's own upstream_error transport-failure flag above - see SseAssembler.errorText,
+     *  RecordingProxy.streamSse()). Null when nothing in the window carried one - the common case,
+     *  and not itself evidence of anything; a silent stall (T19's own case) sends nothing at all. */
+    public static String lastUpstreamError(final String journal, final String sinceIso) {
+        if (journal == null || !Files.isRegularFile(Path.of(journal))) return null;
+        final OffsetDateTime since = OffsetDateTime.parse(sinceIso);
+        String err = null;
+        for (Entry e : entries(Path.of(journal)))
+            if (e.ts() != null && !e.ts().isBefore(since) && e.error() != null) err = e.error();
+        return err;
     }
 
     static String jsonQuote(String t) { return "\"" + t.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""; }

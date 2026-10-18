@@ -353,9 +353,18 @@ public class RunBench {
      *  chatWithRetry's own retries-exhausted TransientError (the exact shape an infra rejection
      *  takes); rc==124 is runBounded's own task-wall timeout; anything else reaching here is a
      *  session that returned normally but produced no further output on its last turn (T7's own
-     *  actual case) - a real, if rarer, anomaly worth pointing at the journal for, not silence. */
-    static String fallbackTail(final int rc, final long wallSec, final int turns, final String endIso) {
-        return switch (rc) {
+     *  actual case) - a real, if rarer, anomaly worth pointing at the journal for, not silence.
+     *
+     *  #415: `upstreamError` (JournalFacts.lastUpstreamError's result for this window, nullable) is
+     *  appended to whichever branch fires above, regardless of rc - found live on T19 (a silent
+     *  oMLX memory-pressure abort, "process limit exceeded..." - see the Second Brain ACE note §24)
+     *  that this very fallback text used to describe only as "the model produced no further output",
+     *  with the real cause recoverable only via manual oMLX server.log archaeology. Most of the time
+     *  this is null (a silent stall sends nothing at all, as T19's own case did) - not itself
+     *  evidence of anything; when it IS present, it is the single most specific fact this method can
+     *  report. */
+    static String fallbackTail(final int rc, final long wallSec, final int turns, final String endIso, final String upstreamError) {
+        final String base = switch (rc) {
             case 2 -> " (the model's own call failed and its retries were exhausted - see the "
                     + "service log around " + endIso + " for the underlying error, e.g. an "
                     + "upstream model-server rejection)";
@@ -363,6 +372,7 @@ public class RunBench {
             default -> " (the model produced no further output after " + turns
                     + " turns - check interactions.jsonl for this session around " + endIso + ")";
         };
+        return upstreamError == null || upstreamError.isBlank() ? base : base + " [upstream error: " + upstreamError + "]";
     }
 
     /** #263: one JSON line per attempt at a plan task's own main session, appended to
@@ -1098,13 +1108,17 @@ public class RunBench {
             // session specifically (not the wrap-up's own w, scoped to the branch above and absent
             // entirely when rc==2 skipped the wrap-up) - that is exactly what decided there would be
             // no status line, so it is the right thing to name here regardless of which branch ran.
-            final String tail = fallbackTail(rec.rc(), wall, rec.turns(), rec.end().toString());
+            // #415: whatever the upstream itself said (an explicit OpenAI-shaped "error" - see
+            // SseAssembler.errorText), if anything - most of the time this is null (T19's own case)
+            final String upstreamError = JournalFacts.lastUpstreamError(journal.toString(), rec.start().toString());
+            final String tail = fallbackTail(rec.rc(), wall, rec.turns(), rec.end().toString(), upstreamError);
             final Path pp = ws.resolve("docs/PROGRESS.md");
             Files.createDirectories(pp.getParent());
             final String existing = Files.isRegularFile(pp) ? Files.readString(pp) : "";
             Files.writeString(pp, (existing.isEmpty() || existing.endsWith("\n") ? "" : "\n") + Packs.fallbackStatus(name, tail) + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
             reported = "unfinished";
             out.put("status_by_harness", true);
+            if (upstreamError != null && !upstreamError.isBlank()) out.put("upstream_error_text", upstreamError);
         }
         // the proxy's 429 refusal is the budget's own verdict: over_budget, never INVALID (R4 C-3)
         final Map<String, Object> wf = JournalFacts.facts(journal.toString(), rec.start().toString(), nowIso(), null, null, null);
@@ -1615,7 +1629,7 @@ public class RunBench {
      *  would be actively wrong, since nothing was actually exhausted. Extracted as a pure function,
      *  same reasoning as shouldRescue() itself. */
     static String rescueReason(final Map<String, Object> rec) {
-        return Integer.valueOf(4).equals(rec.get("rc"))
+        final String base = Integer.valueOf(4).equals(rec.get("rc"))
                 ? "ran out of context window space (its own conversation history grew too large to fit)"
                 : Integer.valueOf(124).equals(rec.get("rc"))
                 ? "ran out of its own wall-clock time budget"
@@ -1623,6 +1637,11 @@ public class RunBench {
                 ? "ran out of its own token budget"
                 : "stalled - its own session ended without producing any further output or a status "
                 + "report (not a budget or time limit being reached)";
+        // #415: rec's own "upstream_error_text" (sessionWithPolicy's fallback-status block, set from
+        // JournalFacts.lastUpstreamError) - when the model server itself reported something, the
+        // rescue session should be told the real cause instead of just this method's own best guess
+        return rec.get("upstream_error_text") instanceof String s && !s.isBlank()
+                ? base + " (the model server itself reported: " + s + ")" : base;
     }
 
     /** #351/#413: a wall-timeout OR harness-fallback-status rescue must never fall back to

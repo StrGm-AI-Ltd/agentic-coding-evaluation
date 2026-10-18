@@ -71,4 +71,27 @@ class SseAssemblerTest {
         assertEquals("x", a.content());
         assertNull(a.finishReason());
     }
+
+    /** #415: a top-level "error" chunk (the OpenAI-API shape an upstream can send even on a 200
+     *  streamed response) used to parse as valid JSON, contribute nothing (no "choices" to iterate),
+     *  and vanish - found live investigating a T19 stall whose real cause (oMLX's own memory-pressure
+     *  abort) was invisible to this journal as a result. Must still capture whatever real content
+     *  streamed before the error, not replace it - an error can arrive after partial progress. */
+    @Test
+    void capturesATopLevelErrorChunkInsteadOfSilentlyDroppingIt() {
+        final SseAssembler.Assembled a = SseAssembler.parse(List.of(
+                chunk("{\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}"),
+                chunk("{\"error\":{\"message\":\"process memory limit exceeded (usage 27.9 GB)\",\"type\":\"server_error\"}}")));
+        assertEquals("partial", a.content(), "real content that streamed before the error must survive");
+        assertEquals("process memory limit exceeded (usage 27.9 GB)", a.error());
+    }
+
+    @Test
+    void errorTextHandlesTheNestedShapeTheBareStringShapeAndNoErrorAtAll() throws Exception {
+        assertEquals("boom", SseAssembler.errorText(M.readTree("{\"error\":{\"message\":\"boom\"}}")));
+        assertEquals("boom", SseAssembler.errorText(M.readTree("{\"error\":\"boom\"}")),
+                "a provider that sends a bare string instead of {message:...} must still be read");
+        assertNull(SseAssembler.errorText(M.readTree("{\"choices\":[]}")), "no error key at all");
+        assertNull(SseAssembler.errorText(M.readTree("{\"error\":null}")), "an explicit null error key");
+    }
 }

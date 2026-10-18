@@ -371,6 +371,11 @@ public class RecordingProxy {
             if (asm.usage() != null) resp.set("usage", asm.usage());
             else if (drainAborted)   // an abandoned stream has no usage chunk: estimate, and say so
                 resp.putPOJO("usage", estimatedUsage(asm));
+            // #415: an upstream error chunk (e.g. oMLX's own memory-pressure abort) used to parse
+            // and vanish - SseAssembler now extracts it, journal it here so a future "why did this
+            // come back empty" investigation finds it in interactions.jsonl, not just in oMLX's own
+            // local server.log (see JournalFacts.lastUpstreamError, RunBench.fallbackTail/rescueReason)
+            if (asm.error() != null) resp.put("error", asm.error());
         } else resp.put("_bytes", chunks.stream().mapToLong(c -> c.length).sum());
         rec.put("status", up.statusCode()).put("streamed", true).put("latency_sec", elapsed(t0));
         rec.put("reads", reads).put("max_read_gap_ms", maxReadGapMs);

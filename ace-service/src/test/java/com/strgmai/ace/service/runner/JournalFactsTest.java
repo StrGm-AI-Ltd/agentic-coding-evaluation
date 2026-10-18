@@ -173,6 +173,24 @@ class JournalFactsTest {
         assertEquals(100L, JournalFacts.lastPromptTokens(one.toString(), "2026-09-14T09:00:00Z"));
     }
 
+    /** #415: found live on T19 - the real cause of a silent stall (oMLX's own memory-pressure
+     *  abort) lived only in oMLX's own local server.log until RecordingProxy/SseAssembler started
+     *  journaling an upstream "error" field. This is the read side: the most recent one in the
+     *  window, null when nothing in it ever carried one (the common case - a silent stall, T19's own
+     *  included, sends nothing at all). */
+    @Test
+    void lastUpstreamErrorSeesTheLatestInWindowAndNullWhenNoneWasRecorded() throws Exception {
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
+        Files.writeString(j, chat("2026-09-14T10:00:00Z", "", "\"finish_reason\": \"tool_calls\"", REQ)
+                + chat("2026-09-14T11:00:00Z", "", "\"error\": \"process memory limit exceeded\"", REQ));
+        assertEquals("process memory limit exceeded", JournalFacts.lastUpstreamError(j.toString(), "2026-09-14T09:00:00Z"));
+        assertNull(JournalFacts.lastUpstreamError(j.toString(), "2026-09-14T11:30:00Z"), "the window starts after the only error");
+
+        Path none = track(Files.createTempFile("j-none", ".jsonl"));
+        Files.writeString(none, chat("2026-09-14T10:00:00Z", "", "\"finish_reason\": \"tool_calls\"", REQ));
+        assertNull(JournalFacts.lastUpstreamError(none.toString(), "2026-09-14T09:00:00Z"));
+    }
+
     /** #32: run stats had no latency/TTFT at all - RecordingProxy always journals latency_sec, and
      *  first_byte_ms on streamed requests, but nothing ever averaged them until now. */
     @Test

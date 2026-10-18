@@ -681,10 +681,26 @@ class RunBenchTest {
      *  replaced. */
     @Test
     void fallbackTailNamesTheRealCauseInsteadOfBeingBlank() {
-        assertTrue(RunBench.fallbackTail(2, 20000, 46, "2026-10-06T05:43:31Z").contains("service log"));
-        assertEquals(" (task-wall budget of 20000s exceeded)", RunBench.fallbackTail(124, 20000, 46, "2026-10-06T05:43:31Z"));
-        final var plain = RunBench.fallbackTail(0, 20000, 46, "2026-10-06T05:43:31Z");
+        assertTrue(RunBench.fallbackTail(2, 20000, 46, "2026-10-06T05:43:31Z", null).contains("service log"));
+        assertEquals(" (task-wall budget of 20000s exceeded)", RunBench.fallbackTail(124, 20000, 46, "2026-10-06T05:43:31Z", null));
+        final var plain = RunBench.fallbackTail(0, 20000, 46, "2026-10-06T05:43:31Z", null);
         assertTrue(plain.contains("46 turns") && plain.contains("interactions.jsonl"));
+    }
+
+    /** #415: found live on T19 - the real cause (oMLX's own memory-pressure abort) lived only in
+     *  oMLX's own local server.log, invisible to this fallback text, which could only say "the model
+     *  produced no further output". When JournalFacts.lastUpstreamError found something, it must be
+     *  appended regardless of which rc branch fired - a null/blank upstreamError (the common case,
+     *  not itself evidence of anything) must leave the base text completely unchanged. */
+    @Test
+    void fallbackTailAppendsTheUpstreamErrorWhenOneWasFound() {
+        final var withError = RunBench.fallbackTail(0, 20000, 46, "2026-10-06T05:43:31Z",
+                "process memory limit exceeded (usage 27.9 GB, abort threshold 28.0 GB)");
+        assertTrue(withError.contains("46 turns") && withError.contains("process memory limit exceeded"),
+                "both the existing text and the new upstream detail must be present");
+        assertEquals(RunBench.fallbackTail(124, 20000, 46, "2026-10-06T05:43:31Z", null),
+                RunBench.fallbackTail(124, 20000, 46, "2026-10-06T05:43:31Z", ""),
+                "a blank upstreamError must behave exactly like null, not append an empty bracket");
     }
 
     /** #300: the in-session handoff fast path's own gating - mirrors #249's own lesson (the old
@@ -986,6 +1002,21 @@ class RunBenchTest {
                 + "report (not a budget or time limit being reached)",
                 RunBench.rescueReason(Map.of("rc", 0, "status_by_harness", true)),
                 "#413: rc=0, a harness-synthesized status - nothing was actually exhausted");
+    }
+
+    /** #415: when sessionWithPolicy's own fallback-status block found an explicit upstream error
+     *  (JournalFacts.lastUpstreamError) and carried it onto rec as "upstream_error_text", the rescue
+     *  session's own instruction should be told the real cause, not just this method's best guess by
+     *  rc alone - found live on T19, whose real cause (oMLX's own memory-pressure abort) this method
+     *  had no way to know about before #415. */
+    @Test
+    void rescueReasonNamesTheUpstreamErrorWhenOneWasRecorded() {
+        final var withError = RunBench.rescueReason(Map.of("rc", 0, "status_by_harness", true,
+                "upstream_error_text", "process memory limit exceeded (usage 27.9 GB, abort threshold 28.0 GB)"));
+        assertTrue(withError.startsWith("stalled") && withError.contains("process memory limit exceeded"),
+                "both the rc-based reason and the upstream's own text must be present");
+        assertEquals("ran out of its own token budget", RunBench.rescueReason(Map.of("rc", 3)),
+                "no upstream_error_text key at all - unchanged behavior");
     }
 
     /** #351: a wall-timeout rescue must never fall back to "unlimited" wall time or the operator-
