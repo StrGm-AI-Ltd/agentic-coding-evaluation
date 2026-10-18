@@ -1563,7 +1563,7 @@ public class RunBench {
         return out;
     }
 
-    /** #307/#351: whether a task's own final rc earns it a rescue attempt - extracted as a pure
+    /** #307/#351/#413: whether a task's own final rc earns it a rescue attempt - extracted as a pure
      *  predicate (same reasoning as isJudgeTurn/shouldRetryOnLengthFinish above) since rescueStep()
      *  itself is heavy orchestration with no direct test, same as handoffStep(). Three rc values
      *  are eligible: 3 (BudgetExhausted) and 4 (ContextWindowExceeded, #299-adjacent: found live
@@ -1576,64 +1576,92 @@ public class RunBench {
      *  Found live on T7 (run svc-20261013-opt): the task was genuinely close to done (judge: ON
      *  TRACK, "1 test failure left") but burned ~half its 9h wall budget on compaction-triggered
      *  re-prefills before the hard timeout cut it off mid-fix - exactly the situation a bounded,
-     *  aggressively-compacted rescue reconnect (see rescueStep()'s own javadoc) is built for. Never
-     *  when the feature is off; never on the `pi` harness (no in-process loop to compact/reconnect).
-     *  `rescueCfg` is the task's own EFFECTIVE config (effectiveRescueCfg()'s result), not the raw
-     *  run-level map directly, so a restarted task can flip this independent of the run's own
-     *  original choice. */
+     *  aggressively-compacted rescue reconnect (see rescueStep()'s own javadoc) is built for.
+     *
+     *  #413: a FOURTH, rc-independent path is also eligible: `rec`'s own "status_by_harness" flag
+     *  (sessionWithPolicy()'s own marker, set exactly when the main session, its length-retry, its
+     *  re-engage call, AND its dedicated wrap-up call all failed to produce a self-reported status,
+     *  forcing the harness to synthesize the "unfinished | budget exhausted before a status was
+     *  written" fallback line itself). Found live on T19 (run svc-20261013-opt): rc==0 (a normal,
+     *  non-exceptional return - the session never threw BudgetExhausted/ContextWindowExceeded at
+     *  all), yet the task's own final turns show the model/oMLX stalling outright (a truncated,
+     *  finish-less reply, then two fully empty ones, each pegged at the run's own
+     *  --first-token-timeout ceiling) - real, substantial work (a full docker-compose.yml,
+     *  Dockerfiles, db-init scripts) was already committed, but with no status line, no
+     *  verification, and no handoff note for the tasks depending on it, since rc==0 fell outside
+     *  every existing rc check above. status_by_harness is exactly the signal the rc checks were
+     *  trying to approximate - the harness genuinely has nothing else to go on - so it is checked
+     *  directly instead of trying to enumerate every rc a silent stall might arrive under.
+     *
+     *  Never when the feature is off; never on the `pi` harness (no in-process loop to
+     *  compact/reconnect). `rescueCfg` is the task's own EFFECTIVE config (effectiveRescueCfg()'s
+     *  result), not the raw run-level map directly, so a restarted task can flip this independent
+     *  of the run's own original choice. */
     static boolean shouldRescue(final Map<String, Object> rescueCfg, final Map<String, Object> rec, final String harness) {
-        return Boolean.TRUE.equals(rescueCfg.get("enabled")) && rec.get("rc") instanceof Integer rc && (rc == 3 || rc == 4 || rc == 124)
+        return Boolean.TRUE.equals(rescueCfg.get("enabled"))
+                && ((rec.get("rc") instanceof Integer rc && (rc == 3 || rc == 4 || rc == 124))
+                        || Boolean.TRUE.equals(rec.get("status_by_harness")))
                 && !"pi".equals(harness);
     }
 
-    /** #307/#351: the instruction must name the REAL reason accurately - "ran out of budget" would
+    /** #307/#351/#413: the instruction must name the REAL reason accurately - "ran out of budget" would
      *  be misleading for rc=4, a different problem (too much accumulated history, not too much
      *  spent) that the agent would otherwise have no way to know actually happened; rc=124 is a
      *  third, distinct problem again (wall-clock time, not tokens or context space at all - #351
-     *  found this live on T7, which still had well under half its token budget spent). Extracted
-     *  as a pure function, same reasoning as shouldRescue() itself. */
+     *  found this live on T7, which still had well under half its token budget spent). A fourth
+     *  reason, found live on T19: none of rc 3/4/124 at all (rc==0, a normal return) - the session
+     *  simply stalled and produced nothing a status-written fallback could skip past (see
+     *  shouldRescue()'s own javadoc for the full story) - telling the model "ran out of X" here
+     *  would be actively wrong, since nothing was actually exhausted. Extracted as a pure function,
+     *  same reasoning as shouldRescue() itself. */
     static String rescueReason(final Map<String, Object> rec) {
         return Integer.valueOf(4).equals(rec.get("rc"))
                 ? "ran out of context window space (its own conversation history grew too large to fit)"
                 : Integer.valueOf(124).equals(rec.get("rc"))
                 ? "ran out of its own wall-clock time budget"
-                : "ran out of its own token budget";
+                : Integer.valueOf(3).equals(rec.get("rc"))
+                ? "ran out of its own token budget"
+                : "stalled - its own session ended without producing any further output or a status "
+                + "report (not a budget or time limit being reached)";
     }
 
-    /** #351: a wall-timeout rescue must never fall back to "unlimited" - a task that just proved
-     *  it can run away on repeated compactions (that is exactly how it got here) cannot be trusted
-     *  with an unbounded second attempt. 1200s (20min) is a deliberately small cap: the rescue's
-     *  whole premise is a CHEAP, aggressively-compacted reconnect (see
+    /** #351/#413: a wall-timeout OR harness-fallback-status rescue must never fall back to
+     *  "unlimited" - a task that just proved it can run away on repeated compactions (rc=124), or
+     *  that just proved its own session can go silent entirely (status_by_harness, #413), cannot be
+     *  trusted with an unbounded second attempt. 1200s (20min) is a deliberately small cap: the
+     *  rescue's whole premise is a CHEAP, aggressively-compacted reconnect (see
      *  DEFAULT_WALL_TIMEOUT_RESCUE_KEEP_RECENT_TURNS below), not a second full task-wall's worth of
      *  room. An explicit `rescue_wall_sec` override always wins, for every rc alike. */
     static final int DEFAULT_WALL_TIMEOUT_RESCUE_WALL_SEC = 1200;
 
-    static int rescueWallFor(final Map<String, Object> rescueCfg, final boolean rescuingWallTimeout) {
+    static int rescueWallFor(final Map<String, Object> rescueCfg, final boolean rescuingBounded) {
         // 0 means unlimited (the system-wide "0 = no budget" convention) for every OTHER rescue
-        // reason - but never for a wall-timeout rescue (see DEFAULT_WALL_TIMEOUT_RESCUE_WALL_SEC)
+        // reason - but never for a bounded rescue (see DEFAULT_WALL_TIMEOUT_RESCUE_WALL_SEC)
         return rescueCfg.get("wall_sec") instanceof Number w ? w.intValue()
-                : rescuingWallTimeout ? DEFAULT_WALL_TIMEOUT_RESCUE_WALL_SEC : 0;
+                : rescuingBounded ? DEFAULT_WALL_TIMEOUT_RESCUE_WALL_SEC : 0;
     }
 
-    /** #351: a wall-timeout rescue reconnects to the task with the LARGEST accumulated history in
-     *  the whole run (that is why it hit rc=124) - the operator-wide keep-recent-turns default is
-     *  tuned for a reactive, in-session compaction during otherwise-normal progress, not for
-     *  minimizing a cold reconnect's own re-prefill cost under a tight rescue wall. Keep only the
-     *  last 2 turns: enough for the model to see its own most recent attempt and the harness's
-     *  just-computed verification output, cheap enough to fit the bounded wall above even on a
-     *  session that was already deep into repeated compactions. */
+    /** #351/#413: a wall-timeout OR harness-fallback-status rescue reconnects to the task with the
+     *  LARGEST accumulated history in the whole run (that is how it got here either way) - the
+     *  operator-wide keep-recent-turns default is tuned for a reactive, in-session compaction
+     *  during otherwise-normal progress, not for minimizing a cold reconnect's own re-prefill cost
+     *  under a tight rescue wall. Keep only the last 2 turns: enough for the model to see its own
+     *  most recent attempt and the harness's just-computed verification output, cheap enough to fit
+     *  the bounded wall above even on a session that was already deep into repeated compactions. */
     static final int DEFAULT_WALL_TIMEOUT_RESCUE_KEEP_RECENT_TURNS = 2;
 
-    static int rescueKeepRecentTurnsFor(final Map<String, Object> rescueCfg, final boolean rescuingWallTimeout, final int operatorDefault) {
+    static int rescueKeepRecentTurnsFor(final Map<String, Object> rescueCfg, final boolean rescuingBounded, final int operatorDefault) {
         return rescueCfg.get("keep_recent_turns") instanceof Number krt ? krt.intValue()
-                : rescuingWallTimeout ? DEFAULT_WALL_TIMEOUT_RESCUE_KEEP_RECENT_TURNS : operatorDefault;
+                : rescuingBounded ? DEFAULT_WALL_TIMEOUT_RESCUE_KEEP_RECENT_TURNS : operatorDefault;
     }
 
-    /** #307/#351: the budget-exhaustion rescue step - the second "fail recovery" mechanism alongside
-     *  the Judge (#265). When a task's own main session chain ends via rc=3 (BudgetExhausted), rc=4
-     *  (ContextWindowExceeded), or rc=124 (the task-wall timeout, since #351) - give it ONE more
-     *  dedicated session, on its own separate bounded budget, before accepting that final state.
-     *  Opt-in (cfg "budget_rescue"."enabled") - a real, visible, restart-tunable knob,
+    /** #307/#351/#413: the budget-exhaustion rescue step - the second "fail recovery" mechanism
+     *  alongside the Judge (#265). When a task's own main session chain ends via rc=3
+     *  (BudgetExhausted), rc=4 (ContextWindowExceeded), rc=124 (the task-wall timeout, since #351),
+     *  or the harness had to synthesize its own "unfinished" status because nothing else produced
+     *  one at all (`status_by_harness`, since #413 - see shouldRescue()'s own javadoc) - give it ONE
+     *  more dedicated session, on its own separate bounded budget, before accepting that final
+     *  state. Opt-in (cfg "budget_rescue"."enabled") - a real, visible, restart-tunable knob,
      *  same philosophy as the Judge, never a silent default - and scoped to the `ref` harness only:
      *  PiAgent has no in-process turn loop and no concept of `continueSession`-time compaction to
      *  hook into, the same reason Judge/FinalTurn are PiAgent no-ops elsewhere in this file.
@@ -1662,7 +1690,9 @@ public class RunBench {
                              final Path journal, final Map<String, Object> rec, final Map<String, Object> taskOverride) throws Exception {
         final Map<String, Object> rescueCfg = effectiveRescueCfg(cfg, taskOverride);
         if (!shouldRescue(rescueCfg, rec, (String) cfg.get("harness"))) return;
-        final boolean rescuingWallTimeout = Integer.valueOf(124).equals(rec.get("rc"));
+        // #413: a harness-synthesized status (the session stalled outright, rc often 0) gets the
+        // same bounded treatment as a wall timeout - see rescueWallFor()/rescueKeepRecentTurnsFor()
+        final boolean rescuingBounded = Integer.valueOf(124).equals(rec.get("rc")) || Boolean.TRUE.equals(rec.get("status_by_harness"));
         final String reason = rescueReason(rec);
         final String verificationSummary = VerifyTask.verifyText((Map<String, Object>) rec.get("verification"));
         // 0 means unlimited (the system-wide "0 = no budget" convention)
@@ -1672,7 +1702,7 @@ public class RunBench {
         final int compactionTrigger = effectiveCompactionTrigger(taskOverride,
                 cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger());
         final int maxTurns = cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS;
-        final int keepRecentTurns = rescueKeepRecentTurnsFor(rescueCfg, rescuingWallTimeout, props.keepRecentTurns());
+        final int keepRecentTurns = rescueKeepRecentTurnsFor(rescueCfg, rescuingBounded, props.keepRecentTurns());
         // the only live signal that a rescue is in progress for this task: the call below reuses the
         // task's own canonical session id with continueSession=true, which never writes a new session
         // header (see ReferenceAgent.run()'s own continueSession branch) - so nothing in the session
@@ -1688,7 +1718,7 @@ public class RunBench {
             // the SAME canonical id as the task's own main session - continueSession=true must find
             // and compact THAT task's own history, not a separate one
             final String sid = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + t.id).getBytes()).toString();
-            final int rescueWall = rescueWallFor(rescueCfg, rescuingWallTimeout);
+            final int rescueWall = rescueWallFor(rescueCfg, rescuingBounded);
             final ReferenceAgent.SessionResult h = RunBenchSupport.runBounded(rescueWall, t.id + "-rescue", rd.resolve("sessions"), sid, proxy.abort(),
                     () -> agent.run(t.id + "-rescue", Packs.rescueInstruction(t.id, reason, verificationSummary), rescueWall, rescueTokens,
                             rd.resolve("sessions"), sid, true, rd.resolve("packs/stable.md").toString(), ws.toString(),
