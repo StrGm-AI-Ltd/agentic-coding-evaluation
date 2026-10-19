@@ -1,5 +1,6 @@
 package com.strgmai.ace.service.runner;
 
+import com.strgmai.ace.service.agent.CompactionStrategies;
 import com.strgmai.ace.service.agent.PiAgent;
 import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.config.BenchProperties;
@@ -186,6 +187,19 @@ public class RunBench {
      *  already-resolved run-level value as the fallback rather than re-deriving it. */
     static int effectiveCompactionTrigger(final Map<String, Object> override, final int runLevel) {
         return effectiveInt(override, "compaction_trigger", runLevel);
+    }
+
+    /** #417: same "a task_override wins over the run-level default" rule as effectiveCompactionTrigger
+     *  above, just list-valued - only sessionWithPolicy's own main-session call site resolves this
+     *  (see its own javadoc for why only there). A task override replaces the run-level list wholesale
+     *  (same semantics as every other task_overrides entry - taskOverride() itself already documents
+     *  that a task's own override map REPLACES, not merges). Both the override's own value and cfg's
+     *  run-level one are the same comma-separated String shape phasesWanted() already uses for
+     *  "phases" - not a JSON list - kept consistent on purpose so there is exactly one shape for this
+     *  class of ordered-name-list config across the whole run/task-override surface. */
+    static List<String> effectiveCompactionStrategies(final Map<String, Object> override, final List<String> runLevel) {
+        return override.get("compaction_strategies") instanceof String s && !s.isBlank()
+                ? List.of(s.split(",")) : runLevel;
     }
 
     /** #322: temperature/top_p/top_k/repetition_penalty/max_tokens/reasoning_effort are per-call
@@ -918,7 +932,7 @@ public class RunBench {
             final long firstTokenTimeoutMs, final int compactionTrigger, final int maxTurns, final String model,
             final Map<String, String> extraEnv) throws Exception {
         return runAgentSession(cfg, name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase,
-                abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, null);
+                abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, null, null);
     }
 
     /** #265: the judge-aware form - only the task loop's own main-session call site ever passes a
@@ -933,7 +947,7 @@ public class RunBench {
             final long firstTokenTimeoutMs, final int compactionTrigger, final int maxTurns, final String model,
             final Map<String, String> extraEnv, final ReferenceAgent.JudgeCheckpoint judge) throws Exception {
         return runAgentSession(cfg, name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase,
-                abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, null);
+                abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, null, null);
     }
 
     /** #300: adds the in-session handoff fast path's own FinalTurn hook (see its javadoc) on top of
@@ -946,11 +960,28 @@ public class RunBench {
             final String appendSystem, final String cwd, final String proxyBase, final Consumer<String> abortProxy,
             final long firstTokenTimeoutMs, final int compactionTrigger, final int maxTurns, final String model,
             final Map<String, String> extraEnv, final ReferenceAgent.JudgeCheckpoint judge, final ReferenceAgent.FinalTurn finalTurn) throws Exception {
+        return runAgentSession(cfg, name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase,
+                abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, finalTurn, null);
+    }
+
+    /** #417: adds the resolved compaction-strategies list (see CompactionStrategies) on top of the
+     *  finalTurn-aware form above - only sessionWithPolicy's own call sites ever resolve and pass a
+     *  real, possibly task-overridden list (effectiveCompactionStrategies); every other call site
+     *  goes through one of the convenience overloads above with compactionStrategies=null
+     *  (ReferenceAgent defaults that to CompactionStrategies.DEFAULT itself, today's exact existing
+     *  behavior). PiAgent ignores this the same way it already ignores judge/finalTurn. */
+    private ReferenceAgent.SessionResult runAgentSession(final Map<String, Object> cfg, final String name, final String instruction,
+            final long wallSec, final Long tokenBudget, final Path sessionDir, final String sessionId, final boolean continueSession,
+            final String appendSystem, final String cwd, final String proxyBase, final Consumer<String> abortProxy,
+            final long firstTokenTimeoutMs, final int compactionTrigger, final int maxTurns, final String model,
+            final Map<String, String> extraEnv, final ReferenceAgent.JudgeCheckpoint judge, final ReferenceAgent.FinalTurn finalTurn,
+            final List<String> compactionStrategies) throws Exception {
         return "pi".equals(cfg.get("harness"))
                 ? piAgent.run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase,
                         abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv)
                 : agent.run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase,
-                        abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, finalTurn);
+                        abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, false, finalTurn, null,
+                        compactionStrategies == null ? CompactionStrategies.DEFAULT : compactionStrategies);
     }
 
     private Map<String, Object> sessionWithPolicy(Map<String, Object> cfg, String runId, String name, String instruction,
@@ -1005,6 +1036,11 @@ public class RunBench {
                 : cfg.get("first_token_timeout_ms") instanceof Number ftt ? ftt.longValue() : 0L;
         final int compactionTrigger = effectiveCompactionTrigger(override,
                 cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger());
+        // #417: resolved once here and forwarded to all four of this method's own session calls
+        // (main, length-retry continue, re-engage, wrap-up) - see effectiveCompactionStrategies' own
+        // javadoc for why this is the only call site that resolves a real, task-overridable list.
+        final List<String> compactionStrategies = effectiveCompactionStrategies(override,
+                cfg.get("compaction_strategies") instanceof String cs && !cs.isBlank() ? List.of(cs.split(",")) : CompactionStrategies.DEFAULT);
         // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded
         // ReferenceAgent-local constant with no run-level override at all
         final int maxTurns = effectiveInt(override, "max_turns",
@@ -1022,7 +1058,7 @@ public class RunBench {
         final String sid = sessionId == null ? canonicalSessionId : sessionId;
         ReferenceAgent.SessionResult rec = RunBenchSupport.runBounded(wall, name, rd.resolve("sessions"), sid, proxy.abort(), () -> runAgentSession(cfg, name, full, wall, tokens,
                 rd.resolve("sessions"), sid, false, appendSystem, ws.toString(), proxy.base(), proxy.abort(),
-                firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, judge, finalTurn));
+                firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, judge, finalTurn, compactionStrategies));
         // P-1: a session that died on a `length` finish gets one continuation with what is LEFT (R4
         // C-7). wall/tokens <= 0 means unlimited (the system-wide "0 = no budget" convention): there
         // is always "enough" remaining wall-clock, and what's LEFT of an unlimited token budget is
@@ -1041,7 +1077,7 @@ public class RunBench {
                 rec = RunBenchSupport.runBounded(contWall, name + "-continue", rd.resolve("sessions"), sid, contProxy.abort(), () -> runAgentSession(cfg, name + "-continue",
                         "Your previous turn was cut off at the output limit. Continue the task from where you stopped; be concise and act with tools.",
                         contWall, remaining, rd.resolve("sessions"), sid, true, appendSystem, ws.toString(), contProxy.base(), contProxy.abort(),
-                        firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, finalTurn));
+                        firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, finalTurn, compactionStrategies));
             } finally { contProxy.stop(); }
         }
         final Map<String, Object> out = RunBench.sessionRecord(rec, name);
@@ -1057,7 +1093,7 @@ public class RunBench {
                     final long reengageWall = wall <= 0 ? 0 : wall - (System.currentTimeMillis() - t0) / 1000;
                     rec = RunBenchSupport.runBounded(reengageWall, name + "-reengage", rd.resolve("sessions"), sid, reengageProxy.abort(), () -> runAgentSession(cfg, name + "-reengage",
                             Packs.reEngageInstruction(name), reengageWall, remaining, rd.resolve("sessions"), sid, true, appendSystem, ws.toString(), reengageProxy.base(), reengageProxy.abort(),
-                            firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, finalTurn));
+                            firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, finalTurn, compactionStrategies));
                 } finally { reengageProxy.stop(); }
                 reported = progressStatus(ws, name);
             }
@@ -1094,7 +1130,7 @@ public class RunBench {
             try {
                 w = RunBenchSupport.runBounded(wrapWall, name + "-wrapup", rd.resolve("sessions"), canonicalSessionId, wrapProxy.abort(),
                         () -> runAgentSession(cfg, name + "-wrapup", wrapInstr, wrapWall, wrapupTokens, rd.resolve("sessions"), canonicalSessionId,
-                                true, appendSystem, ws.toString(), wrapProxy.base(), wrapProxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, wrapFinalTurn));
+                                true, appendSystem, ws.toString(), wrapProxy.base(), wrapProxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, wrapFinalTurn, compactionStrategies));
             } finally { wrapProxy.stop(); }
             out.put("wrapup_rc", w.rc());
             out.put("wrapup_seconds", w.seconds());

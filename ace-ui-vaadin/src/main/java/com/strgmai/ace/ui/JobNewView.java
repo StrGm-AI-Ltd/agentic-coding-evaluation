@@ -55,6 +55,7 @@ public class JobNewView extends VerticalLayout {
     private final IntegerField contextWindow = new IntegerField("Context window");
     private final IntegerField firstTokenTimeout = new IntegerField("First-token timeout");
     private final IntegerField compactionTrigger = new IntegerField("Compaction trigger");
+    private final CompactionStrategyList compactionStrategies = new CompactionStrategyList();
     private final IntegerField reviewWallSec = new IntegerField("Review wall-clock budget");
     private final IntegerField reviewTokens = new IntegerField("Review token budget");
     private final IntegerField maxTurns = new IntegerField("Max turns");
@@ -181,6 +182,7 @@ public class JobNewView extends VerticalLayout {
         compactionTrigger.setMin(0);
         compactionTrigger.setPlaceholder("blank = default (28000), 0 = disabled");
         compactionTrigger.setTooltipText(Tooltips.COMPACTION_TRIGGER);
+        compactionStrategies.setValue(List.of(CompactionStrategyList.TOOL_RESULT_MASK));   // today's own behavior, visibly checked
         reviewWallSec.setMin(1);
         reviewWallSec.setPlaceholder("blank = default (900s)");
         reviewWallSec.setTooltipText(Tooltips.REVIEW_WALL_SEC);
@@ -293,6 +295,7 @@ public class JobNewView extends VerticalLayout {
         add(Forms.section("Budgets",
                 Forms.row(taskWall, taskTokens, implWall, implTokens, planWall, planTokens, wallBudget, contextWindow),
                 Forms.row(firstTokenTimeout, compactionTrigger, maxTurns),
+                Forms.row(compactionStrategies),
                 Forms.row(parallelPlanWall, handoffWall, wrapupWall),
                 Forms.row(parallelPlanTokens, handoffTokens, wrapupTokens),
                 Forms.row(fixWall, fixTokens),
@@ -414,6 +417,7 @@ public class JobNewView extends VerticalLayout {
         raw.put("context_window", contextWindow.getValue());
         raw.put("first_token_timeout", firstTokenTimeout.getValue());
         raw.put("compaction_trigger", compactionTrigger.getValue());
+        raw.put("compaction_strategies", String.join(",", compactionStrategies.getValue()));
         raw.put("parallel", parallel.getValue());
         raw.put("parallel_plan", parallelPlan.getValue());
         raw.put("parallel_weight", parallelWeight.getValue());

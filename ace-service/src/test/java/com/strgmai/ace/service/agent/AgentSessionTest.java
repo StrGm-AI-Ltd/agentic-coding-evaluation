@@ -63,6 +63,46 @@ class AgentSessionTest {
         assertTrue(((ToolExecutionResultMessage) msgs.get(msgs.size() - 1)).text().startsWith("output"));
     }
 
+    /** #417: a turn count alone never shrinks the protected window even when one of ITS OWN tool
+     *  outputs is huge - the root cause #417 found live. keepRecentTurns=2 would normally protect
+     *  turn1+turn2 (indices 4-7) verbatim, but turn1's own tool output is deliberately oversized here;
+     *  the token ceiling must shrink the cut past it (stubbing turn1 too) while still never touching
+     *  turn2, the genuinely newest one. */
+    @Test
+    void tokenBudgetShrinksTheProtectedWindowPastAnOversizedOlderTurnButNeverTheNewestOne() {
+        final List<ChatMessage> msgs = new ArrayList<>();
+        msgs.add(SystemMessage.from("system"));
+        msgs.add(UserMessage.from("the harness pack"));
+        for (int i = 0; i < 3; i++) {
+            final var req = ToolExecutionRequest.builder().id("c" + i).name("bash").arguments("{}").build();
+            msgs.add(AiMessage.from("turn " + i, List.of(req)));
+            msgs.add(ToolExecutionResultMessage.from(req, i == 1 ? "x".repeat(50_000) : "output " + i));
+        }
+        final int stubbed = AgentSession.compact(msgs, 2, 10);
+        assertEquals(2, stubbed, "turn0's pair AND turn1's oversized pair are both stubbed");
+        assertTrue(((ToolExecutionResultMessage) msgs.get(3)).text().startsWith("[output dropped"));
+        assertTrue(((ToolExecutionResultMessage) msgs.get(5)).text().startsWith("[output dropped"), "turn1's oversized output must be shrunk out despite keepRecentTurns=2");
+        assertEquals("output 2", ((ToolExecutionResultMessage) msgs.get(7)).text(), "the genuinely newest turn is never touched by the shrink");
+    }
+
+    @Test
+    void tokenBudgetZeroOrBelowDisablesTheShrinkEntirely() {
+        final var msgs = sixTurns();
+        // same fixture/assertion as positiveKeepRecentTurnsBehaviorIsUnaffectedByTheClamp above,
+        // just through the 3-arg form with the shrink explicitly disabled
+        assertEquals(2, AgentSession.compact(msgs, 1, 0));
+        assertEquals(2, AgentSession.compact(sixTurns(), 1, -5));
+    }
+
+    @Test
+    void cutIndexMatchesTheOriginalTurnCountBoundary() {
+        final var msgs = sixTurns();
+        // sixTurns(): sys(0), user(1), then 3 turns of [AiMessage, ToolResult] at 2/3, 4/5, 6/7
+        assertEquals(0, AgentSession.cutIndex(msgs, 10), "fewer turns than the floor: nothing eligible");
+        assertEquals(8, AgentSession.cutIndex(msgs, 0), "keep nothing verbatim: everything eligible");
+        assertEquals(6, AgentSession.cutIndex(msgs, 1), "keep the newest turn only: cut lands on its own AiMessage index");
+    }
+
     @Test
     void loadMessagesRebuildsAllRoleTypesInOrder() throws IOException {
         final var dir = Files.createTempDirectory("session");

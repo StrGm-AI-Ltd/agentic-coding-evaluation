@@ -1834,12 +1834,26 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var maxTurns = new com.vaadin.flow.component.textfield.IntegerField("Max turns");
         final var wrapupWall = new com.vaadin.flow.component.textfield.IntegerField("Wrap-up wall (sec)");
         final var wrapupTokens = new com.vaadin.flow.component.textfield.IntegerField("Wrap-up tokens");
-        for (final var field : List.of(taskWall, taskTokens, maxTurns, wrapupWall, wrapupTokens)) {
+        // #417: compaction_trigger has been a legal restart-override key since #345 but never had
+        // an editable field in this form at all - a pre-existing gap, cheap to close while already
+        // touching this form.
+        final var compactionTrigger = new com.vaadin.flow.component.textfield.IntegerField("Compaction trigger");
+        compactionTrigger.setMin(0);
+        for (final var field : List.of(taskWall, taskTokens, maxTurns, wrapupWall, wrapupTokens, compactionTrigger)) {
             field.setPlaceholder("run default");
             field.setWidth("140px");
         }
-        final var form = new HorizontalLayout(taskWall, taskTokens, maxTurns, wrapupWall, wrapupTokens);
+        final var form = new HorizontalLayout(taskWall, taskTokens, maxTurns, wrapupWall, wrapupTokens, compactionTrigger);
         form.getStyle().set("flex-wrap", "wrap");
+
+        // #417: which compaction strategy/strategies this task uses, and in what order - overrides
+        // the run-level default (CompactionStrategyList's own getValue() is blank = "unset", which
+        // setPendingTaskOverride's caller below already treats as "don't include this key").
+        final var compactionStrategies = new CompactionStrategyList();
+        final var compactionForm = new VerticalLayout(new Span("Compaction strategies"), compactionStrategies);
+        compactionForm.setPadding(false);
+        compactionForm.setSpacing(false);
+        compactionForm.getStyle().set("margin-top", "4px");
 
         // #265: the mid-task judge - every judgeEveryNTurns turns, a separate LLM checks whether
         // this task is still on the most efficient path to its goal and will meet its deadline.
@@ -1875,6 +1889,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         if (currentOverride.get("max_turns") instanceof Number n) maxTurns.setValue(n.intValue());
         if (currentOverride.get("wrapup_wall_sec") instanceof Number n) wrapupWall.setValue(n.intValue());
         if (currentOverride.get("wrapup_tokens") instanceof Number n) wrapupTokens.setValue(n.intValue());
+        if (currentOverride.get("compaction_trigger") instanceof Number n) compactionTrigger.setValue(n.intValue());
+        if (currentOverride.get("compaction_strategies") instanceof String s && !s.isBlank())
+            compactionStrategies.setValue(List.of(s.split(",")));
         if (Boolean.TRUE.equals(currentOverride.get("judge_enabled"))) judgeEnabled.setValue(true);
         if (currentOverride.get("judge_every_n_turns") instanceof Number n) judgeEveryNTurns.setValue(n.intValue());
         if (currentOverride.get("judge_model") instanceof String s && !s.isBlank()) judgeModel.setValue(s);
@@ -1887,6 +1904,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             if (maxTurns.getValue() != null) overrides.put("max_turns", maxTurns.getValue());
             if (wrapupWall.getValue() != null) overrides.put("wrapup_wall_sec", wrapupWall.getValue());
             if (wrapupTokens.getValue() != null) overrides.put("wrapup_tokens", wrapupTokens.getValue());
+            if (compactionTrigger.getValue() != null) overrides.put("compaction_trigger", compactionTrigger.getValue());
+            if (!compactionStrategies.getValue().isEmpty()) overrides.put("compaction_strategies", String.join(",", compactionStrategies.getValue()));
             if (judgeEnabled.getValue()) overrides.put("judge_enabled", true);
             if (judgeEveryNTurns.getValue() != null) overrides.put("judge_every_n_turns", judgeEveryNTurns.getValue());
             if (judgeModel.getValue() != null && !judgeModel.getValue().isBlank()) overrides.put("judge_model", judgeModel.getValue());
@@ -1906,7 +1925,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             }
         });
         restartButton.getStyle().set("margin-top", "8px");
-        restartBody.add(warning, form, judgeForm, rescueForm, restartButton);
+        restartBody.add(warning, form, compactionForm, judgeForm, rescueForm, restartButton);
     }
 
     /** #264: the sessionsGrid counterpart of openTaskPromptDialog() - scoped to the three pre-task

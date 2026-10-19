@@ -140,6 +140,12 @@ final class Tooltips {
             + "(stubs out its oldest tool results) rather than risk running out of room. Blank = 28000. "
             + "0 disables compaction entirely.";
 
+    static final String COMPACTION_STRATEGIES = "Which compaction mechanism(s) run once the trigger above "
+            + "fires, and in what order: tool-result masking (stub old tool outputs, no extra model call) "
+            + "and/or structured eviction (ask the model for a fixed-outline summary of the older turns). "
+            + "Unchecked = that strategy never runs. Blank/all unchecked = tool-result masking alone, "
+            + "today's own behavior.";
+
     static final String REVIEW_WALL_SEC = "Wall-clock seconds given to the self-review session (only "
             + "relevant when self_review is checked). Blank = 900 seconds.";
 

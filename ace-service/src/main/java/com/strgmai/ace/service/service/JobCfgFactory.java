@@ -61,6 +61,8 @@ final class JobCfgFactory {
         if (WorkerService.flag(argv, "--impl-tokens") != null) cfg.put("impl_tokens", Long.parseLong(WorkerService.flag(argv, "--impl-tokens")));
         if (WorkerService.flag(argv, "--first-token-timeout") != null) cfg.put("first_token_timeout_sec", Integer.parseInt(WorkerService.flag(argv, "--first-token-timeout")));
         if (WorkerService.flag(argv, "--compaction-trigger") != null) cfg.put("compaction_trigger", Integer.parseInt(WorkerService.flag(argv, "--compaction-trigger")));
+        // #417: same comma-separated-string shape as --phases above
+        if (WorkerService.flag(argv, "--compaction-strategies") != null) cfg.put("compaction_strategies", WorkerService.flag(argv, "--compaction-strategies"));
         // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded
         // ReferenceAgent-local constant with no run-level override at all
         if (WorkerService.flag(argv, "--max-turns") != null) cfg.put("max_turns", Integer.parseInt(WorkerService.flag(argv, "--max-turns")));
