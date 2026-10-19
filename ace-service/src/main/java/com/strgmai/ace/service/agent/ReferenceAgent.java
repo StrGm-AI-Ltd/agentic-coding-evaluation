@@ -18,6 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -171,11 +172,21 @@ public class ReferenceAgent {
                                 .required("command").build())
                         .build(),
                 // #424: formalizes the stub text's own "re-run the command if you need it" - the
-                // ORIGINAL output is already sitting in this session's own journal (toolResult()
-                // writes it unconditionally, before anything is ever masked), so recalling it is
-                // free; re-running could mean redoing an expensive build/docker-compose step.
+                // output is already sitting in this session's own journal (toolResult() writes it
+                // unconditionally, before anything is ever masked), so recalling it is free;
+                // re-running could mean redoing an expensive build/docker-compose step.
+                // #417 follow-up review (C11): the description used to say "the full, original
+                // output" - inaccurate, since what's journaled (and so what this returns) is the
+                // SAME output already capped by AgentTools' own head/tail/size limits before it
+                // ever entered context in the first place, not a fuller version that was never
+                // seen. (C13): this is an exact tool_call_id lookup, not the content SEARCH Letta's
+                // own filesystem-memory benchmark demonstrated beating a purpose-built memory
+                // product with (https://www.letta.com/blog/benchmarking-ai-agent-memory/) - a
+                // deliberately narrower v1 of that result, not an implementation of it.
                 ToolSpecification.builder().name("recall_tool_output")
-                        .description("Recall the full, original output of an earlier tool call whose result was dropped to save context - use the tool_call_id named in its \"[output dropped...]\" stub text.")
+                        .description("Recall the SAME output you already saw for an earlier tool call before it was dropped to save context "
+                                + "(exactly what was shown then, including any truncation already applied - not a fuller version, and it does not "
+                                + "re-run the command). Use the tool_call_id named in its \"[output dropped...]\" stub text.")
                         .parameters(JsonObjectSchema.builder()
                                 .addStringProperty("tool_call_id", "the id named in the \"[output dropped...]\" stub text")
                                 .required("tool_call_id").build())
@@ -301,7 +312,7 @@ public class ReferenceAgent {
                 preloadCompactions = AgentSession.compact(msgs, compactOnLoadKeepRecentTurns);
                 // 0: compacted proactively on load, not reactively at an observed over-threshold
                 // prompt - there is no "prompt tokens before" yet, no request has been sent
-                if (preloadCompactions > 0) session.compaction(preloadCompactions, 0);
+                if (preloadCompactions > 0) session.compaction(preloadCompactions, false, 0);
             }
             msgs.add(UserMessage.from(instruction));
             session.user(instruction);
@@ -364,6 +375,12 @@ public class ReferenceAgent {
         int turns = 0, toolErrors = 0, compactions = preloadCompactions, lastPrompt = 0;
         String finish = null; int rc = 0;
         FinalTurn pendingFinalTurn = finalTurn;   // consumed (set null) the first time it fires - see FinalTurn's own javadoc
+        // #417 follow-up review: both scoped to THIS session's own turn loop, never shared across
+        // sessions - compactionState lets structured_eviction skip a redundant re-summarization
+        // (C9, see CompactionStrategies.State's own javadoc); recallCounts bounds how many times
+        // the SAME archived tool-call id can be recalled this session (C12 below).
+        final CompactionStrategies.State compactionState = new CompactionStrategies.State();
+        final Map<String, Integer> recallCounts = new HashMap<>();
         // wallSec <= 0 means unlimited (the harness's own runBounded() is the real enforcement for
         // that - see its javadoc); deadline here only clamps chatWithRetry's exponential backoff
         // sleep, so it must stay far in the future rather than collapsing to "now" (which would
@@ -376,14 +393,38 @@ public class ReferenceAgent {
                 // or whatever a run/task override sets) rather than a second magic number, and
                 // guarantees there is always real headroom left to free (the root cause found live:
                 // a protected window with NO ceiling can itself grow to consume the entire budget).
-                final int n = CompactionStrategies.apply(compactionStrategies, msgs, props.keepRecentTurns(), compactionTrigger / 2,
+                final CompactionStrategies.Result cr = CompactionStrategies.apply(compactionStrategies, msgs, props.keepRecentTurns(), compactionTrigger / 2, compactionState,
                         range -> {
-                            final List<ChatMessage> req = new ArrayList<>();
-                            req.add(SystemMessage.from(Packs.STRUCTURED_EVICTION_INSTRUCTION));
-                            req.addAll(range);
-                            return chatWithRetry(chatModel, ChatRequest.builder().messages(req).build(), deadline, abortProxy, firstTokenTimeoutMs).aiMessage().text();
+                            // #417 follow-up review (C5): the range's OWN SystemMessage (always
+                            // range.get(0)) used to sit alongside a SECOND SystemMessage prepended
+                            // here, with the actual instruction maximally far from the generation
+                            // point - two chat-template-dependent risks "The Pitfalls of KV Cache
+                            // Compression" (arXiv 2510.00231) names as real degradation factors
+                            // (multiple system-ish messages, instruction order) for exactly this
+                            // kind of request. One real SystemMessage, instruction last (closest to
+                            // generation) as a plain UserMessage, same as any other ask-the-model-
+                            // to-do-one-thing request elsewhere in this class.
+                            final List<ChatMessage> req = new ArrayList<>(range);
+                            req.add(UserMessage.from(Packs.STRUCTURED_EVICTION_INSTRUCTION));
+                            final ChatResponse r = chatWithRetry(chatModel, ChatRequest.builder().messages(req).build(), deadline, abortProxy, firstTokenTimeoutMs);
+                            // #417 follow-up review (C8): this side call spends real tokens
+                            // RecordingProxy already charges to the task's own budget, but nothing
+                            // recorded it in the SESSION file's own accounting - AgentSession.usage()
+                            // (the fallback token source for a session with no proxy) silently
+                            // undercounted it. A journaling failure must never discard an otherwise-
+                            // good summary, so it's caught and logged here, not left to propagate
+                            // into this method's own caller (which would wrongly treat it as if the
+                            // summarization itself had failed).
+                            try {
+                                final var u = r.metadata() == null ? null : r.metadata().tokenUsage();
+                                session.sidecarUsage("structured_eviction", u == null || u.inputTokenCount() == null ? 0 : u.inputTokenCount(),
+                                        u == null || u.outputTokenCount() == null ? 0 : u.outputTokenCount());
+                            } catch (IOException e) {
+                                log.warn("could not journal structured_eviction's own token usage for session {}: {}", session.sessionId, e.toString());
+                            }
+                            return r.aiMessage().text();
                         });
-                if (n > 0) { compactions++; session.compaction(n, lastPrompt); }
+                if (cr.masked() > 0 || cr.summarized()) { compactions++; session.compaction(cr.masked(), cr.summarized(), lastPrompt); }
             }
             ChatResponse resp;
             try {
@@ -457,7 +498,7 @@ public class ReferenceAgent {
                     log.warn("could not parse tool call arguments for {} ({}), executing with no arguments: {}", c.name(), c.id(), e.toString());
                     args = Map.of();
                 }
-                final AgentTools.Outcome out = executeTool(c.name(), args, cwd, env, name, session);
+                final AgentTools.Outcome out = executeTool(c.name(), args, cwd, env, name, session, recallCounts);
                 if (out.isError()) toolErrors++;
                 msgs.add(ToolExecutionResultMessage.from(c, out.output()));
                 session.toolResult(c.id(), c.name(), out.output(), out.isError());
@@ -492,8 +533,21 @@ public class ReferenceAgent {
         return new SessionResult(id, rc, Math.round(secs * 10) / 10.0, finish, turns, toolErrors, compactions, s.path(), start, Instant.now());
     }
 
-    private AgentTools.Outcome executeTool(final String name, final Map<String, Object> args, final String cwd, final Map<String, String> env,
-                                            final String sessionName, final AgentSession session) {
+    /** #417 follow-up review (C12): bounds how many times the SAME archived tool-call id may be
+     *  recalled within one session - found live: a recalled output is journaled as a fresh
+     *  toolResult (via the ordinary msgs.add()/session.toolResult() path right after this method
+     *  returns), which is itself immediately re-maskable by the NEXT compaction pass, making
+     *  recall -> mask -> recall of the SAME id an unguarded cycle, each lap costing a full tool
+     *  output of context. A small cap breaks the cycle while still allowing the legitimate case
+     *  (recalling a few different ids once each) unhindered. */
+    private static final int MAX_RECALLS_PER_ID = 3;
+
+    // package-private (not private) and static: no instance state is used, matching this class's
+    // existing pattern for directly-testable helpers (reasoningKind/isEmptyModelResponse/
+    // cachedTokens) - recall_tool_output's own cap (C12) and blank-id handling (C14) are tested
+    // directly against this method rather than through a full live run() call.
+    static AgentTools.Outcome executeTool(final String name, final Map<String, Object> args, final String cwd, final Map<String, String> env,
+                                           final String sessionName, final AgentSession session, final Map<String, Integer> recallCounts) {
         try {
             return switch (name) {
                 case "read" -> AgentTools.read(cwd, args);
@@ -502,12 +556,24 @@ public class ReferenceAgent {
                 case "bash" -> AgentTools.bash(cwd, args, env);
                 case "recall_tool_output" -> {
                     final String id = String.valueOf(args.getOrDefault("tool_call_id", ""));
+                    // #417 follow-up review (C14): a blank id used to fall through to "error: no
+                    // archived output for tool_call_id " with a confusing trailing space - callable
+                    // in practice if the model omits the required argument (MAPPER.readValue above
+                    // can still hand this method an empty Map on a malformed tool call).
+                    if (id.isBlank()) yield new AgentTools.Outcome("error: tool_call_id is required", true);
+                    final int seen = recallCounts.merge(id, 1, Integer::sum);
+                    if (seen > MAX_RECALLS_PER_ID) {
+                        log.info("session {} refused a repeated recall of {} (requested {} times this session)", sessionName, id, seen);
+                        yield new AgentTools.Outcome("error: tool_call_id " + id + " has already been recalled " + (seen - 1)
+                                + " time(s) this session - repeatedly re-reading the same dropped output usually means a "
+                                + "different approach is needed (e.g. reading the relevant file/state directly instead)", true);
+                    }
                     final String text = AgentSession.recallToolOutput(session.path(), id);
                     // #424: a usage metric the review found missing - MemGPT/Letta's own result
                     // depends on the model actually paging content back in; without a log line
                     // there would be no way to tell whether a local model ever does, versus this
                     // whole mechanism quietly doing nothing
-                    log.info("session {} recalled archived tool output {} ({})", sessionName, id, text == null ? "not found" : "found");
+                    log.info("session {} recalled archived tool output {} ({}, attempt {})", sessionName, id, text == null ? "not found" : "found", seen);
                     yield text == null ? new AgentTools.Outcome("error: no archived output for tool_call_id " + id, true)
                             : new AgentTools.Outcome(text, false);
                 }

@@ -57,10 +57,22 @@ class TaskTranscriptTest {
 
     @Test
     void renderLineRendersCompactionAndEndMarkers() {
-        assertEquals("[history compacted: 4 turns stubbed]",
-                TaskTranscript.renderLine("{\"type\":\"compaction\",\"stubbed\":4,\"prompt_tokens_before\":1000}"));
+        assertEquals("[history compacted: 4 tool result(s) stubbed]",
+                TaskTranscript.renderLine("{\"type\":\"compaction\",\"stubbed\":4,\"summarized\":false,\"prompt_tokens_before\":1000}"));
         assertEquals("[session ended: finish=stop, 12 turns]",
                 TaskTranscript.renderLine("{\"type\":\"end\",\"turns\":12,\"finish\":\"stop\"}"));
+    }
+
+    /** #417 follow-up review (C7): "stubbed" and "summarized" are two genuinely different
+     *  mechanisms' own contributions - a structured_eviction-only pass stubs nothing at all, so
+     *  it must never be rendered as "0 turns stubbed" (or worse, folded into a count that implies
+     *  masking happened when it didn't). */
+    @Test
+    void renderLineRendersAStructuredEvictionOnlyCompactionDistinctlyFromStubbing() {
+        assertEquals("[history compacted: a structured summary written]",
+                TaskTranscript.renderLine("{\"type\":\"compaction\",\"stubbed\":0,\"summarized\":true,\"prompt_tokens_before\":1000}"));
+        assertEquals("[history compacted: 2 tool result(s) stubbed, a structured summary written]",
+                TaskTranscript.renderLine("{\"type\":\"compaction\",\"stubbed\":2,\"summarized\":true,\"prompt_tokens_before\":1000}"));
     }
 
     @Test
