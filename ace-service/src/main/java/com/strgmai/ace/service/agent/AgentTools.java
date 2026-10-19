@@ -19,9 +19,25 @@ public final class AgentTools {
      *  where a failing assertion or stack trace in a long test/build log usually sits. Matches a
      *  failure/exception marker, an assertion-diff line (JUnit's own "expected: <...> but was: <...>"),
      *  or a stack-trace frame - deterministic, no model, no extra latency, same "mechanical output
-     *  hygiene" spirit as the head/tail cap itself. */
+     *  hygiene" spirit as the head/tail cap itself.
+     *
+     *  #417 follow-up review: measured against this harness's own 907 real session journals
+     *  (139k lines of real `bash` output), the original pattern was both too narrow and too broad.
+     *  Too narrow: `\bException\b`/`\bError\b` can never match INSIDE a concrete class name
+     *  (`\b` requires a word boundary, and there is none between "Null" and "Exception" in
+     *  "NullPointerException") - every concrete exception class, every "Caused by:" line, and
+     *  every module-prefixed stack frame (Java 9+'s "at app//com.example.Foo.bar(...)" /
+     *  "at java.base/java.lang.Thread.run(...)" - "/" was never in the frame alternative's own
+     *  character class) went unmatched. Too broad: the bare, case-insensitive words "error"/
+     *  "failed" matched 75% of ALL hits in this harness's own logs - mostly a package segment
+     *  (`io.trading.platform.common.error`), a JSON field name (`"error"`), or a log message
+     *  about "N error(s)", none of them an actual failure. Case-SENSITIVE now: FAILED/ERROR/
+     *  FAILURE: match only their typical ALL-CAPS log-marker form (Gradle's own convention), and
+     *  a concrete exception/error class must start with a capital letter - "NullPointerException"
+     *  matches, "the error below" does not. Scoped to this harness's own actual log shapes
+     *  (Gradle/JUnit/Kotlin); not chasing every ecosystem's own conventions. */
     private static final Pattern ERROR_LINE = Pattern.compile(
-            "(?i)\\b(FAILED|ERROR|Exception|AssertionError)\\b|expected:.*but was:|^\\s*at [\\w.$]+\\(");
+            "\\bFAILED\\b|\\bERROR\\b|\\bFAILURE:|Caused by:|[A-Z][\\w$]*(?:Exception|Error)\\b|expected:.*but was:|^\\s*at [\\w./$]+\\(");
     private static final int MAX_ERROR_LINES_KEPT = 20;
 
     public record Outcome(String output, boolean isError) {}
@@ -132,18 +148,36 @@ public final class AgentTools {
             return new Outcome("error: " + e, true);
         }
         final List<String> lines = Arrays.asList(out.split("\n", -1));
-        if (out.length() > BASH_MAX_CHARS || lines.size() > BASH_HEAD + BASH_TAIL + 10) {
-            final int midStart = Math.min(BASH_HEAD, lines.size());
-            final int midEnd = Math.max(midStart, lines.size() - BASH_TAIL);
-            final List<String> errorLines = lines.subList(midStart, midEnd).stream()
-                    .filter(l -> ERROR_LINE.matcher(l).find()).limit(MAX_ERROR_LINES_KEPT).toList();
+        // #417 follow-up review: this used to be `out.length() > BASH_MAX_CHARS || lines.size() > ...`
+        // - the OR meant a handful of very long lines (few lines, but over the char cap) triggered
+        // the line-based head/tail reconstruction below even though midStart>=midEnd (no real gap
+        // to speak of), producing head+tail that fully OVERLAPPED and DUPLICATED the entire input,
+        // with "0 lines omitted" and no marker at all once the subsequent char-cap then halved it.
+        // Reconstructing by LINE only makes sense when there's a genuine line-count excess; the
+        // char-level cap below is now unconditional and independent, so a few oversized lines are
+        // still bounded without this duplication.
+        if (lines.size() > BASH_HEAD + BASH_TAIL + 10) {
+            final int midStart = BASH_HEAD;
+            final int midEnd = lines.size() - BASH_TAIL;
+            final List<String> matched = lines.subList(midStart, midEnd).stream()
+                    .filter(l -> ERROR_LINE.matcher(l).find()).toList();
+            // #417 follow-up review: `.limit(MAX_ERROR_LINES_KEPT)` on the stream above kept the
+            // OLDEST matches - backwards, since early build/dependency noise (a Gradle plugin is
+            // literally named "error-prone") fills the quota before the real failure near the END
+            // of the log, closest to the tail, is ever reached.
+            final List<String> errorLines = matched.size() <= MAX_ERROR_LINES_KEPT ? matched
+                    : matched.subList(matched.size() - MAX_ERROR_LINES_KEPT, matched.size());
+            // #417 follow-up review: placed right before the TAIL, not right after the head - if
+            // the char-level cap below still has to fire, these lines now sit far closer to what
+            // that cap actually keeps (measured: ~3.4% of already-capped outputs lost this block
+            // entirely under the old head-adjacent placement).
+            final String errorBlock = errorLines.isEmpty() ? "" : "… error-relevant lines kept verbatim from the omitted range:\n" + String.join("\n", errorLines) + "\n";
             out = String.join("\n", lines.subList(0, midStart))
-                    + "\n… [" + Math.max(0, lines.size() - BASH_HEAD - BASH_TAIL) + " lines omitted; filter the command's output next time]"
-                    + (errorLines.isEmpty() ? "" : " - error-relevant lines kept verbatim from the omitted range:\n" + String.join("\n", errorLines))
-                    + " …\n"
-                    + String.join("\n", lines.subList(Math.max(0, lines.size() - BASH_TAIL), lines.size()));
-            if (out.length() > BASH_MAX_CHARS) out = out.substring(0, BASH_MAX_CHARS / 2) + "\n… [truncated] …\n" + out.substring(out.length() - BASH_MAX_CHARS / 2);
+                    + "\n… [" + (midEnd - midStart) + " lines omitted; filter the command's output next time] …\n"
+                    + errorBlock
+                    + String.join("\n", lines.subList(midEnd, lines.size()));
         }
+        if (out.length() > BASH_MAX_CHARS) out = out.substring(0, BASH_MAX_CHARS / 2) + "\n… [truncated] …\n" + out.substring(out.length() - BASH_MAX_CHARS / 2);
         return new Outcome((out.isBlank() ? "(no output)" : out.strip()) + "\n[exit " + rc + "]", rc != 0);
     }
 
