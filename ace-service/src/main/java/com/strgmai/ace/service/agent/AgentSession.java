@@ -192,6 +192,30 @@ public final class AgentSession {
         return t;
     }
 
+    /** #424: the tool-output archive IS the session file itself - toolResult() above already writes
+     *  every tool result's original, un-stubbed text, unconditionally, before anything ever gets
+     *  masked (compaction only ever mutates the in-memory msgs list, never this file). Returns the
+     *  LAST recorded text for toolCallId (a tool call id is unique within one session, so "last"
+     *  and "only" coincide in practice), or null if nothing matches - same "re-read the session
+     *  file for something not otherwise available" pattern as usage()/lastAssistantText() above. */
+    public static String recallToolOutput(final Path sessionFile, final String toolCallId) {
+        if (sessionFile == null || !Files.isRegularFile(sessionFile) || toolCallId == null || toolCallId.isBlank()) return null;
+        String found = null;
+        try {
+            for (String line : Files.readAllLines(sessionFile, StandardCharsets.UTF_8)) {
+                if (line.isBlank()) continue;
+                JsonNode r;
+                try { r = JSON.readTree(line); } catch (Exception e) { log.debug("could not parse session line while recalling a tool output, skipping it: {}", e.toString()); continue; }
+                final JsonNode m = r.path("message");
+                if (!"message".equals(r.path("type").asText()) || !"toolResult".equals(m.path("role").asText())) continue;
+                if (!toolCallId.equals(m.path("toolCallId").asText())) continue;
+                final JsonNode c = m.path("content").path(0);
+                if (!c.isMissingNode()) found = c.path("text").asText();
+            }
+        } catch (IOException e) { log.warn("could not read session {} to recall tool output {}: {}", sessionFile, toolCallId, e.toString()); }
+        return found;
+    }
+
     /** #265: the LAST assistant turn's own text, straight from the session file - for a session
      *  with no other return channel for its own output (e.g. the judge, whose SessionResult alone
      *  carries no text at all). Same "re-read the session file for something SessionResult doesn't
@@ -261,7 +285,10 @@ public final class AgentSession {
             if (msgs.get(i) instanceof ToolExecutionResultMessage m && !m.text().startsWith("[output dropped")) {
                 msgs.set(i, ToolExecutionResultMessage.from(
                         ToolExecutionRequest.builder().id(m.id()).name(m.toolName()).build(),
-                        "[output dropped by the harness to save context; re-run the command if you need it]"));
+                        // #424: the exact "[output dropped" PREFIX is load-bearing - it's this
+                        // method's own one-shot guard (the condition right above), so changing it
+                        // would make a later pass re-stub (and re-count) the same message
+                        "[output dropped by the harness to save context; call recall_tool_output(tool_call_id=\"" + m.id() + "\") to see it again instead of re-running the command]"));
                 n++;
             }
         }

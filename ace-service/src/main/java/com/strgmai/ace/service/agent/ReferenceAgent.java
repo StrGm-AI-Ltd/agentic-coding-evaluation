@@ -169,6 +169,16 @@ public class ReferenceAgent {
                                 .addStringProperty("command", "the command to run")
                                 .addIntegerProperty("timeout_sec", "default 600, max 1800")
                                 .required("command").build())
+                        .build(),
+                // #424: formalizes the stub text's own "re-run the command if you need it" - the
+                // ORIGINAL output is already sitting in this session's own journal (toolResult()
+                // writes it unconditionally, before anything is ever masked), so recalling it is
+                // free; re-running could mean redoing an expensive build/docker-compose step.
+                ToolSpecification.builder().name("recall_tool_output")
+                        .description("Recall the full, original output of an earlier tool call whose result was dropped to save context - use the tool_call_id named in its \"[output dropped...]\" stub text.")
+                        .parameters(JsonObjectSchema.builder()
+                                .addStringProperty("tool_call_id", "the id named in the \"[output dropped...]\" stub text")
+                                .required("tool_call_id").build())
                         .build());
     }
 
@@ -447,7 +457,7 @@ public class ReferenceAgent {
                     log.warn("could not parse tool call arguments for {} ({}), executing with no arguments: {}", c.name(), c.id(), e.toString());
                     args = Map.of();
                 }
-                final AgentTools.Outcome out = executeTool(c.name(), args, cwd, env);
+                final AgentTools.Outcome out = executeTool(c.name(), args, cwd, env, name, session);
                 if (out.isError()) toolErrors++;
                 msgs.add(ToolExecutionResultMessage.from(c, out.output()));
                 session.toolResult(c.id(), c.name(), out.output(), out.isError());
@@ -482,13 +492,25 @@ public class ReferenceAgent {
         return new SessionResult(id, rc, Math.round(secs * 10) / 10.0, finish, turns, toolErrors, compactions, s.path(), start, Instant.now());
     }
 
-    private AgentTools.Outcome executeTool(final String name, final Map<String, Object> args, final String cwd, final Map<String, String> env) {
+    private AgentTools.Outcome executeTool(final String name, final Map<String, Object> args, final String cwd, final Map<String, String> env,
+                                            final String sessionName, final AgentSession session) {
         try {
             return switch (name) {
                 case "read" -> AgentTools.read(cwd, args);
                 case "write" -> AgentTools.write(cwd, args);
                 case "edit" -> AgentTools.edit(cwd, args);
                 case "bash" -> AgentTools.bash(cwd, args, env);
+                case "recall_tool_output" -> {
+                    final String id = String.valueOf(args.getOrDefault("tool_call_id", ""));
+                    final String text = AgentSession.recallToolOutput(session.path(), id);
+                    // #424: a usage metric the review found missing - MemGPT/Letta's own result
+                    // depends on the model actually paging content back in; without a log line
+                    // there would be no way to tell whether a local model ever does, versus this
+                    // whole mechanism quietly doing nothing
+                    log.info("session {} recalled archived tool output {} ({})", sessionName, id, text == null ? "not found" : "found");
+                    yield text == null ? new AgentTools.Outcome("error: no archived output for tool_call_id " + id, true)
+                            : new AgentTools.Outcome(text, false);
+                }
                 default -> new AgentTools.Outcome("error: unknown tool " + name, true);
             };
         } catch (Exception e) { return new AgentTools.Outcome("error: " + e, true); }
