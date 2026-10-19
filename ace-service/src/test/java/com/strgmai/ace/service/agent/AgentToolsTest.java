@@ -88,10 +88,101 @@ class AgentToolsTest {
     }
 
     @Test
-    void bashKeepsAtMostTheCapOnErrorRelevantLinesAndLeavesPlainLogsUnannotated() throws IOException {
+    void bashLeavesAPlainLogWithNoErrorMarkersUnannotated() throws IOException {
         final var ws = Files.createTempDirectory("ws");
         final AgentTools.Outcome plain = AgentTools.bash(ws.toString(), Map.of("command", "seq 1 200"), Map.of());
         assertFalse(plain.output().contains("error-relevant lines kept"), "a plain log with no error markers gets no extra annotation");
+    }
+
+    /** #417 follow-up review: the original pattern - measured against this harness's own 907 real
+     *  session journals (139k lines of real `bash` output) - missed the HIGHEST-signal lines in a
+     *  real Java failure: `\bException\b`/`\bError\b` can never match INSIDE a concrete class name
+     *  (no word boundary between "Null" and "Exception"), "Caused by:" was never matched at all,
+     *  and a Java 9+ module-prefixed stack frame ("at app//com.example.Foo.bar(...)",
+     *  "at java.base/java.lang.Thread.run(...)") was unmatched because "/" was never in the frame
+     *  alternative's own character class. */
+    @Test
+    void bashKeepsConcreteExceptionClassesCausedByAndModulePrefixedFrames() throws IOException {
+        final var ws = Files.createTempDirectory("ws");
+        final var sb = new StringBuilder();
+        for (int i = 0; i < 100; i++) sb.append("noise line ").append(i).append('\n');
+        sb.append("java.lang.NullPointerException: Cannot invoke \"String.length()\" because s is null\n");
+        sb.append("\tat app//com.example.Main.run(Main.java:10)\n");
+        sb.append("Caused by: java.lang.IllegalStateException: already closed\n");
+        sb.append("\tat java.base/java.lang.Thread.run(Thread.java:840)\n");
+        for (int i = 0; i < 100; i++) sb.append("more noise ").append(i).append('\n');
+        final Path log = ws.resolve("log.txt");
+        Files.writeString(log, sb.toString());
+        final AgentTools.Outcome out = AgentTools.bash(ws.toString(), Map.of("command", "cat log.txt"), Map.of());
+        assertFalse(out.isError(), out.output());
+        assertTrue(out.output().contains("java.lang.NullPointerException"), "a concrete exception class with no word boundary before \"Exception\" must survive: " + out.output());
+        assertTrue(out.output().contains("Caused by: java.lang.IllegalStateException"), "the cause chain must survive: " + out.output());
+        assertTrue(out.output().contains("at app//com.example.Main.run"), "a module-prefixed frame (unnamed module) must survive: " + out.output());
+        assertTrue(out.output().contains("at java.base/java.lang.Thread.run"), "a module-prefixed frame (named module) must survive: " + out.output());
+    }
+
+    /** #417 follow-up review: 75% of the original pattern's own matches, measured against this
+     *  harness's own real logs, came from the bare, case-insensitive word "error" appearing in
+     *  perfectly ordinary code - a package segment, a JSON field name, a log message about "N
+     *  error(s)" - none of them an actual failure. Case-sensitive ALL-CAPS matching for the
+     *  log-marker words fixes this without losing the real markers (Gradle/JUnit always emit
+     *  FAILED/FAILURE/ERROR in that exact case). */
+    @Test
+    void bashDoesNotTreatOrdinaryLowercaseMentionsOfErrorAsErrorRelevant() throws IOException {
+        final var ws = Files.createTempDirectory("ws");
+        final var sb = new StringBuilder();
+        for (int i = 0; i < 100; i++) {
+            sb.append("package io.trading.platform.common.error; // line ").append(i).append('\n');
+        }
+        sb.append("fun error(code: ErrorCode, message: String): String = code(code.name, message)\n");
+        sb.append(".body(Map.of(\"error\", e.getMessage()));\n");
+        sb.append("1 error\n");
+        for (int i = 0; i < 100; i++) sb.append("more noise ").append(i).append('\n');
+        final Path log = ws.resolve("log.txt");
+        Files.writeString(log, sb.toString());
+        final AgentTools.Outcome out = AgentTools.bash(ws.toString(), Map.of("command", "cat log.txt"), Map.of());
+        assertFalse(out.isError(), out.output());
+        assertFalse(out.output().contains("error-relevant lines kept"), "none of these ordinary lowercase lines should be flagged as error-relevant: " + out.output());
+    }
+
+    /** #417 follow-up review: `.limit(MAX_ERROR_LINES_KEPT)` on the filtered stream kept the
+     *  OLDEST matches - backwards, since early build/dependency noise fills the quota before the
+     *  real failure near the END of the log (closest to the tail) is ever reached. This pins that
+     *  the NEWEST matching lines are the ones kept when there are more than the cap. */
+    @Test
+    void bashKeepsTheNewestErrorRelevantLinesNotTheOldestWhenThereAreMoreThanTheCap() throws IOException {
+        final var ws = Files.createTempDirectory("ws");
+        final var sb = new StringBuilder();
+        for (int i = 0; i < 100; i++) sb.append("noise\n");
+        for (int i = 0; i < 25; i++) sb.append("OLD_ERROR line, java.lang.RuntimeException marker ").append(i).append('\n');
+        for (int i = 0; i < 25; i++) sb.append("NEW_ERROR line, java.lang.RuntimeException marker ").append(i).append('\n');
+        for (int i = 0; i < 100; i++) sb.append("more noise\n");
+        final Path log = ws.resolve("log.txt");
+        Files.writeString(log, sb.toString());
+        final AgentTools.Outcome out = AgentTools.bash(ws.toString(), Map.of("command", "cat log.txt"), Map.of());
+        assertFalse(out.output().contains("OLD_ERROR"), "the oldest matches, beyond the 20-line cap, must be dropped: " + out.output());
+        assertTrue(out.output().contains("NEW_ERROR"), "the newest matches, closest to the tail, must be kept: " + out.output());
+    }
+
+    /** #417 follow-up review: `out.length() > BASH_MAX_CHARS || lines.size() > ...` used to trigger
+     *  the line-based head/tail reconstruction on EITHER condition - a few very long lines (over
+     *  the char cap, but nowhere near the line-count threshold) made midStart>=midEnd (no real gap),
+     *  producing head+tail that fully DUPLICATED the entire input with "0 lines omitted" and no
+     *  marker, before the subsequent char-cap then halved that duplicate. Line reconstruction must
+     *  only fire on a genuine line-count excess; the char-level cap is unconditional and independent. */
+    @Test
+    void bashNeverDuplicatesOutputWhenOnlyTheCharCapFiresOnAFewVeryLongLines() throws IOException {
+        final var ws = Files.createTempDirectory("ws");
+        final var sb = new StringBuilder();
+        for (int i = 0; i < 4; i++) sb.append("x".repeat(3_000)).append('\n');   // 4 lines, well under any line-count threshold
+        final Path log = ws.resolve("log.txt");
+        Files.writeString(log, sb.toString());
+        final AgentTools.Outcome out = AgentTools.bash(ws.toString(), Map.of("command", "cat log.txt"), Map.of());
+        assertFalse(out.isError(), out.output());
+        assertFalse(out.output().contains("lines omitted"), "only 4 lines - the line-based path must not fire at all");
+        assertTrue(out.output().contains("[truncated]"), "the char-level cap must still fire independently");
+        final long xCount = out.output().chars().filter(c -> c == 'x').count();
+        assertTrue(xCount < 4 * 3_000, "the content must be genuinely truncated, not duplicated then halved: " + xCount + " x's kept");
     }
 
     /** #243: found live 2026-10-04: zsh -lc is a LOGIN shell, so it sources /etc/zprofile - which on
