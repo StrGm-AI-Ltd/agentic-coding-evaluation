@@ -64,6 +64,36 @@ class AgentToolsTest {
         assertFalse(ansi.output().contains("\u001b[31m"), "ANSI must be stripped");
     }
 
+    /** #423: a deterministic, non-LLM alternative to the mechanism #423 originally proposed
+     *  (LLM/perplexity-based compression) - the omitted middle of a long log is exactly where a
+     *  failing assertion or stack trace usually sits; this keeps those lines verbatim instead of
+     *  just announcing a line count. */
+    @Test
+    void bashKeepsErrorRelevantLinesFromTheOmittedMiddleOfALongLog() throws IOException {
+        final var ws = Files.createTempDirectory("ws");
+        final var sb = new StringBuilder();
+        for (int i = 0; i < 100; i++) sb.append("noise line ").append(i).append('\n');
+        sb.append("FAILURE: Build failed\n");
+        sb.append("org.opentest4j.AssertionFailedError: expected: <1> but was: <2>\n");
+        sb.append("\tat com.example.FooTest.testBar(FooTest.java:42)\n");
+        for (int i = 0; i < 100; i++) sb.append("more noise ").append(i).append('\n');
+        final Path log = ws.resolve("log.txt");
+        Files.writeString(log, sb.toString());
+        final AgentTools.Outcome out = AgentTools.bash(ws.toString(), Map.of("command", "cat log.txt"), Map.of());
+        assertFalse(out.isError(), out.output());
+        assertTrue(out.output().contains("lines omitted"), "still head+tail capped");
+        assertTrue(out.output().contains("FAILURE: Build failed"), "the failure marker must survive from the omitted range: " + out.output());
+        assertTrue(out.output().contains("AssertionFailedError: expected: <1> but was: <2>"), "the assertion diff must survive: " + out.output());
+        assertTrue(out.output().contains("at com.example.FooTest.testBar"), "the stack frame must survive: " + out.output());
+    }
+
+    @Test
+    void bashKeepsAtMostTheCapOnErrorRelevantLinesAndLeavesPlainLogsUnannotated() throws IOException {
+        final var ws = Files.createTempDirectory("ws");
+        final AgentTools.Outcome plain = AgentTools.bash(ws.toString(), Map.of("command", "seq 1 200"), Map.of());
+        assertFalse(plain.output().contains("error-relevant lines kept"), "a plain log with no error markers gets no extra annotation");
+    }
+
     /** #243: found live 2026-10-04: zsh -lc is a LOGIN shell, so it sources /etc/zprofile - which on
      *  macOS unconditionally runs path_helper and rebuilds $PATH with system dirs first, silently
      *  demoting whatever this scrubbed env's own PATH put first (the docker shim) to the very end.
