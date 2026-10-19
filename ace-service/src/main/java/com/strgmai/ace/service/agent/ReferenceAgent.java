@@ -1,6 +1,7 @@
 package com.strgmai.ace.service.agent;
 
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.pack.Packs;
 import com.strgmai.ace.service.proxy.RecordingProxy;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
@@ -265,6 +266,19 @@ public class ReferenceAgent {
     public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
                              Path sessionDir, String sessionId, boolean continueSession,
                              String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, int maxTurns, String model, Map<String, String> extraEnv, JudgeCheckpoint judge, boolean advisoryOnly, FinalTurn finalTurn, Integer compactOnLoadKeepRecentTurns) throws Exception {
+        return run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase, abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, advisoryOnly, finalTurn, compactOnLoadKeepRecentTurns, CompactionStrategies.DEFAULT);
+    }
+
+    /** #417: `compactionStrategies` selects which compaction mechanism(s) the reactive,
+     *  mid-loop compaction below uses, and in what order (see CompactionStrategies) - every other
+     *  call site (Judge, the rescue step's own compact-on-load, p0/p1/handoff/wrap-up) goes through
+     *  one of the convenience overloads above with CompactionStrategies.DEFAULT (today's exact
+     *  existing behavior, unchanged); only RunBench's own main task-session call site
+     *  (sessionWithPolicy, the one place #417's own diminishing-returns problem was found) resolves
+     *  and passes a real, possibly task-overridden list. */
+    public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
+                             Path sessionDir, String sessionId, boolean continueSession,
+                             String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, int maxTurns, String model, Map<String, String> extraEnv, JudgeCheckpoint judge, boolean advisoryOnly, FinalTurn finalTurn, Integer compactOnLoadKeepRecentTurns, List<String> compactionStrategies) throws Exception {
         final long t0 = System.nanoTime();
         final var start = Instant.now();
         final String reasoningEffort = DEFAULT_REASONING.getOrDefault(reasoningKind(name), "medium");
@@ -347,7 +361,18 @@ public class ReferenceAgent {
         final long deadline = wallSec > 0 ? System.currentTimeMillis() + wallSec * 1000 : Long.MAX_VALUE;
         while (turns < maxTurns) {
             if (compactionTrigger > 0 && lastPrompt > 0 && lastPrompt > compactionTrigger) {
-                final int n = AgentSession.compact(msgs, props.keepRecentTurns());
+                // #417: the protected window's own ceiling is half of whatever triggers compaction
+                // in the first place - self-scaling with compactionTrigger (28000 operator default,
+                // or whatever a run/task override sets) rather than a second magic number, and
+                // guarantees there is always real headroom left to free (the root cause found live:
+                // a protected window with NO ceiling can itself grow to consume the entire budget).
+                final int n = CompactionStrategies.apply(compactionStrategies, msgs, props.keepRecentTurns(), compactionTrigger / 2,
+                        range -> {
+                            final List<ChatMessage> req = new ArrayList<>();
+                            req.add(SystemMessage.from(Packs.STRUCTURED_EVICTION_INSTRUCTION));
+                            req.addAll(range);
+                            return chatWithRetry(chatModel, ChatRequest.builder().messages(req).build(), deadline, abortProxy, firstTokenTimeoutMs).aiMessage().text();
+                        });
                 if (n > 0) { compactions++; session.compaction(n, lastPrompt); }
             }
             ChatResponse resp;

@@ -213,20 +213,49 @@ public final class AgentSession {
         return last;
     }
 
-    /** port of compact(): stub the oldest tool outputs, keep the newest `keepRecentTurns` assistant
-     *  turns intact, never touch the system prompt or the first user message (the harness's pack).
-     *  A negative keepRecentTurns is an operator misconfiguration, not a reachable intent - clamped
-     *  to 0 ("keep nothing verbatim") rather than indexing past the end of idxAssist and crashing
-     *  the whole session (a harness-side crash from a bad config value must never read as the
-     *  agent's own failure). 0 itself cuts at msgs.size() - idxAssist's own last entry is still
-     *  "the newest 0 turns", i.e. none of them, so everything from index 2 onward is eligible. */
-    public static int compact(final List<ChatMessage> msgs, final int keepRecentTurns) {
+    /** the turn-count boundary alone: index of the first message that belongs to the newest
+     *  `keepRecentTurns` assistant turns, never touching the system prompt or the first user
+     *  message (the harness's pack). A negative keepRecentTurns is an operator misconfiguration,
+     *  not a reachable intent - clamped to 0 ("keep nothing verbatim") rather than indexing past
+     *  the end of idxAssist and crashing the whole session (a harness-side crash from a bad config
+     *  value must never read as the agent's own failure). 0 itself cuts at msgs.size() - idxAssist's
+     *  own last entry is still "the newest 0 turns", i.e. none of them, so everything from index 2
+     *  onward is eligible. Always lands exactly on an AiMessage index, so msgs.subList(0, cut) is
+     *  always a structurally complete slice (never an AiMessage with some, but not all, of its own
+     *  tool results left outside the slice) - the only boundary safe to hand to anything that sends
+     *  a sub-range as its OWN standalone request (CompactionStrategies' structured_eviction). */
+    public static int cutIndex(final List<ChatMessage> msgs, final int keepRecentTurns) {
         if (keepRecentTurns < 0) log.warn("keepRecentTurns={} is negative - clamping to 0 (\"keep nothing verbatim\")", keepRecentTurns);
         final int keep = Math.max(0, keepRecentTurns);
         final List<Integer> idxAssist = new ArrayList<>();
         for (int i = 0; i < msgs.size(); i++) if (msgs.get(i) instanceof AiMessage) idxAssist.add(i);
-        if (idxAssist.size() <= keep) return 0;
-        final int cut = keep == 0 ? msgs.size() : idxAssist.get(idxAssist.size() - keep);
+        return idxAssist.size() <= keep ? 0 : (keep == 0 ? msgs.size() : idxAssist.get(idxAssist.size() - keep));
+    }
+
+    /** original form (#417's own `tool_result_mask` strategy, pre-token-budget): the turn-count
+     *  boundary alone, no ceiling on its own size. Kept as the 2-arg form so every existing caller
+     *  (the rescue step's compact-on-load, this class's own tests) keeps compiling unchanged. */
+    public static int compact(final List<ChatMessage> msgs, final int keepRecentTurns) {
+        return compact(msgs, keepRecentTurns, 0);
+    }
+
+    /** #417: the turn-count floor alone never shrinks, no matter how large those protected turns'
+     *  own tool outputs grow - that is this issue's own root cause (found live: five compactions in
+     *  one task freeing ~21k/11k/8k/8k/4k tokens, converging to near-zero as the protected window's
+     *  own footprint ate the entire budget). Stub the oldest tool outputs as before, but first
+     *  re-check the turn-count-protected region's OWN estimated size (RecordingProxy's chars/token
+     *  estimate) and shrink the cut forward - protecting fewer, more recent turns - until it
+     *  actually fits keepTokenBudget. keepTokenBudget<=0 disables the shrink (this codebase's usual
+     *  "0 = no budget" convention), giving the exact original turn-count-only behavior. */
+    public static int compact(final List<ChatMessage> msgs, final int keepRecentTurns, final int keepTokenBudget) {
+        int cut = cutIndex(msgs, keepRecentTurns);
+        if (keepTokenBudget > 0 && cut < msgs.size()) {
+            long tokens = 0;
+            for (int i = msgs.size() - 1; i >= Math.max(cut, 2); i--) {
+                tokens += estimateTokens(msgs.get(i));
+                if (tokens > keepTokenBudget) { cut = i + 1; break; }
+            }
+        }
         int n = 0;
         for (int i = 2; i < cut; i++) {
             if (msgs.get(i) instanceof ToolExecutionResultMessage m && !m.text().startsWith("[output dropped")) {
@@ -237,5 +266,16 @@ public final class AgentSession {
             }
         }
         return n;
+    }
+
+    private static long estimateTokens(final ChatMessage m) {
+        final StringBuilder sb = new StringBuilder();
+        if (m instanceof AiMessage ai) {
+            if (ai.text() != null) sb.append(ai.text());
+            if (ai.hasToolExecutionRequests()) for (ToolExecutionRequest c : ai.toolExecutionRequests()) sb.append(c.arguments());
+        } else if (m instanceof ToolExecutionResultMessage t) sb.append(t.text());
+        else if (m instanceof UserMessage u) sb.append(u.singleText());
+        else if (m instanceof SystemMessage s) sb.append(s.text());
+        return (long) (sb.length() / com.strgmai.ace.service.proxy.RecordingProxy.CHARS_PER_TOKEN);
     }
 }

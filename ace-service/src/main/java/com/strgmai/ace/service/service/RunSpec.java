@@ -1,5 +1,7 @@
 package com.strgmai.ace.service.service;
 
+import com.strgmai.ace.service.agent.CompactionStrategies;
+
 import java.util.*;
 
 /** Port of service/queue.py's RunSpec: the flags a queued run may carry, in argv order, with the
@@ -10,7 +12,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                       boolean systemRules, boolean selfReview,
                       boolean trajectoryReview, String reviewerModel, boolean handoffNotes,
                       boolean noContextProbe, boolean contextProbeFresh,
-                      Integer contextWindow, Integer firstTokenTimeout, Integer compactionTrigger, Integer reviewWallSec,
+                      Integer contextWindow, Integer firstTokenTimeout, Integer compactionTrigger, String compactionStrategies, Integer reviewWallSec,
                       boolean reviewBlind, String trajectoryReviewerModel, Double reviewWeight, Double trajectoryWeight,
                       String trajectoryUse, String javaHome, String runId,
                       Double temperature, Double topP, Integer topK, Double repetitionPenalty, Integer maxTokens, String reasoningEffort,
@@ -73,6 +75,11 @@ public record RunSpec(String task, String model, String harness, String mode, St
         rescueKeepRecentTurns = nonNegative(rescueKeepRecentTurns);
         // 0 is a legitimate value here (disables compaction) - unlike the budgets above, only reject negative
         if (compactionTrigger != null && compactionTrigger < 0) throw new IllegalArgumentException("compactionTrigger must be >= 0 (0 disables compaction): " + compactionTrigger);
+        // #417: same bounded, comma-separated, order-preserving shape as phases/PHASES above
+        if (compactionStrategies != null && !compactionStrategies.isBlank())
+            for (final String s : compactionStrategies.split(","))
+                if (!CompactionStrategies.KNOWN.contains(s))
+                    throw new IllegalArgumentException("unknown compaction strategy: " + s + " (must be one of " + CompactionStrategies.KNOWN + ")");
         if (reviewWeight != null && (reviewWeight < 0 || reviewWeight > 1)) throw new IllegalArgumentException("reviewWeight must be within 0..1: " + reviewWeight);
         if (trajectoryWeight != null && (trajectoryWeight < 0 || trajectoryWeight > 1)) throw new IllegalArgumentException("trajectoryWeight must be within 0..1: " + trajectoryWeight);
         if (trajectoryUse != null && !trajectoryUse.isBlank() && !List.of("calibration", "direct").contains(trajectoryUse))
@@ -145,6 +152,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (contextWindow != null) args.add("--context-window=" + contextWindow);
         if (firstTokenTimeout != null) args.add("--first-token-timeout=" + firstTokenTimeout);
         if (compactionTrigger != null) args.add("--compaction-trigger=" + compactionTrigger);
+        if (compactionStrategies != null && !compactionStrategies.isBlank()) args.add("--compaction-strategies=" + compactionStrategies);
         if (reviewWallSec != null) args.add("--review-wall-sec=" + reviewWallSec);
         if (reviewTokens != null) args.add("--review-tokens=" + reviewTokens);
         if (reviewBlind) args.add("--review-blind");
@@ -195,7 +203,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
      *  sync. */
     public static final class Builder {
         private String task, model, harness, mode, planSource, phases, parallel, parallelPlan, reviewerModel,
-                trajectoryReviewerModel, trajectoryUse, javaHome, runId, reasoningEffort, judgeModel;
+                trajectoryReviewerModel, trajectoryUse, javaHome, runId, reasoningEffort, judgeModel, compactionStrategies;
         private Integer taskWall, taskTokens, implWall, implTokens, planWall, planTokens, wallBudget, contextWindow, firstTokenTimeout,
                 compactionTrigger, reviewWallSec, topK, maxTokens, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
                 fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, judgeEveryNTurns, judgeWallSec, judgeTokens,
@@ -230,6 +238,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public Builder contextWindow(final Integer v) { contextWindow = v; return this; }
         public Builder firstTokenTimeout(final Integer v) { firstTokenTimeout = v; return this; }
         public Builder compactionTrigger(final Integer v) { compactionTrigger = v; return this; }
+        public Builder compactionStrategies(final String v) { compactionStrategies = v; return this; }
         public Builder reviewWallSec(final Integer v) { reviewWallSec = v; return this; }
         public Builder reviewTokens(final Integer v) { reviewTokens = v; return this; }
         public Builder reviewBlind(final boolean v) { reviewBlind = v; return this; }
@@ -268,7 +277,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public RunSpec build() {
             return new RunSpec(task, model, harness, mode, planSource, phases, taskWall, taskTokens, implWall, implTokens,
                     planWall, planTokens, wallBudget, parallel, parallelPlan, parallelWeight, systemRules, selfReview, trajectoryReview, reviewerModel, handoffNotes,
-                    noContextProbe, contextProbeFresh, contextWindow, firstTokenTimeout, compactionTrigger, reviewWallSec,
+                    noContextProbe, contextProbeFresh, contextWindow, firstTokenTimeout, compactionTrigger, compactionStrategies, reviewWallSec,
                     reviewBlind, trajectoryReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse, javaHome, runId,
                     temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
                     fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, efficiencyWeight,
@@ -294,7 +303,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 .handoffNotes(bool(spec, "handoff_notes", false))
                 .noContextProbe(bool(spec, "no_context_probe", false)).contextProbeFresh(bool(spec, "context_probe_fresh", false))
                 .contextWindow(intOf(spec, "context_window")).firstTokenTimeout(intOf(spec, "first_token_timeout"))
-                .compactionTrigger(intOf(spec, "compaction_trigger")).reviewWallSec(intOf(spec, "review_wall_sec"))
+                .compactionTrigger(intOf(spec, "compaction_trigger")).compactionStrategies(str(spec, "compaction_strategies"))
+                .reviewWallSec(intOf(spec, "review_wall_sec"))
                 .reviewTokens(intOf(spec, "review_tokens"))
                 .reviewBlind(bool(spec, "review_blind", false)).trajectoryReviewerModel(str(spec, "trajectory_reviewer_model"))
                 .reviewWeight(doubleOf(spec, "review_weight")).trajectoryWeight(doubleOf(spec, "trajectory_weight"))

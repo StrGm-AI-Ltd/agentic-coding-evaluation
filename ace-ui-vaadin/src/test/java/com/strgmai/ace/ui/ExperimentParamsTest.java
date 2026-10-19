@@ -252,6 +252,18 @@ class ExperimentParamsTest {
     }
 
     @Test
+    void compactionStrategiesOmittedWhenUnsetOtherwisePassedThrough() {
+        final var raw = common();
+        raw.put("model", "qwen");
+        raw.put("compaction_strategies", null);
+        assertFalse(ExperimentParams.build("harness_effect", raw).containsKey("compaction_strategies"), "unset leaves the run-level default in place");
+        raw.put("compaction_strategies", "");
+        assertFalse(ExperimentParams.build("harness_effect", raw).containsKey("compaction_strategies"), "blank is treated the same as unset");
+        raw.put("compaction_strategies", "structured_eviction,tool_result_mask");
+        assertEquals("structured_eviction,tool_result_mask", ExperimentParams.build("harness_effect", raw).get("compaction_strategies"));
+    }
+
+    @Test
     void unknownTemplateRejected() {
         assertThrows(IllegalArgumentException.class, () -> ExperimentParams.build("nope", Map.of()));
     }

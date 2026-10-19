@@ -110,6 +110,32 @@ class RunSpecTest {
         assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").phases("p1_plan,bogus").build());
     }
 
+    /** #417: same shape/validation as --phases above, for CompactionStrategies.KNOWN instead of
+     *  RunSpec.PHASES. */
+    @Test
+    void argvIncludesCompactionStrategiesWhenSet() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").compactionStrategies("tool_result_mask,structured_eviction").build().argv("r1");
+        assertTrue(argv.contains("--compaction-strategies=tool_result_mask,structured_eviction"));
+    }
+
+    @Test
+    void argvOmitsCompactionStrategiesWhenUnset() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
+        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--compaction-strategies")));
+    }
+
+    @Test
+    void everyKnownCompactionStrategyIsAccepted() {
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").compactionStrategies("tool_result_mask").build());
+        assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").compactionStrategies("structured_eviction,tool_result_mask").build());
+    }
+
+    @Test
+    void unknownCompactionStrategyIsRejected() {
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").compactionStrategies("not_a_strategy").build());
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").compactionStrategies("tool_result_mask,bogus").build());
+    }
+
     /** Found live 2026-09-25: PARALLEL_PLAN/handoff/wrap-up walls were fixed literals in
      *  RunBench.java (600/300/300*scale) with no run-level control at all. */
     @Test
@@ -412,7 +438,8 @@ class RunSpecTest {
         spec.put("handoff_notes", true);
         spec.put("no_context_probe", true); spec.put("context_probe_fresh", true);
         spec.put("context_window", 555); spec.put("first_token_timeout", 666);
-        spec.put("compaction_trigger", 777); spec.put("review_wall_sec", 888); spec.put("review_tokens", 8880);
+        spec.put("compaction_trigger", 777); spec.put("compaction_strategies", "structured_eviction,tool_result_mask");
+        spec.put("review_wall_sec", 888); spec.put("review_tokens", 8880);
         spec.put("review_blind", true); spec.put("trajectory_reviewer_model", "traj-reviewer-m");
         spec.put("review_weight", 0.11); spec.put("trajectory_weight", 0.22);
         spec.put("trajectory_use", "direct"); spec.put("java_home", "/opt/jdk-21"); spec.put("run_id", "run-xyz");
@@ -452,6 +479,7 @@ class RunSpecTest {
         assertEquals(555, rs.contextWindow());
         assertEquals(666, rs.firstTokenTimeout());
         assertEquals(777, rs.compactionTrigger());
+        assertEquals("structured_eviction,tool_result_mask", rs.compactionStrategies());
         assertEquals(888, rs.reviewWallSec());
         assertEquals(8880, rs.reviewTokens());
         assertTrue(rs.reviewBlind());
@@ -491,7 +519,7 @@ class RunSpecTest {
     @Test
     void builderProducesTheSameRunSpecAsThePositionalConstructor() {
         final var viaBuilder = RunSpec.builder().task("t").model("m").runId("r1").temperature(0.5).build();
-        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, null, null, null, null, false, null, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, null, null, null, null, false, null, null, null);
+        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, null, null, null, null, null, false, null, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, null, null, null, null, false, null, null, null);
         assertEquals(viaConstructor, viaBuilder);
     }
 }

@@ -436,6 +436,21 @@ public final class Packs {
                 + "docs/PROGRESS.md status line honestly (`" + id + " | partial | <what remains and why>`) and stop; do not keep "
                 + "spending budget once you have made a real attempt.";
     }
+    // #417: structured_eviction's own one-shot summarization ask - asks for a fixed outline instead
+    // of free prose specifically because a narrative summary collapses the causal/provenance
+    // structure a long session's own trajectory carries (see issue #417's research) - the same
+    // reason ACE's own inter-task handoff-notes/lessons.md are already structured documents, not
+    // prose summaries.
+    public static final String STRUCTURED_EVICTION_INSTRUCTION = "The conversation above is being compacted to save context. "
+            + "Write a structured summary of it under exactly these six headings, each a short bullet list (omit a heading only "
+            + "if genuinely empty):\n\n"
+            + "## LANDED\nWhat is actually done and verified (tests passing, files written).\n\n"
+            + "## STATE\nThe current state of the workspace right now - what exists, what doesn't yet.\n\n"
+            + "## INVARIANTS\nFacts and constraints that must keep holding (API shapes, config values, conventions discovered).\n\n"
+            + "## TASKS\nWhat is still open or in progress.\n\n"
+            + "## DO NEXT\nThe single most useful next step.\n\n"
+            + "## DECISIONS\nNon-obvious choices made and why, so they are not silently re-litigated.\n\n"
+            + "Write nothing except this summary - no preamble, no code listings, no apology.";
     public static final String FIX_INSTRUCTION = """
             The harness merged the parallel tasks {tasks} into this repository and found the problems listed above. Fix them: resolve every
             conflict marker, make the build and the complete test suite green from the repository root, and keep every task's behaviour as
