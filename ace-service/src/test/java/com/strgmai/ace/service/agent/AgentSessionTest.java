@@ -181,6 +181,47 @@ class AgentSessionTest {
         assertEquals(2L, u.get("turns"));
     }
 
+    /** #424: the tool-output archive is the session file itself - the original, un-stubbed text
+     *  toolResult() already writes, recallable by the same id the stub text now names. */
+    @Test
+    void recallToolOutputFindsTheOriginalTextByToolCallId() throws IOException {
+        final var dir = Files.createTempDirectory("session");
+        final var session = new AgentSession(dir, "s4", false);
+        session.toolResult("c1", "bash", "the real, original output", false);
+        assertEquals("the real, original output", AgentSession.recallToolOutput(session.path(), "c1"));
+    }
+
+    @Test
+    void recallToolOutputSurvivesMaskingSinceCompactionNeverTouchesTheSessionFile() throws IOException {
+        final var dir = Files.createTempDirectory("session");
+        final var session = new AgentSession(dir, "s5", false);
+        final var req = ToolExecutionRequest.builder().id("c1").name("bash").arguments("{}").build();
+        session.toolResult("c1", "bash", "the real, original output", false);
+        final List<ChatMessage> msgs = new ArrayList<>(List.of(
+                SystemMessage.from("system"), UserMessage.from("pack"),
+                AiMessage.from("turn", List.of(req)), ToolExecutionResultMessage.from(req, "the real, original output")));
+        AgentSession.compact(msgs, 0);   // masks the in-memory copy - the session FILE is untouched
+        assertTrue(((ToolExecutionResultMessage) msgs.get(3)).text().startsWith("[output dropped"));
+        assertEquals("the real, original output", AgentSession.recallToolOutput(session.path(), "c1"));
+    }
+
+    @Test
+    void recallToolOutputReturnsNullForAnUnknownIdOrMissingSession() {
+        assertNull(AgentSession.recallToolOutput(Path.of("/no/such/session.jsonl"), "c1"));
+        assertNull(AgentSession.recallToolOutput(null, "c1"));
+    }
+
+    /** #424: the stub text's own prefix is load-bearing (the one-shot re-stub guard checks it) -
+     *  this pins that the new wording still starts with it, and still names a recallable id. */
+    @Test
+    void stubTextKeepsTheLoadBearingPrefixAndNamesTheRecallableId() {
+        final var msgs = sixTurns();
+        AgentSession.compact(msgs, 0);
+        final String text = ((ToolExecutionResultMessage) msgs.get(3)).text();
+        assertTrue(text.startsWith("[output dropped"), "the one-shot guard's own prefix must survive");
+        assertTrue(text.contains("recall_tool_output(tool_call_id=\"c0\")"), text);
+    }
+
     @Test
     void usageReturnsZeroedDefaultsForAMissingOrNullFile() {
         final Map<String, Long> missing = AgentSession.usage(Path.of("/no/such/session.jsonl"));
