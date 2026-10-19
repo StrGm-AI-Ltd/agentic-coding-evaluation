@@ -337,21 +337,73 @@ public final class AgentSession {
         return lastAssistantIdx < 0 ? cut : Math.min(cut, lastAssistantIdx);
     }
 
+    /** #417 follow-up review (found live on a real task, 2026-10-19/T21): masking a tool RESULT's
+     *  own text, alone, still left the AiMessage that ISSUED that call untouched forever - its own
+     *  tool-call arguments (a full `bash` command string, a full `edit` old_string/new_string, a
+     *  full `write` file's content) are never masked, no matter how long ago its own result was
+     *  already stubbed. Measured live: this grows LINEARLY with turn count with nothing ever
+     *  shrinking it - 8.5k -> 13.3k -> 18.1k tokens across three real compactions on one task,
+     *  becoming the dominant and still-growing share of the SAME trigger budget, which is exactly
+     *  why compaction kept freeing progressively less even after the protected-window-size bug
+     *  (#417's own original finding) was fixed. A short, fixed, valid-JSON placeholder - same
+     *  one-shot-per-message spirit as the result stub above, just on the call side. */
+    private static final String DROPPED_ARGS = "{\"_dropped\":true}";
+
     public static int compact(final List<ChatMessage> msgs, final int keepRecentTurns, final int keepTokenBudget) {
         final int cut = effectiveCut(msgs, keepRecentTurns, keepTokenBudget);
         int n = 0;
         for (int i = 2; i < cut; i++) {
-            if (msgs.get(i) instanceof ToolExecutionResultMessage m && !m.text().startsWith("[output dropped")) {
-                msgs.set(i, ToolExecutionResultMessage.from(
-                        ToolExecutionRequest.builder().id(m.id()).name(m.toolName()).build(),
-                        // #424: the exact "[output dropped" PREFIX is load-bearing - it's this
-                        // method's own one-shot guard (the condition right above), so changing it
-                        // would make a later pass re-stub (and re-count) the same message
-                        "[output dropped by the harness to save context; call recall_tool_output(tool_call_id=\"" + m.id() + "\") to see it again instead of re-running the command]"));
-                n++;
+            if (msgs.get(i) instanceof ToolExecutionResultMessage m) {
+                if (!m.text().startsWith("[output dropped")) {
+                    msgs.set(i, ToolExecutionResultMessage.from(
+                            ToolExecutionRequest.builder().id(m.id()).name(m.toolName()).build(),
+                            // #424: the exact "[output dropped" PREFIX is load-bearing - it's this
+                            // method's own one-shot guard (the condition right above), so changing it
+                            // would make a later pass re-stub (and re-count) the same message
+                            "[output dropped by the harness to save context; call recall_tool_output(tool_call_id=\"" + m.id() + "\") to see it again instead of re-running the command]"));
+                    n++;
+                }
+                // whether masked just now or on an earlier pass (this range is re-scanned every
+                // call, so a result masked before this fix shipped is caught up retroactively the
+                // next time compaction fires) - its own ORIGINATING call's arguments are shrunk too.
+                shrinkOwningCallArguments(msgs, i, m.id());
             }
         }
         return n;
+    }
+
+    /** Scans backward from a masked tool result's own index to find the AiMessage that issued it -
+     *  no OTHER AiMessage can sit between them by construction, only sibling tool results from the
+     *  SAME batch (a turn can issue more than one call at once) - then replaces just THAT one
+     *  call's own arguments with DROPPED_ARGS, leaving any other, still-live sibling call's
+     *  arguments (and the AiMessage's own text) untouched. Thinking content is NOT preserved across
+     *  the rebuild (AiMessage.from(text, calls) below has no thinking parameter) - confirmed live
+     *  against real request payloads that this is harmless: thinking is never resent to the model
+     *  on any later request regardless (the wire payload for a historical assistant turn is just
+     *  {role, content, tool_calls} - no reasoning field at all), the exact same drop
+     *  loadMessages() already performs unconditionally on every --continue resume. A missing owner
+     *  (a malformed or hand-edited history) is a silent no-op, not a crash - this is best-effort
+     *  token hygiene, never load-bearing for correctness. Note for anyone combining this with
+     *  structured_eviction: ordering it BEFORE tool_result_mask (see CompactionStrategies.apply()'s
+     *  own javadoc) now matters even more than before - after tool_result_mask runs, an old turn's
+     *  call arguments AND its result are both gone, leaving less for a summary to work from. */
+    private static void shrinkOwningCallArguments(final List<ChatMessage> msgs, final int resultIdx, final String toolCallId) {
+        int aiIdx = -1;
+        for (int j = resultIdx - 1; j >= 0; j--) {
+            if (msgs.get(j) instanceof AiMessage) { aiIdx = j; break; }
+        }
+        if (aiIdx < 0 || !(msgs.get(aiIdx) instanceof AiMessage ai) || !ai.hasToolExecutionRequests()) return;
+        boolean changed = false;
+        final List<ToolExecutionRequest> shrunk = new ArrayList<>(ai.toolExecutionRequests().size());
+        for (final ToolExecutionRequest c : ai.toolExecutionRequests()) {
+            if (c.id().equals(toolCallId) && !DROPPED_ARGS.equals(c.arguments())) {
+                shrunk.add(ToolExecutionRequest.builder().id(c.id()).name(c.name()).arguments(DROPPED_ARGS).build());
+                changed = true;
+            } else {
+                shrunk.add(c);
+            }
+        }
+        if (changed) msgs.set(aiIdx, AiMessage.from(ai.text(), shrunk));
     }
 
     private static long estimateTokens(final ChatMessage m) {

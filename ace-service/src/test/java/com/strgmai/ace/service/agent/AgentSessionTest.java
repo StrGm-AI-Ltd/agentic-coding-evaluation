@@ -118,6 +118,87 @@ class AgentSessionTest {
         assertEquals(2, AgentSession.compact(sixTurns(), 1, -5));
     }
 
+    /** Follow-up to #417/#424 (found live on T21, 2026-10-19): masking a tool RESULT alone left the
+     *  AiMessage that ISSUED it untouched forever - its own tool-call arguments (a full bash command,
+     *  a full edit diff, a full file write) grew the SAME trigger budget right back up, unbounded,
+     *  turn after turn. Once a result is masked, its own originating call's arguments must shrink
+     *  too; the still-protected (newest) turn's own call must be left exactly as it was. */
+    @Test
+    void compactAlsoShrinksTheOwningCallsOwnArgumentsOnceItsResultIsMasked() {
+        final var msgs = sixTurns();
+        AgentSession.compact(msgs, 1);   // stubs turn0 and turn1's results; keeps turn2 verbatim
+        final var turn0Call = ((AiMessage) msgs.get(2)).toolExecutionRequests().get(0);
+        final var turn1Call = ((AiMessage) msgs.get(4)).toolExecutionRequests().get(0);
+        final var turn2Call = ((AiMessage) msgs.get(6)).toolExecutionRequests().get(0);
+        assertEquals("{\"_dropped\":true}", turn0Call.arguments(), "its own result was masked, so its arguments shrink too");
+        assertEquals("{\"_dropped\":true}", turn1Call.arguments(), "its own result was masked, so its arguments shrink too");
+        assertEquals("{}", turn2Call.arguments(), "the newest, still-protected turn's own call must be untouched");
+        assertEquals("turn 2", ((AiMessage) msgs.get(6)).text(), "the protected AiMessage object itself must be the same, untouched instance's own text");
+    }
+
+    /** The shrink must catch up retroactively: a result masked by an EARLIER compact() pass (before
+     *  this fix even shipped, for any session resumed from disk) still gets its owning call's
+     *  arguments shrunk the next time compact() runs over the same range - not only on the exact
+     *  pass that performed the masking itself. */
+    @Test
+    void compactShrinksArgumentsForAResultThatWasAlreadyMaskedByAnEarlierPass() {
+        final var msgs = sixTurns();
+        AgentSession.compact(msgs, 2);   // first pass: keepRecentTurns=2, nothing eligible yet to mask (only 3 turns)
+        AgentSession.compact(msgs, 1);   // second pass: now turn0's result becomes eligible and is masked
+        final var turn0Call = ((AiMessage) msgs.get(2)).toolExecutionRequests().get(0);
+        assertEquals("{\"_dropped\":true}", turn0Call.arguments());
+    }
+
+    /** Calling compact() again over an already-shrunk call must be a no-op, not a double-wrap or a
+     *  crash - the one-shot guard on the argument side mirrors the result side's "[output dropped"
+     *  prefix check exactly. */
+    @Test
+    void compactIsIdempotentAndDoesNotReShrinkAnAlreadyShrunkCallsArguments() {
+        final var msgs = sixTurns();
+        AgentSession.compact(msgs, 1);
+        AgentSession.compact(msgs, 1);
+        AgentSession.compact(msgs, 1);
+        final var turn0Call = ((AiMessage) msgs.get(2)).toolExecutionRequests().get(0);
+        assertEquals("{\"_dropped\":true}", turn0Call.arguments());
+    }
+
+    /** One AiMessage can issue MORE THAN ONE tool call in a single turn. Found live: the masking
+     *  loop (and now the argument-shrink it drives) must shrink a multi-call turn's arguments
+     *  PER CALL, matched by the call's own id against the specific tool result that was masked -
+     *  never the whole AiMessage at once - so a sibling call whose own result is still protected
+     *  keeps its real arguments even when its sibling's result (and arguments) are already gone. */
+    @Test
+    void compactShrinksOnlyTheSpecificCallWhoseOwnResultWasMaskedWithinAMultiCallTurn() {
+        final List<ChatMessage> msgs = new ArrayList<>();
+        msgs.add(SystemMessage.from("system"));
+        msgs.add(UserMessage.from("the harness pack"));
+        final var c0 = ToolExecutionRequest.builder().id("c0").name("bash").arguments("echo turn0").build();
+        msgs.add(AiMessage.from("turn 0", List.of(c0)));
+        msgs.add(ToolExecutionResultMessage.from(c0, "output 0"));
+        final var c1 = ToolExecutionRequest.builder().id("c1").name("bash").arguments("echo turn1a").build();
+        final var c2 = ToolExecutionRequest.builder().id("c2").name("bash").arguments("echo small").build();
+        msgs.add(AiMessage.from("turn 1", List.of(c1, c2)));
+        msgs.add(ToolExecutionResultMessage.from(c1, "x".repeat(50_000)));   // c1's own RESULT is the oversized one
+        msgs.add(ToolExecutionResultMessage.from(c2, "output 2"));
+        final var c3 = ToolExecutionRequest.builder().id("c3").name("bash").arguments("echo turn2").build();
+        msgs.add(AiMessage.from("turn 2", List.of(c3)));
+        msgs.add(ToolExecutionResultMessage.from(c3, "output 3"));
+
+        // keepRecentTurns=2 protects turn1+turn2 by count; the token budget then trims INTO turn1's
+        // own multi-call batch because c1's own RESULT (50,000 chars) alone blows the budget,
+        // landing the cut strictly between c1's and c2's own tool results
+        final int cut = AgentSession.effectiveCut(msgs, 2, 10);
+        assertEquals(6, cut, "cut must land between c1's and c2's own results - a partial-batch split");
+
+        AgentSession.compact(msgs, 2, 10);
+        assertTrue(((ToolExecutionResultMessage) msgs.get(5)).text().startsWith("[output dropped"), "c1's own result is inside the mask range");
+        assertEquals("output 2", ((ToolExecutionResultMessage) msgs.get(6)).text(), "c2's own result is still protected");
+        final var turn1Calls = ((AiMessage) msgs.get(4)).toolExecutionRequests();
+        assertEquals("{\"_dropped\":true}", turn1Calls.get(0).arguments(), "c1's own arguments shrink - its own result was masked");
+        assertEquals("echo small", turn1Calls.get(1).arguments(), "c2's own arguments must be untouched - its own result is still protected");
+        assertEquals("turn 1", ((AiMessage) msgs.get(4)).text());
+    }
+
     @Test
     void cutIndexMatchesTheOriginalTurnCountBoundary() {
         final var msgs = sixTurns();
