@@ -150,6 +150,43 @@ class WorkerServiceTest {
         verify(queue, never()).finish(eq(JOB_1), eq("failed"), anyInt(), anyString());
     }
 
+    /** Found live 2026-10-19 (job 25b8828c, T21): a plain `catch (Exception e)` here let an Error
+     *  (OutOfMemoryError was the live suspect - interactions.jsonl had grown to 454MB by then)
+     *  escape uncaught, past every catch clause - the job's own status never left "running",
+     *  nothing was ever logged, and nothing was left running it either, orphaning it forever with
+     *  no trace. `catch (Throwable e)` closes that gap: an Error must land on "failed" exactly
+     *  like an Exception already does, not vanish silently. */
+    @Test
+    void anErrorNotJustAnExceptionStillLandsTheJobOnFailed() throws Exception {
+        final var tmpHome = Files.createTempDirectory("fake-home");
+        final var resultsDir = Files.createTempDirectory("results");
+        final JobQueue queue = mock(JobQueue.class);
+        when(queue.list()).thenReturn(List.of());   // reconcile() runs in the constructor
+        final TreatmentPin pin = mock(TreatmentPin.class);
+        when(pin.current()).thenReturn("build-abc123");
+        final Preflight preflight = mock(Preflight.class);
+        when(preflight.check(any())).thenReturn(new Preflight.Report(List.of(), false));
+        final BenchProperties props = mock(BenchProperties.class);
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(Files.createTempDirectory("ws").toString());
+        when(props.model()).thenReturn("m");
+        final RunBench runBench = mock(RunBench.class);
+        when(runBench.runOnce(any(), any(), any(), any(), any())).thenThrow(new OutOfMemoryError("test"));
+
+        final JobQueue.Job job = new JobQueue.Job(JOB_1, null, "A", 1, "run", "run-1",
+                List.of("--task=L3p_point_in_time", "--model=m"),
+                "queued", null, 0, null, null, false, false, null, null, "build-abc123", "build-abc123", java.util.Map.of());
+        when(queue.claim()).thenReturn(job);
+        when(queue.get(JOB_1)).thenReturn(Map.of("cancel_requested", false, "pause_requested", false));
+
+        final WorkerService ws = new WorkerService(queue, runBench, mock(ImporterService.class),
+                mock(ExperimentsService.class), preflight, pin, props, mock(ContextProbe.class), mock(RecordingProxyFactory.class));
+        withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
+
+        verify(queue, timeout(3000)).finish(eq(JOB_1), eq("failed"), eq(1), anyString());
+        assertFalse(ws.busyNow(), "busy must clear so poll() can pick up the next job, even after an Error");
+    }
+
     /** Live bug found 2026-09-27: the cancel-watch thread called probe.abortInflight() exactly once
      *  (its old loop condition, `!cancelCurrent`, went false right after that first reaction) - but
      *  ContextProbe.askRetry() opens a BRAND NEW request right after an aborted one fails, and
