@@ -185,18 +185,40 @@ code:
 `agent/ReferenceAgent.java` is a direct, verified port of `runner/agent_loop.py`, built on
 LangChain4j against an OpenAI-compatible endpoint:
 
-- **Same four tools**: `read` (line ranges), `write`, `edit` (exact-match replace, with
-  `replace_all`), `bash` (zsh, timeout parameter, default/max caps) — defined via LangChain4j
-  `ToolSpecification`s in `toolSpecs()`.
+- **Same four core tools, plus one**: `read` (line ranges), `write`, `edit` (exact-match replace,
+  with `replace_all`), `bash` (zsh, timeout parameter, default/max caps), and `recall_tool_output`
+  (#424 - recalls an earlier tool call's original output from the session's own journal once it's
+  been dropped by compaction, rather than re-running a command that might itself be expensive) —
+  defined via LangChain4j `ToolSpecification`s in `toolSpecs()`.
 - **Same loop shape**: a turn with no tool call ends the session; the proxy's 429 (budget exhausted)
   ends the session with `rc=3` via a dedicated `BudgetExhausted` exception, matched against a literal
   string (`RecordingProxy`'s own error body) rather than by status code alone, since a real upstream
   429 and the proxy's budget refusal are otherwise indistinguishable over HTTP; transient 5xx / typed
   LangChain4j exceptions are retried up to 4 times with exponential backoff; a hard 400-turn cap
   exists as a backstop (exiting `rc=1`, not a false success, if the model never stops on its own).
-- **Structural compaction, not an LLM summary**: `AgentSession.compact()` is invoked once the last
-  prompt exceeds `props.compactionTrigger()`, matching the original design's "stub the oldest tool
-  outputs, keep the newest turns, never touch the system prompt" approach.
+- **Pluggable compaction strategies (#417/#421/#426), not a single fixed mechanism.**
+  `CompactionStrategies.apply()` runs whichever strategies a run/task has enabled, in the configured
+  order, once the last prompt exceeds `props.compactionTrigger()` (job/task-overridable via
+  `compaction_strategies`): `tool_result_mask` (the original design's own "stub the oldest tool
+  outputs, keep the newest turns, never touch the system prompt" approach, now token-budgeted rather
+  than turn-count-only - the protected window itself is capped so it can never grow to consume the
+  whole budget) and `structured_eviction` (a one-shot, fixed-outline LLM summary of the evicted
+  range - LANDED/STATE/INVARIANTS/TASKS/DO NEXT/DECISIONS - updated in place on later passes, the
+  same pattern this project's own inter-task handoff-notes/`lessons.md` already use, applied within
+  one session). Both are capped and logged (#426) rather than risking an unbounded call or a silent
+  failure. A different layer - KV-cache-level eviction (H2O/StreamingLLM/PyramidKV) inside oMLX's
+  own attention mechanism - is deliberately out of scope here: it isn't anything this codebase
+  controls (oMLX is a third-party app), only something to request/configure on oMLX's side. oMLX's
+  underlying `mlx-lm` already ships `--kv-bits`/`--kv-group-size`/`--quantized-kv-start` (quantized
+  KV, disables request batching while active) and `max_kv_size` (a rotating, fixed-size cache,
+  StreamingLLM-shaped) as concrete settings worth evaluating if this project ever upgrades to use
+  them - with one real caution first: "The Pitfalls of KV Cache Compression" (arXiv 2510.00231,
+  2026) found that under KV compression, some instructions in a multi-instruction system prompt
+  degrade far faster than others and become effectively ignored, with observed system-prompt
+  leakage and reduced instruction-following - exactly the shape of this project's own system prompt
+  (the full tool contract, plus mid-task injected judge recommendations), so any future evaluation
+  should check instruction-following under the specific chosen technique, not just overall task
+  completion. See issue #425 for the full research trail.
 - **`reasoning_effort` transmission and read-back are both verified working.** The original design
   records `reasoning_effort` as a *treatment* sent on every request and read back from the journal
   for provenance. This port sends it via the standard OpenAI field
