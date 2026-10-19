@@ -173,7 +173,7 @@ public class WorkerService {
                 queue.finish(job.id(), "succeeded", 0, resultLine(Path.of(props.resultsDir(), job.runId())));
                 importer.importRun(Path.of(props.resultsDir(), job.runId()), job.kind().equals("run") ? job.id() : null);
                 if (job.experimentId() != null) experiments.finalizeIfDone(job.experimentId());   // the missing call site
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 // #289/#273: Future.cancel(true) reliably makes the interrupted runOnce() throw,
                 // landing here even for a deliberate, operator-requested cancel/pause - previously
                 // logged at ERROR with a full stack trace indistinguishable from a real crash
@@ -186,6 +186,18 @@ public class WorkerService {
                 // instead of "cancelled". The finally block (cancel) and queue.paused() (pause)
                 // are the ones that resolve the real terminal status for a deliberate stop; this
                 // catch block must stay out of their way entirely when that's what happened.
+                //
+                // Found live (job 25b8828c, T21, 2026-10-19): a `catch (Exception e)` here let
+                // something OTHER than an Exception - an Error (OutOfMemoryError is the live
+                // suspect: interactions.jsonl had grown to 454MB by then, and several JournalFacts
+                // lookups scan it whole) - escape uncaught. The job's own status never left
+                // "running" and nothing was ever logged (an Error matches neither this catch nor
+                // anything above it), while `finally` below still ran (busy.set(false)), so poll()
+                // kept working and quietly orphaned this one job forever - no live thread, no
+                // crash, no trace, status stuck "running" with no way to tell apart from a job that
+                // is still genuinely progressing. `catch (Throwable e)` closes that gap: an Error
+                // now lands exactly where an Exception already did, logged and marked failed
+                // instead of vanishing.
                 if (cancelCurrent || pauseCurrent) {
                     log.info("job {} interrupted by a {} request", job.id(), cancelCurrent ? "cancel" : "pause");
                 } else {
