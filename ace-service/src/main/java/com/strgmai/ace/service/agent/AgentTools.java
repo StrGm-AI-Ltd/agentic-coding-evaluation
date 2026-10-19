@@ -15,6 +15,15 @@ public final class AgentTools {
     public static final int READ_MAX_LINES = 250, READ_MAX_CHARS = 12000, BASH_MAX_CHARS = 8000, BASH_HEAD = 60, BASH_TAIL = 60;
     private static final Pattern ANSI = Pattern.compile("\\x1b\\[[0-9;?]*[A-Za-z]");
 
+    /** #423: the plain head+tail cap below used to drop the omitted MIDDLE unconditionally - exactly
+     *  where a failing assertion or stack trace in a long test/build log usually sits. Matches a
+     *  failure/exception marker, an assertion-diff line (JUnit's own "expected: <...> but was: <...>"),
+     *  or a stack-trace frame - deterministic, no model, no extra latency, same "mechanical output
+     *  hygiene" spirit as the head/tail cap itself. */
+    private static final Pattern ERROR_LINE = Pattern.compile(
+            "(?i)\\b(FAILED|ERROR|Exception|AssertionError)\\b|expected:.*but was:|^\\s*at [\\w.$]+\\(");
+    private static final int MAX_ERROR_LINES_KEPT = 20;
+
     public record Outcome(String output, boolean isError) {}
 
     public static Path resolve(final String cwd, final String path) {
@@ -124,8 +133,14 @@ public final class AgentTools {
         }
         final List<String> lines = Arrays.asList(out.split("\n", -1));
         if (out.length() > BASH_MAX_CHARS || lines.size() > BASH_HEAD + BASH_TAIL + 10) {
-            out = String.join("\n", lines.subList(0, Math.min(BASH_HEAD, lines.size())))
-                    + "\n… [" + Math.max(0, lines.size() - BASH_HEAD - BASH_TAIL) + " lines omitted; filter the command's output next time] …\n"
+            final int midStart = Math.min(BASH_HEAD, lines.size());
+            final int midEnd = Math.max(midStart, lines.size() - BASH_TAIL);
+            final List<String> errorLines = lines.subList(midStart, midEnd).stream()
+                    .filter(l -> ERROR_LINE.matcher(l).find()).limit(MAX_ERROR_LINES_KEPT).toList();
+            out = String.join("\n", lines.subList(0, midStart))
+                    + "\n… [" + Math.max(0, lines.size() - BASH_HEAD - BASH_TAIL) + " lines omitted; filter the command's output next time]"
+                    + (errorLines.isEmpty() ? "" : " - error-relevant lines kept verbatim from the omitted range:\n" + String.join("\n", errorLines))
+                    + " …\n"
                     + String.join("\n", lines.subList(Math.max(0, lines.size() - BASH_TAIL), lines.size()));
             if (out.length() > BASH_MAX_CHARS) out = out.substring(0, BASH_MAX_CHARS / 2) + "\n… [truncated] …\n" + out.substring(out.length() - BASH_MAX_CHARS / 2);
         }
