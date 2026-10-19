@@ -111,8 +111,28 @@ public final class AgentSession {
         write(Map.of("type", "message", "message", msg, "ts", Instant.now().toString()));
     }
 
-    public void compaction(final int stubbed, final int promptTokensBefore) throws IOException {
-        write(Map.of("type", "compaction", "stubbed", stubbed, "prompt_tokens_before", promptTokensBefore, "ts", Instant.now().toString()));
+    /** #417 follow-up review (C7): `stubbed` and `summarized` are two genuinely different
+     *  mechanisms' own contributions (tool_result_mask's stub count vs. whether structured_eviction
+     *  wrote a summary this pass) - keeping them as separate fields instead of folding a summary
+     *  into the stub count (the old 2-arg form effectively did, via CompactionStrategies.apply()'s
+     *  own summed return value) means TaskTranscript can say "a structured summary written"
+     *  instead of misreporting it as "N turns stubbed" when no masking happened at all. */
+    public void compaction(final int stubbed, final boolean summarized, final int promptTokensBefore) throws IOException {
+        write(Map.of("type", "compaction", "stubbed", stubbed, "summarized", summarized,
+                "prompt_tokens_before", promptTokensBefore, "ts", Instant.now().toString()));
+    }
+
+    /** #417 follow-up review (C8): a side LLM call outside the main turn loop (structured_eviction's
+     *  own one-shot summarization request) still spends real tokens the task's budget is charged
+     *  for via RecordingProxy - but nothing recorded it in the SESSION file's own accounting, so
+     *  usage() (the fallback token source for a session with no proxy - see its own javadoc) was
+     *  silently undercounting it, while the proxy's own journal counted it correctly: two sources
+     *  of truth disagreeing about the same task's real cost. A distinct record type, not an
+     *  "assistant" message: loadMessages() only ever rebuilds conversation history from
+     *  type=="message", so this is invisible to a --continue resume and cannot corrupt a resumed
+     *  session's own trajectory - it only adds to usage()'s own tally. */
+    public void sidecarUsage(final String label, final long input, final long output) throws IOException {
+        write(Map.of("type", "sidecar_usage", "label", label, "input", input, "output", output, "ts", Instant.now().toString()));
     }
 
     public void end(final int turns, final int toolErrors, final int compactions, final String finish) throws IOException {
@@ -192,12 +212,35 @@ public final class AgentSession {
         return t;
     }
 
+    /** #417 follow-up review (C8): sidecar_usage records (structured_eviction's own summarization
+     *  calls) are not conversation turns, so they're summed separately from usage()'s own
+     *  "turns"-counted tally above rather than folded into it - callers that want the FULL token
+     *  cost of a session (sidecar calls included) add this to usage()'s own input/output. */
+    public static Map<String, Long> sidecarUsage(final Path sessionFile) {
+        final Map<String, Long> t = new LinkedHashMap<>(Map.of("input", 0L, "output", 0L));
+        if (sessionFile == null || !Files.isRegularFile(sessionFile)) return t;
+        try {
+            for (String line : Files.readAllLines(sessionFile, StandardCharsets.UTF_8)) {
+                JsonNode r;
+                try { r = JSON.readTree(line); } catch (Exception e) { log.debug("could not parse session line for sidecar usage accounting, skipping it: {}", e.toString()); continue; }
+                if (!"sidecar_usage".equals(r.path("type").asText())) continue;
+                t.merge("input", r.path("input").asLong(0), Long::sum);
+                t.merge("output", r.path("output").asLong(0), Long::sum);
+            }
+        } catch (IOException e) { log.warn("could not read session {} for sidecar usage accounting: {}", sessionFile, e.toString()); }
+        return t;
+    }
+
     /** #424: the tool-output archive IS the session file itself - toolResult() above already writes
-     *  every tool result's original, un-stubbed text, unconditionally, before anything ever gets
-     *  masked (compaction only ever mutates the in-memory msgs list, never this file). Returns the
-     *  LAST recorded text for toolCallId (a tool call id is unique within one session, so "last"
-     *  and "only" coincide in practice), or null if nothing matches - same "re-read the session
-     *  file for something not otherwise available" pattern as usage()/lastAssistantText() above. */
+     *  every tool result's own text, unconditionally, before anything ever gets masked (compaction
+     *  only ever mutates the in-memory msgs list, never this file). #417 follow-up review (C11):
+     *  that text is the SAME one AgentTools already capped before the result ever entered context
+     *  in the first place (AgentTools.READ_MAX_CHARS/BASH_MAX_CHARS etc.) - "un-stubbed" is
+     *  accurate (nothing here is EVER the masking placeholder), but recalling it is not a way to
+     *  see MORE than the agent originally saw, only the same thing again. Returns the LAST
+     *  recorded text for toolCallId (a tool call id is unique within one session, so "last" and
+     *  "only" coincide in practice), or null if nothing matches - same "re-read the session file
+     *  for something not otherwise available" pattern as usage()/lastAssistantText() above. */
     public static String recallToolOutput(final Path sessionFile, final String toolCallId) {
         if (sessionFile == null || !Files.isRegularFile(sessionFile) || toolCallId == null || toolCallId.isBlank()) return null;
         String found = null;
@@ -266,20 +309,36 @@ public final class AgentSession {
     /** #417: the turn-count floor alone never shrinks, no matter how large those protected turns'
      *  own tool outputs grow - that is this issue's own root cause (found live: five compactions in
      *  one task freeing ~21k/11k/8k/8k/4k tokens, converging to near-zero as the protected window's
-     *  own footprint ate the entire budget). Stub the oldest tool outputs as before, but first
-     *  re-check the turn-count-protected region's OWN estimated size (RecordingProxy's chars/token
-     *  estimate) and shrink the cut forward - protecting fewer, more recent turns - until it
-     *  actually fits keepTokenBudget. keepTokenBudget<=0 disables the shrink (this codebase's usual
-     *  "0 = no budget" convention), giving the exact original turn-count-only behavior. */
-    public static int compact(final List<ChatMessage> msgs, final int keepRecentTurns, final int keepTokenBudget) {
+     *  own footprint ate the entire budget). Re-checks the turn-count-protected region's OWN
+     *  estimated size (RecordingProxy's chars/token estimate) and shrinks the cut forward -
+     *  protecting fewer, more recent turns - until it actually fits keepTokenBudget.
+     *  keepTokenBudget<=0 disables the shrink (this codebase's usual "0 = no budget" convention),
+     *  giving the exact original turn-count-only boundary.
+     *
+     *  #417 follow-up review (C4/C10): factored out of compact() so structured_eviction's own
+     *  eligible range (CompactionStrategies.structuredEvict) matches EXACTLY what tool_result_mask
+     *  actually protects, instead of structured_eviction using cutIndex()'s turn-count-only
+     *  boundary while compact() shrank its own boundary further - a divergence that could leave a
+     *  blind spot in exactly the region the token pressure that triggered compaction came from,
+     *  one neither mechanism covered. Also enforces a FLOOR (found live): if the single newest
+     *  turn alone exceeds keepTokenBudget, the shrink loop below would otherwise push cut all the
+     *  way to msgs.size() - masking (or excluding from the summary) the very turn and tool results
+     *  the model is about to act on next. Never shrinks past the newest AiMessage's own index. */
+    static int effectiveCut(final List<ChatMessage> msgs, final int keepRecentTurns, final int keepTokenBudget) {
         int cut = cutIndex(msgs, keepRecentTurns);
-        if (keepTokenBudget > 0 && cut < msgs.size()) {
-            long tokens = 0;
-            for (int i = msgs.size() - 1; i >= Math.max(cut, 2); i--) {
-                tokens += estimateTokens(msgs.get(i));
-                if (tokens > keepTokenBudget) { cut = i + 1; break; }
-            }
+        if (keepTokenBudget <= 0 || cut >= msgs.size()) return cut;
+        int lastAssistantIdx = -1;
+        for (int i = msgs.size() - 1; i >= 0; i--) if (msgs.get(i) instanceof AiMessage) { lastAssistantIdx = i; break; }
+        long tokens = 0;
+        for (int i = msgs.size() - 1; i >= Math.max(cut, 2); i--) {
+            tokens += estimateTokens(msgs.get(i));
+            if (tokens > keepTokenBudget) { cut = i + 1; break; }
         }
+        return lastAssistantIdx < 0 ? cut : Math.min(cut, lastAssistantIdx);
+    }
+
+    public static int compact(final List<ChatMessage> msgs, final int keepRecentTurns, final int keepTokenBudget) {
+        final int cut = effectiveCut(msgs, keepRecentTurns, keepTokenBudget);
         int n = 0;
         for (int i = 2; i < cut; i++) {
             if (msgs.get(i) instanceof ToolExecutionResultMessage m && !m.text().startsWith("[output dropped")) {

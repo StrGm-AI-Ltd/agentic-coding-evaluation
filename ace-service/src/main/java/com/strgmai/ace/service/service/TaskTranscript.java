@@ -111,7 +111,18 @@ final class TaskTranscript {
                     default -> null; // "system" - boilerplate, repeated on every message
                 };
             }
-            case "compaction" -> "[history compacted: " + r.path("stubbed").asInt() + " turns stubbed]";
+            // #417 follow-up review (C7): "stubbed" and "summarized" are two genuinely different
+            // mechanisms' own contributions (AgentSession.compaction()'s own javadoc) - rendering
+            // them separately instead of always saying "N turns stubbed" avoids misreporting a
+            // structured_eviction-only pass (which stubs nothing at all) as if masking had happened.
+            case "compaction" -> {
+                final int stubbed = r.path("stubbed").asInt();
+                final boolean summarized = r.path("summarized").asBoolean(false);
+                final var parts = new java.util.ArrayList<String>();
+                if (stubbed > 0) parts.add(stubbed + " tool result(s) stubbed");
+                if (summarized) parts.add("a structured summary written");
+                yield "[history compacted: " + (parts.isEmpty() ? "no changes" : String.join(", ", parts)) + "]";
+            }
             case "end" -> "[session ended: finish=" + r.path("finish").asText("?") + ", " + r.path("turns").asInt() + " turns]";
             default -> null; // "session" header - nothing the operator needs mid-stream
         };

@@ -85,6 +85,30 @@ class AgentSessionTest {
         assertEquals("output 2", ((ToolExecutionResultMessage) msgs.get(7)).text(), "the genuinely newest turn is never touched by the shrink");
     }
 
+    /** #417 follow-up review (C10): if the SINGLE newest turn alone exceeds keepTokenBudget, the
+     *  shrink loop's first iteration already breaks the budget, which - with no floor - would set
+     *  cut all the way to msgs.size(): masking (or excluding from a structured_eviction summary)
+     *  the very turn and tool results the model is about to act on next. effectiveCut() must never
+     *  shrink past the newest AiMessage's own index, regardless of how oversized that turn is. */
+    @Test
+    void effectiveCutNeverShrinksPastTheNewestTurnEvenWhenThatTurnAloneExceedsTheBudget() {
+        final List<ChatMessage> msgs = new ArrayList<>();
+        msgs.add(SystemMessage.from("system"));
+        msgs.add(UserMessage.from("the harness pack"));
+        for (int i = 0; i < 3; i++) {
+            final var req = ToolExecutionRequest.builder().id("c" + i).name("bash").arguments("{}").build();
+            msgs.add(AiMessage.from("turn " + i, List.of(req)));
+            // the NEWEST turn's own output is the oversized one this time
+            msgs.add(ToolExecutionResultMessage.from(req, i == 2 ? "x".repeat(50_000) : "output " + i));
+        }
+        final int newestAiIdx = msgs.size() - 2;   // index of the final turn's own AiMessage
+        final int cut = AgentSession.effectiveCut(msgs, 2, 10);
+        assertTrue(cut <= newestAiIdx, "cut must never exceed the newest turn's own AiMessage index: cut=" + cut + ", newestAiIdx=" + newestAiIdx);
+        final int stubbed = AgentSession.compact(msgs, 2, 10);
+        assertFalse(((ToolExecutionResultMessage) msgs.get(msgs.size() - 1)).text().startsWith("[output dropped"),
+                "the newest turn's own (oversized) tool result must never be masked, however large it is");
+    }
+
     @Test
     void tokenBudgetZeroOrBelowDisablesTheShrinkEntirely() {
         final var msgs = sixTurns();
@@ -181,8 +205,34 @@ class AgentSessionTest {
         assertEquals(2L, u.get("turns"));
     }
 
-    /** #424: the tool-output archive is the session file itself - the original, un-stubbed text
-     *  toolResult() already writes, recallable by the same id the stub text now names. */
+    /** #417 follow-up review (C8): structured_eviction's own one-shot summarization call spends
+     *  real tokens RecordingProxy already charges to the task, but nothing recorded it in the
+     *  SESSION file's own accounting - usage() (the fallback token source for a session with no
+     *  proxy) silently undercounted it. sidecarUsage()/usage()'s own "sidecar_usage" handling must
+     *  (a) be summed separately, not folded into usage()'s own "turns"-counted assistant tally,
+     *  and (b) never corrupt loadMessages()' resumed conversation (it only ever reads type=="message"). */
+    @Test
+    void sidecarUsageIsCountedSeparatelyFromOrdinaryTurnsAndNeverReentersLoadMessagesOnResume() throws IOException {
+        final var dir = Files.createTempDirectory("session");
+        final var session = new AgentSession(dir, "s3b", false);
+        session.user("the pack");
+        session.assistant(null, "a", List.of(), "stop", Map.of("input", 100, "output", 10));
+        session.sidecarUsage("structured_eviction", 500, 50);
+
+        final Map<String, Long> u = AgentSession.usage(session.path());
+        assertEquals(100L, u.get("input"), "sidecar usage must not be folded into the ordinary-turn tally");
+        assertEquals(1L, u.get("turns"), "a sidecar call is not a conversation turn");
+        final Map<String, Long> sidecar = AgentSession.sidecarUsage(session.path());
+        assertEquals(500L, sidecar.get("input"));
+        assertEquals(50L, sidecar.get("output"));
+
+        final var resumed = new AgentSession(dir, "s3b", true);
+        assertEquals(List.of("the pack"), resumed.loadMessages().stream()
+                .filter(m -> m instanceof UserMessage).map(m -> ((UserMessage) m).singleText()).toList());
+    }
+
+    /** #424: the tool-output archive is the session file itself - the (already AgentTools-capped)
+     *  text toolResult() already writes, recallable by the same id the stub text now names. */
     @Test
     void recallToolOutputFindsTheOriginalTextByToolCallId() throws IOException {
         final var dir = Files.createTempDirectory("session");

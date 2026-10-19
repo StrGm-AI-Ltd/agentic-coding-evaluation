@@ -205,20 +205,28 @@ LangChain4j against an OpenAI-compatible endpoint:
   whole budget) and `structured_eviction` (a one-shot, fixed-outline LLM summary of the evicted
   range - LANDED/STATE/INVARIANTS/TASKS/DO NEXT/DECISIONS - updated in place on later passes, the
   same pattern this project's own inter-task handoff-notes/`lessons.md` already use, applied within
-  one session). Both are capped and logged (#426) rather than risking an unbounded call or a silent
-  failure. A different layer - KV-cache-level eviction (H2O/StreamingLLM/PyramidKV) inside oMLX's
-  own attention mechanism - is deliberately out of scope here: it isn't anything this codebase
+  one session - its own one-shot LLM call is capped and a failed call is logged (#426) rather than
+  risking an unbounded request or vanishing silently; it also spends part of the task's own
+  measured token budget, journaled separately from ordinary turns so that cost stays visible rather
+  than hidden inside a side call nothing accounts for). A different layer - KV-cache-level
+  eviction (H2O/StreamingLLM/PyramidKV) inside oMLX's own attention mechanism - is deliberately
+  out of scope here: it isn't anything this codebase
   controls (oMLX is a third-party app), only something to request/configure on oMLX's side. oMLX's
   underlying `mlx-lm` already ships `--kv-bits`/`--kv-group-size`/`--quantized-kv-start` (quantized
-  KV, disables request batching while active) and `max_kv_size` (a rotating, fixed-size cache,
-  StreamingLLM-shaped) as concrete settings worth evaluating if this project ever upgrades to use
-  them - with one real caution first: "The Pitfalls of KV Cache Compression" (arXiv 2510.00231,
-  2026) found that under KV compression, some instructions in a multi-instruction system prompt
-  degrade far faster than others and become effectively ignored, with observed system-prompt
-  leakage and reduced instruction-following - exactly the shape of this project's own system prompt
-  (the full tool contract, plus mid-task injected judge recommendations), so any future evaluation
-  should check instruction-following under the specific chosen technique, not just overall task
-  completion. See issue #425 for the full research trail.
+  KV, disables request batching while active - and one current report shows `--kv-bits` silently
+  corrupting prefilled context on some builds, in-context recall failing while fp16 is correct) and
+  `--max-kv-size` (a rotating, fixed-size cache, StreamingLLM-shaped) as concrete settings worth
+  evaluating if this project ever upgrades to use them - with one real caution first: "The Pitfalls
+  of KV Cache Compression" (arXiv 2510.00231, 2025; rev. 2026) found that under KV compression, some
+  instructions in a multi-instruction PROMPT (not only a system prompt - that's the paper's own
+  worked case study) degrade far faster than others and become effectively ignored, with observed
+  system-prompt leakage and reduced instruction-following, naming three contributing factors:
+  compression method, instruction ORDER, and eviction bias. The middle one is a lever this project
+  already controls - `structured_eviction`'s own one-shot request used to prepend its instruction
+  as a SECOND system message ahead of the agent's real one; it now appends it last, closest to
+  generation, as a plain user message (#417 follow-up review) - so any future KV-compression
+  evaluation should check instruction-following under the specific chosen technique, not just
+  overall task completion. See issue #425 for the full research trail.
 - **`reasoning_effort` transmission and read-back are both verified working.** The original design
   records `reasoning_effort` as a *treatment* sent on every request and read back from the journal
   for provenance. This port sends it via the standard OpenAI field

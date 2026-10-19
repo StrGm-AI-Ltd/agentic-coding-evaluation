@@ -179,4 +179,44 @@ class ReferenceAgentTest {
                 new dev.langchain4j.exception.HttpException(429, com.strgmai.ace.service.proxy.RecordingProxy.CONTEXT_WINDOW_REFUSAL_MARKER)), "wrong status code - this marker is only ever sent on a 400");
         assertFalse(ReferenceAgent.isContextWindowRefusal(new RuntimeException("no HTTP status at all")));
     }
+
+    /** #417 follow-up review (C14): a blank tool_call_id used to fall through all the way to
+     *  "error: no archived output for tool_call_id " with a confusing trailing space - reachable
+     *  in practice if the model omits the required argument (a malformed tool call already falls
+     *  back to an empty args Map elsewhere in this class). */
+    @Test
+    void recallToolOutputRejectsABlankIdWithAClearMessageInsteadOfAConfusingTrailingSpace() throws java.io.IOException {
+        final var dir = java.nio.file.Files.createTempDirectory("session");
+        final var session = new AgentSession(dir, "s1", false);
+        final var out = ReferenceAgent.executeTool("recall_tool_output", Map.of("tool_call_id", ""), "/task/ws", Map.of(), "T1", session, new java.util.HashMap<>());
+        assertTrue(out.isError());
+        assertEquals("error: tool_call_id is required", out.output());
+    }
+
+    /** #417 follow-up review (C12): a recalled output is journaled as a fresh toolResult right
+     *  after this call returns (same as any other tool), which is itself immediately re-maskable
+     *  by the NEXT compaction pass - making recall -> mask -> recall of the SAME id an unguarded
+     *  cycle. The per-id cap must allow a FEW legitimate recalls of the same id, then refuse. */
+    @Test
+    void recallToolOutputCapsHowManyTimesTheSameIdCanBeRecalledThisSession() throws java.io.IOException {
+        final var dir = java.nio.file.Files.createTempDirectory("session");
+        final var session = new AgentSession(dir, "s2", false);
+        session.toolResult("c1", "bash", "the archived output", false);
+        final var recallCounts = new java.util.HashMap<String, Integer>();
+
+        for (int i = 0; i < 3; i++) {
+            final var ok = ReferenceAgent.executeTool("recall_tool_output", Map.of("tool_call_id", "c1"), "/task/ws", Map.of(), "T1", session, recallCounts);
+            assertFalse(ok.isError(), "attempt " + (i + 1) + " must still be allowed");
+            assertEquals("the archived output", ok.output());
+        }
+        final var refused = ReferenceAgent.executeTool("recall_tool_output", Map.of("tool_call_id", "c1"), "/task/ws", Map.of(), "T1", session, recallCounts);
+        assertTrue(refused.isError(), "a 4th recall of the SAME id must be refused");
+        assertTrue(refused.output().contains("already been recalled"), refused.output());
+
+        // a DIFFERENT id must be entirely unaffected by the first id's own cap
+        session.toolResult("c2", "bash", "a different archived output", false);
+        final var other = ReferenceAgent.executeTool("recall_tool_output", Map.of("tool_call_id", "c2"), "/task/ws", Map.of(), "T1", session, recallCounts);
+        assertFalse(other.isError(), "the cap is per-id, not session-wide");
+        assertEquals("a different archived output", other.output());
+    }
 }

@@ -199,7 +199,7 @@ public class RunBench {
      *  class of ordered-name-list config across the whole run/task-override surface. */
     static List<String> effectiveCompactionStrategies(final Map<String, Object> override, final List<String> runLevel) {
         return override.get("compaction_strategies") instanceof String s && !s.isBlank()
-                ? List.of(s.split(",")) : runLevel;
+                ? CompactionStrategies.parse(s) : runLevel;
     }
 
     /** #322: temperature/top_p/top_k/repetition_penalty/max_tokens/reasoning_effort are per-call
@@ -1040,7 +1040,7 @@ public class RunBench {
         // (main, length-retry continue, re-engage, wrap-up) - see effectiveCompactionStrategies' own
         // javadoc for why this is the only call site that resolves a real, task-overridable list.
         final List<String> compactionStrategies = effectiveCompactionStrategies(override,
-                cfg.get("compaction_strategies") instanceof String cs && !cs.isBlank() ? List.of(cs.split(",")) : CompactionStrategies.DEFAULT);
+                cfg.get("compaction_strategies") instanceof String cs && !cs.isBlank() ? CompactionStrategies.parse(cs) : CompactionStrategies.DEFAULT);
         // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded
         // ReferenceAgent-local constant with no run-level override at all
         final int maxTurns = effectiveInt(override, "max_turns",
