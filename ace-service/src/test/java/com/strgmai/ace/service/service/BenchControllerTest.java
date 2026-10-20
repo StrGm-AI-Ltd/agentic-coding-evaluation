@@ -884,6 +884,43 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.attempts[0].compactions_before_request[0]").value(2));
     }
 
+    /** Per-attempt compaction effectiveness, estimated the same way this session's own live T21
+     *  investigation did: "reclaimed" is the REAL figure (this compaction's own
+     *  prompt_tokens_before minus the NEXT assistant turn's actual usage.input), not a stubbed
+     *  message count. Two compactions here - the first with nothing to compare its own gap
+     *  against (requests_since_previous is null), the second landing 2 requests later. */
+    @Test
+    void taskStatsReportsCompactionEffectivenessPerAttempt() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": []}");
+        Files.writeString(runDir.resolve("sessions/a.jsonl"), String.join("\n",
+                "{\"type\":\"session\",\"id\":\"session-t21\",\"label\":\"T21\",\"ts\":\"2026-10-20T10:00:00Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"usage\":{\"input\":10000,\"output\":50},\"ts\":\"2026-10-20T10:00:01Z\"}",
+                "{\"type\":\"compaction\",\"prompt_tokens_before\":10000,\"ts\":\"2026-10-20T10:00:02Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"usage\":{\"input\":6000,\"output\":50},\"ts\":\"2026-10-20T10:00:03Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"usage\":{\"input\":8000,\"output\":50},\"ts\":\"2026-10-20T10:00:04Z\"}",
+                "{\"type\":\"compaction\",\"prompt_tokens_before\":8000,\"ts\":\"2026-10-20T10:00:05Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"usage\":{\"input\":5000,\"output\":50},\"ts\":\"2026-10-20T10:00:06Z\"}") + "\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T21/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attempts[0].compaction_count").value(2))
+                .andExpect(jsonPath("$.attempts[0].compaction_distribution", hasSize(2)))
+                .andExpect(jsonPath("$.attempts[0].compaction_distribution[0].request_number").value(1))
+                .andExpect(jsonPath("$.attempts[0].compaction_distribution[0].requests_since_previous").value(nullValue()))
+                .andExpect(jsonPath("$.attempts[0].compaction_distribution[1].request_number").value(3))
+                .andExpect(jsonPath("$.attempts[0].compaction_distribution[1].requests_since_previous").value(2))
+                .andExpect(jsonPath("$.attempts[0].compaction_reclaimed", hasSize(2)))
+                .andExpect(jsonPath("$.attempts[0].compaction_reclaimed[0].prompt_tokens_before").value(10000))
+                .andExpect(jsonPath("$.attempts[0].compaction_reclaimed[0].reclaimed_tokens").value(4000))
+                .andExpect(jsonPath("$.attempts[0].compaction_reclaimed[1].prompt_tokens_before").value(8000))
+                .andExpect(jsonPath("$.attempts[0].compaction_reclaimed[1].reclaimed_tokens").value(3000));
+    }
+
     /** The operator asked for the same kind of marker for judge checkpoints, colored by verdict.
      *  judge/&lt;taskId&gt;-&lt;attemptStamp&gt;-turn&lt;N&gt;.md's own attempt stamp (Judge.attemptStamp() -
      *  the exact same filesystem-safe format as a session file's own leading timestamp) is matched

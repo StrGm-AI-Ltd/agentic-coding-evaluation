@@ -231,6 +231,53 @@ public final class AgentSession {
         return t;
     }
 
+    /** Per-attempt compaction effectiveness: how many compactions fired, where they landed among the
+     *  session's own requests, and how many tokens each one actually reclaimed. "reclaimed" is the
+     *  REAL figure - this compaction's own `prompt_tokens_before` minus the NEXT assistant turn's own
+     *  reported `usage.input` - not the `stubbed` message count, which can look healthy while real
+     *  tokens-freed collapses (found live, 2026-10-19/T21: `stubbed` masking a tool RESULT alone says
+     *  nothing about everything else - tool-call arguments, new turns - that grew in between).
+     *  `requestNumber` is this compaction's own 1-indexed ordinal position among the session's
+     *  assistant turns (the request it immediately followed); `requestsSincePrevious` is null for the
+     *  first compaction in the file (nothing to compare against yet). `reclaimedTokens` is null when
+     *  no later assistant turn exists in the file to measure against - the attempt ended, or was
+     *  interrupted, right after this compaction fired. */
+    public record CompactionEvent(int requestNumber, Integer requestsSincePrevious, long promptTokensBefore, Long reclaimedTokens) {}
+
+    public static List<CompactionEvent> compactionEffectiveness(final Path sessionFile) {
+        if (sessionFile == null || !Files.isRegularFile(sessionFile)) return List.of();
+        final List<CompactionEvent> events = new ArrayList<>();
+        try {
+            int requestCount = 0;
+            Integer previousRequestNumber = null;
+            for (String line : Files.readAllLines(sessionFile, StandardCharsets.UTF_8)) {
+                if (line.isBlank()) continue;
+                JsonNode r;
+                try { r = JSON.readTree(line); } catch (Exception e) { log.debug("could not parse session line while computing compaction effectiveness, skipping it: {}", e.toString()); continue; }
+                final String type = r.path("type").asText("");
+                if ("compaction".equals(type)) {
+                    final int requestNumber = requestCount;
+                    final Integer gap = previousRequestNumber == null ? null : requestNumber - previousRequestNumber;
+                    previousRequestNumber = requestNumber;
+                    events.add(new CompactionEvent(requestNumber, gap, r.path("prompt_tokens_before").asLong(), null));
+                    continue;
+                }
+                if (!"message".equals(type) || !"assistant".equals(r.path("message").path("role").asText(""))) continue;
+                requestCount++;
+                final JsonNode u = r.path("usage");
+                if (!u.has("input")) continue;
+                // this turn's own usage.input resolves every currently-pending compaction behind it -
+                // normally exactly one, but nothing stops two compactions firing back-to-back with no
+                // assistant turn in between, so walk backward until an already-resolved one is hit
+                for (int i = events.size() - 1; i >= 0 && events.get(i).reclaimedTokens() == null; i--) {
+                    final CompactionEvent e = events.get(i);
+                    events.set(i, new CompactionEvent(e.requestNumber(), e.requestsSincePrevious(), e.promptTokensBefore(), e.promptTokensBefore() - u.get("input").asLong()));
+                }
+            }
+        } catch (IOException e) { log.warn("could not read session {} for compaction effectiveness: {}", sessionFile, e.toString()); return List.of(); }
+        return events;
+    }
+
     /** #424: the tool-output archive IS the session file itself - toolResult() above already writes
      *  every tool result's own text, unconditionally, before anything ever gets masked (compaction
      *  only ever mutates the in-memory msgs list, never this file). #417 follow-up review (C11):

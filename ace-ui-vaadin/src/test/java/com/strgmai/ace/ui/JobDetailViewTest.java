@@ -590,6 +590,51 @@ class JobDetailViewTest {
         assertEquals(List.of(2), sections.get(1).judgeOffTrackRequests());
     }
 
+    /** Per-attempt compaction effectiveness - attemptSections() just reads the backend's own
+     *  "compaction_distribution"/"compaction_reclaimed" arrays straight through (same convention as
+     *  compactions_before_request above), preserving a null requestsSincePrevious/reclaimedTokens
+     *  (JSON null, not an absent key - BenchController always writes the key) rather than coercing
+     *  it to 0, which would misreport "nothing to compare against yet" as "zero requests elapsed". */
+    @Test
+    void attemptSections_carriesCompactionDistributionAndReclaimedTokensThrough() {
+        final var stats = Json.MAPPER.readTree("""
+                {"state": "done", "attempts": [
+                    {"started_iso": "2026-10-20T10:00:00Z", "turns": 3, "compactions": 2, "tool_errors": 0, "tool_calls": {}, "seconds": 5.0,
+                     "compaction_count": 2,
+                     "compaction_distribution": [{"request_number": 1, "requests_since_previous": null},
+                                                  {"request_number": 3, "requests_since_previous": 2}],
+                     "compaction_reclaimed": [{"request_number": 1, "prompt_tokens_before": 10000, "reclaimed_tokens": 4000},
+                                               {"request_number": 3, "prompt_tokens_before": 8000, "reclaimed_tokens": null}]}
+                ]}""");
+
+        final var sections = JobDetailView.attemptSections(stats);
+
+        final var distribution = sections.get(0).compactionDistribution();
+        assertEquals(2, distribution.size());
+        assertEquals(1, distribution.get(0).requestNumber());
+        assertNull(distribution.get(0).requestsSincePrevious(), "nothing to compare the first compaction against");
+        assertEquals(2, distribution.get(1).requestsSincePrevious());
+
+        final var reclaimed = sections.get(0).compactionReclaimed();
+        assertEquals(2, reclaimed.size());
+        assertEquals(10000L, reclaimed.get(0).promptTokensBefore());
+        assertEquals(4000L, reclaimed.get(0).reclaimedTokens());
+        assertNull(reclaimed.get(1).reclaimedTokens(), "no later request in this attempt to measure against yet");
+    }
+
+    @Test
+    void attemptSections_leavesCompactionTablesEmptyWhenTheBackendReportsNoCompactions() {
+        final var stats = Json.MAPPER.readTree("""
+                {"state": "done", "attempts": [
+                    {"started_iso": "2026-10-20T10:00:00Z", "turns": 3, "compactions": 0, "tool_errors": 0, "tool_calls": {}, "seconds": 5.0}
+                ]}""");
+
+        final var sections = JobDetailView.attemptSections(stats);
+
+        assertTrue(sections.get(0).compactionDistribution().isEmpty());
+        assertTrue(sections.get(0).compactionReclaimed().isEmpty());
+    }
+
     /** #355-followup-2: a session cut off before RunBench.logTaskAttempt() ever ran leaves no
      *  matching task_attempts.jsonl row - that attempt still gets its own section (turns/wall
      *  time/compactions), just without the params/outcome lines, rather than showing nothing. */

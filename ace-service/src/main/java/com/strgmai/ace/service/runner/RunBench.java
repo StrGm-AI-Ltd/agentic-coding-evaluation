@@ -1,5 +1,6 @@
 package com.strgmai.ace.service.runner;
 
+import com.strgmai.ace.service.agent.AgentSession;
 import com.strgmai.ace.service.agent.CompactionStrategies;
 import com.strgmai.ace.service.agent.PiAgent;
 import com.strgmai.ace.service.agent.ReferenceAgent;
@@ -429,6 +430,31 @@ public class RunBench {
             if (rec.get("rescue_succeeded") instanceof Boolean b) entry.put("rescue_succeeded", b);
             if (rec.get("rescue_rc") instanceof Number n) entry.put("rescue_rc", n);
             if (rec.get("rescue_seconds") instanceof Number n) entry.put("rescue_seconds", n);
+            // this attempt's own compaction effectiveness - how many compactions fired, where they
+            // landed among the session's requests, and how many tokens each one actually reclaimed.
+            // rec's own "session_id" (set by sessionRecord()) names the EXACT file this attempt wrote
+            // - no need to search sessions/ by label the way Collect.compactionOverhead() does (that
+            // pools every file sharing a label together, losing per-attempt distinction on purpose,
+            // which is wrong for this use case: estimating effectiveness PER ATTEMPT is the whole point).
+            if (rec.get("session_id") instanceof String sid) {
+                final List<AgentSession.CompactionEvent> events = AgentSession.compactionEffectiveness(rd.resolve("sessions").resolve(sid));
+                entry.put("compaction_count", events.size());
+                final List<Map<String, Object>> distribution = new ArrayList<>(events.size());
+                final List<Map<String, Object>> reclaimed = new ArrayList<>(events.size());
+                for (final AgentSession.CompactionEvent e : events) {
+                    final Map<String, Object> d = new LinkedHashMap<>();
+                    d.put("request_number", e.requestNumber());
+                    d.put("requests_since_previous", e.requestsSincePrevious());
+                    distribution.add(d);
+                    final Map<String, Object> r = new LinkedHashMap<>();
+                    r.put("request_number", e.requestNumber());
+                    r.put("prompt_tokens_before", e.promptTokensBefore());
+                    r.put("reclaimed_tokens", e.reclaimedTokens());
+                    reclaimed.add(r);
+                }
+                entry.put("compaction_distribution", distribution);
+                entry.put("compaction_reclaimed", reclaimed);
+            }
             Files.writeString(rd.resolve("task_attempts.jsonl"), json.writeValueAsString(entry) + "\n",
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (Exception e) { log.warn("could not log task attempt for {}: {}", taskId, e.toString()); }
