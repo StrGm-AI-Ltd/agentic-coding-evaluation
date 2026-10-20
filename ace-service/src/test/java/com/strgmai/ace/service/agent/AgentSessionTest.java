@@ -353,6 +353,74 @@ class AgentSessionTest {
         assertTrue(text.contains("recall_tool_output(tool_call_id=\"c0\")"), text);
     }
 
+    /** Per-attempt compaction effectiveness: request numbers are 1-indexed ordinals among the
+     *  session's own assistant turns, requestsSincePrevious is null for the first compaction, and
+     *  reclaimedTokens is the REAL figure (this compaction's own promptTokensBefore minus the NEXT
+     *  assistant turn's actual usage.input) - not the stubbed count, which is a message count, not
+     *  a token figure (found live, 2026-10-19/T21). */
+    @Test
+    void compactionEffectivenessComputesRequestNumbersGapsAndRealReclaimedTokens() throws IOException {
+        final var dir = Files.createTempDirectory("session");
+        final var session = new AgentSession(dir, "s1", false);
+        session.assistant(null, "turn1", List.of(), "stop", Map.of("input", 10_000, "output", 50));
+        session.assistant(null, "turn2", List.of(), "stop", Map.of("input", 12_000, "output", 50));
+        session.compaction(10, false, 12_000);
+        session.assistant(null, "turn3", List.of(), "stop", Map.of("input", 9_000, "output", 50));
+        session.assistant(null, "turn4", List.of(), "stop", Map.of("input", 11_000, "output", 50));
+        session.assistant(null, "turn5", List.of(), "stop", Map.of("input", 13_000, "output", 50));
+        session.compaction(4, false, 13_000);
+        session.assistant(null, "turn6", List.of(), "stop", Map.of("input", 8_000, "output", 50));
+
+        final var events = AgentSession.compactionEffectiveness(session.path());
+        assertEquals(2, events.size());
+        assertEquals(2, events.get(0).requestNumber(), "followed the 2nd assistant turn");
+        assertNull(events.get(0).requestsSincePrevious(), "nothing to compare the first compaction against");
+        assertEquals(12_000L, events.get(0).promptTokensBefore());
+        assertEquals(3_000L, events.get(0).reclaimedTokens(), "12000 before, 9000 on the next real turn");
+
+        assertEquals(5, events.get(1).requestNumber(), "followed the 5th assistant turn");
+        assertEquals(3, events.get(1).requestsSincePrevious(), "3 requests elapsed between the two compactions (turns 3,4,5)");
+        assertEquals(13_000L, events.get(1).promptTokensBefore());
+        assertEquals(5_000L, events.get(1).reclaimedTokens(), "13000 before, 8000 on the next real turn");
+    }
+
+    @Test
+    void compactionEffectivenessLeavesReclaimedTokensNullWhenNoLaterTurnExistsYet() throws IOException {
+        final var dir = Files.createTempDirectory("session");
+        final var session = new AgentSession(dir, "s2", false);
+        session.assistant(null, "turn1", List.of(), "stop", Map.of("input", 10_000, "output", 50));
+        session.compaction(3, false, 10_000);
+
+        final var events = AgentSession.compactionEffectiveness(session.path());
+        assertEquals(1, events.size());
+        assertNull(events.get(0).reclaimedTokens(), "no later assistant turn in the file to measure against yet");
+    }
+
+    /** Found live (real T21 data): nothing stops two compactions firing back-to-back with no
+     *  assistant turn in between (e.g. the trigger fires again before the very next request lands) -
+     *  both must resolve against the SAME next turn's usage.input, not just the most recent one. */
+    @Test
+    void compactionEffectivenessResolvesTwoBackToBackCompactionsAgainstTheSameNextTurn() throws IOException {
+        final var dir = Files.createTempDirectory("session");
+        final var session = new AgentSession(dir, "s3", false);
+        session.assistant(null, "turn1", List.of(), "stop", Map.of("input", 10_000, "output", 50));
+        session.compaction(5, false, 10_000);
+        session.compaction(2, false, 10_000);
+        session.assistant(null, "turn2", List.of(), "stop", Map.of("input", 6_000, "output", 50));
+
+        final var events = AgentSession.compactionEffectiveness(session.path());
+        assertEquals(2, events.size());
+        assertEquals(4_000L, events.get(0).reclaimedTokens());
+        assertEquals(4_000L, events.get(1).reclaimedTokens());
+        assertEquals(0, events.get(1).requestsSincePrevious(), "both fired after the same, single assistant turn");
+    }
+
+    @Test
+    void compactionEffectivenessReturnsEmptyForAMissingOrNullFile() {
+        assertEquals(List.of(), AgentSession.compactionEffectiveness(Path.of("/no/such/session.jsonl")));
+        assertEquals(List.of(), AgentSession.compactionEffectiveness(null));
+    }
+
     @Test
     void usageReturnsZeroedDefaultsForAMissingOrNullFile() {
         final Map<String, Long> missing = AgentSession.usage(Path.of("/no/such/session.jsonl"));

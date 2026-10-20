@@ -1,6 +1,7 @@
 package com.strgmai.ace.service.service;
 
 import com.openai.models.models.Model;
+import com.strgmai.ace.service.agent.AgentSession;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.config.JsonColumns;
 import com.strgmai.ace.service.metrics.StatsService;
@@ -515,8 +516,17 @@ public class BenchController {
      *  usable usage block (parseRequestSpeedEntry - a failed/non-streamed call), shifting every
      *  ordinal after it by one. Good enough for a chart annotation, not something to build a
      *  stricter timestamp-based join for without real evidence this actually happens live. */
+    /** compactionEvents: per-attempt compaction effectiveness - how many tokens each compaction
+     *  actually reclaimed and how it's distributed across this attempt's own requests (see
+     *  AgentSession.compactionEffectiveness()'s own javadoc for the real-reclaimed-vs-stubbed-count
+     *  distinction this exists to surface). A SEPARATE read of the same file compactionsBeforeTurn
+     *  above is built from, rather than derived from it - the two fields label the SAME events by
+     *  slightly different conventions (the turn immediately AFTER vs. the turn immediately BEFORE
+     *  each compaction), and compactionsBeforeTurn already powers an existing, working chart this
+     *  change has no reason to touch. */
     record AttemptCounts(String sessionId, String sessionUuid, String startedIso, String endedIso, int turns, int compactions,
-                          int toolErrorsTotal, Map<String, Object> toolCalls, double wallSec, List<Integer> compactionsBeforeTurn) {
+                          int toolErrorsTotal, Map<String, Object> toolCalls, double wallSec, List<Integer> compactionsBeforeTurn,
+                          List<AgentSession.CompactionEvent> compactionEvents) {
     }
 
     /** aggregate (summed across every attempt - a false-start-then-real-redo pair counts as the
@@ -628,7 +638,8 @@ public class BenchController {
         toolCounts.forEach((name, c) -> toolCallsOut.put(name, Map.of("count", c[0], "errors", c[1])));
         final double wallSec = firstTs == null ? 0.0 : Duration.between(firstTs, lastTs).toMillis() / 1000.0;
         return new AttemptCounts(f.getFileName().toString(), sessionUuid, firstTs == null ? null : firstTs.toString(),
-                lastTs == null ? null : lastTs.toString(), turns, compactions, toolErrorsTotal, toolCallsOut, wallSec, compactionsBeforeTurn);
+                lastTs == null ? null : lastTs.toString(), turns, compactions, toolErrorsTotal, toolCallsOut, wallSec, compactionsBeforeTurn,
+                AgentSession.compactionEffectiveness(f));
     }
 
     /** #355-followup-2: each session-file attempt, enriched with the params the run actually used
@@ -727,6 +738,25 @@ public class BenchController {
             }
             am.put("request_speeds", speedsPerAttempt.get(ai));
             am.put("compactions_before_request", a.compactionsBeforeTurn());
+            // per-attempt compaction effectiveness - two tables, one row per compaction event: how
+            // the events are distributed across this attempt's own requests, and how many tokens
+            // each one actually reclaimed (see AttemptCounts.compactionEvents's own javadoc)
+            final List<Map<String, Object>> compactionDistribution = new ArrayList<>(a.compactionEvents().size());
+            final List<Map<String, Object>> compactionReclaimed = new ArrayList<>(a.compactionEvents().size());
+            for (final AgentSession.CompactionEvent ce : a.compactionEvents()) {
+                final Map<String, Object> cd = new LinkedHashMap<>();
+                cd.put("request_number", ce.requestNumber());
+                cd.put("requests_since_previous", ce.requestsSincePrevious());
+                compactionDistribution.add(cd);
+                final Map<String, Object> rc = new LinkedHashMap<>();
+                rc.put("request_number", ce.requestNumber());
+                rc.put("prompt_tokens_before", ce.promptTokensBefore());
+                rc.put("reclaimed_tokens", ce.reclaimedTokens());
+                compactionReclaimed.add(rc);
+            }
+            am.put("compaction_count", a.compactionEvents().size());
+            am.put("compaction_distribution", compactionDistribution);
+            am.put("compaction_reclaimed", compactionReclaimed);
             final List<JudgeCheckpoint> checkpoints = matchedJudgeStamp[ai] != null
                     ? judgeByStamp.getOrDefault(matchedJudgeStamp[ai], List.of()) : List.of();
             final List<Integer> judgeOnTrack = new ArrayList<>();

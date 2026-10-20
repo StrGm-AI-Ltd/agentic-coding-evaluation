@@ -1001,13 +1001,18 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 for (int i = 0; i < sections.size(); i++) {
                     final var section = sections.get(i);
                     final var ui = attemptUis.get(i);
+                    // the compaction tables below are worth showing for every attempt, whether or
+                    // not there's more than one of them - unlike the header/body text (which would
+                    // just duplicate the single-attempt summary above), so textBody() is always
+                    // cleared and rebuilt, not just when multiAttempt
+                    ui.textBody().removeAll();
                     if (multiAttempt) {
-                        ui.textBody().removeAll();
                         final var header = new com.vaadin.flow.component.html.H4(section.header());
                         header.getStyle().set("margin", "12px 0 4px 0").set("font-size", "0.95em");
                         ui.textBody().add(header);
                         ui.textBody().add(Panels.mono(section.body()));
                     }
+                    addCompactionEffectivenessTables(section, ui.textBody());
                     final var isLast = i == sections.size() - 1;
                     final var pointCount = section.requestSpeeds().size();
                     final var alreadyCharted = ui.chartsBody().getChildren().findAny().isPresent();
@@ -1662,8 +1667,50 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         container.add(chart);
     }
 
+    /** One row of the "compaction distribution" table: which request this compaction landed right
+     *  after, and how many requests elapsed since the attempt's previous one (null for the first -
+     *  nothing to compare against yet). */
+    record CompactionDistributionRow(int requestNumber, Integer requestsSincePrevious) {
+    }
+
+    /** One row of the "reclaimed context" table. reclaimedTokens is the REAL figure (this
+     *  compaction's own promptTokensBefore minus the NEXT request's actual input tokens), not a
+     *  stubbed-message count - found live (2026-10-19/T21) that the two can tell very different
+     *  stories. Null when no later request exists yet in this attempt to measure against. */
+    record CompactionReclaimedRow(int requestNumber, long promptTokensBefore, Long reclaimedTokens) {
+    }
+
+    /** The two per-attempt compaction-effectiveness tables the operator asked for: where compactions
+     *  landed among this attempt's own requests, and how many tokens each one actually reclaimed -
+     *  the REAL figure, not a stubbed-message count (see CompactionReclaimedRow's own javadoc for
+     *  why that distinction matters). Built fresh every refresh, same as the charts above - cheap
+     *  enough not to need their own redraw-throttling. A fixed height (not setAllRowsVisible), same
+     *  reasoning as buildRequestsGrid()'s own: a long attempt can have dozens of compactions, and an
+     *  unbounded-height table would dominate the page instead of scrolling internally. */
+    private void addCompactionEffectivenessTables(final AttemptSection section, final Div container) {
+        if (section.compactionDistribution().isEmpty()) return;
+        container.add(Panels.sectionTitle("Compaction distribution (" + section.compactionDistribution().size() + " compactions)"));
+        final var distribution = new Grid<>(CompactionDistributionRow.class, false);
+        distribution.addColumn(CompactionDistributionRow::requestNumber).setHeader("request #").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
+        distribution.addColumn(r -> Fmt.count(r.requestsSincePrevious() == null ? null : r.requestsSincePrevious().longValue()))
+                .setHeader("requests since previous").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
+        distribution.setItems(section.compactionDistribution());
+        distribution.setHeight("240px");
+        container.add(distribution);
+
+        container.add(Panels.sectionTitle("Reclaimed context per compaction"));
+        final var reclaimed = new Grid<>(CompactionReclaimedRow.class, false);
+        reclaimed.addColumn(CompactionReclaimedRow::requestNumber).setHeader("request #").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
+        reclaimed.addColumn(r -> Fmt.count(r.promptTokensBefore())).setHeader("prompt tokens before").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
+        reclaimed.addColumn(r -> Fmt.count(r.reclaimedTokens())).setHeader("reclaimed tokens").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
+        reclaimed.setItems(section.compactionReclaimed());
+        reclaimed.setHeight("240px");
+        container.add(reclaimed);
+    }
+
     record AttemptSection(String header, String body, List<RequestSpeedPoint> requestSpeeds, List<Integer> compactionsBeforeRequest,
-                           List<Integer> judgeOnTrackRequests, List<Integer> judgeOffTrackRequests) {
+                           List<Integer> judgeOnTrackRequests, List<Integer> judgeOffTrackRequests,
+                           List<CompactionDistributionRow> compactionDistribution, List<CompactionReclaimedRow> compactionReclaimed) {
     }
 
     /** #355-followup-2: one section per session file sharing a task's label, oldest first,
@@ -1704,10 +1751,19 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                     .append("   failed tool calls: ").append(a.path("tool_errors").asText("0"));
             final var tc = a.path("tool_calls");
             if (tc.isObject() && tc.size() > 0) for (final var line : toolCallLines(tc)) body.append('\n').append(line);
+            final List<CompactionDistributionRow> distribution = new ArrayList<>();
+            for (final var d : a.path("compaction_distribution"))
+                distribution.add(new CompactionDistributionRow(d.path("request_number").asInt(),
+                        d.hasNonNull("requests_since_previous") ? d.path("requests_since_previous").asInt() : null));
+            final List<CompactionReclaimedRow> reclaimed = new ArrayList<>();
+            for (final var r : a.path("compaction_reclaimed"))
+                reclaimed.add(new CompactionReclaimedRow(r.path("request_number").asInt(), r.path("prompt_tokens_before").asLong(),
+                        r.hasNonNull("reclaimed_tokens") ? r.path("reclaimed_tokens").asLong() : null));
             sections.add(new AttemptSection(header.toString(), body.toString(), requestSpeedPoints(a.path("request_speeds")),
                     compactionsBeforeRequest(a.path("compactions_before_request")),
                     compactionsBeforeRequest(a.path("judge_on_track_requests")),
-                    compactionsBeforeRequest(a.path("judge_off_track_requests"))));
+                    compactionsBeforeRequest(a.path("judge_off_track_requests")),
+                    distribution, reclaimed));
         }
         return sections;
     }
