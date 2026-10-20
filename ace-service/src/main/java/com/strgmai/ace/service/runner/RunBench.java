@@ -1005,8 +1005,18 @@ public class RunBench {
         return "pi".equals(cfg.get("harness"))
                 ? piAgent.run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase,
                         abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv)
+                // found live (2026-10-20): a session resumed via continueSession=true (see this
+                // method's own callers' identical fix) reconstructs its FULL prior history, then
+                // appends a freshly-rebuilt instruction on top - for a long-running session that
+                // can overflow the context window on the very first post-resume request
+                // (confirmed live: a 279-turn self-review resume died instantly, rc=4/
+                // ContextWindowExceeded). compactOnLoadKeepRecentTurns was already built for
+                // exactly this shape of problem (see its own javadoc - originally scoped to the
+                // budget-rescue step's own cold reconnect); passing it here too is a no-op for the
+                // overwhelmingly common case (continueSession=false, or no prior session file yet)
+                // and only ever fires when there is real history to shrink before the first send.
                 : agent.run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase,
-                        abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, false, finalTurn, null,
+                        abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, false, finalTurn, props.keepRecentTurns(),
                         compactionStrategies == null ? CompactionStrategies.DEFAULT : compactionStrategies);
     }
 

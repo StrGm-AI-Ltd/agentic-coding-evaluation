@@ -278,11 +278,20 @@ public class Reviews {
             // RunBench.buildJudgeCheckpoint()) - review never gets an LLM-driven Judge of its own,
             // only this operator channel, so the lambda is just the poll, nothing else.
             final ReferenceAgent.JudgeCheckpoint operatorChannel = (turn, trajectory) -> intervene.poll(runId, name);
+            // found live (2026-10-20, the SAME resume this fix is part of): a review's own
+            // instruction is a freshly-rebuilt pack (Packs.reviewPack(), not the capped single-task
+            // pack a real task gets), so reconstructing a long prior history via continueSession=true
+            // above and then appending that fresh instruction on top can overflow the context window
+            // on the very first post-resume request - confirmed live (a 279-turn review resume died
+            // instantly, rc=4/ContextWindowExceeded). compactOnLoadKeepRecentTurns (see its own
+            // javadoc on ReferenceAgent.run()) shrinks the reconstructed history down first; a no-op
+            // for a genuine first attempt (continueSession's own session.exists() check), same
+            // reasoning as RunBench.runAgentSession()'s identical fix.
             ReferenceAgent.SessionResult res = RunBenchSupport.runBounded(wallSec, name, rd.resolve("sessions"), reviewSid, abort,
                     () -> agent.run(name, Files.readString(packPath) + "\n\n" + (name.equals("REVIEW") ? Packs.REVIEW_INSTRUCTION : Packs.TRAJ_INSTRUCTION),
                             wallSec, tokens, rd.resolve("sessions"), reviewSid, true, sysPath.toString(), ws.toString(),
                             proxy == null ? externalBase(reviewer, cfg) : proxy.base(), abort, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv,
-                            operatorChannel));
+                            operatorChannel, false, null, props.keepRecentTurns()));
             // both self-review and trajectory-review write to the SAME log path - append, or the
             // second review's line silently replaces the first's (default writeString() truncates)
             if (log != null) Files.writeString(log, "review session " + name + " rc=" + res.rc() + " turns=" + res.turns() + "\n",
