@@ -28,8 +28,11 @@ public class Reviews {
     private static final ObjectMapper JSON = new ObjectMapper();
     private final BenchProperties props;
     private final ReferenceAgent agent;
+    private final Intervene intervene;
 
-    public Reviews(BenchProperties props, ReferenceAgent agent) { this.props = props; this.agent = agent; }
+    public Reviews(BenchProperties props, ReferenceAgent agent, Intervene intervene) {
+        this.props = props; this.agent = agent; this.intervene = intervene;
+    }
 
     /** files `git status` reports as changed, minus build artefacts and the given prefixes (a
      *  reviewer that runs the tests changes build/test-results, which is not code — R4 C-11) */
@@ -260,19 +263,26 @@ public class Reviews {
         final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 0L;
         final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
         final int maxTurns = cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS;
+        final String runId = String.valueOf(manifest.get("run_id"));
         try {
             final long wallSec = ((Number) reviewCfg.getOrDefault("wall_sec", 0)).longValue();
-            final String reviewSid = UUID.nameUUIDFromBytes(("agentbench/" + manifest.get("run_id") + "/" + name).getBytes()).toString();
+            final String reviewSid = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + name).getBytes()).toString();
             final var abort = proxy == null ? (java.util.function.Consumer<String>) reason -> {} : proxy.abort();
             // found live (2026-10-20): hardcoded `false` here meant a job paused/interrupted mid-
             // review and later resumed silently started a BRAND NEW review session from scratch,
             // discarding however many hours of real investigation it had already done - see
             // RunBench.sessionWithPolicy()'s own identical fix for the full reasoning (same
             // AgentSession.exists() fallback makes `true` safe for a genuine first attempt too).
+            // Also, same request: an operator's own live steering message (Intervene) now reaches a
+            // review session the exact same way it already reaches a task's own main session (see
+            // RunBench.buildJudgeCheckpoint()) - review never gets an LLM-driven Judge of its own,
+            // only this operator channel, so the lambda is just the poll, nothing else.
+            final ReferenceAgent.JudgeCheckpoint operatorChannel = (turn, trajectory) -> intervene.poll(runId, name);
             ReferenceAgent.SessionResult res = RunBenchSupport.runBounded(wallSec, name, rd.resolve("sessions"), reviewSid, abort,
                     () -> agent.run(name, Files.readString(packPath) + "\n\n" + (name.equals("REVIEW") ? Packs.REVIEW_INSTRUCTION : Packs.TRAJ_INSTRUCTION),
                             wallSec, tokens, rd.resolve("sessions"), reviewSid, true, sysPath.toString(), ws.toString(),
-                            proxy == null ? externalBase(reviewer, cfg) : proxy.base(), abort, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv));
+                            proxy == null ? externalBase(reviewer, cfg) : proxy.base(), abort, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv,
+                            operatorChannel));
             // both self-review and trajectory-review write to the SAME log path - append, or the
             // second review's line silently replaces the first's (default writeString() truncates)
             if (log != null) Files.writeString(log, "review session " + name + " rc=" + res.rc() + " turns=" + res.turns() + "\n",
@@ -280,6 +290,9 @@ public class Reviews {
             return res;
         } finally {
             if (proxy != null) proxy.stop();
+            // mirrors RunBench's own task-loop finally block: a message sent too late (or
+            // mistargeted) must not leak into a later, unrelated review attempt
+            intervene.clear(runId, name);
         }
     }
 
