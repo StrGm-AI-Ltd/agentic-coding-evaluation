@@ -264,9 +264,14 @@ public class Reviews {
             final long wallSec = ((Number) reviewCfg.getOrDefault("wall_sec", 0)).longValue();
             final String reviewSid = UUID.nameUUIDFromBytes(("agentbench/" + manifest.get("run_id") + "/" + name).getBytes()).toString();
             final var abort = proxy == null ? (java.util.function.Consumer<String>) reason -> {} : proxy.abort();
+            // found live (2026-10-20): hardcoded `false` here meant a job paused/interrupted mid-
+            // review and later resumed silently started a BRAND NEW review session from scratch,
+            // discarding however many hours of real investigation it had already done - see
+            // RunBench.sessionWithPolicy()'s own identical fix for the full reasoning (same
+            // AgentSession.exists() fallback makes `true` safe for a genuine first attempt too).
             ReferenceAgent.SessionResult res = RunBenchSupport.runBounded(wallSec, name, rd.resolve("sessions"), reviewSid, abort,
                     () -> agent.run(name, Files.readString(packPath) + "\n\n" + (name.equals("REVIEW") ? Packs.REVIEW_INSTRUCTION : Packs.TRAJ_INSTRUCTION),
-                            wallSec, tokens, rd.resolve("sessions"), reviewSid, false, sysPath.toString(), ws.toString(),
+                            wallSec, tokens, rd.resolve("sessions"), reviewSid, true, sysPath.toString(), ws.toString(),
                             proxy == null ? externalBase(reviewer, cfg) : proxy.base(), abort, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv));
             // both self-review and trajectory-review write to the SAME log path - append, or the
             // second review's line silently replaces the first's (default writeString() truncates)
