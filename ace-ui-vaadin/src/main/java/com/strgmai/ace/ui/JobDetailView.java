@@ -666,13 +666,23 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     private static JobLiveState.SessionRow lastMatchingSession(final List<JobLiveState.SessionRow> sessions, final String taskId) {
-        final var prefix = "Task " + taskId;
         JobLiveState.SessionRow last = null;
-        for (final var s : sessions) {
-            final var d = s.description();
-            if (d != null && (d.equals(prefix) || d.startsWith(prefix + " "))) last = s;
-        }
+        for (final var s : sessions) if (matchesSession(s.name(), taskId)) last = s;
         return last;
+    }
+
+    /** A session's raw label ("T21", "T21-judge-turn20", "REVIEW", "p0_definition-continue", ...)
+     *  matches taskId itself or any of its own continuation/judge/handoff/fix sub-sessions - the
+     *  same matching earliestOtherTaskSessionStartAfter() below already used inline before this was
+     *  pulled out and shared here too. name() is the session's raw label, unlike description()'s
+     *  human-rendered form ("Task T21", "Self review", ...) - matching on it directly is label-
+     *  shape-agnostic, working identically for a real task id ("T21") and a pipeline stage id
+     *  ("REVIEW", "p0_definition") alike, unlike the OLD "Task " + id prefix-on-description() check
+     *  this replaces, which only ever matched a real task's own "Task <id>" rendering - never a
+     *  stage's ("Definition", "Self review", ...), silently leaving a stage's own live time/tokens/
+     *  running-status undetectable. */
+    private static boolean matchesSession(final String rawLabel, final String taskId) {
+        return rawLabel != null && (rawLabel.equals(taskId) || rawLabel.startsWith(taskId + "-"));
     }
 
     /** A task's own live time/token totals for the plan grid - unlike lastMatchingSession() (which
@@ -693,13 +703,11 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     static TaskStats taskStats(final List<JobLiveState.SessionRow> sessions, final String taskId, final String currentStep) {
-        final var prefix = "Task " + taskId;
         var wall = 0.0;
         var completion = 0L;
         var prompt = 0L;
         for (final var s : sessions) {
-            final var d = s.description();
-            if (d == null || !(d.equals(prefix) || d.startsWith(prefix + " "))) continue;
+            if (!matchesSession(s.name(), taskId)) continue;
             if (s.endedStage() != null) {
                 if (s.wallSec() != null) wall += s.wallSec();
             } else {
@@ -718,18 +726,16 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
     /** The earliest start, across every session in the run, strictly after afterTs - excluding
      *  taskId's own (sub-)sessions (a judge/continuation/handoff turn for the SAME task is still
-     *  that task running, not evidence something else superseded it). name() is the session's raw
-     *  label ("T21", "T21-judge-turn20", ...), unlike description()'s human-rendered form - a
-     *  plain prefix+hyphen check on it avoids the same T2-vs-T21 collision lastMatchingSession's
-     *  own prefix+space check on description() guards against. */
+     *  that task running, not evidence something else superseded it) via the same matchesSession()
+     *  lastMatchingSession() above now shares too, rather than each duplicating the same raw-label
+     *  check. */
     private static OffsetDateTime earliestOtherTaskSessionStartAfter(
             final List<JobLiveState.SessionRow> sessions, final String taskId, final String afterTs) {
         final var after = Fmt.parseTime(afterTs);
         if (after == null) return null;
         OffsetDateTime earliest = null;
         for (final var s : sessions) {
-            final var name = s.name();
-            if (name != null && (name.equals(taskId) || name.startsWith(taskId + "-"))) continue;
+            if (matchesSession(s.name(), taskId)) continue;
             final var t = Fmt.parseTime(s.ts());
             if (t != null && t.isAfter(after) && (earliest == null || t.isBefore(earliest))) earliest = t;
         }
@@ -811,6 +817,12 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var transcriptTab = new com.vaadin.flow.component.tabs.Tab("Live");
         final var tabs = new com.vaadin.flow.component.tabs.Tabs(promptTab, changesTab, restartTab, historyTab, judgeTab, statsTab, transcriptTab);
         tabs.getStyle().set("width", "100%").set("box-sizing", "border-box");
+        // a pipeline stage (definition/plan/parallel-plan/self-review) has no Restart tab - the
+        // per-task restart endpoint it would call assumes a "phase/" + id git tag, which doesn't
+        // match any of these stages' own irregular tag names (see Api.PlanTask.stage()'s own
+        // javadoc), so restarting one from here would just fail with a confusing server error
+        // instead of doing nothing visibly wrong.
+        restartTab.setVisible(!task.stage());
         tabs.addSelectedChangeListener(e -> {
             promptBody.setVisible(tabs.getSelectedTab() == promptTab);
             diffBody.setVisible(tabs.getSelectedTab() == changesTab);
