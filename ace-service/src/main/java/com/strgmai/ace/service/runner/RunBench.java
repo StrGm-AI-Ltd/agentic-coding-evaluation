@@ -1082,8 +1082,19 @@ public class RunBench {
                 + "\n\n" + Packs.DOCKER_NOTE;
         final String canonicalSessionId = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + name).getBytes()).toString();
         final String sid = sessionId == null ? canonicalSessionId : sessionId;
+        // found live (2026-10-20, self-review's own 11-hour session): this used to be a hardcoded
+        // `false` - a job paused/interrupted mid-session and later resumed silently started this
+        // task/phase's own main session completely fresh, discarding its entire conversation (the
+        // workspace's own code changes survived, since nothing here resets those - only the
+        // agent's own MEMORY of how it got there was lost). `true` is safe unconditionally: when no
+        // prior session file exists yet (the common case - a genuinely first attempt, or one an
+        // explicit /restart already archived aside - see BenchController.archiveSessionsForLabel())
+        // AgentSession's own `continueSession && session.exists()` check falls through to the exact
+        // same fresh-start branch as before; it only changes behavior when a same-id file already
+        // exists, which previously only happened after an interrupt-and-resume, never a genuine
+        // first run.
         ReferenceAgent.SessionResult rec = RunBenchSupport.runBounded(wall, name, rd.resolve("sessions"), sid, proxy.abort(), () -> runAgentSession(cfg, name, full, wall, tokens,
-                rd.resolve("sessions"), sid, false, appendSystem, ws.toString(), proxy.base(), proxy.abort(),
+                rd.resolve("sessions"), sid, true, appendSystem, ws.toString(), proxy.base(), proxy.abort(),
                 firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, judge, finalTurn, compactionStrategies));
         // P-1: a session that died on a `length` finish gets one continuation with what is LEFT (R4
         // C-7). wall/tokens <= 0 means unlimited (the system-wide "0 = no budget" convention): there
@@ -1978,8 +1989,10 @@ public class RunBench {
             ReferenceAgent.SessionResult prec;
             try {
                 prec = RunBenchSupport.runBounded(parallelPlanWall, "PARALLEL_PLAN", rd.resolve("sessions"), planSid, proxy.abort(),
+                        // see sessionWithPolicy()'s own identical fix's javadoc for why this is
+                        // `true` now, not a hardcoded `false`
                         () -> runAgentSession(cfg, "PARALLEL_PLAN", Packs.parallelPlanPack(tasks) + "\n\n" + Packs.PARALLEL_PLAN_INSTRUCTION, parallelPlanWall, parallelPlanTokens,
-                                rd.resolve("sessions"), planSid, false, rd.resolve("packs/stable.md").toString(), ws.toString(),
+                                rd.resolve("sessions"), planSid, true, rd.resolve("packs/stable.md").toString(), ws.toString(),
                                 proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("model"),
                                 (Map<String, String>) cfg.get("_agent_env")));
             } finally { proxy.stop(); }

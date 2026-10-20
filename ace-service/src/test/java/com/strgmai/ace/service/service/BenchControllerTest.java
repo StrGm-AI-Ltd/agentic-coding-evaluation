@@ -1508,6 +1508,56 @@ class BenchControllerTest {
         assertFalse(com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/T3"));
     }
 
+    /** #417-followup (found live, 2026-10-20): every main-session call now passes
+     *  continueSession=true (RunBench.sessionWithPolicy()'s own fix, mirroring Reviews.java's
+     *  identical one), so a session file left behind by a restart would get silently RESUMED on the
+     *  next attempt instead of starting clean - the agent reconstructing a conversation about code
+     *  this exact restart just discarded. T2/T2-handoff/T3 (restarted + cascaded) must be archived;
+     *  T1 (untouched, earlier) must not be. */
+    @Test
+    void restartTaskArchivesStaleSessionFilesForTheRestartedAndCascadedTasksButNotEarlierOnes() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), """
+                ## T1 — first
+                - Goal: a
+                ## T2 — second
+                - Goal: b
+                - Dependencies: T1
+                ## T3 — third
+                - Goal: c
+                - Dependencies: T2
+                """);
+        Files.writeString(runDir.resolve("sessions/t1.jsonl"), "{\"type\":\"session\",\"id\":\"s1\",\"label\":\"T1\"}\n");
+        Files.writeString(runDir.resolve("sessions/t2.jsonl"), "{\"type\":\"session\",\"id\":\"s2\",\"label\":\"T2\"}\n");
+        Files.writeString(runDir.resolve("sessions/t2h.jsonl"), "{\"type\":\"session\",\"id\":\"s2h\",\"label\":\"T2-handoff\"}\n");
+        Files.writeString(runDir.resolve("sessions/t3.jsonl"), "{\"type\":\"session\",\"id\":\"s3\",\"label\":\"T3\"}\n");
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T1");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T2");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T2-handoff");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T3");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
+        when(queue.setTaskOverride(eq(JOB_1), eq("T2"), anyMap()))
+                .thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/restart").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk());
+
+        assertTrue(Files.exists(runDir.resolve("sessions/t1.jsonl")), "T1 is earlier and untouched - must stay where Stats/Live/Attempts can still find it");
+        assertFalse(Files.exists(runDir.resolve("sessions/t2.jsonl")), "T2's own session must no longer be where a fresh attempt's continueSession=true would find it");
+        assertFalse(Files.exists(runDir.resolve("sessions/t2h.jsonl")));
+        assertFalse(Files.exists(runDir.resolve("sessions/t3.jsonl")));
+        assertTrue(Files.exists(runDir.resolve("sessions/archived/t2.jsonl")), "archived, not deleted - recoverable the same way the backup git tag is");
+        assertTrue(Files.exists(runDir.resolve("sessions/archived/t2h.jsonl")));
+        assertTrue(Files.exists(runDir.resolve("sessions/archived/t3.jsonl")));
+    }
+
     /** #321: the pre-run counterpart of restartTask() - a task that has never run has no
      *  phase/{id} tag to reset to, so this endpoint takes a plain paused job and writes the
      *  override with no git involvement at all. */
@@ -1687,6 +1737,45 @@ class BenchControllerTest {
         assertFalse(com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/parallel_plan"));
         assertFalse(com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/T1"));
         assertFalse(com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/T2"));
+    }
+
+    /** The same archiving as restartTask's own test above, but exercising PHASE_TAGS's own
+     *  irregular name mapping: the git tag being deleted is "phase/parallel_plan", but the session
+     *  file's own label (and so what must be archived) is "PARALLEL_PLAN" - a naive "phase/" prefix
+     *  strip alone would look for a session labeled "parallel_plan" and archive nothing at all. */
+    @Test
+    void restartSessionArchivesSessionsByTheirOwnLabelNotTheGitTagsIrregularName() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), """
+                ## T1 — first
+                - Goal: a
+                """);
+        Files.writeString(runDir.resolve("sessions/p0.jsonl"), "{\"type\":\"session\",\"id\":\"s0\",\"label\":\"p0_definition\"}\n");
+        Files.writeString(runDir.resolve("sessions/p1.jsonl"), "{\"type\":\"session\",\"id\":\"s1\",\"label\":\"p1_plan\"}\n");
+        Files.writeString(runDir.resolve("sessions/pp.jsonl"), "{\"type\":\"session\",\"id\":\"s2\",\"label\":\"PARALLEL_PLAN\"}\n");
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/p0");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/p1");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/parallel_plan");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
+        when(queue.setTaskOverride(eq(JOB_1), eq("p1_plan"), anyMap()))
+                .thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
+
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/sessions/p1_plan/restart").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk());
+
+        assertTrue(Files.exists(runDir.resolve("sessions/p0.jsonl")), "p0 is earlier and untouched");
+        assertFalse(Files.exists(runDir.resolve("sessions/p1.jsonl")));
+        assertFalse(Files.exists(runDir.resolve("sessions/pp.jsonl")));
+        assertTrue(Files.exists(runDir.resolve("sessions/archived/p1.jsonl")));
+        assertTrue(Files.exists(runDir.resolve("sessions/archived/pp.jsonl")),
+                "PARALLEL_PLAN's own session must be found via its real label, not a naive strip of its tag's irregular \"parallel_plan\" name");
     }
 
     @Test

@@ -476,11 +476,53 @@ public class BenchController {
         final String before = com.strgmai.ace.service.runner.RunBenchSupport.nearestPhaseTagSha(ws, ownTag + "^");
         com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "reset", "--hard", before);
 
-        for (final String tag : tagsToDeleteSupplier.get())
+        // #417-followup (found live, 2026-10-20): every main-session call now passes
+        // continueSession=true (see RunBench.sessionWithPolicy()'s own fix), so a stale session
+        // file left behind here would get silently RESUMED on the next attempt - the agent
+        // reconstructing a conversation about code this git reset just discarded. Archiving each
+        // invalidated tag's own session (never deleting - same "nothing here is ever destroyed,
+        // just set aside" philosophy the backup git tag above already follows) is what makes that
+        // continueSession=true safe for an EXPLICIT restart too, not just an interrupt-and-resume.
+        final Path sessionsDir = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath().resolve("sessions");
+        for (final String tag : tagsToDeleteSupplier.get()) {
             if (com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, tag))
                 com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "tag", "-d", tag);
+            archiveSessionsForLabel(sessionsDir, labelForTag(tag));
+        }
 
         return queue.setTaskOverride(id, overrideKey, overrides);
+    }
+
+    /** The session label a git tag names - the inverse of PHASE_TAGS for p0/p1/PARALLEL_PLAN's own
+     *  irregular names, a plain "phase/" prefix strip for everything else (a real task id or its
+     *  own "-handoff" sub-session, both identity-named). */
+    private static String labelForTag(final String tag) {
+        for (final var e : PHASE_TAGS.entrySet()) if (e.getValue().equals(tag)) return e.getKey();
+        return tag.startsWith("phase/") ? tag.substring("phase/".length()) : tag;
+    }
+
+    /** Moves aside (never deletes) every session file whose own JSONL header "label" exactly
+     *  matches, into sessions/archived/ - invisible to every existing per-label scan (scanAttempt(),
+     *  TaskTranscript, compactionEffectiveness, ...), all of which list the sessions/ directory
+     *  itself non-recursively, never walk into a subdirectory - but still present on disk,
+     *  recoverable the same way the backup git tag is. Best-effort: a missing sessions/ directory
+     *  or an unreadable file must never fail the restart itself. */
+    private void archiveSessionsForLabel(final Path sessionsDir, final String label) {
+        if (!Files.isDirectory(sessionsDir)) return;
+        final var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        try (var stream = Files.list(sessionsDir)) {
+            for (final Path f : stream.filter(p -> p.getFileName().toString().endsWith(".jsonl")).toList()) {
+                final String firstLine;
+                try (var lines = Files.lines(f)) { firstLine = lines.findFirst().orElse(null); } catch (final Exception ignore) { continue; }
+                if (firstLine == null) continue;
+                final Map<String, Object> header;
+                try { header = mapper.readValue(firstLine, Map.class); } catch (final Exception ignore) { continue; }
+                if (!label.equals(header.get("label"))) continue;
+                final Path archiveDir = sessionsDir.resolve("archived");
+                Files.createDirectories(archiveDir);
+                Files.move(f, archiveDir.resolve(f.getFileName()), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (final Exception e) { log.warn("could not archive stale sessions for label {}: {}", label, e.toString()); }
     }
 
     /** #321: unlike restartTask() above, this is for a task that has NOT run yet - no phase/{id}
