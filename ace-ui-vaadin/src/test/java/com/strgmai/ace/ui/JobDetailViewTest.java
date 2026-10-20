@@ -161,8 +161,14 @@ class JobDetailViewTest {
         assertEquals("", JobDetailView.plannedOrderText(List.of()));
     }
 
+    /** name() (the raw label matchesSession() now matches on, not description()'s human-rendered
+     *  form) is derived here from description's own "Task <id>[ (suffix)][ — title]" shape, the
+     *  exact reverse of what sessionDescription() does in production - every call site below
+     *  passes that shape already, so deriving it here keeps them all unchanged. */
     private static JobLiveState.SessionRow sessionRow(final String description, final String endedStage) {
-        return new JobLiveState.SessionRow("sid", "sid", description, endedStage, null, null, null, null, null, null, null, null, null);
+        final String name = description != null && description.startsWith("Task ")
+                ? description.substring("Task ".length()).split("[ (]", 2)[0] : null;
+        return new JobLiveState.SessionRow("sid", "sid", description, endedStage, null, null, null, null, null, null, null, name, null);
     }
 
     /** taskStats() sums EVERY session matching the task id, not just the latest one - a task
@@ -249,7 +255,7 @@ class JobDetailViewTest {
 
     private static Api.PlanTask planTask(final String id, final boolean implemented, final boolean handoffDone,
                                          final String reportedStatus, final String reportedDetail, final int attempts, final boolean rescued) {
-        return new Api.PlanTask(0, id, "", "", List.of(), implemented, handoffDone, reportedStatus, reportedDetail, attempts, rescued);
+        return new Api.PlanTask(0, id, "", "", List.of(), implemented, handoffDone, reportedStatus, reportedDetail, attempts, rescued, false);
     }
 
     @Test
@@ -263,6 +269,19 @@ class JobDetailViewTest {
     void taskStatus_runningWhileItsSessionHasNoEndedStageYetAndItIsTheCurrentStep() {
         final var sessions = List.of(sessionRow("Task T2", null));
         assertEquals("running", JobDetailView.taskStatus(sessions, planTask("T2", false, false), false, "T2", null));
+    }
+
+    /** A pipeline stage's own session never renders as "Task <id>" - sessionDescription() gives it
+     *  a human name instead ("Self review", "Definition", ...) - so matching must go through the
+     *  session's raw label (name()), not the old "Task " + id prefix check on description(). This
+     *  is exactly what a real stage row (Api.PlanTask.stage()==true) needs for its own live
+     *  status/time/tokens to work at all. */
+    @Test
+    void taskStatus_matchesAPipelineStageSessionByItsRawLabelNotTheTaskPrefixConvention() {
+        final var sessions = List.of(new JobLiveState.SessionRow("sid", "sid", "Self review", null,
+                null, null, null, null, null, null, null, "REVIEW", null));
+        final var review = new Api.PlanTask(0, "REVIEW", "Self-review", "", List.of(), false, false, null, null, 0, false, true);
+        assertEquals("running", JobDetailView.taskStatus(sessions, review, false, "REVIEW", null));
     }
 
     /** #335, found live: an unclosed session for a task that is NOT the current step was

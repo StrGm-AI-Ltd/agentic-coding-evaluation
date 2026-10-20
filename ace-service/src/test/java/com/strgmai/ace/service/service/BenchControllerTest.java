@@ -307,6 +307,72 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.tasks[1].handoff_done").value(false));
     }
 
+    /** The harness's own pipeline stages appear in /plan too now, as "stage" rows - before the
+     *  real tasks for p0_definition/p1_plan/PARALLEL_PLAN, after them for REVIEW - so the operator
+     *  gets the same Stats/Live/History features for them. Only included when a session for that
+     *  stage actually exists (p1_plan/PARALLEL_PLAN have none here, so they're absent entirely -
+     *  not merely blank rows). "implemented" reads each stage's own irregular completion tag
+     *  (phase/p0, not phase/p0_definition; phase/review, not phase/REVIEW - see
+     *  BenchController.PRE_TASK_STAGES/POST_TASK_STAGE's own javadoc for why). */
+    @Test
+    void jobPlanIncludesPipelineStagesAroundTheRealTasksWhenTheirSessionsExist() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), """
+                # Plan
+                ## T1 — model the schema
+                - Goal: create the entities
+                - Dependencies: none
+                """);
+        Files.writeString(runDir.resolve("sessions/a.jsonl"),
+                "{\"type\":\"session\",\"id\":\"s-p0\",\"label\":\"p0_definition\",\"ts\":\"2026-10-20T08:00:00Z\"}\n");
+        Files.writeString(runDir.resolve("sessions/b.jsonl"),
+                "{\"type\":\"session\",\"id\":\"s-review\",\"label\":\"REVIEW\",\"ts\":\"2026-10-20T09:00:00Z\"}\n");
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/p0");   // p0_definition's own irregular tag
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/plan"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tasks", hasSize(3)))
+                .andExpect(jsonPath("$.tasks[0].id").value("p0_definition"))
+                .andExpect(jsonPath("$.tasks[0].title").value("Definition"))
+                .andExpect(jsonPath("$.tasks[0].stage").value(true))
+                .andExpect(jsonPath("$.tasks[0].implemented").value(true))
+                .andExpect(jsonPath("$.tasks[1].id").value("T1"))
+                .andExpect(jsonPath("$.tasks[1].stage").value(false))
+                .andExpect(jsonPath("$.tasks[2].id").value("REVIEW"))
+                .andExpect(jsonPath("$.tasks[2].title").value("Self-review"))
+                .andExpect(jsonPath("$.tasks[2].stage").value(true))
+                .andExpect(jsonPath("$.tasks[2].implemented").value(false));
+    }
+
+    @Test
+    void jobPlanOmitsAPipelineStageEntirelyWhenItHasNoSessionAtAll() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));   // empty - no stage ever ran on this run
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), """
+                # Plan
+                ## T1 — model the schema
+                - Goal: create the entities
+                - Dependencies: none
+                """);
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(Files.createTempDirectory("ws-root").toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/plan"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tasks", hasSize(1)))
+                .andExpect(jsonPath("$.tasks[0].id").value("T1"));
+    }
+
     /** #261/#262: unlike implemented/handoff_done (which only say the SESSION ran to completion),
      *  reported_status carries whether the task actually SUCCEEDED - its own self-reported
      *  done/partial/blocked line, or the harness's "unfinished" fallback when even a dedicated

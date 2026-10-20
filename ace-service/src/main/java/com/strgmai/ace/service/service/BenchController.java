@@ -254,12 +254,33 @@ public class BenchController {
      *  genuinely finished one. reported_status carries the task's own self-reported outcome
      *  (done/partial/blocked), or the harness's "unfinished" fallback when even its dedicated
      *  wrap-up chance came back empty - null until the task's main session has actually ended. */
+    /** The harness's own pipeline stages, shown as rows alongside the real plan tasks so the
+     *  operator gets the same Stats/Live/History features for them too - the backend endpoints
+     *  those already call (sessionCounts/scanAttempt/TaskTranscript) match a session purely by its
+     *  own JSONL header "label" field, so using that EXACT label as the stage's own "id" here means
+     *  no new plumbing is needed there at all. Each entry is {sessionLabel, title, completionTag} -
+     *  completionTag is the git tag naming that stage's OWN finished state, which is irregular per
+     *  stage (found live, same issue PHASE_TAGS below already documents for the pre-task phases):
+     *  p0/p1 truncate their own label, PARALLEL_PLAN case-folds it, and REVIEW's is
+     *  Reviews.selfReview()'s own "phase/review" - written only after the reviewer session AND its
+     *  own revert-anything-outside-review/ cleanup both finish, not merely once it starts. Only
+     *  included in the response when a session with that exact label actually exists (see
+     *  stageRow()'s own sessionCounts().found() check) - a run without --parallel-plan never has a
+     *  PARALLEL_PLAN session, and self-review only starts once every task is done, same "show what's
+     *  actually there" rule the real per-task rows already follow. */
+    private static final List<String[]> PRE_TASK_STAGES = List.of(
+            new String[]{"p0_definition", "Definition", "phase/p0"},
+            new String[]{"p1_plan", "Plan", "phase/p1"},
+            new String[]{"PARALLEL_PLAN", "Parallel plan", "phase/parallel_plan"});
+    private static final String[] POST_TASK_STAGE = {"REVIEW", "Self-review", "phase/review"};
+
     @GetMapping("/api/jobs/{id}/plan")
     public Map<String, Object> plan(@PathVariable UUID id) {
         final Map<String, Object> job = queue.get(id);
         final List<PlanTask> tasks;
+        final Path base;
         try {
-            final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
+            base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
             final Path planFile = base.resolve("IMPLEMENTATION_PLAN.md");
             if (!Files.isRegularFile(planFile) || !isContainedEvenViaSymlinks(base, planFile)) return Map.of("tasks", List.of());
             tasks = PlanParser.parseFile(planFile);
@@ -269,6 +290,8 @@ public class BenchController {
         final Map<String, List<Map<String, Object>>> attemptsByTask = taskAttemptsByTaskId(job);
         final List<Map<String, Object>> rows = new ArrayList<>();
         int order = 0;
+        for (final String[] stage : PRE_TASK_STAGES)
+            if (sessionCounts(base, stage[0]).found()) rows.add(stageRow(order++, stage, ws));
         for (final List<PlanTask> wave : PlanParser.waves(tasks))
             for (final PlanTask t : wave) {
                 final Map<String, Object> row = new LinkedHashMap<>();
@@ -293,9 +316,37 @@ public class BenchController {
                 final List<Map<String, Object>> taskAttempts = attemptsByTask.getOrDefault(t.id, List.of());
                 row.put("attempts", taskAttempts.size());
                 row.put("rescued", taskAttempts.stream().anyMatch(a -> Boolean.TRUE.equals(a.get("rescue_succeeded"))));
+                row.put("stage", false);
                 rows.add(row);
             }
+        if (sessionCounts(base, POST_TASK_STAGE[0]).found()) rows.add(stageRow(order, POST_TASK_STAGE, ws));
         return Map.of("tasks", rows);
+    }
+
+    /** One pipeline-stage row, shaped exactly like a real task's own row above (so the UI's
+     *  Api.PlanTask - and everything that reads one - needs no per-field null-handling beyond what
+     *  a real task already tolerates) minus the fields that genuinely don't apply to a stage: no
+     *  goal/deps (nothing in IMPLEMENTATION_PLAN.md describes a stage), no handoff step, no
+     *  self-reported done/partial/blocked status (that convention is docs/PROGRESS.md's own, task-
+     *  specific one), no task_attempts.jsonl history (logTaskAttempt() is only ever called for a
+     *  real task). "stage" is the one new field the UI uses to tell the two apart - e.g. to hide the
+     *  Restart tab, since the per-task restart endpoint assumes a "phase/" + id tag that doesn't
+     *  match any of these stages' own irregular tag names. */
+    private Map<String, Object> stageRow(final int order, final String[] stage, final Path ws) {
+        final Map<String, Object> row = new LinkedHashMap<>();
+        row.put("order", order);
+        row.put("id", stage[0]);
+        row.put("title", stage[1]);
+        row.put("goal", "");
+        row.put("deps", List.of());
+        row.put("implemented", com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, stage[2]));
+        row.put("handoff_done", false);
+        row.put("reported_status", null);
+        row.put("reported_detail", null);
+        row.put("attempts", 0);
+        row.put("rescued", false);
+        row.put("stage", true);
+        return row;
     }
 
     /** #337: task_attempts.jsonl grouped by task_id, read once per plan() call rather than once per

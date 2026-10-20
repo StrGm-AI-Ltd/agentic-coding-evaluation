@@ -148,10 +148,13 @@ public final class Api {
      *  a dedicated wrap-up chance came back empty); null until the task's main session has ended.
      *  reported_detail is the free-text half of that same self-reported line - how it was verified,
      *  what's missing, why it's blocked, or the harness fallback's own fixed explanation.
-     *  See JobDetailView.taskStatus(). */
+     *  See JobDetailView.taskStatus(). stage marks one of the harness's own pipeline stages
+     *  (definition/plan/parallel-plan/self-review) rather than a real plan task - the UI hides the
+     *  Restart tab for these (the per-task restart endpoint assumes a "phase/" + id tag that
+     *  doesn't match any of these stages' own, irregular tag names). */
     public record PlanTask(int order, String id, String title, String goal, List<String> deps,
                            boolean implemented, boolean handoff_done, String reported_status, String reported_detail,
-                           int attempts, boolean rescued) {
+                           int attempts, boolean rescued, boolean stage) {
     }
 
     /** GET /api/jobs/{id}/tasks/{taskId}/prompt — progressively enriched: text is always the task's
