@@ -257,12 +257,14 @@ public class ExperimentNewView extends VerticalLayout {
                 Forms.row(name, template, k, model),
                 Forms.row(task),
                 Forms.row(taskWall, taskTokens, contextWindow, noContextProbe),
-                Forms.row(firstTokenTimeout, compactionTrigger, maxTurns),
-                Forms.row(compactionStrategies),
+                Forms.row(firstTokenTimeout, maxTurns),
                 Forms.row(parallelPlanWall, handoffWall, wrapupWall),
                 Forms.row(parallelPlanTokens, handoffTokens, wrapupTokens),
                 Forms.row(fixWall, fixTokens),
                 Forms.row(budgetRescueEnabled, rescueWallSec, rescueTokens, rescueKeepRecentTurns)));
+        add(Forms.section("Context compaction",
+                Forms.row(compactionTrigger),
+                Forms.row(compactionStrategies)));
 
         // NB: Vaadin components have exactly ONE parent — a shared field must live in
         // one section only (this bug shipped the model picker away from harness_effect
