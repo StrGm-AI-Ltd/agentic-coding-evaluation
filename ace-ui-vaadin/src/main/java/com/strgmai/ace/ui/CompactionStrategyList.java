@@ -37,6 +37,16 @@ public class CompactionStrategyList extends VerticalLayout {
         LABELS.put(STRUCTURED_EVICTION, "Structured eviction");
     }
 
+    /** one tooltip per mechanism - each describes that specific algorithm, not the control as a
+     *  whole, so a row can be understood on its own without reading every other row first. */
+    private static final Map<String, String> TOOLTIPS = new LinkedHashMap<>();
+    static {
+        TOOLTIPS.put(TOOL_RESULT_MASK, Tooltips.COMPACTION_TOOL_RESULT_MASK);
+        TOOLTIPS.put(ERROR_LINE_EXTRACTION, Tooltips.COMPACTION_ERROR_LINE_EXTRACTION);
+        TOOLTIPS.put(TOOL_OUTPUT_RECALL, Tooltips.COMPACTION_TOOL_OUTPUT_RECALL);
+        TOOLTIPS.put(STRUCTURED_EVICTION, Tooltips.COMPACTION_STRUCTURED_EVICTION);
+    }
+
     private final List<String> order = new ArrayList<>(LABELS.keySet());
     private final Map<String, Checkbox> checkboxes = new LinkedHashMap<>();
     private final VerticalLayout rows = new VerticalLayout();
@@ -51,7 +61,7 @@ public class CompactionStrategyList extends VerticalLayout {
         // value to inherit from) call setValue(List.of(TOOL_RESULT_MASK)) explicitly instead.
         for (final var name : LABELS.keySet()) {
             final var box = new Checkbox(LABELS.get(name));
-            box.setTooltipText(Tooltips.COMPACTION_STRATEGIES);
+            box.setTooltipText(TOOLTIPS.get(name));
             checkboxes.put(name, box);
         }
         rows.setPadding(false);

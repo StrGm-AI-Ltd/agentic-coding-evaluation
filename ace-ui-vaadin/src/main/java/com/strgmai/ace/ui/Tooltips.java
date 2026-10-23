@@ -140,11 +140,29 @@ final class Tooltips {
             + "(stubs out its oldest tool results) rather than risk running out of room. Blank = 28000. "
             + "0 disables compaction entirely.";
 
-    static final String COMPACTION_STRATEGIES = "Which compaction mechanism(s) run once the trigger above "
-            + "fires, and in what order: tool-result masking (stub old tool outputs, no extra model call) "
-            + "and/or structured eviction (ask the model for a fixed-outline summary of the older turns). "
-            + "Unchecked = that strategy never runs. Blank/all unchecked = tool-result masking alone, "
-            + "today's own behavior.";
+    static final String COMPACTION_TOOL_RESULT_MASK = "Once a tool result falls outside the protected "
+            + "window (sized by keep-recent-turns and a token budget - whichever cuts first), replace its "
+            + "text with a one-line \"[output dropped...]\" stub instead of sending it again, and shrink "
+            + "the tool call's own arguments that produced it. No extra model call. This is the original, "
+            + "always-on-before-it-was-toggleable mechanism.";
+
+    static final String COMPACTION_ERROR_LINE_EXTRACTION = "When a single bash command's own output is "
+            + "long enough to need head/tail capping, scan the omitted middle - which would otherwise go "
+            + "completely dark - for error-relevant lines (FAILURE/Exception/assertion-diff/stack-frame "
+            + "patterns) and keep a capped number of the newest matches verbatim alongside the head/tail.";
+
+    static final String COMPACTION_TOOL_OUTPUT_RECALL = "Offers the recall_tool_output(tool_call_id) tool "
+            + "at all. Once tool-result masking stubs a result, the stub text points the model at recalling "
+            + "that exact (already-capped) output from this session's own journal instead of re-running "
+            + "the command - capped to a few recalls per id, since a recalled output is itself immediately "
+            + "re-maskable.";
+
+    static final String COMPACTION_STRUCTURED_EVICTION = "Instead of stubbing, ask the model for one "
+            + "fixed-outline summary document (LANDED / STATE / INVARIANTS / TASKS / DO NEXT / DECISIONS) "
+            + "covering the turns about to fall out of the protected window - written once right after the "
+            + "task instruction and updated in place on later passes, never piled up as duplicates. The "
+            + "same pattern ACE's own inter-task handoff notes already use, applied within a single "
+            + "session.";
 
     static final String REVIEW_WALL_SEC = "Wall-clock seconds given to the self-review session (only "
             + "relevant when self_review is checked). Blank = 900 seconds.";
