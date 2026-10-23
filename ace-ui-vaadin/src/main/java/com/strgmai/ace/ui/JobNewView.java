@@ -295,12 +295,14 @@ public class JobNewView extends VerticalLayout {
                 Forms.row(phases, parallel, parallelPlan, parallelWeight)));
         add(Forms.section("Budgets",
                 Forms.row(taskWall, taskTokens, implWall, implTokens, planWall, planTokens, wallBudget, contextWindow),
-                Forms.row(firstTokenTimeout, compactionTrigger, maxTurns),
-                Forms.row(compactionStrategies),
+                Forms.row(firstTokenTimeout, maxTurns),
                 Forms.row(parallelPlanWall, handoffWall, wrapupWall),
                 Forms.row(parallelPlanTokens, handoffTokens, wrapupTokens),
                 Forms.row(fixWall, fixTokens),
                 Forms.row(efficiencyWeight)));
+        add(Forms.section("Context compaction",
+                Forms.row(compactionTrigger),
+                Forms.row(compactionStrategies)));
         add(Forms.section("Sampler",
                 Forms.row(temperature, topP, topK, repetitionPenalty),
                 Forms.row(maxTokens, reasoningEffort)));

@@ -1902,23 +1902,27 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var maxTurns = new com.vaadin.flow.component.textfield.IntegerField("Max turns");
         final var wrapupWall = new com.vaadin.flow.component.textfield.IntegerField("Wrap-up wall (sec)");
         final var wrapupTokens = new com.vaadin.flow.component.textfield.IntegerField("Wrap-up tokens");
-        // #417: compaction_trigger has been a legal restart-override key since #345 but never had
-        // an editable field in this form at all - a pre-existing gap, cheap to close while already
-        // touching this form.
-        final var compactionTrigger = new com.vaadin.flow.component.textfield.IntegerField("Compaction trigger");
-        compactionTrigger.setMin(0);
-        for (final var field : List.of(taskWall, taskTokens, maxTurns, wrapupWall, wrapupTokens, compactionTrigger)) {
+        for (final var field : List.of(taskWall, taskTokens, maxTurns, wrapupWall, wrapupTokens)) {
             field.setPlaceholder("run default");
             field.setWidth("140px");
         }
-        final var form = new HorizontalLayout(taskWall, taskTokens, maxTurns, wrapupWall, wrapupTokens, compactionTrigger);
+        final var form = new HorizontalLayout(taskWall, taskTokens, maxTurns, wrapupWall, wrapupTokens);
         form.getStyle().set("flex-wrap", "wrap");
+
+        // #417: compaction_trigger has been a legal restart-override key since #345 but never had
+        // an editable field in this form at all - a pre-existing gap, cheap to close while already
+        // touching this form. Grouped with compactionStrategies below rather than in the generic
+        // `form` row above, since both configure the same "Context compaction" mechanism.
+        final var compactionTrigger = new com.vaadin.flow.component.textfield.IntegerField("Compaction trigger");
+        compactionTrigger.setMin(0);
+        compactionTrigger.setPlaceholder("run default");
+        compactionTrigger.setWidth("140px");
 
         // #417: which compaction strategy/strategies this task uses, and in what order - overrides
         // the run-level default (CompactionStrategyList's own getValue() is blank = "unset", which
         // setPendingTaskOverride's caller below already treats as "don't include this key").
         final var compactionStrategies = new CompactionStrategyList();
-        final var compactionForm = new VerticalLayout(new Span("Compaction strategies"), compactionStrategies);
+        final var compactionForm = new VerticalLayout(new Span("Context compaction"), compactionTrigger, compactionStrategies);
         compactionForm.setPadding(false);
         compactionForm.setSpacing(false);
         compactionForm.getStyle().set("margin-top", "4px");
