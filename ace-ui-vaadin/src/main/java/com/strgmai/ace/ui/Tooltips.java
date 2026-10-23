@@ -37,6 +37,13 @@ final class Tooltips {
             + "entirely (only L3p_point_in_time ships one; other rungs fall back to the raw task prompt). "
             + "Blank = agent.";
 
+    static final String TASK_GRANULARITY = "How finely the agent should decompose the implementation plan into "
+            + "subtasks. 'fine': the smallest sensible unit + its test - one method, one migration script, one "
+            + "small fix. 'medium': a class, module, or single endpoint + its tests. 'coarse': a full feature "
+            + "slice end-to-end (e.g. a saga across services, or a complete HTTP contract) + tests. Blank = no "
+            + "explicit sizing guidance (today's behavior). Only applies when the agent itself authors the plan "
+            + "(a no-op when plan_source=reference).";
+
     static final String PHASES = "Restricts which of a rung's own multi-phase sequence actually run: "
             + "p0_definition, p1_plan, p2_implementation. Only L7_full_platform (all three) and "
             + "L3p_point_in_time (p1_plan + p2_implementation) have more than one phase - selecting "

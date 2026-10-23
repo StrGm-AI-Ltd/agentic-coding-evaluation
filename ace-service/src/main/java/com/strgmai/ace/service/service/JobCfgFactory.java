@@ -63,6 +63,9 @@ final class JobCfgFactory {
         if (WorkerService.flag(argv, "--compaction-trigger") != null) cfg.put("compaction_trigger", Integer.parseInt(WorkerService.flag(argv, "--compaction-trigger")));
         // #417: same comma-separated-string shape as --phases above
         if (WorkerService.flag(argv, "--compaction-strategies") != null) cfg.put("compaction_strategies", WorkerService.flag(argv, "--compaction-strategies"));
+        // #398: only read back when present - blank/absent means "no explicit guidance," which the
+        // p1_plan instruction itself already treats as its own no-op default
+        if (WorkerService.flag(argv, "--task-granularity") != null) cfg.put("task_granularity", WorkerService.flag(argv, "--task-granularity"));
         // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded
         // ReferenceAgent-local constant with no run-level override at all
         if (WorkerService.flag(argv, "--max-turns") != null) cfg.put("max_turns", Integer.parseInt(WorkerService.flag(argv, "--max-turns")));

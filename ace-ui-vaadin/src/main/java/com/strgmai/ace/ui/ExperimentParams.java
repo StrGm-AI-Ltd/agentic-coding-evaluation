@@ -39,6 +39,8 @@ public final class ExperimentParams {
         putIfPresent(params, raw, "compaction_trigger", Integer.class);
         // #417: unset/blank -> tool_result_mask alone, today's own behavior
         putIfPresent(params, raw, "compaction_strategies", String.class);
+        // #398: unset/blank -> no explicit sizing guidance, today's own unconstrained behavior
+        putIfPresent(params, raw, "task_granularity", String.class);
         // unset -> Reviews' own default (900s); shared by self-review and trajectory-review alike
         putIfPresent(params, raw, "review_wall_sec", Integer.class);
         putIfPresent(params, raw, "no_context_probe", Boolean.class);

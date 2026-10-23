@@ -136,6 +136,30 @@ class RunSpecTest {
         assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").compactionStrategies("tool_result_mask,bogus").build());
     }
 
+    /** #398: same shape/validation as --plan-source above, for RunSpec.TASK_GRANULARITIES. */
+    @Test
+    void argvIncludesTaskGranularityWhenSet() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").taskGranularity("fine").build().argv("r1");
+        assertTrue(argv.contains("--task-granularity=fine"));
+    }
+
+    @Test
+    void argvOmitsTaskGranularityWhenUnset() {
+        final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
+        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--task-granularity")));
+    }
+
+    @Test
+    void everyKnownTaskGranularityIsAccepted() {
+        for (final var level : RunSpec.TASK_GRANULARITIES)
+            assertDoesNotThrow(() -> RunSpec.builder().task("t").model("m").runId("r1").taskGranularity(level).build());
+    }
+
+    @Test
+    void unknownTaskGranularityIsRejected() {
+        assertThrows(IllegalArgumentException.class, () -> RunSpec.builder().task("t").model("m").runId("r1").taskGranularity("method_level").build());
+    }
+
     /** Found live 2026-09-25: PARALLEL_PLAN/handoff/wrap-up walls were fixed literals in
      *  RunBench.java (600/300/300*scale) with no run-level control at all. */
     @Test
@@ -450,6 +474,7 @@ class RunSpecTest {
         spec.put("fix_wall", 1200); spec.put("fix_tokens", 30000);
         spec.put("parallel_plan_tokens", 9000); spec.put("handoff_tokens", 4000); spec.put("wrapup_tokens", 2500);
         spec.put("efficiency_weight", 0.17);
+        spec.put("task_granularity", "coarse");
 
         final var rs = RunSpec.from(spec);
 
@@ -504,6 +529,7 @@ class RunSpecTest {
         assertEquals(4000, rs.handoffTokens());
         assertEquals(2500, rs.wrapupTokens());
         assertEquals(0.17, rs.efficiencyWeight());
+        assertEquals("coarse", rs.taskGranularity());
     }
 
     @Test
@@ -519,7 +545,7 @@ class RunSpecTest {
     @Test
     void builderProducesTheSameRunSpecAsThePositionalConstructor() {
         final var viaBuilder = RunSpec.builder().task("t").model("m").runId("r1").temperature(0.5).build();
-        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, null, null, null, null, null, false, null, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, null, null, null, null, false, null, null, null);
+        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, null, null, null, null, null, false, null, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, null, null, null, null, false, null, null, null, null);
         assertEquals(viaConstructor, viaBuilder);
     }
 }

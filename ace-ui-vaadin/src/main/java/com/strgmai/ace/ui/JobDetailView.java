@@ -2132,6 +2132,17 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var form = new HorizontalLayout(taskWall, taskTokens, maxTurns, firstTokenTimeout);
         form.getStyle().set("flex-wrap", "wrap");
 
+        // #398: task granularity only has meaning for "p1_plan" - restarting p0_definition/
+        // PARALLEL_PLAN with it set would be inert (neither phase reads it), so the field is only
+        // shown for a p1_plan restart, same "don't offer a control that silently does nothing"
+        // reasoning as the compaction fields' own task-vs-phase scoping.
+        final var taskGranularity = new com.vaadin.flow.component.select.Select<String>();
+        taskGranularity.setLabel("Task granularity");
+        taskGranularity.setItems("", "fine", "medium", "coarse");
+        taskGranularity.setItemLabelGenerator(v -> v.isEmpty() ? "—" : v);
+        taskGranularity.setWidth("160px");
+        taskGranularity.setTooltipText(Tooltips.TASK_GRANULARITY);
+
         // #266: same pre-fill as buildRestartTab() above - restartSession() stores this phase's
         // own override in the SAME jobs.task_overrides map, just keyed by phase name instead of
         // task id (see BenchController.restartSession()/doRestart()).
@@ -2141,6 +2152,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         if (currentOverride.get("task_tokens") instanceof Number n) taskTokens.setValue(n.intValue());
         if (currentOverride.get("max_turns") instanceof Number n) maxTurns.setValue(n.intValue());
         if (currentOverride.get("first_token_timeout_sec") instanceof Number n) firstTokenTimeout.setValue(n.intValue());
+        if (currentOverride.get("task_granularity") instanceof String s && !s.isBlank()) taskGranularity.setValue(s);
 
         final var restartButton = new Button("Restart from " + name, e -> {
             final java.util.Map<String, Object> overrides = new java.util.LinkedHashMap<>();
@@ -2148,6 +2160,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             if (taskTokens.getValue() != null) overrides.put("task_tokens", taskTokens.getValue());
             if (maxTurns.getValue() != null) overrides.put("max_turns", maxTurns.getValue());
             if (firstTokenTimeout.getValue() != null) overrides.put("first_token_timeout_sec", firstTokenTimeout.getValue());
+            if ("p1_plan".equals(name) && taskGranularity.getValue() != null && !taskGranularity.getValue().isBlank())
+                overrides.put("task_granularity", taskGranularity.getValue());
             try {
                 client.restartSession(jobId, name, overrides);
                 client.requeue(jobId);
@@ -2159,7 +2173,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             }
         });
         restartButton.getStyle().set("margin-top", "8px");
-        restartBody.add(warning, form, restartButton);
+        restartBody.add(warning, form);
+        if ("p1_plan".equals(name)) restartBody.add(taskGranularity);
+        restartBody.add(restartButton);
     }
 
     /**

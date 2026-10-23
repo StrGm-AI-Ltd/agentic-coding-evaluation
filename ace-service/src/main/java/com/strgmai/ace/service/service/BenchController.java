@@ -397,11 +397,15 @@ public class BenchController {
     // self-review/trajectory-review family - these are run-wide identity/infrastructure/lifecycle
     // choices with no per-task session to attach to; nothing reads a task_override for them, so
     // allowing them here would silently no-op rather than do anything.
+    // #398: task_granularity is the odd one out - it only takes effect on a restarted "p1_plan"
+    // session specifically (RunBench.sessionWithPolicy's own name-gated check), a no-op on every
+    // other phase/task restart, same "lookup is a no-op for a name that was never written"
+    // reasoning every other override field here already relies on.
     private static final Set<String> RESTART_OVERRIDE_KEYS = Set.of(
             "task_wall_sec", "task_tokens", "max_turns", "wrapup_wall_sec", "wrapup_tokens", "first_token_timeout_sec",
             "judge_enabled", "judge_every_n_turns", "judge_model", "budget_rescue_enabled",
             "compaction_trigger", "compaction_strategies", "max_tokens", "temperature", "top_p", "top_k", "repetition_penalty", "reasoning_effort",
-            "rescue_wall_sec", "rescue_tokens", "rescue_keep_recent_turns");
+            "rescue_wall_sec", "rescue_tokens", "rescue_keep_recent_turns", "task_granularity");
 
     /** the three pre-task phases that can be inspected/restarted via /sessions/{name}/... - an
      *  explicit, small map because the name-to-tag relationship is irregular (found live): p0/p1

@@ -41,6 +41,7 @@ public class ExperimentNewView extends VerticalLayout {
     private final Select<String> template = new Select<>();
     private final IntegerField k = new IntegerField("Repeats per arm");
     private final ComboBox<String> task = new ComboBox<>("Task");
+    private final Select<String> taskGranularity = new Select<>();
     private final IntegerField taskWall = new IntegerField("Task wall-clock budget");
     private final TextField taskTokens = new TextField("Task token budget");
     private final IntegerField firstTokenTimeout = new IntegerField("First-token timeout");
@@ -121,6 +122,10 @@ public class ExperimentNewView extends VerticalLayout {
         task.setAllowCustomValue(true);
         task.setPlaceholder("L1…L7 rung (blank = L3p_point_in_time)");
         task.setTooltipText(Tooltips.TASK);
+        taskGranularity.setLabel("Task granularity");
+        taskGranularity.setItems("", "fine", "medium", "coarse");
+        taskGranularity.setItemLabelGenerator(v -> v.isEmpty() ? "—" : v);
+        taskGranularity.setTooltipText(Tooltips.TASK_GRANULARITY);
         taskWall.setValue(3600);
         taskWall.setMin(1);
         taskWall.setHelperText("seconds, per task");
@@ -255,7 +260,7 @@ public class ExperimentNewView extends VerticalLayout {
 
         add(Forms.section("Experiment",
                 Forms.row(name, template, k, model),
-                Forms.row(task),
+                Forms.row(task, taskGranularity),
                 Forms.row(taskWall, taskTokens, contextWindow, noContextProbe),
                 Forms.row(firstTokenTimeout, maxTurns),
                 Forms.row(parallelPlanWall, handoffWall, wrapupWall),
@@ -390,6 +395,7 @@ public class ExperimentNewView extends VerticalLayout {
         raw.put("first_token_timeout", firstTokenTimeout.getValue());
         raw.put("compaction_trigger", compactionTrigger.getValue());
         raw.put("compaction_strategies", String.join(",", compactionStrategies.getValue()));
+        raw.put("task_granularity", taskGranularity.getValue());
         raw.put("review_wall_sec", reviewWallSec.getValue());
         raw.put("review_tokens", reviewTokens.getValue());
         raw.put("context_window", contextWindow.getValue());
