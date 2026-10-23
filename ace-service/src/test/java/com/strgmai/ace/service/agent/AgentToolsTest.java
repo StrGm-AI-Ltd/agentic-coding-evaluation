@@ -88,6 +88,23 @@ class AgentToolsTest {
     }
 
     @Test
+    void bashSkipsTheErrorLineScanWhenTheStrategyIsDisabledButStillHeadTailCaps() throws IOException {
+        final var ws = Files.createTempDirectory("ws");
+        final var sb = new StringBuilder();
+        for (int i = 0; i < 100; i++) sb.append("noise line ").append(i).append('\n');
+        sb.append("FAILURE: Build failed\n");
+        sb.append("org.opentest4j.AssertionFailedError: expected: <1> but was: <2>\n");
+        for (int i = 0; i < 100; i++) sb.append("more noise ").append(i).append('\n');
+        final Path log = ws.resolve("log.txt");
+        Files.writeString(log, sb.toString());
+        final AgentTools.Outcome out = AgentTools.bash(ws.toString(), Map.of("command", "cat log.txt"), Map.of(), false);
+        assertFalse(out.isError(), out.output());
+        assertTrue(out.output().contains("lines omitted"), "head+tail capping must still happen with the strategy off");
+        assertFalse(out.output().contains("error-relevant lines kept"), "no error-line annotation when the strategy is disabled");
+        assertFalse(out.output().contains("AssertionFailedError"), "the omitted middle must stay fully dropped when the strategy is disabled: " + out.output());
+    }
+
+    @Test
     void bashLeavesAPlainLogWithNoErrorMarkersUnannotated() throws IOException {
         final var ws = Files.createTempDirectory("ws");
         final AgentTools.Outcome plain = AgentTools.bash(ws.toString(), Map.of("command", "seq 1 200"), Map.of());

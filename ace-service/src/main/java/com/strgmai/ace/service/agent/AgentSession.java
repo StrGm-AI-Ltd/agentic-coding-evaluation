@@ -348,9 +348,10 @@ public final class AgentSession {
 
     /** original form (#417's own `tool_result_mask` strategy, pre-token-budget): the turn-count
      *  boundary alone, no ceiling on its own size. Kept as the 2-arg form so every existing caller
-     *  (the rescue step's compact-on-load, this class's own tests) keeps compiling unchanged. */
+     *  (the rescue step's compact-on-load, this class's own tests) keeps compiling unchanged -
+     *  recall_tool_output defaults to enabled, today's own existing behavior. */
     public static int compact(final List<ChatMessage> msgs, final int keepRecentTurns) {
-        return compact(msgs, keepRecentTurns, 0);
+        return compact(msgs, keepRecentTurns, 0, true);
     }
 
     /** #417: the turn-count floor alone never shrinks, no matter how large those protected turns'
@@ -396,7 +397,19 @@ public final class AgentSession {
      *  one-shot-per-message spirit as the result stub above, just on the call side. */
     private static final String DROPPED_ARGS = "{\"_dropped\":true}";
 
+    /** today's own existing behavior (recall_tool_output enabled) - kept as the 3-arg form so
+     *  every existing caller (CompactionStrategiesTest, the rescue step before #423/#424 ever
+     *  existed) keeps compiling unchanged. */
     public static int compact(final List<ChatMessage> msgs, final int keepRecentTurns, final int keepTokenBudget) {
+        return compact(msgs, keepRecentTurns, keepTokenBudget, true);
+    }
+
+    /** #423/#424: `recallEnabled` picks which of the two stub wordings a masked result gets - with
+     *  TOOL_OUTPUT_RECALL on, the formalized "call recall_tool_output(...)" pointer #424 added;
+     *  disabled, the pre-#424 "re-run the command if you need it" wording, so the stub never tells
+     *  the model to call a tool its own toolSpecs() isn't offering this session (ReferenceAgent.
+     *  toolSpecs()'s own identical check). */
+    public static int compact(final List<ChatMessage> msgs, final int keepRecentTurns, final int keepTokenBudget, final boolean recallEnabled) {
         final int cut = effectiveCut(msgs, keepRecentTurns, keepTokenBudget);
         int n = 0;
         for (int i = 2; i < cut; i++) {
@@ -407,7 +420,9 @@ public final class AgentSession {
                             // #424: the exact "[output dropped" PREFIX is load-bearing - it's this
                             // method's own one-shot guard (the condition right above), so changing it
                             // would make a later pass re-stub (and re-count) the same message
-                            "[output dropped by the harness to save context; call recall_tool_output(tool_call_id=\"" + m.id() + "\") to see it again instead of re-running the command]"));
+                            recallEnabled
+                                    ? "[output dropped by the harness to save context; call recall_tool_output(tool_call_id=\"" + m.id() + "\") to see it again instead of re-running the command]"
+                                    : "[output dropped by the harness to save context; re-run the command if you need it]"));
                     n++;
                 }
                 // whether masked just now or on an earlier pass (this range is re-scanned every

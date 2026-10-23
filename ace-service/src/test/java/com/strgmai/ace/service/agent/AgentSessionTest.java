@@ -63,6 +63,18 @@ class AgentSessionTest {
         assertTrue(((ToolExecutionResultMessage) msgs.get(msgs.size() - 1)).text().startsWith("output"));
     }
 
+    /** #423/#424: with the recall strategy disabled, a masked result's stub must point the model at
+     *  re-running the command, never at a tool (recall_tool_output) this session doesn't offer. */
+    @Test
+    void compactWritesTheNoRecallStubWordingWhenTheStrategyIsDisabled() {
+        final var msgs = sixTurns();
+        AgentSession.compact(msgs, 0, 0, false);
+        final var stub = ((ToolExecutionResultMessage) msgs.get(3)).text();
+        assertTrue(stub.startsWith("[output dropped"), stub);
+        assertFalse(stub.contains("recall_tool_output"), "must not point at a tool this session never offers: " + stub);
+        assertTrue(stub.contains("re-run the command"), stub);
+    }
+
     /** #417: a turn count alone never shrinks the protected window even when one of ITS OWN tool
      *  outputs is huge - the root cause #417 found live. keepRecentTurns=2 would normally protect
      *  turn1+turn2 (indices 4-7) verbatim, but turn1's own tool output is deliberately oversized here;
