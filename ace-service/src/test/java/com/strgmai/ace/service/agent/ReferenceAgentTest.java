@@ -188,9 +188,33 @@ class ReferenceAgentTest {
     void recallToolOutputRejectsABlankIdWithAClearMessageInsteadOfAConfusingTrailingSpace() throws java.io.IOException {
         final var dir = java.nio.file.Files.createTempDirectory("session");
         final var session = new AgentSession(dir, "s1", false);
-        final var out = ReferenceAgent.executeTool("recall_tool_output", Map.of("tool_call_id", ""), "/task/ws", Map.of(), "T1", session, new java.util.HashMap<>());
+        final var out = ReferenceAgent.executeTool("recall_tool_output", Map.of("tool_call_id", ""), "/task/ws", Map.of(), "T1", session, new java.util.HashMap<>(), CompactionStrategies.DEFAULT);
         assertTrue(out.isError());
         assertEquals("error: tool_call_id is required", out.output());
+    }
+
+    /** #423/#424: disabled, recall_tool_output refuses even a direct call, not just a hidden
+     *  toolSpecs() entry - the toggle is a real behavior change, not merely hiding the affordance. */
+    @Test
+    void recallToolOutputRefusesWhenTheStrategyIsDisabledEvenIfCalledDirectly() throws java.io.IOException {
+        final var dir = java.nio.file.Files.createTempDirectory("session");
+        final var session = new AgentSession(dir, "s1b", false);
+        session.toolResult("c1", "bash", "the archived output", false);
+        final var out = ReferenceAgent.executeTool("recall_tool_output", Map.of("tool_call_id", "c1"), "/task/ws", Map.of(), "T1", session,
+                new java.util.HashMap<>(), List.of(CompactionStrategies.TOOL_RESULT_MASK));
+        assertTrue(out.isError());
+        assertEquals("error: recall_tool_output is disabled for this session", out.output());
+    }
+
+    /** #423/#424: the model can't call a tool it was never offered - this is the structural half
+     *  of the toggle, alongside executeTool()'s own direct-call refusal above. */
+    @Test
+    void toolSpecsOffersRecallToolOutputOnlyWhenTheStrategyIsEnabled() {
+        final var enabled = ReferenceAgent.toolSpecs(true).stream().map(dev.langchain4j.agent.tool.ToolSpecification::name).toList();
+        assertTrue(enabled.contains("recall_tool_output"));
+        final var disabled = ReferenceAgent.toolSpecs(false).stream().map(dev.langchain4j.agent.tool.ToolSpecification::name).toList();
+        assertFalse(disabled.contains("recall_tool_output"));
+        assertEquals(enabled.size() - 1, disabled.size(), "disabling the strategy must remove exactly one tool, nothing else");
     }
 
     /** #417 follow-up review (C12): a recalled output is journaled as a fresh toolResult right
@@ -205,17 +229,17 @@ class ReferenceAgentTest {
         final var recallCounts = new java.util.HashMap<String, Integer>();
 
         for (int i = 0; i < 3; i++) {
-            final var ok = ReferenceAgent.executeTool("recall_tool_output", Map.of("tool_call_id", "c1"), "/task/ws", Map.of(), "T1", session, recallCounts);
+            final var ok = ReferenceAgent.executeTool("recall_tool_output", Map.of("tool_call_id", "c1"), "/task/ws", Map.of(), "T1", session, recallCounts, CompactionStrategies.DEFAULT);
             assertFalse(ok.isError(), "attempt " + (i + 1) + " must still be allowed");
             assertEquals("the archived output", ok.output());
         }
-        final var refused = ReferenceAgent.executeTool("recall_tool_output", Map.of("tool_call_id", "c1"), "/task/ws", Map.of(), "T1", session, recallCounts);
+        final var refused = ReferenceAgent.executeTool("recall_tool_output", Map.of("tool_call_id", "c1"), "/task/ws", Map.of(), "T1", session, recallCounts, CompactionStrategies.DEFAULT);
         assertTrue(refused.isError(), "a 4th recall of the SAME id must be refused");
         assertTrue(refused.output().contains("already been recalled"), refused.output());
 
         // a DIFFERENT id must be entirely unaffected by the first id's own cap
         session.toolResult("c2", "bash", "a different archived output", false);
-        final var other = ReferenceAgent.executeTool("recall_tool_output", Map.of("tool_call_id", "c2"), "/task/ws", Map.of(), "T1", session, recallCounts);
+        final var other = ReferenceAgent.executeTool("recall_tool_output", Map.of("tool_call_id", "c2"), "/task/ws", Map.of(), "T1", session, recallCounts, CompactionStrategies.DEFAULT);
         assertFalse(other.isError(), "the cap is per-id, not session-wide");
         assertEquals("a different archived output", other.output());
     }

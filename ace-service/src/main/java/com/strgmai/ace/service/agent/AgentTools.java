@@ -118,7 +118,17 @@ public final class AgentTools {
         return n;
     }
 
+    /** #423's own error-line extraction defaults to enabled - today's own existing behavior
+     *  before it had an off switch. Kept as the 3-arg form so every existing caller (this class's
+     *  own tests) keeps compiling unchanged. */
     public static Outcome bash(final String cwd, final Map<String, Object> a, final Map<String, String> env) {
+        return bash(cwd, a, env, true);
+    }
+
+    /** `errorLineExtractionEnabled=false` falls back to the plain head/tail reconstruction alone
+     *  (no scan of the omitted middle for FAILED/Exception/assertion-diff/stack-frame lines) -
+     *  #417's original, pre-#423 behavior. */
+    public static Outcome bash(final String cwd, final Map<String, Object> a, final Map<String, String> env, final boolean errorLineExtractionEnabled) {
         final String cmd = String.valueOf(a.getOrDefault("command", ""));
         int to = 600;
         if (a.get("timeout_sec") instanceof Number n) to = Math.min(1800, Math.max(5, n.intValue()));
@@ -159,19 +169,25 @@ public final class AgentTools {
         if (lines.size() > BASH_HEAD + BASH_TAIL + 10) {
             final int midStart = BASH_HEAD;
             final int midEnd = lines.size() - BASH_TAIL;
-            final List<String> matched = lines.subList(midStart, midEnd).stream()
-                    .filter(l -> ERROR_LINE.matcher(l).find()).toList();
-            // #417 follow-up review: `.limit(MAX_ERROR_LINES_KEPT)` on the stream above kept the
-            // OLDEST matches - backwards, since early build/dependency noise (a Gradle plugin is
-            // literally named "error-prone") fills the quota before the real failure near the END
-            // of the log, closest to the tail, is ever reached.
-            final List<String> errorLines = matched.size() <= MAX_ERROR_LINES_KEPT ? matched
-                    : matched.subList(matched.size() - MAX_ERROR_LINES_KEPT, matched.size());
-            // #417 follow-up review: placed right before the TAIL, not right after the head - if
-            // the char-level cap below still has to fire, these lines now sit far closer to what
-            // that cap actually keeps (measured: ~3.4% of already-capped outputs lost this block
-            // entirely under the old head-adjacent placement).
-            final String errorBlock = errorLines.isEmpty() ? "" : "… error-relevant lines kept verbatim from the omitted range:\n" + String.join("\n", errorLines) + "\n";
+            // #423: the head/tail reconstruction itself is #417's own original, unconditional
+            // behavior - only the error-relevant-lines scan of the otherwise-fully-dark omitted
+            // middle is this strategy's own, toggleable addition on top of it.
+            String errorBlock = "";
+            if (errorLineExtractionEnabled) {
+                final List<String> matched = lines.subList(midStart, midEnd).stream()
+                        .filter(l -> ERROR_LINE.matcher(l).find()).toList();
+                // #417 follow-up review: `.limit(MAX_ERROR_LINES_KEPT)` on the stream above kept the
+                // OLDEST matches - backwards, since early build/dependency noise (a Gradle plugin is
+                // literally named "error-prone") fills the quota before the real failure near the END
+                // of the log, closest to the tail, is ever reached.
+                final List<String> errorLines = matched.size() <= MAX_ERROR_LINES_KEPT ? matched
+                        : matched.subList(matched.size() - MAX_ERROR_LINES_KEPT, matched.size());
+                // #417 follow-up review: placed right before the TAIL, not right after the head - if
+                // the char-level cap below still has to fire, these lines now sit far closer to what
+                // that cap actually keeps (measured: ~3.4% of already-capped outputs lost this block
+                // entirely under the old head-adjacent placement).
+                errorBlock = errorLines.isEmpty() ? "" : "… error-relevant lines kept verbatim from the omitted range:\n" + String.join("\n", errorLines) + "\n";
+            }
             out = String.join("\n", lines.subList(0, midStart))
                     + "\n… [" + (midEnd - midStart) + " lines omitted; filter the command's output next time] …\n"
                     + errorBlock

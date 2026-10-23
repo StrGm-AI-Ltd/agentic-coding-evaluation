@@ -22,14 +22,18 @@ import java.util.Map;
  */
 public class CompactionStrategyList extends VerticalLayout {
 
-    /** mirrors CompactionStrategies.TOOL_RESULT_MASK/STRUCTURED_EVICTION on the service side - keep
-     *  in sync by hand with the service-side names. */
+    /** mirrors CompactionStrategies' own constants on the service side - keep in sync by hand with
+     *  the service-side names. */
     public static final String TOOL_RESULT_MASK = "tool_result_mask";
     public static final String STRUCTURED_EVICTION = "structured_eviction";
+    public static final String ERROR_LINE_EXTRACTION = "error_line_extraction";
+    public static final String TOOL_OUTPUT_RECALL = "tool_output_recall";
 
     private static final Map<String, String> LABELS = new LinkedHashMap<>();
     static {
         LABELS.put(TOOL_RESULT_MASK, "Tool-result masking");
+        LABELS.put(ERROR_LINE_EXTRACTION, "Error-line extraction");
+        LABELS.put(TOOL_OUTPUT_RECALL, "Tool-output recall");
         LABELS.put(STRUCTURED_EVICTION, "Structured eviction");
     }
 

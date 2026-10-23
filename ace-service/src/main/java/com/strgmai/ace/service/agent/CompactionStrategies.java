@@ -25,9 +25,20 @@ public final class CompactionStrategies {
 
     public static final String TOOL_RESULT_MASK = "tool_result_mask";
     public static final String STRUCTURED_EVICTION = "structured_eviction";
-    public static final Set<String> KNOWN = Set.of(TOOL_RESULT_MASK, STRUCTURED_EVICTION);
-    /** today's own behavior, unchanged, when a run/task configures nothing. */
-    public static final List<String> DEFAULT = List.of(TOOL_RESULT_MASK);
+    /** #423: keep up to MAX_ERROR_LINES_KEPT FAILED/Exception/assertion-diff/stack-frame lines from
+     *  a bash output's own omitted middle, verbatim, instead of letting that range go completely
+     *  dark (AgentTools.bash()'s own deterministic rescope of #417's original mechanism 4). */
+    public static final String ERROR_LINE_EXTRACTION = "error_line_extraction";
+    /** #424: offers the recall_tool_output tool at all, and is what AgentSession's own masking
+     *  stub text points at ("call recall_tool_output(...)") - disabled, a session falls back to
+     *  the pre-#424 "re-run the command if you need it" wording instead, so the stub never
+     *  references a tool the model structurally cannot call. */
+    public static final String TOOL_OUTPUT_RECALL = "tool_output_recall";
+    public static final Set<String> KNOWN = Set.of(TOOL_RESULT_MASK, STRUCTURED_EVICTION, ERROR_LINE_EXTRACTION, TOOL_OUTPUT_RECALL);
+    /** today's own behavior, unchanged, when a run/task configures nothing - #423/#424 were always
+     *  unconditionally on before either had an off switch, so the default must keep both on;
+     *  structured_eviction stays opt-in, matching its own existing default. */
+    public static final List<String> DEFAULT = List.of(TOOL_RESULT_MASK, ERROR_LINE_EXTRACTION, TOOL_OUTPUT_RECALL);
 
     /** #417 follow-up review (C6): a task override set via the restart-task endpoint never goes
      *  through RunSpec's own compact-constructor validation at all (only a run-level RunSpec
@@ -92,7 +103,7 @@ public final class CompactionStrategies {
         boolean summarized = false;
         for (final String strategy : strategies) {
             switch (strategy) {
-                case TOOL_RESULT_MASK -> masked += AgentSession.compact(msgs, keepRecentTurns, keepTokenBudget);
+                case TOOL_RESULT_MASK -> masked += AgentSession.compact(msgs, keepRecentTurns, keepTokenBudget, strategies.contains(TOOL_OUTPUT_RECALL));
                 case STRUCTURED_EVICTION -> summarized |= structuredEvict(msgs, keepRecentTurns, keepTokenBudget, state, summarize);
                 // #417 follow-up review (C6): this used to be a silent `default -> 0` with a
                 // comment claiming "RunSpec's own validation already rejects an unknown name

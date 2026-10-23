@@ -138,8 +138,12 @@ public class ReferenceAgent {
 
     public ReferenceAgent(BenchProperties props) { this.props = props; }
 
-    static List<ToolSpecification> toolSpecs() {
-        return List.of(
+    /** #424: `recallEnabled=false` leaves recall_tool_output out of the offered tools entirely -
+     *  the model structurally cannot call a tool it was never told exists, matching
+     *  AgentSession.compact()'s own identical check for which stub wording to write (a disabled
+     *  session's stub never points at a tool this list doesn't offer). */
+    static List<ToolSpecification> toolSpecs(final boolean recallEnabled) {
+        final var specs = new ArrayList<ToolSpecification>(List.of(
                 ToolSpecification.builder().name("read")
                         .description("Read a text file (or a line range of it). Prefer ranges: locate with `bash` (grep -n) first, then read only what you need.")
                         .parameters(JsonObjectSchema.builder()
@@ -170,27 +174,28 @@ public class ReferenceAgent {
                                 .addStringProperty("command", "the command to run")
                                 .addIntegerProperty("timeout_sec", "default 600, max 1800")
                                 .required("command").build())
-                        .build(),
-                // #424: formalizes the stub text's own "re-run the command if you need it" - the
-                // output is already sitting in this session's own journal (toolResult() writes it
-                // unconditionally, before anything is ever masked), so recalling it is free;
-                // re-running could mean redoing an expensive build/docker-compose step.
-                // #417 follow-up review (C11): the description used to say "the full, original
-                // output" - inaccurate, since what's journaled (and so what this returns) is the
-                // SAME output already capped by AgentTools' own head/tail/size limits before it
-                // ever entered context in the first place, not a fuller version that was never
-                // seen. (C13): this is an exact tool_call_id lookup, not the content SEARCH Letta's
-                // own filesystem-memory benchmark demonstrated beating a purpose-built memory
-                // product with (https://www.letta.com/blog/benchmarking-ai-agent-memory/) - a
-                // deliberately narrower v1 of that result, not an implementation of it.
-                ToolSpecification.builder().name("recall_tool_output")
-                        .description("Recall the SAME output you already saw for an earlier tool call before it was dropped to save context "
-                                + "(exactly what was shown then, including any truncation already applied - not a fuller version, and it does not "
-                                + "re-run the command). Use the tool_call_id named in its \"[output dropped...]\" stub text.")
-                        .parameters(JsonObjectSchema.builder()
-                                .addStringProperty("tool_call_id", "the id named in the \"[output dropped...]\" stub text")
-                                .required("tool_call_id").build())
-                        .build());
+                        .build()));
+        // #424: formalizes the stub text's own "re-run the command if you need it" - the
+        // output is already sitting in this session's own journal (toolResult() writes it
+        // unconditionally, before anything is ever masked), so recalling it is free;
+        // re-running could mean redoing an expensive build/docker-compose step.
+        // #417 follow-up review (C11): the description used to say "the full, original
+        // output" - inaccurate, since what's journaled (and so what this returns) is the
+        // SAME output already capped by AgentTools' own head/tail/size limits before it
+        // ever entered context in the first place, not a fuller version that was never
+        // seen. (C13): this is an exact tool_call_id lookup, not the content SEARCH Letta's
+        // own filesystem-memory benchmark demonstrated beating a purpose-built memory
+        // product with (https://www.letta.com/blog/benchmarking-ai-agent-memory/) - a
+        // deliberately narrower v1 of that result, not an implementation of it.
+        if (recallEnabled) specs.add(ToolSpecification.builder().name("recall_tool_output")
+                .description("Recall the SAME output you already saw for an earlier tool call before it was dropped to save context "
+                        + "(exactly what was shown then, including any truncation already applied - not a fuller version, and it does not "
+                        + "re-run the command). Use the tool_call_id named in its \"[output dropped...]\" stub text.")
+                .parameters(JsonObjectSchema.builder()
+                        .addStringProperty("tool_call_id", "the id named in the \"[output dropped...]\" stub text")
+                        .required("tool_call_id").build())
+                .build());
+        return specs;
     }
 
     /** run one non-interactive session (or a continuation). The proxy for this session is passed in:
@@ -309,7 +314,7 @@ public class ReferenceAgent {
         if (continueSession && session.exists()) {
             msgs = session.loadMessages();
             if (compactOnLoadKeepRecentTurns != null) {
-                preloadCompactions = AgentSession.compact(msgs, compactOnLoadKeepRecentTurns);
+                preloadCompactions = AgentSession.compact(msgs, compactOnLoadKeepRecentTurns, 0, compactionStrategies.contains(CompactionStrategies.TOOL_OUTPUT_RECALL));
                 // 0: compacted proactively on load, not reactively at an observed over-threshold
                 // prompt - there is no "prompt tokens before" yet, no request has been sent
                 if (preloadCompactions > 0) session.compaction(preloadCompactions, false, 0);
@@ -367,7 +372,7 @@ public class ReferenceAgent {
                 // per-session prefill/decode speed averages
                 .customHeaders(Map.of(com.strgmai.ace.service.proxy.RecordingProxy.SESSION_HEADER, session.sessionId))
                 .build();
-        final List<ToolSpecification> specs = advisoryOnly ? List.of() : toolSpecs();
+        final List<ToolSpecification> specs = advisoryOnly ? List.of() : toolSpecs(compactionStrategies.contains(CompactionStrategies.TOOL_OUTPUT_RECALL));
         // the run's SCRUBBED environment (fresh HOME, docker shim, pinned JAVA_HOME, AB_RUN_ID) is the
         // base for every tool call; extraEnv null = a bare unit-test context
         Map<String, String> env = toolEnv(extraEnv, cwd);
@@ -498,7 +503,7 @@ public class ReferenceAgent {
                     log.warn("could not parse tool call arguments for {} ({}), executing with no arguments: {}", c.name(), c.id(), e.toString());
                     args = Map.of();
                 }
-                final AgentTools.Outcome out = executeTool(c.name(), args, cwd, env, name, session, recallCounts);
+                final AgentTools.Outcome out = executeTool(c.name(), args, cwd, env, name, session, recallCounts, compactionStrategies);
                 if (out.isError()) toolErrors++;
                 msgs.add(ToolExecutionResultMessage.from(c, out.output()));
                 session.toolResult(c.id(), c.name(), out.output(), out.isError());
@@ -546,15 +551,27 @@ public class ReferenceAgent {
     // existing pattern for directly-testable helpers (reasoningKind/isEmptyModelResponse/
     // cachedTokens) - recall_tool_output's own cap (C12) and blank-id handling (C14) are tested
     // directly against this method rather than through a full live run() call.
+    /** `enabledStrategies` defaults to CompactionStrategies.DEFAULT at every call site that does
+     *  not care about #423/#424 specifically (this class's own tests exercising read/write/edit,
+     *  or recall WHILE enabled) - both toggles are on by default, matching today's own existing
+     *  behavior before either had an off switch. */
     static AgentTools.Outcome executeTool(final String name, final Map<String, Object> args, final String cwd, final Map<String, String> env,
-                                           final String sessionName, final AgentSession session, final Map<String, Integer> recallCounts) {
+                                           final String sessionName, final AgentSession session, final Map<String, Integer> recallCounts,
+                                           final List<String> enabledStrategies) {
         try {
             return switch (name) {
                 case "read" -> AgentTools.read(cwd, args);
                 case "write" -> AgentTools.write(cwd, args);
                 case "edit" -> AgentTools.edit(cwd, args);
-                case "bash" -> AgentTools.bash(cwd, args, env);
+                case "bash" -> AgentTools.bash(cwd, args, env, enabledStrategies.contains(CompactionStrategies.ERROR_LINE_EXTRACTION));
                 case "recall_tool_output" -> {
+                    // #423/#424: structurally unreachable once toolSpecs()'s own identical check
+                    // stops offering this tool at all - this guard is what makes the toggle a real
+                    // behavior change rather than just hiding the affordance (a test, or a model
+                    // that already has this id in context from before the toggle flipped, could
+                    // still try calling it directly).
+                    if (!enabledStrategies.contains(CompactionStrategies.TOOL_OUTPUT_RECALL))
+                        yield new AgentTools.Outcome("error: recall_tool_output is disabled for this session", true);
                     final String id = String.valueOf(args.getOrDefault("tool_call_id", ""));
                     // #417 follow-up review (C14): a blank id used to fall through to "error: no
                     // archived output for tool_call_id " with a confusing trailing space - callable
