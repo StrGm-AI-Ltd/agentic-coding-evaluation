@@ -40,6 +40,14 @@ class JobCfgFactoryTest {
         assertFalse(JobCfgFactory.build(List.of(), props()).containsKey("phases"));
     }
 
+    /** #398: same class of bug as --phases above - nothing downstream used to read a task
+     *  granularity flag back out of argv into cfg at all (the flag didn't exist yet). */
+    @Test
+    void taskGranularityIsParsedWhenPresentAndAbsentOtherwise() {
+        assertEquals("fine", JobCfgFactory.build(List.of("--task-granularity=fine"), props()).get("task_granularity"));
+        assertFalse(JobCfgFactory.build(List.of(), props()).containsKey("task_granularity"));
+    }
+
     /** #228: 8 more RunSpec flags had nothing downstream reading them back out of argv into cfg either. */
     @Test
     void planTokensAndWallBudgetAreParsedWhenPresentAndAbsentOtherwise() {

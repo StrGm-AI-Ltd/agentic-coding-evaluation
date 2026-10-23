@@ -362,6 +362,21 @@ public final class Packs {
                 + "Before you stop, append exactly one line to docs/PROGRESS.md: `" + id + " | done | <how verified>` when the acceptance "
                 + "criterion holds, `" + id + " | partial | <what works, what remains>` when it does not yet, or `" + id + " | blocked | <why>`.";
     }
+    /** #398: appended to the p1_plan instruction only when a run (or a restarted p1_plan's own
+     *  override) set a granularity level - an unrecognized/blank level returns "" so the caller's
+     *  own blank check already decides whether to append anything at all. Examples mirror the
+     *  dropdown's own tooltip text, kept non-OOP-specific since ladder rungs span migrations and
+     *  sagas as much as endpoints and classes. */
+    public static String taskGranularityInstruction(final String level) {
+        return switch (level) {
+            case "fine" -> "Favor FINE-grained subtasks: the smallest sensible unit plus its test - e.g. one "
+                    + "method, one migration script, or one small fix per subtask.";
+            case "medium" -> "Favor MEDIUM-grained subtasks: a class, module, or single endpoint plus its tests per subtask.";
+            case "coarse" -> "Favor COARSE-grained subtasks: a full feature slice end-to-end (e.g. a saga across "
+                    + "services, or a complete HTTP contract) plus its tests per subtask.";
+            case null, default -> "";
+        };
+    }
     public static String wrapupInstruction(final String id) {
         return "Time is up for " + id + ". Do NOT write or edit any more code and do not run builds or tests. Append exactly one line to "
                 + "docs/PROGRESS.md: `" + id + " | done | <how verified>` if the acceptance criterion holds, otherwise "

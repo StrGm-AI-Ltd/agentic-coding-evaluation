@@ -183,6 +183,17 @@ class PacksTest {
         assertTrue(instr.contains("Implement task T9 only"), "the original instruction must still be intact");
     }
 
+    /** #398: an unrecognized/blank level must return "" (never throw) so a caller's own blank
+     *  check decides whether to append anything - see RunBench.sessionWithPolicy's own call site. */
+    @Test
+    void taskGranularityInstructionCoversEveryKnownLevelAndFallsBackToEmptyOtherwise() {
+        assertTrue(Packs.taskGranularityInstruction("fine").contains("FINE-grained"));
+        assertTrue(Packs.taskGranularityInstruction("medium").contains("MEDIUM-grained"));
+        assertTrue(Packs.taskGranularityInstruction("coarse").contains("COARSE-grained"));
+        assertEquals("", Packs.taskGranularityInstruction("bogus"));
+        assertEquals("", Packs.taskGranularityInstruction(null));
+    }
+
     @Test
     void theHygieneRulesNameTheRunsWindow() {
         Packs.setWindow(79872);

@@ -576,6 +576,16 @@ class RunBenchTest {
         assertEquals(40000, RunBench.effectiveCompactionTrigger(Map.of("compaction_trigger", "not-a-number"), 40000));
     }
 
+    /** #398: same "a task_override wins over the run-level default" rule as
+     *  effectiveCompactionTrigger above. */
+    @Test
+    void effectiveTaskGranularityPrefersTheTaskOverrideOverTheRunLevelValue() {
+        assertEquals("fine", RunBench.effectiveTaskGranularity(Map.of("task_granularity", "fine"), "coarse"));
+        assertEquals("coarse", RunBench.effectiveTaskGranularity(Map.of(), "coarse"), "no override - the run-level value stands");
+        assertNull(RunBench.effectiveTaskGranularity(Map.of(), null), "no override and no run-level value - no explicit guidance");
+        assertEquals("coarse", RunBench.effectiveTaskGranularity(Map.of("task_granularity", ""), "coarse"), "a blank override is treated as absent");
+    }
+
     /** #322: a task_override for any sampler field replaces just that field - the others keep
      *  whatever the run-level SamplerOverrides already carried (an empty override must return the
      *  exact same base instance, not a field-by-field-identical copy, since callers may rely on

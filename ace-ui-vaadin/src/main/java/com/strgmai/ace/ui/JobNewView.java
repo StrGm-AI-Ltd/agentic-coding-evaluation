@@ -39,6 +39,7 @@ public class JobNewView extends VerticalLayout {
     private final Select<String> harness = new Select<>();
     private final Select<String> mode = new Select<>();
     private final Select<String> planSource = new Select<>();
+    private final Select<String> taskGranularity = new Select<>();
     private final Select<String> parallelPlan = new Select<>();
     private final Select<String> trajectoryUse = new Select<>();
     private final Select<String> reasoningEffort = new Select<>();
@@ -130,12 +131,14 @@ public class JobNewView extends VerticalLayout {
         configureSelect(harness, "", "ref", "pi");
         configureSelect(mode, "", "monolithic", "orchestrated");
         configureSelect(planSource, "", "agent", "reference");
+        configureSelect(taskGranularity, "", "fine", "medium", "coarse");
         configureSelect(parallelPlan, "", "on", "off");
         configureSelect(trajectoryUse, "", "calibration", "direct");
         configureSelect(reasoningEffort, "", "none", "low", "medium", "high");
         harness.setLabel("Harness");
         mode.setLabel("Mode");
         planSource.setLabel("Plan source");
+        taskGranularity.setLabel("Task granularity");
         parallelPlan.setLabel("Parallel planning");
         trajectoryUse.setLabel("Trajectory use");
         reasoningEffort.setLabel("Reasoning effort");
@@ -143,6 +146,7 @@ public class JobNewView extends VerticalLayout {
         harness.setTooltipText(Tooltips.HARNESS);
         mode.setTooltipText(Tooltips.MODE);
         planSource.setTooltipText(Tooltips.PLAN_SOURCE);
+        taskGranularity.setTooltipText(Tooltips.TASK_GRANULARITY);
         parallelPlan.setTooltipText(Tooltips.PARALLEL_PLAN);
         trajectoryUse.setTooltipText(Tooltips.TRAJECTORY_USE);
         reasoningEffort.setTooltipText(Tooltips.REASONING_EFFORT);
@@ -290,7 +294,7 @@ public class JobNewView extends VerticalLayout {
         add(errors);
 
         add(Forms.section("Run",
-                Forms.row(task, runIdField, harness, mode, planSource),
+                Forms.row(task, runIdField, harness, mode, planSource, taskGranularity),
                 Forms.row(taskInfo),
                 Forms.row(phases, parallel, parallelPlan, parallelWeight)));
         add(Forms.section("Budgets",
@@ -395,6 +399,7 @@ public class JobNewView extends VerticalLayout {
         raw.put("harness", harness.getValue());
         raw.put("mode", mode.getValue());
         raw.put("plan_source", planSource.getValue());
+        raw.put("task_granularity", taskGranularity.getValue());
         raw.put("reasoning_effort", reasoningEffort.getValue());
         raw.put("phases", String.join(",", phases.getValue()));
         raw.put("temperature", temperature.getValue());

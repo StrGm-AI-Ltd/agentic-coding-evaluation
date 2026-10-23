@@ -203,6 +203,15 @@ public class RunBench {
                 ? CompactionStrategies.parse(s) : runLevel;
     }
 
+    /** #398: same "a task_override wins over the run-level default" rule as
+     *  effectiveCompactionTrigger above - only ever resolved for name=="p1_plan" (see
+     *  sessionWithPolicy's own call site), since granularity has no meaning for any other
+     *  phase/task session. null/blank at every level means "no explicit guidance" - today's own
+     *  unconstrained behavior. */
+    static String effectiveTaskGranularity(final Map<String, Object> override, final String runLevel) {
+        return override.get("task_granularity") instanceof String s && !s.isBlank() ? s : runLevel;
+    }
+
     /** #322: temperature/top_p/top_k/repetition_penalty/max_tokens/reasoning_effort are per-call
      *  sampler knobs, pinned run-wide once as cfg's "_sampler_overrides" (RecordingProxy.
      *  SamplerOverrides) and reused at every proxies.start(...) call site. A task_override for any
@@ -1081,11 +1090,21 @@ public class RunBench {
         // ReferenceAgent-local constant with no run-level override at all
         final int maxTurns = effectiveInt(override, "max_turns",
                 cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS);
+        // #398: resolved only for "p1_plan" (the one place decomposition happens) - this single
+        // name-gated check, not a separate append at each of orchestratedPhase's/monolithicPhases'
+        // own two p1_plan call sites, is what makes the gating condition "whenever the agent itself
+        // writes docs/IMPLEMENTATION_PLAN.md" automatic: orchestratedPhase's plan_source=reference
+        // branch never calls this method with name=="p1_plan" at all, and monolithicPhases' own
+        // p1_plan call already flows through here same as every other phase.
+        final String taskGranularity = "p1_plan".equals(name)
+                ? effectiveTaskGranularity(override, (String) cfg.get("task_granularity")) : null;
+        final String effectiveInstruction = taskGranularity == null || taskGranularity.isBlank()
+                ? instruction : instruction + "\n\n" + Packs.taskGranularityInstruction(taskGranularity);
         final long t0 = System.currentTimeMillis();
         // wall <= 0 means unlimited (the system-wide "0 = no budget" convention) - a "hard deadline"
         // of right now would be actively misleading, not just an edge case of the normal wording
-        String full = plainPlan ? instruction
-                : instruction + "\n\n" + (wall > 0
+        String full = plainPlan ? effectiveInstruction
+                : effectiveInstruction + "\n\n" + (wall > 0
                         ? Packs.budgetSection(name, LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm")),
                                 LocalDateTime.now().plusSeconds(wall).format(DateTimeFormatter.ofPattern("HH:mm")), (int) (wall / 60))
                         : Packs.unlimitedBudgetSection(name))

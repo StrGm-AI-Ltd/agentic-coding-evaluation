@@ -20,10 +20,15 @@ public record RunSpec(String task, String model, String harness, String mode, St
                       Integer fixWall, Integer fixTokens, Integer parallelPlanTokens, Integer handoffTokens, Integer wrapupTokens,
                       Double efficiencyWeight,
                       boolean judgeEnabled, Integer judgeEveryNTurns, String judgeModel, Integer judgeWallSec, Integer judgeTokens,
-                      boolean budgetRescueEnabled, Integer rescueWallSec, Integer rescueTokens, Integer rescueKeepRecentTurns) {
+                      boolean budgetRescueEnabled, Integer rescueWallSec, Integer rescueTokens, Integer rescueKeepRecentTurns,
+                      String taskGranularity) {
 
     public static final String RUN_ID = "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$";
     public static final List<String> REASONING_EFFORTS = List.of("none", "low", "medium", "high");
+    /** #398: how finely the agent should decompose the implementation plan into subtasks - only
+     *  meaningful on an agent-authored plan (see RunBench.sessionWithPolicy's own "p1_plan"-only
+     *  gate, which applies regardless of plan_source/mode - see #398's own "Gating condition"). */
+    public static final List<String> TASK_GRANULARITIES = List.of("fine", "medium", "coarse");
     /** "ref" = ReferenceAgent (in-process), "pi" = PiAgent (an external subprocess) - see #236. */
     public static final Set<String> HARNESSES = Set.of("ref", "pi");
     /** the rung's own multi-phase sequence (RunBench.PHASES) - --phases picks a subset of these to
@@ -105,6 +110,8 @@ public record RunSpec(String task, String model, String harness, String mode, St
             throw new IllegalArgumentException("harness must be one of " + HARNESSES + ": " + harness);
         if (planSource != null && !List.of("agent", "reference").contains(planSource))
             throw new IllegalArgumentException("plan_source must be agent or reference");
+        if (taskGranularity != null && !taskGranularity.isBlank() && !TASK_GRANULARITIES.contains(taskGranularity))
+            throw new IllegalArgumentException("task_granularity must be one of " + TASK_GRANULARITIES + ": " + taskGranularity);
         // sampler knobs (#72): temperature/top_p/repetition_penalty are unbounded on the wire (oMLX's
         // own choice to reject or clamp), but a negative value is never meaningful for any of them
         if (temperature != null && temperature < 0) throw new IllegalArgumentException("temperature must be >= 0: " + temperature);
@@ -186,6 +193,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (rescueWallSec != null) args.add("--rescue-wall-sec=" + rescueWallSec);
         if (rescueTokens != null) args.add("--rescue-tokens=" + rescueTokens);
         if (rescueKeepRecentTurns != null) args.add("--rescue-keep-recent-turns=" + rescueKeepRecentTurns);
+        if (taskGranularity != null && !taskGranularity.isBlank()) args.add("--task-granularity=" + taskGranularity);
         return args;
     }
 
@@ -203,7 +211,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
      *  sync. */
     public static final class Builder {
         private String task, model, harness, mode, planSource, phases, parallel, parallelPlan, reviewerModel,
-                trajectoryReviewerModel, trajectoryUse, javaHome, runId, reasoningEffort, judgeModel, compactionStrategies;
+                trajectoryReviewerModel, trajectoryUse, javaHome, runId, reasoningEffort, judgeModel, compactionStrategies, taskGranularity;
         private Integer taskWall, taskTokens, implWall, implTokens, planWall, planTokens, wallBudget, contextWindow, firstTokenTimeout,
                 compactionTrigger, reviewWallSec, topK, maxTokens, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
                 fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, judgeEveryNTurns, judgeWallSec, judgeTokens,
@@ -273,6 +281,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public Builder rescueWallSec(final Integer v) { rescueWallSec = v; return this; }
         public Builder rescueTokens(final Integer v) { rescueTokens = v; return this; }
         public Builder rescueKeepRecentTurns(final Integer v) { rescueKeepRecentTurns = v; return this; }
+        public Builder taskGranularity(final String v) { taskGranularity = v; return this; }
 
         public RunSpec build() {
             return new RunSpec(task, model, harness, mode, planSource, phases, taskWall, taskTokens, implWall, implTokens,
@@ -282,7 +291,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                     temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
                     fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, efficiencyWeight,
                     judgeEnabled, judgeEveryNTurns, judgeModel, judgeWallSec, judgeTokens,
-                    budgetRescueEnabled, rescueWallSec, rescueTokens, rescueKeepRecentTurns);
+                    budgetRescueEnabled, rescueWallSec, rescueTokens, rescueKeepRecentTurns, taskGranularity);
         }
     }
 
@@ -322,6 +331,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 .judgeModel(str(spec, "judge_model")).judgeWallSec(intOf(spec, "judge_wall_sec")).judgeTokens(intOf(spec, "judge_tokens"))
                 .budgetRescueEnabled(bool(spec, "budget_rescue_enabled", false)).rescueWallSec(intOf(spec, "rescue_wall_sec"))
                 .rescueTokens(intOf(spec, "rescue_tokens")).rescueKeepRecentTurns(intOf(spec, "rescue_keep_recent_turns"))
+                .taskGranularity(str(spec, "task_granularity"))
                 .build();
     }
 

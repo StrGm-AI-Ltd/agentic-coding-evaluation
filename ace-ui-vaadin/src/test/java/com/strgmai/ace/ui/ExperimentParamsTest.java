@@ -264,6 +264,18 @@ class ExperimentParamsTest {
     }
 
     @Test
+    void taskGranularityOmittedWhenUnsetOtherwisePassedThrough() {
+        final var raw = common();
+        raw.put("model", "qwen");
+        raw.put("task_granularity", null);
+        assertFalse(ExperimentParams.build("harness_effect", raw).containsKey("task_granularity"), "unset leaves today's unconstrained behavior in place");
+        raw.put("task_granularity", "");
+        assertFalse(ExperimentParams.build("harness_effect", raw).containsKey("task_granularity"), "blank is treated the same as unset");
+        raw.put("task_granularity", "fine");
+        assertEquals("fine", ExperimentParams.build("harness_effect", raw).get("task_granularity"));
+    }
+
+    @Test
     void unknownTemplateRejected() {
         assertThrows(IllegalArgumentException.class, () -> ExperimentParams.build("nope", Map.of()));
     }
