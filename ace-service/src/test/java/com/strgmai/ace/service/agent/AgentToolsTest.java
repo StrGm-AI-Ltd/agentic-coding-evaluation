@@ -233,6 +233,45 @@ class AgentToolsTest {
         assertEquals("'plain'", AgentTools.shellQuote("plain"));
     }
 
+    /** #325 (comment 2): trailing per-line whitespace is pure noise - dropped unconditionally,
+     *  regardless of run length. */
+    @Test
+    void tidyWhitespaceStripsTrailingSpacesAndTabsFromEveryLine() {
+        assertEquals("one\ntwo\nthree", AgentTools.tidyWhitespace("one   \ntwo\t\t\nthree"));
+    }
+
+    /** A run under the 3-line threshold is left alone - not noise, likely an intentional section
+     *  break. */
+    @Test
+    void tidyWhitespaceLeavesAShortBlankRunUntouched() {
+        assertEquals("a\n\n\nb", AgentTools.tidyWhitespace("a\n\n\nb"));
+    }
+
+    /** A run of 3+ blank lines is capped at 2 - long enough to cost real tokens, still recognizably
+     *  "a gap was here" without the full original count. */
+    @Test
+    void tidyWhitespaceCollapsesThreeOrMoreBlankLinesDownToTwo() {
+        assertEquals("a\n\n\nb", AgentTools.tidyWhitespace("a\n\n\n\n\nb"));
+    }
+
+    /** Leading/internal whitespace - column alignment, indentation depth - must survive: the one
+     *  thing this cleanup must never do is destroy structure a model may need to read. */
+    @Test
+    void tidyWhitespacePreservesLeadingIndentation() {
+        assertEquals("  indented\n    more", AgentTools.tidyWhitespace("  indented   \n    more\t"));
+    }
+
+    /** End-to-end through bash() itself, not just the helper directly - confirms the cleanup is
+     *  actually wired into the real output pipeline. */
+    @Test
+    void bashOutputHasTrailingWhitespaceStrippedAndLongBlankRunsCollapsed() throws IOException {
+        final var ws = Files.createTempDirectory("ws");
+        final AgentTools.Outcome out = AgentTools.bash(ws.toString(),
+                Map.of("command", "printf 'a   \\n\\n\\n\\n\\nb\\n'"), Map.of());
+        assertFalse(out.isError(), out.output());
+        assertTrue(out.output().startsWith("a\n\n\nb\n"), out.output());
+    }
+
     @Test
     void compactionStubsOnlyOldestToolOutputsAndNeverThePack() {
         // system, pack (first user), then alternating assistant/toolResult pairs

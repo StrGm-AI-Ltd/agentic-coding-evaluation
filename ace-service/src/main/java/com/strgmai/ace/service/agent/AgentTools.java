@@ -153,6 +153,7 @@ public final class AgentTools {
             rc = r.rc();
             out = r.out() + (r.err().isBlank() ? "" : "\n[stderr]\n" + r.err());
             out = ANSI.matcher(out).replaceAll("");
+            out = tidyWhitespace(out);
             if (rc == 124 && out.contains("[timeout")) return new Outcome("[timeout after " + to + "s]\n[exit 124]", true);
         } catch (Exception e) {
             return new Outcome("error: " + e, true);
@@ -200,6 +201,34 @@ public final class AgentTools {
     /** POSIX single-quoting: safe against anything the value contains, including spaces and `$`. */
     static String shellQuote(final String s) {
         return "'" + s.replace("'", "'\\''") + "'";
+    }
+
+    /** #325 (comment 2): a bash command's own output, not a scoped-down version of it like read()'s
+     *  line-numbered rendering - two cheap, lossless cleanups found live to be reliably pure noise.
+     *  Trailing per-line whitespace is dropped unconditionally (never meaningful). A run of 3+ blank
+     *  lines is capped at 2 - long enough to cost real tokens, and still unambiguously "a gap was
+     *  here" without the full original count. Leading/internal whitespace (indentation, column
+     *  alignment in `docker ps`/`kubectl get pods`-style output, a `tree` listing's own depth) is
+     *  deliberately left alone: a short, common run is usually one token already under this
+     *  model's own BPE, so stripping it saves nothing while risking silently destroying structure -
+     *  worse than truncation, which at least announces itself. */
+    static String tidyWhitespace(final String s) {
+        final String[] lines = s.split("\n", -1);
+        final List<String> out = new ArrayList<>(lines.length);
+        int blankRun = 0;
+        for (final String raw : lines) {
+            int end = raw.length();
+            while (end > 0 && (raw.charAt(end - 1) == ' ' || raw.charAt(end - 1) == '\t')) end--;
+            final String line = raw.substring(0, end);
+            if (line.isEmpty()) {
+                blankRun++;
+                if (blankRun <= 2) out.add(line);
+            } else {
+                blankRun = 0;
+                out.add(line);
+            }
+        }
+        return String.join("\n", out);
     }
 
     public static Duration bashTimeout(int requested) { return Duration.ofSeconds(Math.min(1800, Math.max(5, requested))); }
