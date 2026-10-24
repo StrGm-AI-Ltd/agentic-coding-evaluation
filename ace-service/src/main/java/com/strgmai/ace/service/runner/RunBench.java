@@ -391,6 +391,16 @@ public class RunBench {
         };
     }
 
+    /** #332: backs the record_lesson tool for this task's session (and, via handoffStep's own
+     *  identical call, the cold handoff session too). Always returns a real callback - unlike
+     *  judge/handoffFinalTurn above, there is no separate "should this task even get one" check
+     *  here; actual enable/disable is the "lesson_recording" compaction-strategy toggle
+     *  (CompactionStrategies.LESSON_RECORDING), already checked downstream by toolSpecs()/
+     *  executeTool() themselves, the same place every other strategy toggle is enforced. */
+    ReferenceAgent.LessonRecorder buildLessonRecorder(final Map<String, Object> cfg, final Path rd, final String taskId) {
+        return text -> recordLesson(cfg, rd, taskId, text);
+    }
+
     /** #262, found live: the harness's own fallback status line always carried an empty tail, so
      *  "budget exhausted" showed even when the real cause (confirmed live: an oMLX memory-guard
      *  rejection, nothing to do with any configured budget) was available or inferable. rc==2 is
@@ -1038,6 +1048,20 @@ public class RunBench {
             final long firstTokenTimeoutMs, final int compactionTrigger, final int maxTurns, final String model,
             final Map<String, String> extraEnv, final ReferenceAgent.JudgeCheckpoint judge, final ReferenceAgent.FinalTurn finalTurn,
             final List<String> compactionStrategies) throws Exception {
+        return runAgentSession(cfg, name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase,
+                abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, finalTurn, compactionStrategies, null);
+    }
+
+    /** #332: adds the record_lesson tool's own callback on top of the compactionStrategies-aware
+     *  form above - only sessionWithPolicy's own main-session and handoff call sites ever pass a
+     *  real one; every other call site goes through one of the convenience overloads above with
+     *  lessonRecorder=null. PiAgent ignores this the same way it already ignores judge/finalTurn. */
+    private ReferenceAgent.SessionResult runAgentSession(final Map<String, Object> cfg, final String name, final String instruction,
+            final long wallSec, final Long tokenBudget, final Path sessionDir, final String sessionId, final boolean continueSession,
+            final String appendSystem, final String cwd, final String proxyBase, final Consumer<String> abortProxy,
+            final long firstTokenTimeoutMs, final int compactionTrigger, final int maxTurns, final String model,
+            final Map<String, String> extraEnv, final ReferenceAgent.JudgeCheckpoint judge, final ReferenceAgent.FinalTurn finalTurn,
+            final List<String> compactionStrategies, final ReferenceAgent.LessonRecorder lessonRecorder) throws Exception {
         return "pi".equals(cfg.get("harness"))
                 ? piAgent.run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase,
                         abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv)
@@ -1053,7 +1077,7 @@ public class RunBench {
                 // and only ever fires when there is real history to shrink before the first send.
                 : agent.run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase,
                         abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, false, finalTurn, props.keepRecentTurns(),
-                        compactionStrategies == null ? CompactionStrategies.DEFAULT : compactionStrategies);
+                        compactionStrategies == null ? CompactionStrategies.DEFAULT : compactionStrategies, lessonRecorder);
     }
 
     private Map<String, Object> sessionWithPolicy(Map<String, Object> cfg, String runId, String name, String instruction,
@@ -1093,6 +1117,19 @@ public class RunBench {
                                                   RecordingProxyFactory.ProxySession proxy, String appendSystem, String sessionId,
                                                   Map<String, String> envOverride, boolean plainPlan, ReferenceAgent.JudgeCheckpoint judge,
                                                   ReferenceAgent.FinalTurn finalTurn) throws Exception {
+        return sessionWithPolicy(cfg, runId, name, instruction, wall, tokens, rd, ws, journal, proxy, appendSystem, sessionId, envOverride, plainPlan, judge, finalTurn, null);
+    }
+
+    /** #332: adds the record_lesson tool's own callback on top of the finalTurn-aware form above -
+     *  forwarded to every one of main/continuation/reengage/wrap-up below, same reasoning as
+     *  finalTurn's own identical forwarding (a task may only get around to reporting a finding on
+     *  whichever of those calls turns out to be genuinely last). Only the task loop's own
+     *  main-session call and handoffStep's own cold-session call ever pass a real one. */
+    private Map<String, Object> sessionWithPolicy(Map<String, Object> cfg, String runId, String name, String instruction,
+                                                  long wall, long tokens, Path rd, Path ws, Path journal,
+                                                  RecordingProxyFactory.ProxySession proxy, String appendSystem, String sessionId,
+                                                  Map<String, String> envOverride, boolean plainPlan, ReferenceAgent.JudgeCheckpoint judge,
+                                                  ReferenceAgent.FinalTurn finalTurn, ReferenceAgent.LessonRecorder lessonRecorder) throws Exception {
         final Map<String, String> env = envOverride != null ? envOverride : (Map<String, String>) cfg.get("_agent_env");
         // the run's OWN requested model (--model=): a single worker JVM handles every queued job in
         // turn, so the operator-wide default (props.model()) is not per-run - passing null here would
@@ -1151,7 +1188,7 @@ public class RunBench {
         // first run.
         ReferenceAgent.SessionResult rec = RunBenchSupport.runBounded(wall, name, rd.resolve("sessions"), sid, proxy.abort(), () -> runAgentSession(cfg, name, full, wall, tokens,
                 rd.resolve("sessions"), sid, true, appendSystem, ws.toString(), proxy.base(), proxy.abort(),
-                firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, judge, finalTurn, compactionStrategies));
+                firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, judge, finalTurn, compactionStrategies, lessonRecorder));
         // P-1: a session that died on a `length` finish gets one continuation with what is LEFT (R4
         // C-7). wall/tokens <= 0 means unlimited (the system-wide "0 = no budget" convention): there
         // is always "enough" remaining wall-clock, and what's LEFT of an unlimited token budget is
@@ -1170,7 +1207,7 @@ public class RunBench {
                 rec = RunBenchSupport.runBounded(contWall, name + "-continue", rd.resolve("sessions"), sid, contProxy.abort(), () -> runAgentSession(cfg, name + "-continue",
                         "Your previous turn was cut off at the output limit. Continue the task from where you stopped; be concise and act with tools.",
                         contWall, remaining, rd.resolve("sessions"), sid, true, appendSystem, ws.toString(), contProxy.base(), contProxy.abort(),
-                        firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, finalTurn, compactionStrategies));
+                        firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, finalTurn, compactionStrategies, lessonRecorder));
             } finally { contProxy.stop(); }
         }
         final Map<String, Object> out = RunBench.sessionRecord(rec, name);
@@ -1186,7 +1223,7 @@ public class RunBench {
                     final long reengageWall = wall <= 0 ? 0 : wall - (System.currentTimeMillis() - t0) / 1000;
                     rec = RunBenchSupport.runBounded(reengageWall, name + "-reengage", rd.resolve("sessions"), sid, reengageProxy.abort(), () -> runAgentSession(cfg, name + "-reengage",
                             Packs.reEngageInstruction(name), reengageWall, remaining, rd.resolve("sessions"), sid, true, appendSystem, ws.toString(), reengageProxy.base(), reengageProxy.abort(),
-                            firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, finalTurn, compactionStrategies));
+                            firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, finalTurn, compactionStrategies, lessonRecorder));
                 } finally { reengageProxy.stop(); }
                 reported = progressStatus(ws, name);
             }
@@ -1223,7 +1260,7 @@ public class RunBench {
             try {
                 w = RunBenchSupport.runBounded(wrapWall, name + "-wrapup", rd.resolve("sessions"), canonicalSessionId, wrapProxy.abort(),
                         () -> runAgentSession(cfg, name + "-wrapup", wrapInstr, wrapWall, wrapupTokens, rd.resolve("sessions"), canonicalSessionId,
-                                true, appendSystem, ws.toString(), wrapProxy.base(), wrapProxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, wrapFinalTurn, compactionStrategies));
+                                true, appendSystem, ws.toString(), wrapProxy.base(), wrapProxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, wrapFinalTurn, compactionStrategies, lessonRecorder));
             } finally { wrapProxy.stop(); }
             out.put("wrapup_rc", w.rc());
             out.put("wrapup_seconds", w.seconds());
@@ -1458,9 +1495,10 @@ public class RunBench {
                         final var proxy = proxies.start(journal, effTaskTokens, null, effectiveSamplerOverrides(cfg, taskOverride));
                         final var judgeCheckpoint = buildJudgeCheckpoint(cfg, runId, ws, rd, t.id, t.goal, effTaskWall, effTaskTokens, taskOverride);
                         final var handoffFinalTurn = buildHandoffFinalTurn(handoffs, ws, t.id);
+                        final var lessonRecorder = buildLessonRecorder(cfg, rd, t.id);
                         try {
                             rec = sessionWithPolicy(cfg, runId, t.id, Packs.taskInstruction(t.id) + "\n\n" + tp,
-                                    effTaskWall, effTaskTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null, false, judgeCheckpoint, handoffFinalTurn);
+                                    effTaskWall, effTaskTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null, false, judgeCheckpoint, handoffFinalTurn, lessonRecorder);
                         } finally { proxy.stop(); intervene.clear(runId, t.id); }
                         // #307: before anything downstream (the phase tag, logTaskAttempt, handoffStep)
                         // ever looks at this task's own final state - a successful rescue changes what
@@ -1599,11 +1637,15 @@ public class RunBench {
             final String handoffSid = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/" + t.id).getBytes()).toString();
             // 0 means unlimited (the system-wide "0 = no budget" convention)
             final int handoffWall = cfg.get("handoff_wall_sec") instanceof Number hw ? hw.intValue() : 0;
+            // #332: the cold handoff session gets record_lesson too, same as the main task
+            // session - a task whose own FinalTurn fast path never fired (it timed out and is
+            // only now getting a cold handoff) shouldn't lose this capability just because its
+            // main session already ended.
             ReferenceAgent.SessionResult h = RunBenchSupport.runBounded(handoffWall, t.id + "-handoff", rd.resolve("sessions"), handoffSid, proxy.abort(),
                     () -> runAgentSession(cfg, t.id + "-handoff", Packs.handoffInstruction(t.id), handoffWall, handoffTokens,
                             rd.resolve("sessions"), handoffSid, true, rd.resolve("packs/stable.md").toString(), ws.toString(),
                             proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("model"),
-                            (Map<String, String>) cfg.get("_agent_env")));
+                            (Map<String, String>) cfg.get("_agent_env"), null, null, null, buildLessonRecorder(cfg, rd, t.id)));
             recordHandoffContent(ws, manifest, rec, t.id, hp);
             rec.put("handoff_seconds", h.seconds());
             rec.put("handoff_rc", h.rc());
@@ -2224,11 +2266,12 @@ public class RunBench {
                         Map<String, String> envT = RunBenchSupport.scrubbedEnv(Path.of(home + "-home-" + t.id).toString(), runId + "/" + t.id, (String) cfg.get("java_home"));   // the task's own HOME copy (R6)
                         final Path wsT = Path.of(ws + "-" + t.id);
                         final var judgeCheckpoint = buildJudgeCheckpoint(cfg, runId, wsT, rd, t.id, t.goal, effTaskWall, effTaskTokens, taskOverride);
+                        final var lessonRecorder = buildLessonRecorder(cfg, rd, t.id);
                         Map<String, Object> rec;
                         try {
                             rec = sessionWithPolicy(cfg, runId, t.id, Packs.taskInstruction(t.id) + "\n\n" + packs.get(t.id),
                                     effTaskWall, effTaskTokens, rd, wsT, taskJournals.get(t.id), proxy,
-                                    rd.resolve("packs/stable.md").toString(), null, envT, false, judgeCheckpoint);
+                                    rd.resolve("packs/stable.md").toString(), null, envT, false, judgeCheckpoint, null, lessonRecorder);
                         } finally { proxy.stop(); intervene.clear(runId, t.id); }
                         // #307: same reasoning as the sequential loop's own call site - everything
                         // downstream (the manifest snapshot below, the wave merge) must see the

@@ -28,12 +28,16 @@ public class CompactionStrategyList extends VerticalLayout {
     public static final String STRUCTURED_EVICTION = "structured_eviction";
     public static final String ERROR_LINE_EXTRACTION = "error_line_extraction";
     public static final String TOOL_OUTPUT_RECALL = "tool_output_recall";
+    /** #332: not itself a compaction mechanism - offers the record_lesson tool, reusing this
+     *  exact pluggable-session-capability control rather than a second, parallel toggle UI. */
+    public static final String LESSON_RECORDING = "lesson_recording";
 
     private static final Map<String, String> LABELS = new LinkedHashMap<>();
     static {
         LABELS.put(TOOL_RESULT_MASK, "Tool-result masking");
         LABELS.put(ERROR_LINE_EXTRACTION, "Error-line extraction");
         LABELS.put(TOOL_OUTPUT_RECALL, "Tool-output recall");
+        LABELS.put(LESSON_RECORDING, "Cross-task lesson recording");
         LABELS.put(STRUCTURED_EVICTION, "Structured eviction");
     }
 
@@ -44,6 +48,7 @@ public class CompactionStrategyList extends VerticalLayout {
         TOOLTIPS.put(TOOL_RESULT_MASK, Tooltips.COMPACTION_TOOL_RESULT_MASK);
         TOOLTIPS.put(ERROR_LINE_EXTRACTION, Tooltips.COMPACTION_ERROR_LINE_EXTRACTION);
         TOOLTIPS.put(TOOL_OUTPUT_RECALL, Tooltips.COMPACTION_TOOL_OUTPUT_RECALL);
+        TOOLTIPS.put(LESSON_RECORDING, Tooltips.COMPACTION_LESSON_RECORDING);
         TOOLTIPS.put(STRUCTURED_EVICTION, Tooltips.COMPACTION_STRUCTURED_EVICTION);
     }
 
