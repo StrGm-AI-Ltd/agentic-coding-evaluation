@@ -272,6 +272,11 @@ public class BenchController {
             new String[]{"p0_definition", "Definition", "phase/p0"},
             new String[]{"p1_plan", "Plan", "phase/p1"},
             new String[]{"PARALLEL_PLAN", "Parallel plan", "phase/parallel_plan"});
+    /** RunBench's own fixed final step after every task wave finishes (RunBench.java's "---- integration:
+     *  the fixed final task ----") - runs for every orchestrated multi-task plan, but only once the
+     *  task loop has actually reached it, so this still goes through the same sessionCounts().found()
+     *  gate as every other stage below ("show what's actually there"), not an unconditional row. */
+    private static final String[] INTEGRATION_STAGE = {"INTEGRATION", "Integration", "phase/INTEGRATION"};
     private static final String[] POST_TASK_STAGE = {"REVIEW", "Self-review", "phase/review"};
 
     @GetMapping("/api/jobs/{id}/plan")
@@ -292,7 +297,9 @@ public class BenchController {
         int order = 0;
         for (final String[] stage : PRE_TASK_STAGES)
             if (sessionCounts(base, stage[0]).found()) rows.add(stageRow(order++, stage, ws));
-        for (final List<PlanTask> wave : PlanParser.waves(tasks))
+        int waveIndex = 0;
+        for (final List<PlanTask> wave : PlanParser.waves(tasks)) {
+            waveIndex++;
             for (final PlanTask t : wave) {
                 final Map<String, Object> row = new LinkedHashMap<>();
                 row.put("order", order++);
@@ -319,6 +326,14 @@ public class BenchController {
                 row.put("stage", false);
                 rows.add(row);
             }
+            // the FIX step (RunBench.java's own "FIX-W" + wave count naming - 1-indexed, matching
+            // this wave's own position in PlanParser.waves()) only exists when THIS wave broke and
+            // needed repair - same "show what's actually there" gate as every other stage here.
+            final String fixId = "FIX-W" + waveIndex;
+            if (sessionCounts(base, fixId).found())
+                rows.add(stageRow(order++, new String[]{fixId, "Fix (wave " + waveIndex + ")", "phase/" + fixId}, ws));
+        }
+        if (sessionCounts(base, INTEGRATION_STAGE[0]).found()) rows.add(stageRow(order++, INTEGRATION_STAGE, ws));
         if (sessionCounts(base, POST_TASK_STAGE[0]).found()) rows.add(stageRow(order, POST_TASK_STAGE, ws));
         return Map.of("tasks", rows);
     }
@@ -1206,7 +1221,15 @@ public class BenchController {
     @GetMapping("/api/jobs/{id}/tasks/{taskId}/prompt")
     public Map<String, Object> taskPrompt(@PathVariable UUID id, @PathVariable String taskId) {
         final Map<String, Object> job = queue.get(id);
-        final String instruction = Packs.taskInstruction(taskId);
+        // INTEGRATION/FIX-W* are stage rows now too (see plan()'s own INTEGRATION_STAGE/FIX-W
+        // handling) - Packs.taskInstruction()'s generic "Implement task X only" framing is wrong
+        // for either (they're not real plan tasks), so each gets its own REAL instruction instead,
+        // the exact text RunBench.java itself sends. FIX_INSTRUCTION's "{tasks}" placeholder names
+        // the broken wave's own task ids at the real call site - not worth re-deriving here just for
+        // this preamble, when the pack file right below it already carries the concrete problem list.
+        final String instruction = "INTEGRATION".equals(taskId) ? Packs.INTEGRATION_INSTRUCTION
+                : taskId.startsWith("FIX-W") ? Packs.FIX_INSTRUCTION.replace("{id}", taskId).replace("{tasks}", "the merged tasks")
+                : Packs.taskInstruction(taskId);
         try {
             final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
             final Path pack = base.resolve("packs").resolve(taskId + ".md");
