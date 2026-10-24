@@ -167,7 +167,12 @@ public class ReferenceAgent {
                                 .required("path").build())
                         .build(),
                 ToolSpecification.builder().name("write")
-                        .description("Create or overwrite a file with the given content (directories are created).")
+                        // #325: prefer edit for an existing file - a full rewrite's own argument is
+                        // far larger than a diff, and (unlike a tool result) never shrinks until a
+                        // LATER write/edit/read on the same path makes it provably stale
+                        .description("Create a new file, or fully overwrite an existing one (directories are created). "
+                                + "Prefer `edit` for changes to an existing file; reserve this for new files or rewrites "
+                                + "so pervasive a diff wouldn't be meaningfully smaller.")
                         .parameters(JsonObjectSchema.builder()
                                 .addStringProperty("path", "where to write")
                                 .addStringProperty("content", "the full file content")
