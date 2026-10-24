@@ -542,6 +542,34 @@ class RunSpecTest {
         assertNull(rs.taskWall());
     }
 
+    /** The mid-task judge now defaults to ON for every run that doesn't say otherwise - unlike
+     *  every other boolean flag here, an unset "judge_enabled" must become true, not false. */
+    @Test
+    void fromMapDefaultsJudgeEnabledToTrueWhenUnset() {
+        final var spec = java.util.Map.<String, Object>of("task", "L3p_point_in_time");
+        assertTrue(RunSpec.from(spec).judgeEnabled());
+    }
+
+    @Test
+    void fromMapRespectsAnExplicitJudgeEnabledFalse() {
+        final var spec = java.util.Map.<String, Object>of("task", "L3p_point_in_time", "judge_enabled", false);
+        assertFalse(RunSpec.from(spec).judgeEnabled());
+    }
+
+    /** argv() must emit EITHER --judge or --no-judge, never omit both - an omitted flag would be
+     *  indistinguishable from "never set" on the far side (JobCfgFactory), silently losing an
+     *  explicit opt-out. */
+    @Test
+    void argvAlwaysEmitsEitherJudgeFlagNeverOmitsBoth() {
+        final var on = RunSpec.builder().task("t").model("m").runId("r1").judgeEnabled(true).build().argv("r1");
+        assertTrue(on.contains("--judge"));
+        assertFalse(on.contains("--no-judge"));
+
+        final var off = RunSpec.builder().task("t").model("m").runId("r1").judgeEnabled(false).build().argv("r1");
+        assertTrue(off.contains("--no-judge"));
+        assertFalse(off.contains("--judge"));
+    }
+
     @Test
     void builderProducesTheSameRunSpecAsThePositionalConstructor() {
         final var viaBuilder = RunSpec.builder().task("t").model("m").runId("r1").temperature(0.5).build();

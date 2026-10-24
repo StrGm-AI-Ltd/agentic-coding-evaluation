@@ -129,7 +129,9 @@ final class JobCfgFactory {
         // (and task-override-able) only at the task loop's own call sites in RunBench, never at
         // p0/p1/PARALLEL_PLAN/wrap-up/handoff/review - see RunBench's own judge wiring
         final Map<String, Object> judge = new LinkedHashMap<>();
-        judge.put("enabled", argv.contains("--judge"));
+        // defaults to ON now - RunSpec.argv() always emits either --judge or --no-judge
+        // explicitly, so only a raw/hand-built argv list missing both falls back to enabled here
+        judge.put("enabled", !argv.contains("--no-judge"));
         judge.put("every_n_turns", WorkerService.flag(argv, "--judge-every-n-turns") != null
                 ? Integer.parseInt(WorkerService.flag(argv, "--judge-every-n-turns")) : 10);
         judge.put("model", WorkerService.flag(argv, "--judge-model"));

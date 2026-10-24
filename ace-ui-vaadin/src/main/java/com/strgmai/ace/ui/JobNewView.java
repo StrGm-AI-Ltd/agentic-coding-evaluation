@@ -265,6 +265,7 @@ public class JobNewView extends VerticalLayout {
         trajectoryReview.setTooltipText(Tooltips.TRAJECTORY_REVIEW);
         noContextProbe.setTooltipText(Tooltips.NO_CONTEXT_PROBE);
         contextProbeFresh.setTooltipText(Tooltips.CONTEXT_PROBE_FRESH);
+        judgeEnabled.setValue(true);   // on by default now - mirrors RunSpec.from()'s own default
         judgeEnabled.setTooltipText(Tooltips.JUDGE_ENABLED);
         judgeEveryNTurns.setMin(1);
         judgeEveryNTurns.setPlaceholder("blank = default (10)");

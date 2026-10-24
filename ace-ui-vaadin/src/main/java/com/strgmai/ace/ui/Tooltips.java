@@ -78,7 +78,7 @@ final class Tooltips {
             + "it has produced so far, and its recent trajectory, and returns guidance injected as the "
             + "next turn's own instruction - meant to catch a task drifting off its stated goal before "
             + "it burns its whole budget on the wrong thing. Task-scoped only (p0/p1/PARALLEL_PLAN/"
-            + "wrap-up/handoff/review sessions never run it). Off by default.";
+            + "wrap-up/handoff/review sessions never run it). On by default.";
 
     static final String JUDGE_EVERY_N_TURNS = "How many agent turns pass between judge checkpoints. "
             + "Blank = 10. Only applies when the judge is enabled.";
