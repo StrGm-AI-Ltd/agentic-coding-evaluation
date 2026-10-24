@@ -164,13 +164,13 @@ final class Tooltips {
             + "the command - capped to a few recalls per id, since a recalled output is itself immediately "
             + "re-maskable.";
 
-    static final String COMPACTION_LESSON_RECORDING = "Offers the record_lesson(text) tool at all - not "
-            + "scoped to environment facts, any cross-cutting finding worth telling EVERY later task "
-            + "regardless of the dependency graph (a host/toolchain quirk, a discovered constraint - not a "
-            + "task-specific detail, which belongs in that task's own handoff note instead). Shares the "
-            + "same run-wide lessons.md the mid-task judge's own off-track corrections already write to - a "
-            + "configurable size ceiling with dedup compaction keeps it from growing unbounded. Also offered "
-            + "during the handoff phase, cold-session included.";
+    static final String LESSON_RECORDING_ENABLED = "Offers the record_lesson(text) tool - not scoped to "
+            + "environment facts, any cross-cutting finding worth telling EVERY later task regardless of "
+            + "the dependency graph (a host/toolchain quirk, a discovered constraint - not a task-specific "
+            + "detail, which belongs in that task's own handoff note instead). Shares the same run-wide "
+            + "lessons.md the mid-task judge's own off-track corrections already write to - a configurable "
+            + "size ceiling with dedup compaction keeps it from growing unbounded. Also offered during the "
+            + "handoff phase, cold-session included. On by default.";
 
     static final String COMPACTION_STRUCTURED_EVICTION = "Instead of stubbing, ask the model for one "
             + "fixed-outline summary document (LANDED / STATE / INVARIANTS / TASKS / DO NEXT / DECISIONS) "

@@ -146,6 +146,9 @@ final class JobCfgFactory {
         if (WorkerService.flag(argv, "--rescue-tokens") != null) budgetRescue.put("tokens", Integer.parseInt(WorkerService.flag(argv, "--rescue-tokens")));
         if (WorkerService.flag(argv, "--rescue-keep-recent-turns") != null) budgetRescue.put("keep_recent_turns", Integer.parseInt(WorkerService.flag(argv, "--rescue-keep-recent-turns")));
         cfg.put("budget_rescue", budgetRescue);
+        // #332: defaults to ON now - RunSpec.argv() always emits either --lesson-recording or
+        // --no-lesson-recording explicitly, same convention as judge above
+        cfg.put("lesson_recording_enabled", !argv.contains("--no-lesson-recording"));
         return cfg;
     }
 }

@@ -570,10 +570,37 @@ class RunSpecTest {
         assertFalse(off.contains("--judge"));
     }
 
+    /** #332: cross-task lesson recording now defaults to ON for every run that doesn't say
+     *  otherwise - same "unset must become true, not false" reasoning as judge_enabled above. */
+    @Test
+    void fromMapDefaultsLessonRecordingEnabledToTrueWhenUnset() {
+        final var spec = java.util.Map.<String, Object>of("task", "L3p_point_in_time");
+        assertTrue(RunSpec.from(spec).lessonRecordingEnabled());
+    }
+
+    @Test
+    void fromMapRespectsAnExplicitLessonRecordingEnabledFalse() {
+        final var spec = java.util.Map.<String, Object>of("task", "L3p_point_in_time", "lesson_recording_enabled", false);
+        assertFalse(RunSpec.from(spec).lessonRecordingEnabled());
+    }
+
+    /** argv() must emit EITHER --lesson-recording or --no-lesson-recording, never omit both - same
+     *  "an omitted flag is indistinguishable from never set" reasoning as judge's own test above. */
+    @Test
+    void argvAlwaysEmitsEitherLessonRecordingFlagNeverOmitsBoth() {
+        final var on = RunSpec.builder().task("t").model("m").runId("r1").lessonRecordingEnabled(true).build().argv("r1");
+        assertTrue(on.contains("--lesson-recording"));
+        assertFalse(on.contains("--no-lesson-recording"));
+
+        final var off = RunSpec.builder().task("t").model("m").runId("r1").lessonRecordingEnabled(false).build().argv("r1");
+        assertTrue(off.contains("--no-lesson-recording"));
+        assertFalse(off.contains("--lesson-recording"));
+    }
+
     @Test
     void builderProducesTheSameRunSpecAsThePositionalConstructor() {
         final var viaBuilder = RunSpec.builder().task("t").model("m").runId("r1").temperature(0.5).build();
-        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, null, null, null, null, null, false, null, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, null, null, null, null, false, null, null, null, null);
+        final var viaConstructor = new RunSpec("t", "m", null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, false, false, null, false, false, false, null, null, null, null, null, false, null, null, null, null, null, "r1", 0.5, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, false, null, null, null, null, false, null, null, null, null, false);
         assertEquals(viaConstructor, viaBuilder);
     }
 }

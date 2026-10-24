@@ -34,18 +34,14 @@ public final class CompactionStrategies {
      *  the pre-#424 "re-run the command if you need it" wording instead, so the stub never
      *  references a tool the model structurally cannot call. */
     public static final String TOOL_OUTPUT_RECALL = "tool_output_recall";
-    /** #332: offers the record_lesson tool at all - not itself a compaction mechanism, but reuses
-     *  this exact pluggable-session-capability toggle (the same vehicle ERROR_LINE_EXTRACTION/
-     *  TOOL_OUTPUT_RECALL already are, neither of which is "compaction" in the strictest sense
-     *  either) rather than threading a second, parallel enable/disable mechanism through every
-     *  call site this one already reaches. On by default per #332's own decided design. */
-    public static final String LESSON_RECORDING = "lesson_recording";
-    public static final Set<String> KNOWN = Set.of(TOOL_RESULT_MASK, STRUCTURED_EVICTION, ERROR_LINE_EXTRACTION, TOOL_OUTPUT_RECALL, LESSON_RECORDING);
+    public static final Set<String> KNOWN = Set.of(TOOL_RESULT_MASK, STRUCTURED_EVICTION, ERROR_LINE_EXTRACTION, TOOL_OUTPUT_RECALL);
     /** today's own behavior, unchanged, when a run/task configures nothing - #423/#424 were always
      *  unconditionally on before either had an off switch, so the default must keep both on;
      *  structured_eviction stays opt-in, matching its own existing default. #332's record_lesson
-     *  defaults on too, per its own issue's decided design ("a UI option, on by default"). */
-    public static final List<String> DEFAULT = List.of(TOOL_RESULT_MASK, ERROR_LINE_EXTRACTION, TOOL_OUTPUT_RECALL, LESSON_RECORDING);
+     *  tool is a SEPARATE, dedicated toggle (RunSpec.lessonRecordingEnabled) - not a member of
+     *  this list, since it has nothing to do with context compaction; it only briefly lived here
+     *  as a threading shortcut, found not worth the conceptual mixing it caused. */
+    public static final List<String> DEFAULT = List.of(TOOL_RESULT_MASK, ERROR_LINE_EXTRACTION, TOOL_OUTPUT_RECALL);
 
     /** #417 follow-up review (C6): a task override set via the restart-task endpoint never goes
      *  through RunSpec's own compact-constructor validation at all (only a run-level RunSpec

@@ -405,7 +405,7 @@ public class BenchController {
             "task_wall_sec", "task_tokens", "max_turns", "wrapup_wall_sec", "wrapup_tokens", "first_token_timeout_sec",
             "judge_enabled", "judge_every_n_turns", "judge_model", "budget_rescue_enabled",
             "compaction_trigger", "compaction_strategies", "max_tokens", "temperature", "top_p", "top_k", "repetition_penalty", "reasoning_effort",
-            "rescue_wall_sec", "rescue_tokens", "rescue_keep_recent_turns", "task_granularity");
+            "rescue_wall_sec", "rescue_tokens", "rescue_keep_recent_turns", "task_granularity", "lesson_recording_enabled");
 
     /** the three pre-task phases that can be inspected/restarted via /sessions/{name}/... - an
      *  explicit, small map because the name-to-tag relationship is irregular (found live): p0/p1

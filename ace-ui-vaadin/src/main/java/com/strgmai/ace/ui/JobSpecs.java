@@ -15,7 +15,7 @@ public final class JobSpecs {
     /** RunSpec's boolean flags, in queue.py order. */
     public static final Set<String> BOOLEAN_FLAGS = Set.of(
             "handoff_notes", "system_rules", "self_review", "review_blind", "trajectory_review",
-            "no_context_probe", "context_probe_fresh", "judge_enabled");
+            "no_context_probe", "context_probe_fresh", "judge_enabled", "lesson_recording_enabled");
 
     private JobSpecs() {
     }

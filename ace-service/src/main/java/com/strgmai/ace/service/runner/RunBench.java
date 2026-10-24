@@ -392,13 +392,17 @@ public class RunBench {
     }
 
     /** #332: backs the record_lesson tool for this task's session (and, via handoffStep's own
-     *  identical call, the cold handoff session too). Always returns a real callback - unlike
-     *  judge/handoffFinalTurn above, there is no separate "should this task even get one" check
-     *  here; actual enable/disable is the "lesson_recording" compaction-strategy toggle
-     *  (CompactionStrategies.LESSON_RECORDING), already checked downstream by toolSpecs()/
-     *  executeTool() themselves, the same place every other strategy toggle is enforced. */
-    ReferenceAgent.LessonRecorder buildLessonRecorder(final Map<String, Object> cfg, final Path rd, final String taskId) {
-        return text -> recordLesson(cfg, rd, taskId, text);
+     *  identical call, the cold handoff session too). A dedicated toggle
+     *  (RunSpec.lessonRecordingEnabled, cfg key "lesson_recording_enabled") - NOT a
+     *  CompactionStrategies member, since it has nothing to do with context compaction - defaults
+     *  on; a task override can force it on for one restarted task even if the run-level default
+     *  is off, same asymmetric "override can only add, not subtract" shape judge_enabled's own
+     *  restart-tab checkbox already has. null (not a real callback) is what actually disables the
+     *  tool - see ReferenceAgent's own "null means off" convention for judge/finalTurn. */
+    ReferenceAgent.LessonRecorder buildLessonRecorder(final Map<String, Object> cfg, final Map<String, Object> taskOverride, final Path rd, final String taskId) {
+        final boolean enabled = taskOverride.get("lesson_recording_enabled") instanceof Boolean b
+                ? b : !Boolean.FALSE.equals(cfg.get("lesson_recording_enabled"));
+        return enabled ? text -> recordLesson(cfg, rd, taskId, text) : null;
     }
 
     /** #262, found live: the harness's own fallback status line always carried an empty tail, so
@@ -1495,7 +1499,7 @@ public class RunBench {
                         final var proxy = proxies.start(journal, effTaskTokens, null, effectiveSamplerOverrides(cfg, taskOverride));
                         final var judgeCheckpoint = buildJudgeCheckpoint(cfg, runId, ws, rd, t.id, t.goal, effTaskWall, effTaskTokens, taskOverride);
                         final var handoffFinalTurn = buildHandoffFinalTurn(handoffs, ws, t.id);
-                        final var lessonRecorder = buildLessonRecorder(cfg, rd, t.id);
+                        final var lessonRecorder = buildLessonRecorder(cfg, taskOverride, rd, t.id);
                         try {
                             rec = sessionWithPolicy(cfg, runId, t.id, Packs.taskInstruction(t.id) + "\n\n" + tp,
                                     effTaskWall, effTaskTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null, false, judgeCheckpoint, handoffFinalTurn, lessonRecorder);
@@ -1645,7 +1649,7 @@ public class RunBench {
                     () -> runAgentSession(cfg, t.id + "-handoff", Packs.handoffInstruction(t.id), handoffWall, handoffTokens,
                             rd.resolve("sessions"), handoffSid, true, rd.resolve("packs/stable.md").toString(), ws.toString(),
                             proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("model"),
-                            (Map<String, String>) cfg.get("_agent_env"), null, null, null, buildLessonRecorder(cfg, rd, t.id)));
+                            (Map<String, String>) cfg.get("_agent_env"), null, null, null, buildLessonRecorder(cfg, override, rd, t.id)));
             recordHandoffContent(ws, manifest, rec, t.id, hp);
             rec.put("handoff_seconds", h.seconds());
             rec.put("handoff_rc", h.rc());
@@ -2266,7 +2270,7 @@ public class RunBench {
                         Map<String, String> envT = RunBenchSupport.scrubbedEnv(Path.of(home + "-home-" + t.id).toString(), runId + "/" + t.id, (String) cfg.get("java_home"));   // the task's own HOME copy (R6)
                         final Path wsT = Path.of(ws + "-" + t.id);
                         final var judgeCheckpoint = buildJudgeCheckpoint(cfg, runId, wsT, rd, t.id, t.goal, effTaskWall, effTaskTokens, taskOverride);
-                        final var lessonRecorder = buildLessonRecorder(cfg, rd, t.id);
+                        final var lessonRecorder = buildLessonRecorder(cfg, taskOverride, rd, t.id);
                         Map<String, Object> rec;
                         try {
                             rec = sessionWithPolicy(cfg, runId, t.id, Packs.taskInstruction(t.id) + "\n\n" + packs.get(t.id),

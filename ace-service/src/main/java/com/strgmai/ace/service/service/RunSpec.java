@@ -21,7 +21,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                       Double efficiencyWeight,
                       boolean judgeEnabled, Integer judgeEveryNTurns, String judgeModel, Integer judgeWallSec, Integer judgeTokens,
                       boolean budgetRescueEnabled, Integer rescueWallSec, Integer rescueTokens, Integer rescueKeepRecentTurns,
-                      String taskGranularity) {
+                      String taskGranularity, boolean lessonRecordingEnabled) {
 
     public static final String RUN_ID = "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$";
     public static final List<String> REASONING_EFFORTS = List.of("none", "low", "medium", "high");
@@ -197,6 +197,10 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (rescueTokens != null) args.add("--rescue-tokens=" + rescueTokens);
         if (rescueKeepRecentTurns != null) args.add("--rescue-keep-recent-turns=" + rescueKeepRecentTurns);
         if (taskGranularity != null && !taskGranularity.isBlank()) args.add("--task-granularity=" + taskGranularity);
+        // #332: cross-task lesson recording defaults to ON - same "must emit EITHER way" reasoning
+        // as the judge's own identical flag above, so an explicit opt-out survives the round trip
+        // through argv rather than being indistinguishable from "never set".
+        args.add(lessonRecordingEnabled ? "--lesson-recording" : "--no-lesson-recording");
         return args;
     }
 
@@ -220,7 +224,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, judgeEveryNTurns, judgeWallSec, judgeTokens,
                 rescueWallSec, rescueTokens, rescueKeepRecentTurns;
         private boolean systemRules, selfReview, trajectoryReview, handoffNotes,
-                noContextProbe, contextProbeFresh, reviewBlind, judgeEnabled, budgetRescueEnabled;
+                noContextProbe, contextProbeFresh, reviewBlind, judgeEnabled, budgetRescueEnabled, lessonRecordingEnabled;
         private Double reviewWeight, trajectoryWeight, parallelWeight, efficiencyWeight, temperature, topP, repetitionPenalty;
 
         public Builder task(final String v) { task = v; return this; }
@@ -285,6 +289,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public Builder rescueTokens(final Integer v) { rescueTokens = v; return this; }
         public Builder rescueKeepRecentTurns(final Integer v) { rescueKeepRecentTurns = v; return this; }
         public Builder taskGranularity(final String v) { taskGranularity = v; return this; }
+        public Builder lessonRecordingEnabled(final boolean v) { lessonRecordingEnabled = v; return this; }
 
         public RunSpec build() {
             return new RunSpec(task, model, harness, mode, planSource, phases, taskWall, taskTokens, implWall, implTokens,
@@ -294,7 +299,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                     temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
                     fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, efficiencyWeight,
                     judgeEnabled, judgeEveryNTurns, judgeModel, judgeWallSec, judgeTokens,
-                    budgetRescueEnabled, rescueWallSec, rescueTokens, rescueKeepRecentTurns, taskGranularity);
+                    budgetRescueEnabled, rescueWallSec, rescueTokens, rescueKeepRecentTurns, taskGranularity, lessonRecordingEnabled);
         }
     }
 
@@ -335,6 +340,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 .budgetRescueEnabled(bool(spec, "budget_rescue_enabled", false)).rescueWallSec(intOf(spec, "rescue_wall_sec"))
                 .rescueTokens(intOf(spec, "rescue_tokens")).rescueKeepRecentTurns(intOf(spec, "rescue_keep_recent_turns"))
                 .taskGranularity(str(spec, "task_granularity"))
+                .lessonRecordingEnabled(bool(spec, "lesson_recording_enabled", true))
                 .build();
     }
 
