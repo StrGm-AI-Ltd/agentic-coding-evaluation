@@ -408,8 +408,12 @@ public class ReferenceAgent {
                 // per-session prefill/decode speed averages
                 .customHeaders(Map.of(com.strgmai.ace.service.proxy.RecordingProxy.SESSION_HEADER, session.sessionId))
                 .build();
+        // #332: unlike recall, lesson recording is NOT a CompactionStrategies member - it has
+        // nothing to do with context compaction, it's a cross-task knowledge-sharing capability
+        // that happens to need the same "null caller == disabled" shape judge/finalTurn already
+        // use. null (every call site that doesn't build a real one) already means disabled.
         final List<ToolSpecification> specs = advisoryOnly ? List.of() : toolSpecs(compactionStrategies.contains(CompactionStrategies.TOOL_OUTPUT_RECALL),
-                lessonRecorder != null && compactionStrategies.contains(CompactionStrategies.LESSON_RECORDING));
+                lessonRecorder != null);
         // the run's SCRUBBED environment (fresh HOME, docker shim, pinned JAVA_HOME, AB_RUN_ID) is the
         // base for every tool call; extraEnv null = a bare unit-test context
         Map<String, String> env = toolEnv(extraEnv, cwd);
@@ -610,10 +614,12 @@ public class ReferenceAgent {
                 case "edit" -> AgentTools.edit(cwd, args);
                 case "bash" -> AgentTools.bash(cwd, args, env, enabledStrategies.contains(CompactionStrategies.ERROR_LINE_EXTRACTION));
                 case "record_lesson" -> {
-                    // #332: structurally unreachable once toolSpecs()'s own identical check stops
-                    // offering this tool at all - same "a real behavior change, not just hiding
-                    // the affordance" reasoning as recall_tool_output's own identical guard below.
-                    if (lessonRecorder == null || !enabledStrategies.contains(CompactionStrategies.LESSON_RECORDING))
+                    // #332: structurally unreachable once toolSpecs()'s own identical null-check
+                    // stops offering this tool at all - same "a real behavior change, not just
+                    // hiding the affordance" reasoning as recall_tool_output's own identical guard
+                    // below. Not a CompactionStrategies member (see toolSpecs' own call site) -
+                    // null alone, same convention judge/finalTurn already use, means disabled.
+                    if (lessonRecorder == null)
                         yield new AgentTools.Outcome("error: record_lesson is disabled for this session", true);
                     final String text = String.valueOf(args.getOrDefault("text", "")).strip();
                     if (text.isBlank()) yield new AgentTools.Outcome("error: text is required", true);

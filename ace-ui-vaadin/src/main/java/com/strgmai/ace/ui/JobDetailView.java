@@ -1213,6 +1213,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             case "rescue_wall_sec" -> "rescue wall-clock budget (s)";
             case "rescue_tokens" -> "rescue token budget";
             case "rescue_keep_recent_turns" -> "rescue: turns kept";
+            case "lesson_recording_enabled" -> "cross-task lesson recording enabled";
             default -> key;
         };
     }
@@ -1950,6 +1951,11 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var rescueForm = new HorizontalLayout(rescueEnabled);
         rescueForm.getStyle().set("flex-wrap", "wrap").set("align-items", "center").set("margin-top", "4px");
 
+        // #332: a dedicated toggle, not a CompactionStrategies member - see Tooltips.LESSON_RECORDING_ENABLED
+        final var lessonRecordingEnabled = new com.vaadin.flow.component.checkbox.Checkbox("Cross-task lesson recording");
+        final var lessonRecordingForm = new HorizontalLayout(lessonRecordingEnabled);
+        lessonRecordingForm.getStyle().set("flex-wrap", "wrap").set("align-items", "center").set("margin-top", "4px");
+
         // #266: every field above used to always render with just a "run default" placeholder -
         // no way anywhere in the UI to see what override values (if any) are already in effect for
         // this task from a PREVIOUS restart (only a direct look at jobs.task_overrides in the raw
@@ -1968,6 +1974,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         if (currentOverride.get("judge_every_n_turns") instanceof Number n) judgeEveryNTurns.setValue(n.intValue());
         if (currentOverride.get("judge_model") instanceof String s && !s.isBlank()) judgeModel.setValue(s);
         if (Boolean.TRUE.equals(currentOverride.get("budget_rescue_enabled"))) rescueEnabled.setValue(true);
+        if (Boolean.TRUE.equals(currentOverride.get("lesson_recording_enabled"))) lessonRecordingEnabled.setValue(true);
 
         final var restartButton = new Button(pending ? "Save settings for " + task.id() : "Restart from " + task.id(), e -> {
             final java.util.Map<String, Object> overrides = new java.util.LinkedHashMap<>();
@@ -1982,6 +1989,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             if (judgeEveryNTurns.getValue() != null) overrides.put("judge_every_n_turns", judgeEveryNTurns.getValue());
             if (judgeModel.getValue() != null && !judgeModel.getValue().isBlank()) overrides.put("judge_model", judgeModel.getValue());
             if (rescueEnabled.getValue()) overrides.put("budget_rescue_enabled", true);
+            if (lessonRecordingEnabled.getValue()) overrides.put("lesson_recording_enabled", true);
             try {
                 if (pending) {
                     client.setPendingTaskOverride(jobId, task.id(), overrides);
@@ -1997,7 +2005,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             }
         });
         restartButton.getStyle().set("margin-top", "8px");
-        restartBody.add(warning, form, compactionForm, judgeForm, rescueForm, restartButton);
+        restartBody.add(warning, form, compactionForm, judgeForm, rescueForm, lessonRecordingForm, restartButton);
     }
 
     /** #264: the sessionsGrid counterpart of openTaskPromptDialog() - scoped to the three pre-task

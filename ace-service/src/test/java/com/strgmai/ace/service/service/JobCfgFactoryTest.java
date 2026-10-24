@@ -273,4 +273,14 @@ class JobCfgFactoryTest {
         final Map<String, Object> judgeOn = (Map<String, Object>) JobCfgFactory.build(List.of("--judge"), props()).get("judge");
         assertEquals(true, judgeOn.get("enabled"));
     }
+
+    /** #332: cross-task lesson recording now defaults to ON - same "neither flag present must come
+     *  out enabled" reasoning as judge_enabled above, but a flat key, not a nested map. */
+    @Test
+    void lessonRecordingEnabledDefaultsToTrueUnlessExplicitlyDisabled() {
+        assertEquals(true, JobCfgFactory.build(List.of(), props()).get("lesson_recording_enabled"),
+                "no flag either way - must default to enabled");
+        assertEquals(false, JobCfgFactory.build(List.of("--no-lesson-recording"), props()).get("lesson_recording_enabled"));
+        assertEquals(true, JobCfgFactory.build(List.of("--lesson-recording"), props()).get("lesson_recording_enabled"));
+    }
 }

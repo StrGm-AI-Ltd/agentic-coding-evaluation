@@ -57,6 +57,8 @@ public class JobNewView extends VerticalLayout {
     private final IntegerField firstTokenTimeout = new IntegerField("First-token timeout");
     private final IntegerField compactionTrigger = new IntegerField("Compaction trigger");
     private final CompactionStrategyList compactionStrategies = new CompactionStrategyList();
+    // #332: a dedicated toggle, not a CompactionStrategies member - see Tooltips.LESSON_RECORDING_ENABLED
+    private final Checkbox lessonRecordingEnabled = new Checkbox("Cross-task lesson recording");
     private final IntegerField reviewWallSec = new IntegerField("Review wall-clock budget");
     private final IntegerField reviewTokens = new IntegerField("Review token budget");
     private final IntegerField maxTurns = new IntegerField("Max turns");
@@ -187,7 +189,9 @@ public class JobNewView extends VerticalLayout {
         compactionTrigger.setPlaceholder("blank = default (28000), 0 = disabled");
         compactionTrigger.setTooltipText(Tooltips.COMPACTION_TRIGGER);
         compactionStrategies.setValue(List.of(CompactionStrategyList.TOOL_RESULT_MASK, CompactionStrategyList.ERROR_LINE_EXTRACTION,
-                CompactionStrategyList.TOOL_OUTPUT_RECALL, CompactionStrategyList.LESSON_RECORDING));   // mirrors CompactionStrategies.DEFAULT on the service side
+                CompactionStrategyList.TOOL_OUTPUT_RECALL));   // mirrors CompactionStrategies.DEFAULT on the service side
+        lessonRecordingEnabled.setValue(true);   // on by default now - mirrors RunSpec.from()'s own default
+        lessonRecordingEnabled.setTooltipText(Tooltips.LESSON_RECORDING_ENABLED);
         reviewWallSec.setMin(1);
         reviewWallSec.setPlaceholder("blank = default (900s)");
         reviewWallSec.setTooltipText(Tooltips.REVIEW_WALL_SEC);
@@ -308,6 +312,8 @@ public class JobNewView extends VerticalLayout {
         add(Forms.section("Context compaction",
                 Forms.row(compactionTrigger),
                 Forms.row(compactionStrategies)));
+        add(Forms.section("Cross-task lessons",
+                Forms.row(lessonRecordingEnabled)));
         add(Forms.section("Sampler",
                 Forms.row(temperature, topP, topK, repetitionPenalty),
                 Forms.row(maxTokens, reasoningEffort)));
@@ -427,6 +433,7 @@ public class JobNewView extends VerticalLayout {
         raw.put("first_token_timeout", firstTokenTimeout.getValue());
         raw.put("compaction_trigger", compactionTrigger.getValue());
         raw.put("compaction_strategies", String.join(",", compactionStrategies.getValue()));
+        raw.put("lesson_recording_enabled", lessonRecordingEnabled.getValue());
         raw.put("parallel", parallel.getValue());
         raw.put("parallel_plan", parallelPlan.getValue());
         raw.put("parallel_weight", parallelWeight.getValue());

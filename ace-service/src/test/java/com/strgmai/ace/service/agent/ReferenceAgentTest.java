@@ -227,19 +227,17 @@ class ReferenceAgentTest {
         assertEquals(enabled.size() - 1, disabled.size(), "disabling the strategy must remove exactly one tool, nothing else");
     }
 
-    /** #332: disabled, record_lesson refuses even a direct call, not just a hidden toolSpecs()
-     *  entry - same "a real behavior change, not just hiding the affordance" reasoning as
-     *  recall_tool_output's own identical test. */
+    /** #332: disabled (null recorder), record_lesson refuses even a direct call, not just a hidden
+     *  toolSpecs() entry - same "a real behavior change, not just hiding the affordance" reasoning
+     *  as recall_tool_output's own identical test. */
     @Test
-    void recordLessonRefusesWhenTheStrategyIsDisabledEvenIfCalledDirectly() throws java.io.IOException {
+    void recordLessonRefusesWhenDisabledEvenIfCalledDirectly() throws java.io.IOException {
         final var dir = java.nio.file.Files.createTempDirectory("session");
-        final var calls = new java.util.concurrent.atomic.AtomicInteger();
         final var out = ReferenceAgent.executeTool("record_lesson", Map.of("text", "a finding"), "/task/ws", Map.of(), "T1",
                 new AgentSession(dir, "s1c", false), new java.util.HashMap<>(),
-                List.of(CompactionStrategies.TOOL_RESULT_MASK), text -> calls.incrementAndGet());
+                CompactionStrategies.DEFAULT, null);
         assertTrue(out.isError());
         assertEquals("error: record_lesson is disabled for this session", out.output());
-        assertEquals(0, calls.get(), "the callback must never fire when the strategy is disabled");
     }
 
     @Test
@@ -249,13 +247,13 @@ class ReferenceAgentTest {
         final ReferenceAgent.LessonRecorder recorder = recorded::add;
         final var ok = ReferenceAgent.executeTool("record_lesson", Map.of("text", "JAVA_HOME must be openjdk@21"), "/task/ws", Map.of(), "T1",
                 new AgentSession(dir, "s1d", false), new java.util.HashMap<>(),
-                List.of(CompactionStrategies.LESSON_RECORDING), recorder);
+                CompactionStrategies.DEFAULT, recorder);
         assertFalse(ok.isError());
         assertEquals(List.of("JAVA_HOME must be openjdk@21"), recorded);
 
         final var blank = ReferenceAgent.executeTool("record_lesson", Map.of("text", "   "), "/task/ws", Map.of(), "T1",
                 new AgentSession(dir, "s1d", false), new java.util.HashMap<>(),
-                List.of(CompactionStrategies.LESSON_RECORDING), recorder);
+                CompactionStrategies.DEFAULT, recorder);
         assertTrue(blank.isError());
         assertEquals("error: text is required", blank.output());
     }

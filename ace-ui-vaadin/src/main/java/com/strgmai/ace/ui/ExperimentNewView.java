@@ -141,7 +141,7 @@ public class ExperimentNewView extends VerticalLayout {
         compactionTrigger.setHelperText("prompt tokens; blank = default (28000), 0 = disabled");
         compactionTrigger.setTooltipText(Tooltips.COMPACTION_TRIGGER);
         compactionStrategies.setValue(List.of(CompactionStrategyList.TOOL_RESULT_MASK, CompactionStrategyList.ERROR_LINE_EXTRACTION,
-                CompactionStrategyList.TOOL_OUTPUT_RECALL, CompactionStrategyList.LESSON_RECORDING));   // mirrors CompactionStrategies.DEFAULT on the service side
+                CompactionStrategyList.TOOL_OUTPUT_RECALL));   // mirrors CompactionStrategies.DEFAULT on the service side
         reviewWallSec.setMin(1);
         reviewWallSec.setHelperText("seconds, per reviewer session; blank = default (900s)");
         reviewWallSec.setTooltipText(Tooltips.REVIEW_WALL_SEC);
