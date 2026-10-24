@@ -50,6 +50,26 @@ class VerifyTaskTest {
         assertNull(v.get("could_not_run"));
     }
 
+    /** Found live: every real call site (RunBench's own task/wave/FIX/rescue/INTEGRATION verifies)
+     *  passes a NESTED logPath (rd/verify/T1.log, say) whose own "verify/" directory is never
+     *  created beforehand - Files.newBufferedWriter's CREATE option creates the file, never a
+     *  missing parent, so this threw NoSuchFileException on a genuinely fresh run's very first
+     *  call, silently degrading to "could not run" instead of ever executing the real test suite.
+     *  Every existing test above passes a FLAT logPath (ws.resolve("verify.log")), which never
+     *  exercised this at all - pinned here with a nested one so it can't regress unnoticed again. */
+    @Test
+    void createsItsLogsOwnParentDirectoryInsteadOfSilentlyDegradingToCouldNotRun() throws Exception {
+        final Path ws = fixture("nested-log-dir");
+        fakeGradlew(ws, writeJunitXmlCommand(2, 0) + "\nexit 0");
+        final Path rd = Files.createTempDirectory("results");
+
+        final Map<String, Object> v = VerifyTask.verify(ws, Map.of(), rd.resolve("verify/T1.log"));
+        assertEquals(Boolean.TRUE, v.get("green"), "the real test suite must actually run, not silently abort: " + v);
+        assertEquals(2, v.get("executed"));
+        assertNull(v.get("could_not_run"));
+        assertTrue(Files.isRegularFile(rd.resolve("verify/T1.log")), "the log itself must land where the caller asked");
+    }
+
     @Test
     void redWhenTestsExecutedAndAtLeastOneFailed() throws Exception {
         final Path ws = fixture("red");

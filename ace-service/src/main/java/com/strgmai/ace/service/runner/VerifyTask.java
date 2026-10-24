@@ -45,6 +45,17 @@ public final class VerifyTask {
         try {
             java.io.Writer verifyLog = null;
             try {
+                // Found live: nothing ever created the results dir's own verify/ subdirectory before
+                // this - Reviews.java's own pre-review call happened to paper over it there (it
+                // creates its OWN logPath's parent directly), but every call site in RunBench.java
+                // (a task's own verify, a wave's, FIX/rescue, INTEGRATION) passed a bare
+                // rd.resolve("verify/...") straight into Files.newBufferedWriter with CREATE - which
+                // creates the FILE, never missing PARENT directories. On a genuinely fresh run,
+                // T1's own verify() is the first call of either kind, so it hit this every time:
+                // NoSuchFileException, caught below as ioAborted, degrading silently to "could not
+                // run" instead of ever executing the real test suite - for every task, for the whole
+                // run, with no crash to signal it. Creating it HERE, once, covers every caller.
+                if (logPath != null) Files.createDirectories(logPath.getParent());
                 verifyLog = logPath == null ? null : Files.newBufferedWriter(logPath, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
                 // one factory for the whole glob: newInstance() per XML file re-ran security/feature setup every time
                 final var docFactory = javax.xml.parsers.DocumentBuilderFactory.newInstance();

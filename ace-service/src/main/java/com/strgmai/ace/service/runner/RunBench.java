@@ -107,6 +107,25 @@ public class RunBench {
         return Map.of("source", planSource, "error", msg.substring(0, Math.min(200, msg.length())), "tasks", List.of());
     }
 
+    /** Found live: self-review re-reads docs/IMPLEMENTATION_PLAN.md from disk purely for its own
+     *  benefit (to know what subtasks existed), completely independently of orchestratedPhase's own
+     *  PlanParser.parseFile call - which already handles an unparseable/cyclic plan gracefully
+     *  (manifest.plan.error, run continues as INVALID). This second, unguarded re-read had no such
+     *  protection: the identical PlanError propagated uncaught all the way to WorkerService and
+     *  hard-failed the whole job (exit 1) over what should have been, at worst, a self-review with
+     *  no plan context. Self-review already tolerates a MISSING plan (empty list below) - an
+     *  unparseable one is just as legitimate a degraded case, not a reason to take the run down. */
+    static List<PlanTask> planTasksForSelfReview(final Path ws, final String runId) {
+        final Path path = ws.resolve("docs/IMPLEMENTATION_PLAN.md");
+        if (!Files.isRegularFile(path)) return List.of();
+        try {
+            return PlanParser.parseFile(path);
+        } catch (final PlanError e) {
+            log.warn("run {}: self-review's own re-read of the plan found it unparseable (already recorded in manifest.plan.error) - continuing with no plan context", runId, e);
+            return List.of();
+        }
+    }
+
     static final String IMPLEMENT_TEXT = "Read task/PROMPT.md and do exactly what it asks. Implement it, write tests proving the acceptance "
             + "criteria, run them until green, and record what you did and how you verified it in docs/PROGRESS.md.";
     public static final Map<String, String[]> PHASE_TEXT = Map.of(
@@ -680,8 +699,7 @@ public class RunBench {
             // ---- reviews (scored for CALIBRATION against the oracle; they never replace it) ----
             final Map<String, Object> reviewCfg = cfg.get("review") instanceof Map<?, ?> r ? (Map<String, Object>) r : Map.of();
             if (Boolean.TRUE.equals(reviewCfg.get("enabled"))) {
-                final List<PlanTask> tasks = Files.isRegularFile(ws.resolve("docs/IMPLEMENTATION_PLAN.md")) ? PlanParser.parseFile(ws.resolve("docs/IMPLEMENTATION_PLAN.md")) : List.of();
-                manifest.put("self_review", reviews.selfReview(cfg, ws, rd, manifest, tasks, promptText, proxies,
+                manifest.put("self_review", reviews.selfReview(cfg, ws, rd, manifest, planTasksForSelfReview(ws, runId), promptText, proxies,
                         (String) reviewCfg.get("model"), Boolean.TRUE.equals(reviewCfg.get("blind"))));
                 writeManifest(rd, manifest);
             }
@@ -776,11 +794,17 @@ public class RunBench {
      *  only moved into place once confirmed non-empty, so a failed or partial attempt (R17: git
      *  bundle create over a tree docker has left root-owned files in, among other possible causes)
      *  never clobbers an earlier, good bundle from calling this again later in the same run. */
-    private static void bundleWorkspace(final Path ws, final Path rd) {
+    static void bundleWorkspace(final Path ws, final Path rd) {
         final Path tmp = rd.resolve("workspace.bundle.tmp");
         try {
             Files.deleteIfExists(tmp);
-            final DockerService.Sh r = DockerService.sh(600, "git", "-C", ws.toString(), "bundle", "create", tmp.toString(), "--all");
+            // Found live: rd is a RELATIVE path (results/<runId>) - fine for every plain Files.*
+            // call in this method, which resolve it against the JVM's own cwd same as everywhere
+            // else, but `git -C ws` makes ws git's own effective base for THIS command only, so a
+            // relative tmp path here resolved against ws instead - "fatal: Unable to create
+            // '<ws>/./results/<runId>/workspace.bundle.tmp.lock'" on every single call, 100% of the
+            // time, not the occasional/harmless flakiness this looked like at a glance.
+            final DockerService.Sh r = DockerService.sh(600, "git", "-C", ws.toString(), "bundle", "create", tmp.toAbsolutePath().toString(), "--all");
             if (r.rc() == 0 && Files.isRegularFile(tmp) && Files.size(tmp) > 0) {
                 Files.move(tmp, rd.resolve("workspace.bundle"), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } else {
@@ -813,7 +837,9 @@ public class RunBench {
         final Path tar = rd.resolve("source.tar.tmp");
         try {
             Files.deleteIfExists(tar);
-            final DockerService.Sh archiveR = DockerService.sh(120, "git", "-C", ws.toString(), "archive", "--format=tar", "--output=" + tar, "HEAD");
+            // same fix as bundleWorkspace's own identical bug above: a relative --output= path
+            // resolves against `-C ws`, not the JVM's own cwd, for this one git invocation alone
+            final DockerService.Sh archiveR = DockerService.sh(120, "git", "-C", ws.toString(), "archive", "--format=tar", "--output=" + tar.toAbsolutePath(), "HEAD");
             if (archiveR.rc() != 0 || !Files.isRegularFile(tar) || Files.size(tar) == 0) {
                 log.error("exporting the run's source failed at `git archive` for {} (rc={}): {}", ws, archiveR.rc(), archiveR.out());
                 return false;
