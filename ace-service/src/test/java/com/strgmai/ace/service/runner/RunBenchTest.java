@@ -895,7 +895,7 @@ class RunBenchTest {
 
     @Test
     void appendLessonIsReadBackByReadLessons(@org.junit.jupiter.api.io.TempDir final Path rd) {
-        RunBench.appendLesson(rd, "T7", 30, "OFF TRACK\nStop writing unused test stubs.");
+        RunBench.appendLesson(Map.of(), rd, "T7", 30, "OFF TRACK\nStop writing unused test stubs.");
         final String lessons = RunBench.readLessons(rd);
         assertNotNull(lessons);
         assertTrue(lessons.contains("T7"));
@@ -905,8 +905,8 @@ class RunBenchTest {
 
     @Test
     void appendLessonAccumulatesRatherThanOverwritingEarlierOnes(@org.junit.jupiter.api.io.TempDir final Path rd) {
-        RunBench.appendLesson(rd, "T7", 30, "OFF TRACK\nFirst lesson.");
-        RunBench.appendLesson(rd, "T9", 60, "OFF TRACK\nSecond lesson.");
+        RunBench.appendLesson(Map.of(), rd, "T7", 30, "OFF TRACK\nFirst lesson.");
+        RunBench.appendLesson(Map.of(), rd, "T9", 60, "OFF TRACK\nSecond lesson.");
         final String lessons = RunBench.readLessons(rd);
         assertTrue(lessons.contains("First lesson."));
         assertTrue(lessons.contains("Second lesson."));
@@ -917,7 +917,7 @@ class RunBenchTest {
      *  needing the same kind of rescue in one run is itself informative). */
     @Test
     void appendRescueLessonNamesTheReasonAndWhetherItSucceeded(@org.junit.jupiter.api.io.TempDir final Path rd) {
-        RunBench.appendRescueLesson(rd, "T7", "ran out of its own wall-clock time budget", true);
+        RunBench.appendRescueLesson(Map.of(), rd, "T7", "ran out of its own wall-clock time budget", true);
         final String lessons = RunBench.readLessons(rd);
         assertTrue(lessons.contains("T7"));
         assertTrue(lessons.contains("budget rescue"));
@@ -927,8 +927,65 @@ class RunBenchTest {
 
     @Test
     void appendRescueLessonNamesAFailedRescueDifferently(@org.junit.jupiter.api.io.TempDir final Path rd) {
-        RunBench.appendRescueLesson(rd, "T14", "ran out of its own token budget", false);
+        RunBench.appendRescueLesson(Map.of(), rd, "T14", "ran out of its own token budget", false);
         assertTrue(RunBench.readLessons(rd).contains("did not recover a working result"));
+    }
+
+    /** #332: found live - lessons.md had NO size cap at all, across potentially dozens of tasks.
+     *  recordLesson() now checks a configurable ceiling after every write and runs tier-1
+     *  (deterministic dedup) compaction once it's exceeded. */
+    @Test
+    void recordLessonLeavesAShortFileUntouched(@org.junit.jupiter.api.io.TempDir final Path rd) {
+        RunBench.recordLesson(Map.of(), rd, "T1", "short and sweet");
+        assertEquals("## T1\nshort and sweet\n\n", RunBench.readLessons(rd));
+    }
+
+    /** Tier 1 (dedup) can only shrink the file when there ARE duplicates to drop - exercised here
+     *  with the exact live shape (several tasks reporting the same fact); three near-identical
+     *  entries must collapse to one once the ceiling is crossed. */
+    @Test
+    void recordLessonCompactsAwayDuplicatesOnceTheConfiguredCeilingIsExceeded(@org.junit.jupiter.api.io.TempDir final Path rd) {
+        final var cfg = Map.<String, Object>of("lessons_max_chars", 50);
+        RunBench.recordLesson(cfg, rd, "T16", "JAVA_HOME must be /opt/homebrew/opt/openjdk@21");
+        RunBench.recordLesson(cfg, rd, "T2", "java_home must be /opt/homebrew/opt/openjdk@21");
+        RunBench.recordLesson(cfg, rd, "T9", "JAVA_HOME must be /opt/homebrew/opt/openjdk@21!");
+        final var entries = RunBench.splitLessonEntries(RunBench.readLessons(rd));
+        assertEquals(1, entries.size(), "all three reported the same fact - only the most recent survives");
+        assertTrue(entries.get(0).startsWith("## T9"));
+    }
+
+    @Test
+    void recordLessonNeverCompactsWhenTheCeilingIsZero(@org.junit.jupiter.api.io.TempDir final Path rd) {
+        final var cfg = Map.<String, Object>of("lessons_max_chars", 0);
+        for (int i = 0; i < 20; i++) RunBench.recordLesson(cfg, rd, "T" + i, "entry number " + i);
+        assertEquals(20, RunBench.splitLessonEntries(RunBench.readLessons(rd)).size(), "0 means unlimited - nothing gets dropped");
+    }
+
+    @Test
+    void splitLessonEntriesSplitsOnEachHeadingLine() {
+        final var entries = RunBench.splitLessonEntries("## T1\nfirst\n\n## T2\nsecond\n\n");
+        assertEquals(List.of("## T1\nfirst\n\n", "## T2\nsecond\n\n"), entries);
+    }
+
+    /** The exact live shape #332 found: T16 and T2 independently reported the same underlying
+     *  fact under different headings (their own task ids) - dedup must look at the BODY, not the
+     *  heading, and keep the MOST RECENT of the duplicates. */
+    @Test
+    void dedupLessonEntriesKeepsTheMostRecentOfNearIdenticalBodiesIgnoringTheHeading() {
+        final var entries = List.of(
+                "## T16\nJAVA_HOME must be /opt/homebrew/opt/openjdk@21.\n\n",
+                "## T3\nunrelated fact about the build.\n\n",
+                "## T2\njava_home must be /opt/homebrew/opt/openjdk@21!\n\n");
+        final var deduped = RunBench.dedupLessonEntries(entries);
+        assertEquals(2, deduped.size());
+        assertTrue(deduped.get(0).startsWith("## T3"), "the unrelated entry survives untouched");
+        assertTrue(deduped.get(1).startsWith("## T2"), "the MOST RECENT duplicate (T2) survives, not the older T16 one");
+    }
+
+    @Test
+    void dedupLessonEntriesKeepsDistinctEntriesInOriginalOrder() {
+        final var entries = List.of("## T1\nfirst\n\n", "## T2\nsecond\n\n", "## T3\nthird\n\n");
+        assertEquals(entries, RunBench.dedupLessonEntries(entries));
     }
 
     /** #402/#403: found live that nearly every task on this host independently rediscovered the
