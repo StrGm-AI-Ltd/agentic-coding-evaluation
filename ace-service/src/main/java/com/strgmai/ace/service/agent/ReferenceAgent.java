@@ -134,6 +134,20 @@ public class ReferenceAgent {
         String ask(List<ChatMessage> trajectory);
     }
 
+    /** #332: backs the record_lesson tool - offered to the main task session and the handoff
+     *  session so either can report a cross-cutting finding (any fact worth telling every LATER
+     *  task regardless of the dependency graph) without waiting for a judge's own off-track
+     *  verdict or a handoff note that only reaches direct successors. null means the tool is
+     *  unavailable for this session (same convention as JudgeCheckpoint/FinalTurn above) - only
+     *  RunBench's own task-loop and handoff call sites ever build a real one, and the
+     *  implementation (appending to the run's own lessons.md, with size-capping and compaction)
+     *  deliberately lives in RunBench, not here: ReferenceAgent (package `agent`) must never
+     *  import RunBench (package `runner`) directly, which is exactly why this is an interface
+     *  RunBench implements and passes down, not a direct call. */
+    public interface LessonRecorder {
+        void record(String text);
+    }
+
     private final BenchProperties props;
 
     public ReferenceAgent(BenchProperties props) { this.props = props; }
@@ -142,7 +156,7 @@ public class ReferenceAgent {
      *  the model structurally cannot call a tool it was never told exists, matching
      *  AgentSession.compact()'s own identical check for which stub wording to write (a disabled
      *  session's stub never points at a tool this list doesn't offer). */
-    static List<ToolSpecification> toolSpecs(final boolean recallEnabled) {
+    static List<ToolSpecification> toolSpecs(final boolean recallEnabled, final boolean lessonRecordingEnabled) {
         final var specs = new ArrayList<ToolSpecification>(List.of(
                 ToolSpecification.builder().name("read")
                         .description("Read a text file (or a line range of it). Prefer ranges: locate with `bash` (grep -n) first, then read only what you need.")
@@ -194,6 +208,19 @@ public class ReferenceAgent {
                 .parameters(JsonObjectSchema.builder()
                         .addStringProperty("tool_call_id", "the id named in the \"[output dropped...]\" stub text")
                         .required("tool_call_id").build())
+                .build());
+        // #332: generic - not scoped to environment facts specifically. Any cross-cutting
+        // finding (a host/toolchain quirk, a discovered constraint, anything worth telling
+        // every LATER task regardless of the dependency graph) belongs here, not a task-specific
+        // detail that belongs in this task's own handoff note instead.
+        if (lessonRecordingEnabled) specs.add(ToolSpecification.builder().name("record_lesson")
+                .description("Record a finding worth telling EVERY later task in this run, regardless of the dependency graph - "
+                        + "a host/toolchain quirk, a discovered constraint, anything cross-cutting. Not for task-specific details "
+                        + "(those belong in this task's own handoff note instead). Keep it short and factual - this is a shared, "
+                        + "size-limited record, not a scratchpad.")
+                .parameters(JsonObjectSchema.builder()
+                        .addStringProperty("text", "the finding, short and factual")
+                        .required("text").build())
                 .build());
         return specs;
     }
@@ -305,6 +332,15 @@ public class ReferenceAgent {
     public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
                              Path sessionDir, String sessionId, boolean continueSession,
                              String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, int maxTurns, String model, Map<String, String> extraEnv, JudgeCheckpoint judge, boolean advisoryOnly, FinalTurn finalTurn, Integer compactOnLoadKeepRecentTurns, List<String> compactionStrategies) throws Exception {
+        return run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase, abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, advisoryOnly, finalTurn, compactOnLoadKeepRecentTurns, compactionStrategies, null);
+    }
+
+    /** #332: `lessonRecorder` offers the record_lesson tool at all - see LessonRecorder's own
+     *  javadoc. null (every call site above) means the tool is unavailable for this session;
+     *  only RunBench's own task-loop and handoff call sites build a real one. */
+    public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
+                             Path sessionDir, String sessionId, boolean continueSession,
+                             String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, int maxTurns, String model, Map<String, String> extraEnv, JudgeCheckpoint judge, boolean advisoryOnly, FinalTurn finalTurn, Integer compactOnLoadKeepRecentTurns, List<String> compactionStrategies, LessonRecorder lessonRecorder) throws Exception {
         final long t0 = System.nanoTime();
         final var start = Instant.now();
         final String reasoningEffort = DEFAULT_REASONING.getOrDefault(reasoningKind(name), "medium");
@@ -372,7 +408,8 @@ public class ReferenceAgent {
                 // per-session prefill/decode speed averages
                 .customHeaders(Map.of(com.strgmai.ace.service.proxy.RecordingProxy.SESSION_HEADER, session.sessionId))
                 .build();
-        final List<ToolSpecification> specs = advisoryOnly ? List.of() : toolSpecs(compactionStrategies.contains(CompactionStrategies.TOOL_OUTPUT_RECALL));
+        final List<ToolSpecification> specs = advisoryOnly ? List.of() : toolSpecs(compactionStrategies.contains(CompactionStrategies.TOOL_OUTPUT_RECALL),
+                lessonRecorder != null && compactionStrategies.contains(CompactionStrategies.LESSON_RECORDING));
         // the run's SCRUBBED environment (fresh HOME, docker shim, pinned JAVA_HOME, AB_RUN_ID) is the
         // base for every tool call; extraEnv null = a bare unit-test context
         Map<String, String> env = toolEnv(extraEnv, cwd);
@@ -503,7 +540,7 @@ public class ReferenceAgent {
                     log.warn("could not parse tool call arguments for {} ({}), executing with no arguments: {}", c.name(), c.id(), e.toString());
                     args = Map.of();
                 }
-                final AgentTools.Outcome out = executeTool(c.name(), args, cwd, env, name, session, recallCounts, compactionStrategies);
+                final AgentTools.Outcome out = executeTool(c.name(), args, cwd, env, name, session, recallCounts, compactionStrategies, lessonRecorder);
                 if (out.isError()) toolErrors++;
                 msgs.add(ToolExecutionResultMessage.from(c, out.output()));
                 session.toolResult(c.id(), c.name(), out.output(), out.isError());
@@ -558,12 +595,31 @@ public class ReferenceAgent {
     static AgentTools.Outcome executeTool(final String name, final Map<String, Object> args, final String cwd, final Map<String, String> env,
                                            final String sessionName, final AgentSession session, final Map<String, Integer> recallCounts,
                                            final List<String> enabledStrategies) {
+        return executeTool(name, args, cwd, env, sessionName, session, recallCounts, enabledStrategies, null);
+    }
+
+    /** #332: `lessonRecorder` backs the record_lesson case below - null (every call site above)
+     *  means the tool is unavailable, same convention as every other optional capability here. */
+    static AgentTools.Outcome executeTool(final String name, final Map<String, Object> args, final String cwd, final Map<String, String> env,
+                                           final String sessionName, final AgentSession session, final Map<String, Integer> recallCounts,
+                                           final List<String> enabledStrategies, final LessonRecorder lessonRecorder) {
         try {
             return switch (name) {
                 case "read" -> AgentTools.read(cwd, args);
                 case "write" -> AgentTools.write(cwd, args);
                 case "edit" -> AgentTools.edit(cwd, args);
                 case "bash" -> AgentTools.bash(cwd, args, env, enabledStrategies.contains(CompactionStrategies.ERROR_LINE_EXTRACTION));
+                case "record_lesson" -> {
+                    // #332: structurally unreachable once toolSpecs()'s own identical check stops
+                    // offering this tool at all - same "a real behavior change, not just hiding
+                    // the affordance" reasoning as recall_tool_output's own identical guard below.
+                    if (lessonRecorder == null || !enabledStrategies.contains(CompactionStrategies.LESSON_RECORDING))
+                        yield new AgentTools.Outcome("error: record_lesson is disabled for this session", true);
+                    final String text = String.valueOf(args.getOrDefault("text", "")).strip();
+                    if (text.isBlank()) yield new AgentTools.Outcome("error: text is required", true);
+                    lessonRecorder.record(text);
+                    yield new AgentTools.Outcome("recorded", false);
+                }
                 case "recall_tool_output" -> {
                     // #423/#424: structurally unreachable once toolSpecs()'s own identical check
                     // stops offering this tool at all - this guard is what makes the toggle a real

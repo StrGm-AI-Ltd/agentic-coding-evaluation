@@ -210,11 +210,54 @@ class ReferenceAgentTest {
      *  of the toggle, alongside executeTool()'s own direct-call refusal above. */
     @Test
     void toolSpecsOffersRecallToolOutputOnlyWhenTheStrategyIsEnabled() {
-        final var enabled = ReferenceAgent.toolSpecs(true).stream().map(dev.langchain4j.agent.tool.ToolSpecification::name).toList();
+        final var enabled = ReferenceAgent.toolSpecs(true, false).stream().map(dev.langchain4j.agent.tool.ToolSpecification::name).toList();
         assertTrue(enabled.contains("recall_tool_output"));
-        final var disabled = ReferenceAgent.toolSpecs(false).stream().map(dev.langchain4j.agent.tool.ToolSpecification::name).toList();
+        final var disabled = ReferenceAgent.toolSpecs(false, false).stream().map(dev.langchain4j.agent.tool.ToolSpecification::name).toList();
         assertFalse(disabled.contains("recall_tool_output"));
         assertEquals(enabled.size() - 1, disabled.size(), "disabling the strategy must remove exactly one tool, nothing else");
+    }
+
+    /** #332: same structural-half-of-the-toggle reasoning as recall_tool_output's own test above. */
+    @Test
+    void toolSpecsOffersRecordLessonOnlyWhenTheStrategyIsEnabled() {
+        final var enabled = ReferenceAgent.toolSpecs(false, true).stream().map(dev.langchain4j.agent.tool.ToolSpecification::name).toList();
+        assertTrue(enabled.contains("record_lesson"));
+        final var disabled = ReferenceAgent.toolSpecs(false, false).stream().map(dev.langchain4j.agent.tool.ToolSpecification::name).toList();
+        assertFalse(disabled.contains("record_lesson"));
+        assertEquals(enabled.size() - 1, disabled.size(), "disabling the strategy must remove exactly one tool, nothing else");
+    }
+
+    /** #332: disabled, record_lesson refuses even a direct call, not just a hidden toolSpecs()
+     *  entry - same "a real behavior change, not just hiding the affordance" reasoning as
+     *  recall_tool_output's own identical test. */
+    @Test
+    void recordLessonRefusesWhenTheStrategyIsDisabledEvenIfCalledDirectly() throws java.io.IOException {
+        final var dir = java.nio.file.Files.createTempDirectory("session");
+        final var calls = new java.util.concurrent.atomic.AtomicInteger();
+        final var out = ReferenceAgent.executeTool("record_lesson", Map.of("text", "a finding"), "/task/ws", Map.of(), "T1",
+                new AgentSession(dir, "s1c", false), new java.util.HashMap<>(),
+                List.of(CompactionStrategies.TOOL_RESULT_MASK), text -> calls.incrementAndGet());
+        assertTrue(out.isError());
+        assertEquals("error: record_lesson is disabled for this session", out.output());
+        assertEquals(0, calls.get(), "the callback must never fire when the strategy is disabled");
+    }
+
+    @Test
+    void recordLessonCallsTheRecorderAndRefusesBlankText() throws java.io.IOException {
+        final var dir = java.nio.file.Files.createTempDirectory("session");
+        final var recorded = new java.util.ArrayList<String>();
+        final ReferenceAgent.LessonRecorder recorder = recorded::add;
+        final var ok = ReferenceAgent.executeTool("record_lesson", Map.of("text", "JAVA_HOME must be openjdk@21"), "/task/ws", Map.of(), "T1",
+                new AgentSession(dir, "s1d", false), new java.util.HashMap<>(),
+                List.of(CompactionStrategies.LESSON_RECORDING), recorder);
+        assertFalse(ok.isError());
+        assertEquals(List.of("JAVA_HOME must be openjdk@21"), recorded);
+
+        final var blank = ReferenceAgent.executeTool("record_lesson", Map.of("text", "   "), "/task/ws", Map.of(), "T1",
+                new AgentSession(dir, "s1d", false), new java.util.HashMap<>(),
+                List.of(CompactionStrategies.LESSON_RECORDING), recorder);
+        assertTrue(blank.isError());
+        assertEquals("error: text is required", blank.output());
     }
 
     /** #417 follow-up review (C12): a recalled output is journaled as a fresh toolResult right
