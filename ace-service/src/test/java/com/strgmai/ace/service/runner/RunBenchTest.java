@@ -270,6 +270,43 @@ class RunBenchTest {
         assertFalse(((String) entry.get("error")).isBlank());
     }
 
+    /** Found live: job 246abe1c (run l2-gran-none) hard-failed outright (exit 1) on an agent-authored
+     *  plan with a dependency cycle (T3 -> T4 -> T3) - orchestratedPhase's OWN PlanParser.parseFile
+     *  call already handles exactly this (planErrorEntry above, matching #235's own fix), but
+     *  self-review re-reads the same on-disk file a SECOND time for its own benefit, completely
+     *  unguarded, so the identical PlanError propagated uncaught all the way to WorkerService. */
+    @Test
+    void planTasksForSelfReviewReturnsEmptyInsteadOfPropagatingAnUnparseablePlan() throws java.io.IOException {
+        final var ws = java.nio.file.Files.createTempDirectory("ws");
+        java.nio.file.Files.createDirectories(ws.resolve("docs"));
+        java.nio.file.Files.writeString(ws.resolve("docs/IMPLEMENTATION_PLAN.md"), """
+                ## T3
+                Dependencies: T4
+                ## T4
+                Dependencies: T3
+                """);
+        assertEquals(List.of(), RunBench.planTasksForSelfReview(ws, "l2-gran-none"));
+    }
+
+    @Test
+    void planTasksForSelfReviewReturnsEmptyWhenNoPlanWasEverWritten() throws java.io.IOException {
+        final var ws = java.nio.file.Files.createTempDirectory("ws");
+        assertEquals(List.of(), RunBench.planTasksForSelfReview(ws, "r1"));
+    }
+
+    @Test
+    void planTasksForSelfReviewParsesARealPlanNormally() throws java.io.IOException {
+        final var ws = java.nio.file.Files.createTempDirectory("ws");
+        java.nio.file.Files.createDirectories(ws.resolve("docs"));
+        java.nio.file.Files.writeString(ws.resolve("docs/IMPLEMENTATION_PLAN.md"), """
+                ## T1
+                Goal: do the thing
+                """);
+        final var tasks = RunBench.planTasksForSelfReview(ws, "r1");
+        assertEquals(1, tasks.size());
+        assertEquals("T1", tasks.get(0).id);
+    }
+
     /** Found live 2026-09-25: oMLX's own memory-pressure throttling was slow enough to trip the
      *  agent's 180s stall detector, and oMLX's log - the only place that explained why - spans
      *  every run on the machine and keeps growing. Each run now copies its own slice out. */
@@ -517,6 +554,57 @@ class RunBenchTest {
         final Path rd = track(Files.createDirectory(tmp.resolve("rd2")));
 
         assertFalse(RunBench.exportSource(ws, rd));
+    }
+
+    /** Found live: every real caller (RunBench.runOnce/snapshotRunProgress) passes a RELATIVE rd
+     *  (results/<runId>, resolved against the JVM's own cwd) - which every plain Files.* call in
+     *  exportSource/bundleWorkspace resolves correctly, but `git -C ws ...` makes ws git's own
+     *  effective base for THAT command alone, so the SAME relative path, embedded as its
+     *  --output=/bundle-create argument, resolved against ws instead - "fatal: Unable to create
+     *  '<ws>/./results/<runId>/...'" on every single call, 100% of the time. The test above never
+     *  caught this because @TempDir always hands back an ABSOLUTE path. This one deliberately
+     *  passes a genuinely relative rd (relativized from the real cwd) that still points at the same
+     *  real directory, to pin the fix without writing outside this test's own temp dir. */
+    @Test
+    void exportSourceSucceedsEvenWhenRdIsPassedInAsARelativePath(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
+        final Path ws = track(Files.createDirectory(tmp.resolve("ws")));
+        final Path rdAbs = track(Files.createDirectory(tmp.resolve("rd")));
+        git(ws, "init", "-q");
+        git(ws, "config", "user.email", "bench@local");
+        git(ws, "config", "user.name", "bench");
+        Files.writeString(ws.resolve("docker-compose.yml"), "services: {}\n");
+        git(ws, "add", "-A");
+        git(ws, "commit", "-q", "-m", "T1");
+
+        final Path cwd = Path.of("").toAbsolutePath();
+        final Path rdRelative = cwd.relativize(rdAbs);
+        assertFalse(rdRelative.isAbsolute(), "the whole point is that this Path is NOT absolute");
+
+        assertTrue(RunBench.exportSource(ws, rdRelative), "must succeed even though rd was passed in as a relative path");
+        assertEquals("services: {}\n", Files.readString(rdAbs.resolve("source/docker-compose.yml")));
+    }
+
+    /** Same bug, same fix, same test shape as exportSource's own case above - bundleWorkspace's
+     *  `git -C ws bundle create <tmp>` has the identical relative-path-resolved-against-ws hazard. */
+    @Test
+    void bundleWorkspaceSucceedsEvenWhenRdIsPassedInAsARelativePath(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
+        final Path ws = track(Files.createDirectory(tmp.resolve("ws")));
+        final Path rdAbs = track(Files.createDirectory(tmp.resolve("rd")));
+        git(ws, "init", "-q");
+        git(ws, "config", "user.email", "bench@local");
+        git(ws, "config", "user.name", "bench");
+        Files.writeString(ws.resolve("docker-compose.yml"), "services: {}\n");
+        git(ws, "add", "-A");
+        git(ws, "commit", "-q", "-m", "T1");
+
+        final Path cwd = Path.of("").toAbsolutePath();
+        final Path rdRelative = cwd.relativize(rdAbs);
+        assertFalse(rdRelative.isAbsolute(), "the whole point is that this Path is NOT absolute");
+
+        RunBench.bundleWorkspace(ws, rdRelative);
+
+        assertTrue(Files.isRegularFile(rdAbs.resolve("workspace.bundle")), "must succeed even though rd was passed in as a relative path");
+        assertTrue(Files.size(rdAbs.resolve("workspace.bundle")) > 0);
     }
 
     /** #263: taskOverride() is Map.of() - never null, and never a false-positive match - for every
