@@ -373,6 +373,74 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.tasks[0].id").value("T1"));
     }
 
+    /** RunBench's own fixed final step after every task wave finishes ("---- integration: the fixed
+     *  final task ----") - now a stage row too, same gate/shape as PRE_TASK_STAGES/POST_TASK_STAGE,
+     *  sitting between the real tasks and REVIEW (self-review reviews the integrated result). */
+    @Test
+    void jobPlanIncludesIntegrationAfterTheRealTasksWhenItsSessionExists() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), """
+                # Plan
+                ## T1 — model the schema
+                - Goal: create the entities
+                - Dependencies: none
+                """);
+        Files.writeString(runDir.resolve("sessions/a.jsonl"),
+                "{\"type\":\"session\",\"id\":\"s-int\",\"label\":\"INTEGRATION\",\"ts\":\"2026-10-20T08:00:00Z\"}\n");
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/INTEGRATION");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/plan"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tasks", hasSize(2)))
+                .andExpect(jsonPath("$.tasks[0].id").value("T1"))
+                .andExpect(jsonPath("$.tasks[0].stage").value(false))
+                .andExpect(jsonPath("$.tasks[1].id").value("INTEGRATION"))
+                .andExpect(jsonPath("$.tasks[1].title").value("Integration"))
+                .andExpect(jsonPath("$.tasks[1].stage").value(true))
+                .andExpect(jsonPath("$.tasks[1].implemented").value(true));
+    }
+
+    /** The FIX step (RunBench's own "FIX-W" + wave-count naming) only ran for the wave that actually
+     *  broke - here wave 1 (T1 alone, since T2 depends on it) - so it must land right after that
+     *  wave's own task row(s), before wave 2's (T2), not bundled with INTEGRATION at the very end. */
+    @Test
+    void jobPlanIncludesAFixStepRightAfterTheWaveItRepaired() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), """
+                # Plan
+                ## T1 — model the schema
+                - Goal: create the entities
+                - Dependencies: none
+                ## T2: implement the API
+                Goal: the REST endpoints
+                Dependencies: T1
+                """);
+        Files.writeString(runDir.resolve("sessions/a.jsonl"),
+                "{\"type\":\"session\",\"id\":\"s-fix\",\"label\":\"FIX-W1\",\"ts\":\"2026-10-20T08:00:00Z\"}\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(Files.createTempDirectory("ws-root").toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/plan"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tasks", hasSize(3)))
+                .andExpect(jsonPath("$.tasks[0].id").value("T1"))
+                .andExpect(jsonPath("$.tasks[1].id").value("FIX-W1"))
+                .andExpect(jsonPath("$.tasks[1].title").value("Fix (wave 1)"))
+                .andExpect(jsonPath("$.tasks[1].stage").value(true))
+                .andExpect(jsonPath("$.tasks[2].id").value("T2"));
+    }
+
     /** #261/#262: unlike implemented/handoff_done (which only say the SESSION ran to completion),
      *  reported_status carries whether the task actually SUCCEEDED - its own self-reported
      *  done/partial/blocked line, or the harness's "unfinished" fallback when even a dedicated
@@ -570,6 +638,24 @@ class BenchControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.started").value(false))
                 .andExpect(jsonPath("$.text").value(Packs.taskInstruction("T3")));
+    }
+
+    /** INTEGRATION/FIX-W* are stage rows too now (plan()'s own INTEGRATION_STAGE/FIX-W handling) -
+     *  the generic "Implement task X only" fallback is wrong for either, since neither is a real
+     *  plan task; each must get the REAL instruction text RunBench.java itself sends. */
+    @Test
+    void taskPromptUsesTheRealIntegrationAndFixInstructionsNotTheGenericTaskFallback() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        Files.createDirectories(resultsDir.resolve("run-1"));
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/INTEGRATION/prompt"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.text").value(Packs.INTEGRATION_INSTRUCTION));
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/FIX-W1/prompt"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.text").value(Packs.FIX_INSTRUCTION.replace("{id}", "FIX-W1").replace("{tasks}", "the merged tasks")));
     }
 
     /** #355/#355-followup: once a task finishes, manifest.json carries its OWN rc/seconds/finish/
