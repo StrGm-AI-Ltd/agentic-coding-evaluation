@@ -257,4 +257,20 @@ class JobCfgFactoryTest {
         assertEquals(false, JobCfgFactory.build(List.of(), props()).get("system_rules"));
         assertEquals(false, JobCfgFactory.build(List.of(), props()).get("handoff_notes"));
     }
+
+    /** The mid-task judge now defaults to ON - unlike every other boolean flag here, an argv list
+     *  with NEITHER --judge nor --no-judge must come out enabled, not disabled. RunSpec.argv()
+     *  always emits one or the other for a real RunSpec, but a hand-built argv list (or one from
+     *  before this change) might omit both - that must default to enabled too. */
+    @Test
+    void judgeEnabledDefaultsToTrueUnlessExplicitlyDisabled() {
+        final Map<String, Object> judge = (Map<String, Object>) JobCfgFactory.build(List.of(), props()).get("judge");
+        assertEquals(true, judge.get("enabled"), "no flag either way - must default to enabled");
+
+        final Map<String, Object> judgeOff = (Map<String, Object>) JobCfgFactory.build(List.of("--no-judge"), props()).get("judge");
+        assertEquals(false, judgeOff.get("enabled"));
+
+        final Map<String, Object> judgeOn = (Map<String, Object>) JobCfgFactory.build(List.of("--judge"), props()).get("judge");
+        assertEquals(true, judgeOn.get("enabled"));
+    }
 }

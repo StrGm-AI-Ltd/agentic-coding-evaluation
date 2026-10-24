@@ -184,7 +184,10 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (handoffTokens != null) args.add("--handoff-tokens=" + handoffTokens);
         if (wrapupTokens != null) args.add("--wrapup-tokens=" + wrapupTokens);
         if (efficiencyWeight != null) args.add("--efficiency-weight=" + efficiencyWeight);
-        if (judgeEnabled) args.add("--judge");
+        // the mid-task judge now defaults to ON - unlike every other boolean flag here, this one
+        // must emit EITHER way so an explicit opt-out survives the round trip through argv rather
+        // than being indistinguishable from "never set" (which JobCfgFactory now treats as enabled)
+        args.add(judgeEnabled ? "--judge" : "--no-judge");
         if (judgeEveryNTurns != null) args.add("--judge-every-n-turns=" + judgeEveryNTurns);
         if (judgeModel != null) args.add("--judge-model=" + judgeModel);
         if (judgeWallSec != null) args.add("--judge-wall-sec=" + judgeWallSec);
@@ -327,7 +330,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 .parallelPlanTokens(intOf(spec, "parallel_plan_tokens")).handoffTokens(intOf(spec, "handoff_tokens"))
                 .wrapupTokens(intOf(spec, "wrapup_tokens"))
                 .efficiencyWeight(doubleOf(spec, "efficiency_weight"))
-                .judgeEnabled(bool(spec, "judge_enabled", false)).judgeEveryNTurns(intOf(spec, "judge_every_n_turns"))
+                .judgeEnabled(bool(spec, "judge_enabled", true)).judgeEveryNTurns(intOf(spec, "judge_every_n_turns"))
                 .judgeModel(str(spec, "judge_model")).judgeWallSec(intOf(spec, "judge_wall_sec")).judgeTokens(intOf(spec, "judge_tokens"))
                 .budgetRescueEnabled(bool(spec, "budget_rescue_enabled", false)).rescueWallSec(intOf(spec, "rescue_wall_sec"))
                 .rescueTokens(intOf(spec, "rescue_tokens")).rescueKeepRecentTurns(intOf(spec, "rescue_keep_recent_turns"))
