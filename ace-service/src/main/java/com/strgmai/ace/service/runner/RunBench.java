@@ -34,6 +34,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** Port of runner/run_bench.py's run_once — now at full scope. Isolation: each run gets a fresh
@@ -355,7 +356,7 @@ public class RunBench {
                 if (next != interval[0])
                     log.info("run {}: judge interval for task {} {} {} -> {} turns", runId, taskId, offTrack ? "tightened" : "relaxed", interval[0], next);
                 interval[0] = next;
-                if (offTrack) appendLesson(rd, taskId, turn, recommendation);
+                if (offTrack) appendLesson(cfg, rd, taskId, turn, recommendation);
             }
             return recommendation;
         };
@@ -1878,7 +1879,7 @@ public class RunBench {
                 rec.put("rescue_succeeded", true);
                 rec.put("verification", VerifyTask.verify(ws, cfg, rd.resolve("verify/" + t.id + "-rescue.log")));
             }
-            appendRescueLesson(rd, t.id, reason, h.rc() == 0);
+            appendRescueLesson(cfg, rd, t.id, reason, h.rc() == 0);
         } finally {
             proxy.stop();
             Files.writeString(rd.resolve("rescue/" + t.id + ".done"), "");
@@ -1929,27 +1930,39 @@ public class RunBench {
         catch (IOException e) { log.warn("could not read {}: {}", lp, e.toString()); return null; }
     }
 
-    /** Shared by appendLesson()/appendRescueLesson() below - appends are safe under concurrency
-     *  (a parallel wave can have more than one task's judge or rescue firing at once):
-     *  StandardOpenOption.APPEND opens with O_APPEND, and POSIX guarantees a single write() of
-     *  this size lands atomically, never interleaved with a concurrent one. */
-    private static void writeLesson(final Path rd, final String heading, final String body) {
+    /** #332: lessons.md's own configurable size ceiling, in characters - checked after every
+     *  write via compactLessonsIfNeeded() below. 0 disables the ceiling entirely (the system-wide
+     *  "0 = unlimited" convention). Blank/unset cfg falls back to this constant. */
+    static final int DEFAULT_LESSONS_MAX_CHARS = 6000;
+
+    /** #332: the ONE canonical entry point for writing to lessons.md - the judge's own off-track
+     *  correction (appendLesson below) and budget-rescue's own summary (appendRescueLesson below)
+     *  already funnel through here, and the new record_lesson tool (#332, offered to the main
+     *  task session and the handoff session) will too - size-capping and compaction protect
+     *  every source with no duplicated logic, and the judge's own appends get that protection for
+     *  free. Appends are safe under concurrency (a parallel wave can have more than one task's
+     *  judge/rescue/tool call firing at once): StandardOpenOption.APPEND opens with O_APPEND, and
+     *  POSIX guarantees a single write() of this size lands atomically, never interleaved with a
+     *  concurrent one. */
+    static void recordLesson(final Map<String, Object> cfg, final Path rd, final String heading, final String body) {
         try {
             Files.writeString(rd.resolve("lessons.md"), "## " + heading + "\n" + body.strip() + "\n\n",
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException e) {
             log.warn("could not append a lesson ({}): {}", heading, e.toString());
+            return;
         }
+        compactLessonsIfNeeded(cfg, rd);
     }
 
     /** #404: called from buildJudgeCheckpoint() the moment a checkpoint comes back OFF TRACK -
-     *  appends the judge's own recommendation (the richest, most specific signal already in hand;
+     *  records the judge's own recommendation (the richest, most specific signal already in hand;
      *  no extra summarising LLM call) so later, unrelated tasks in this same run get the same
      *  course-correction the current task just needed. A future harness feature (tracked
      *  separately) can later mine this file at job-end to promote durable facts into #403's
      *  static, cross-run gotchas list - this method only captures the raw material for that. */
-    static void appendLesson(final Path rd, final String taskId, final int turn, final String recommendation) {
-        writeLesson(rd, taskId + " (turn " + turn + ")", recommendation);
+    static void appendLesson(final Map<String, Object> cfg, final Path rd, final String taskId, final int turn, final String recommendation) {
+        recordLesson(cfg, rd, taskId + " (turn " + turn + ")", recommendation);
     }
 
     /** #404: called from rescueStep() once a rescue attempt concludes, win or lose. Weaker signal
@@ -1957,10 +1970,64 @@ public class RunBench {
      *  just which budget ran out and whether the reconnect recovered a working result), but still
      *  worth knowing: several unrelated tasks needing the same KIND of rescue in one run is itself
      *  informative, the same way a cluster of judge interventions would be. */
-    static void appendRescueLesson(final Path rd, final String taskId, final String reason, final boolean succeeded) {
-        writeLesson(rd, taskId + " (budget rescue)", "Needed a budget-rescue reconnect because it " + reason + ". Rescue "
+    static void appendRescueLesson(final Map<String, Object> cfg, final Path rd, final String taskId, final String reason, final boolean succeeded) {
+        recordLesson(cfg, rd, taskId + " (budget rescue)", "Needed a budget-rescue reconnect because it " + reason + ". Rescue "
                 + (succeeded ? "succeeded - a compacted reconnect recovered a working result."
                              : "did not recover a working result - the task is still short of its acceptance criteria."));
+    }
+
+    /** #332: tier 1 of two - deterministic, zero-LLM-risk dedup, run every time recordLesson()
+     *  writes and the file is now over budget. Collapses near-identical entries (the SAME
+     *  underlying claim, found live as two different tasks independently reporting the same
+     *  environment fact) down to the most recent one, verbatim - catches exactly the shape of
+     *  duplication #332 found live, with no risk of an LLM subtly altering a factual record while
+     *  "compacting" it. Tier 2 (LLM-based merge, scoped narrowly to preserving every distinct
+     *  fact rather than free summarization, firing only if tier 1 alone doesn't bring the file
+     *  back under budget) is tracked separately, not yet implemented. */
+    static void compactLessonsIfNeeded(final Map<String, Object> cfg, final Path rd) {
+        final Path lp = rd.resolve("lessons.md");
+        if (!Files.isRegularFile(lp)) return;
+        final int maxChars = cfg.get("lessons_max_chars") instanceof Number n ? n.intValue() : DEFAULT_LESSONS_MAX_CHARS;
+        if (maxChars <= 0) return;   // 0 = unlimited, the system-wide "0 = no budget" convention
+        final String text;
+        try { text = Files.readString(lp); } catch (IOException e) { log.warn("could not read {} for compaction: {}", lp, e.toString()); return; }
+        if (text.length() <= maxChars) return;
+        final String deduped = String.join("", dedupLessonEntries(splitLessonEntries(text)));
+        try { Files.writeString(lp, deduped); }
+        catch (IOException e) { log.warn("could not write compacted {}: {}", lp, e.toString()); }
+    }
+
+    /** Each entry is exactly one `"## " + heading + "\n" + body + "\n\n"` block (recordLesson's
+     *  own append format) - split on the start of each "## " heading line, keeping that line as
+     *  part of the entry it introduces. */
+    static List<String> splitLessonEntries(final String text) {
+        final List<Integer> starts = new ArrayList<>();
+        final Matcher m = Pattern.compile("(?=^## )", Pattern.MULTILINE).matcher(text);
+        while (m.find()) starts.add(m.start());
+        final List<String> entries = new ArrayList<>();
+        for (int i = 0; i < starts.size(); i++)
+            entries.add(text.substring(starts.get(i), i + 1 < starts.size() ? starts.get(i + 1) : text.length()));
+        return entries;
+    }
+
+    /** Keeps the LAST occurrence of each normalized BODY (the heading - task id + turn/reason -
+     *  is specific to who reported it and never shared across genuine duplicates; only the body
+     *  carries the actual claim), in original order otherwise. Normalizing case/punctuation/
+     *  whitespace catches the exact live case - two tasks reporting the same fact, phrased
+     *  identically or near enough - without attempting full semantic dedup (that's tier 2's job). */
+    static List<String> dedupLessonEntries(final List<String> entries) {
+        final Map<String, Integer> lastIndexByBody = new LinkedHashMap<>();
+        for (int i = 0; i < entries.size(); i++) lastIndexByBody.put(normalizeLessonBody(entries.get(i)), i);
+        final List<Integer> keep = new ArrayList<>(new TreeSet<>(lastIndexByBody.values()));
+        final List<String> result = new ArrayList<>();
+        for (final int i : keep) result.add(entries.get(i));
+        return result;
+    }
+
+    private static String normalizeLessonBody(final String entry) {
+        final int nl = entry.indexOf('\n');
+        final String body = nl < 0 ? "" : entry.substring(nl + 1);
+        return body.toLowerCase().replaceAll("[^a-z0-9]+", " ").strip();
     }
 
     /** Extracted from a `javac -version` (or equivalent) invocation's own output - `javac 21.0.12.1`
