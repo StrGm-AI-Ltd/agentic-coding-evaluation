@@ -45,4 +45,11 @@ class ModelPricingTest {
         // the hackathon-reviewer positioning's own target model
         assertEquals(0.30, ModelPricing.costUsd("nvidia/nemotron-3-super-120b-a12b", Map.of("input", 1_000_000L, "output", 0L)));
     }
+
+    @Test
+    void nebiusGlmFlashHasAKnownRate() {
+        // zai-org/GLM-5.3-Flash: $0.15/M input, $0.50/M output
+        final Double cost = ModelPricing.costUsd("zai-org/glm-5.3-flash", Map.of("input", 1_000_000L, "output", 1_000_000L));
+        assertEquals(0.65, cost, 1e-9);
+    }
 }
