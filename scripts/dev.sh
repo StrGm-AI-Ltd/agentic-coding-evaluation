@@ -55,13 +55,22 @@ up() {
     # 2026-09-28). Still overridable via this shell's own ACE_WORKSPACE_ROOT, same as OMLX_API_KEY above.
     local workspace_root="${ACE_WORKSPACE_ROOT:-$ROOT/ace-service/workspaces}"
 
+    # found live (2026-10-25): `launchctl submit` does NOT inherit this shell's own PATH - a
+    # submitted job starts with launchd's own bare default (`/usr/bin:/bin:/usr/sbin:/sbin`), which
+    # has neither /usr/local/bin (docker) nor /opt/homebrew/bin. DockerService.proc() execs
+    # `docker`/etc directly via ProcessBuilder with no shell (unlike AgentTools.bash()'s own
+    # zsh -lc, which rebuilds PATH via path_helper) - so every Docker-gated oracle check
+    # (B1/B2/C2/F5/F6/F7) silently read "docker unavailable" and got SKIPPED on EVERY run since
+    # dev.sh moved to launchd (2026-09-27), even with Docker genuinely running, because the JVM
+    # itself never had a PATH that could find it. Passing this shell's own real PATH through
+    # fixes it at the root - every direct-exec subprocess the service spawns inherits it.
     echo "Starting $SERVICE_LABEL..."
     submit "$SERVICE_LABEL" "$ROOT/service.log" \
-        "cd '$ROOT' && exec env $key_env ACE_WORKSPACE_ROOT='$workspace_root' ./gradlew :ace-service:bootRun >> '$ROOT/service.log' 2>&1"
+        "cd '$ROOT' && exec env $key_env ACE_WORKSPACE_ROOT='$workspace_root' PATH='$PATH' ./gradlew :ace-service:bootRun >> '$ROOT/service.log' 2>&1"
 
     echo "Starting $UI_LABEL..."
     submit "$UI_LABEL" "$ROOT/ui.log" \
-        "cd '$ROOT' && exec ./gradlew :ace-ui-vaadin:bootRun >> '$ROOT/ui.log' 2>&1"
+        "cd '$ROOT' && exec env PATH='$PATH' ./gradlew :ace-ui-vaadin:bootRun >> '$ROOT/ui.log' 2>&1"
 
     wait_for_port 8765 ace-service "$ROOT/service.log"
     wait_for_port 8800 ace-ui-vaadin "$ROOT/ui.log"
