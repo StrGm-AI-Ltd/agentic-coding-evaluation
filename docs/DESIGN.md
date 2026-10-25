@@ -2,11 +2,13 @@
 
 This is the design reference for `ace-service`, the Java 21 / Spring Boot port of the original
 Python `agentbench-trading` CLI harness, plus `ace-ui-vaadin`, its Vaadin web front end. It describes
-what the harness measures, how the scoring and runner mechanics actually work in this codebase, and
-what has and has not been carried over from the original design. Claims below were checked against
-the real source in `ace-service/src/main/java/com/strgmai/ace/service/` — where something could not
-be verified against the code, or is known to differ from the original design, that is called out
-explicitly rather than asserted.
+what the harness measures, how the scoring and runner mechanics actually work in this codebase, what
+has and has not been carried over from the original design, and the capabilities this port has since
+grown natively, with no Python precedent at all (Judge, cross-task lesson sharing, operator
+intervention, the Vaadin UI itself). Claims below were checked against the real source in
+`ace-service/src/main/java/com/strgmai/ace/service/` and `ace-ui-vaadin/src/main/java/com/strgmai/ace/ui/`
+— where something could not be verified against the code, or is known to differ from the original
+design, that is called out explicitly rather than asserted.
 
 ## 1. Purpose and the two questions it answers
 
@@ -20,7 +22,7 @@ Docker Compose microservices. Two questions the harness is built to answer:
 In the original Python project this second question turned out to be the decisive one (an
 orchestrated, task-by-task harness beat a single growing session for a weak local model). That
 finding is *why* this harness is shaped the way it is; ace-service ports the same two-mode design
-(§9) rather than re-deriving it.
+(§13) rather than re-deriving it.
 
 ## 2. Repository layout
 
@@ -28,8 +30,10 @@ finding is *why* this harness is shaped the way it is; ace-service ports the sam
 ace-service/
   src/main/java/com/strgmai/ace/service/
     AceServiceApplication.java       Spring Boot entry point (Vaadin-less REST + scheduled worker)
-    agent/       ReferenceAgent (the harness's own coding agent, on LangChain4j), AgentTools, AgentSession
-    config/      BenchProperties (@ConfigurationProperties(prefix="ace")), PGobjectJsonSerializer
+    agent/       ReferenceAgent (in-process, LangChain4j) and PiAgent (external subprocess) — the
+                 two selectable harnesses (RunSpec.HARNESSES = "ref"/"pi", see §7/§8); AgentTools,
+                 AgentSession, CompactionStrategies
+    config/      BenchProperties (@ConfigurationProperties(prefix="ace")), JsonColumns (jOOQ JSON binding)
     docker/      DockerService — passive Docker-running probe, CLI-plugin mirroring into a fresh HOME
     metrics/     Collect, Trajectory, StatsService — cost, trajectory analysis, k-run statistics
     oracle/      CheckId (the 30-check registry), CheckStatus, CheckResult, Scorer, RunOracle
@@ -39,21 +43,22 @@ ace-service/
     proxy/       RecordingProxy (journals every request/response), SseAssembler
     reference/   TradingService (+ 9 seeded bugs), TradingController, ReferenceServer (standalone twin)
     runner/      RunBench (orchestrator), RunBenchSupport, ContextProbe, Validity, VerifyTask,
-                 JournalFacts, Reviews, RecordingProxyFactory
+                 JournalFacts, Reviews, RecordingProxyFactory, Judge (mid-task trajectory
+                 checkpoint, §9), Intervene + PauseAfterTask (operator controls, §11), TaskMatcher
+                 (cross-run semantic task matching for Compare, §14)
     service/     JobQueue, WorkerService, ExperimentsService, ImporterService, BenchController,
-                 Preflight, RunSpec, Tailer, TreatmentPin, ApiExceptionHandler
+                 Preflight, RunSpec, Tailer, TreatmentPin, ApiExceptionHandler, JobCfgFactory
+                 (argv → job cfg extraction), TaskTranscript (Live-tab transcript rendering)
   src/main/resources/
-    application.yml, schema.sql
+    application.yml, db/migration/V1..V6__*.sql     Flyway migrations for the service's own SQLite store
     task/PROMPT.md, tasks/PROMPT.md, tasks/ladder.json, tasks/L1..L7_*/PROMPT.md   the frozen task specs
     contract/openapi.yaml            machine-readable twin of the frozen HTTP contract
+  fixtures/positive/, fixtures/adversarial/cheat{A-F}_*    gaming-resistance fixtures — see §6
   review.txt, review_fixes.txt       this port's own adversarial code review (66 findings, all fixed)
 
 ace-ui-vaadin/
-  src/main/java/com/strgmai/ace/ui/  Vaadin 25 views over ace-service's (or the original Python
-                                      service's) JSON API — runs/jobs/experiments/groups/compare/preflight
+  src/main/java/com/strgmai/ace/ui/  Vaadin 25 views + SSE-driven live loops — see §14
 ```
-
-There is no `fixtures/positive/` or `fixtures/adversarial/cheat*` directory in this port — see §6.
 
 ## 3. Scoring
 
@@ -168,28 +173,39 @@ code:
   above `maxErrorRate`, zero LLM requests recorded, a request referencing another run's workspace, an
   unparseable plan, or (in orchestrated mode) the integration task never running. A budget exhaustion
   is explicitly treated as a **result**, not an invalidation — this is the same "censor both arms the
-  same way" rule from the original's design rules (§13).
+  same way" rule from the original's design rules (§18).
 - **Provenance and snapshots**: `RunBenchSupport.java` provides the scrubbed environment (`ACE_RUN_ID`
   set into the agent's process env — see the note below), git snapshotting after each phase/task, and
   the single-run lock. One deliberately-unrenamed detail: the run lock lives at
   `~/.cache/agentbench/run.lock`, the *same path* the sibling Python service uses, so the two
   implementations serialize against each other rather than racing for the same model server.
-- **The reference agent replaces Pi entirely.** The original project's later design added its own
-  non-Pi reference agent (`runner/agent_loop.py`, `ref-1.0`) specifically to control reasoning effort,
-  compaction behaviour, and loop version — see §7c. This Java port does not carry Pi forward as an
-  option at all: `agent/ReferenceAgent.java` (`AGENT_VERSION = "jls-ref-1.0"`) is the only agent
-  implementation here.
+- **Two selectable harnesses, not one — `agent/ReferenceAgent.java` and `agent/PiAgent.java`.** The
+  original project's later design added its own non-Pi reference agent (`runner/agent_loop.py`,
+  `ref-1.0`) specifically to control reasoning effort, compaction behaviour, and loop version
+  alongside Pi, not instead of it — and this port carries that same choice forward rather than
+  retiring Pi: `RunSpec.HARNESSES` is `{"ref", "pi"}`, both constructor-injected into `RunBench`,
+  selected per run via `--harness=`. `agent/ReferenceAgent.java` (`AGENT_VERSION = "jls-ref-1.0"`) is
+  the one the rest of this document covers in detail — see §8.
 
-## 7c. The agent — ReferenceAgent
+## 8. The agent — ReferenceAgent and PiAgent
 
-`agent/ReferenceAgent.java` is a direct, verified port of `runner/agent_loop.py`, built on
-LangChain4j against an OpenAI-compatible endpoint:
+Two harnesses are selectable per run (`RunSpec.harness`, `"ref"` or `"pi"` — see §7):
 
-- **Same four core tools, plus one**: `read` (line ranges), `write`, `edit` (exact-match replace,
-  with `replace_all`), `bash` (zsh, timeout parameter, default/max caps), and `recall_tool_output`
-  (#424 - recalls an earlier tool call's original output from the session's own journal once it's
-  been dropped by compaction, rather than re-running a command that might itself be expensive) —
-  defined via LangChain4j `ToolSpecification`s in `toolSpecs()`.
+- **`agent/PiAgent.java`** drives an external agent subprocess rather than calling the model
+  in-process: it owns that subprocess's own lifecycle (start, HOME seeding, process-tree kill on
+  stop) and folds its output back into the same journal/session machinery everything else here uses.
+  This document does not re-derive Pi's own internal loop (it is not this project's own loop to
+  describe) — only that it exists here as a real, selectable alternative, not a retired one.
+- **`agent/ReferenceAgent.java`** is a direct, verified port of `runner/agent_loop.py`, built on
+  LangChain4j against an OpenAI-compatible endpoint, and is the one the rest of this section covers:
+
+- **Six tools, not four plus one.** `read` (line ranges), `write`, `edit` (exact-match replace,
+  with `replace_all`), `bash` (zsh, timeout parameter, default/max caps) are the four core tools;
+  `recall_tool_output` (#424 — recalls an earlier tool call's original output from the session's own
+  journal once it's been dropped by compaction, rather than re-running a command that might itself be
+  expensive) and `record_lesson` (#332 — lets the agent itself report a cross-cutting, non-task-
+  specific finding; see §10) are each an independently toggleable addition, defined via LangChain4j
+  `ToolSpecification`s in `toolSpecs()`.
 - **Same loop shape**: a turn with no tool call ends the session; the proxy's 429 (budget exhausted)
   ends the session with `rc=3` via a dedicated `BudgetExhausted` exception, matched against a literal
   string (`RecordingProxy`'s own error body) rather than by status code alone, since a real upstream
@@ -199,18 +215,31 @@ LangChain4j against an OpenAI-compatible endpoint:
 - **Pluggable compaction strategies (#417/#421/#426), not a single fixed mechanism.**
   `CompactionStrategies.apply()` runs whichever strategies a run/task has enabled, in the configured
   order, once the last prompt exceeds `props.compactionTrigger()` (job/task-overridable via
-  `compaction_strategies`): `tool_result_mask` (the original design's own "stub the oldest tool
-  outputs, keep the newest turns, never touch the system prompt" approach, now token-budgeted rather
-  than turn-count-only - the protected window itself is capped so it can never grow to consume the
-  whole budget) and `structured_eviction` (a one-shot, fixed-outline LLM summary of the evicted
-  range - LANDED/STATE/INVARIANTS/TASKS/DO NEXT/DECISIONS - updated in place on later passes, the
-  same pattern this project's own inter-task handoff-notes/`lessons.md` already use, applied within
-  one session - its own one-shot LLM call is capped and a failed call is logged (#426) rather than
-  risking an unbounded request or vanishing silently; it also spends part of the task's own
-  measured token budget, journaled separately from ordinary turns so that cost stays visible rather
-  than hidden inside a side call nothing accounts for). A different layer - KV-cache-level
-  eviction (H2O/StreamingLLM/PyramidKV) inside oMLX's own attention mechanism - is deliberately
-  out of scope here: it isn't anything this codebase
+  `compaction_strategies`). `CompactionStrategies.KNOWN` is four mechanisms; `DEFAULT` enables three
+  of them (`structured_eviction` stays opt-in):
+    - `tool_result_mask` (**on by default**) — the original design's own "stub the oldest tool
+      outputs, keep the newest turns, never touch the system prompt" approach, now token-budgeted
+      rather than turn-count-only (the protected window itself is capped so it can never grow to
+      consume the whole budget). Found live (#325): it now also stubs a `write` call's own
+      full-file argument once its result is masked, not just the result itself — that argument is
+      often the larger of the two and was previously never compacted at all.
+    - `error_line_extraction` (**on by default**, #423) — when a `bash` output's own head/tail cap
+      would otherwise let its omitted middle go completely dark, scans it for FAILED/Exception/
+      assertion-diff/stack-frame lines and keeps a capped number of the newest matches verbatim.
+    - `tool_output_recall` (**on by default**, #424) — the toggle that makes `recall_tool_output`
+      (above) a real behavioural change rather than just hiding the tool: disabled, a masked
+      result's own stub text falls back to "re-run the command if you need it" instead of pointing
+      at a tool the model cannot actually call.
+    - `structured_eviction` (**opt-in**) — a one-shot, fixed-outline LLM summary of the evicted
+      range (LANDED/STATE/INVARIANTS/TASKS/DO NEXT/DECISIONS), updated in place on later passes, the
+      same pattern this project's own inter-task handoff-notes/`lessons.md` already use, applied
+      within one session. Its own one-shot LLM call is capped and a failed call is logged (#426)
+      rather than risking an unbounded request or vanishing silently; it also spends part of the
+      task's own measured token budget, journaled separately from ordinary turns so that cost stays
+      visible rather than hidden inside a side call nothing accounts for.
+
+  A different layer — KV-cache-level eviction (H2O/StreamingLLM/PyramidKV) inside oMLX's own
+  attention mechanism - is deliberately out of scope here: it isn't anything this codebase
   controls (oMLX is a third-party app), only something to request/configure on oMLX's side. oMLX's
   underlying `mlx-lm` already ships `--kv-bits`/`--kv-group-size`/`--quantized-kv-start` (quantized
   KV, disables request batching while active - and one current report shows `--kv-bits` silently
@@ -235,7 +264,61 @@ LangChain4j against an OpenAI-compatible endpoint:
   `ReferenceAgent`'s chat-model builder sets it on every request. `JournalFacts.java` reads it back
   from that same top-level field for the provenance histogram, matching what is actually sent.
 
-## 8. Recording and metrics
+## 9. Judge — mid-task trajectory checkpointing
+
+Not part of the original Python design at all — a capability this port grew natively. `runner/Judge.java`
+is a separate LLM session, run every N agent turns within a task (`judge_every_n_turns`, default 10),
+that reads the task's own goal, budget, diff-so-far and recent trajectory and replies with exactly one
+verdict line, `ON TRACK` or `OFF TRACK` (parsed case-insensitively from the first line of its reply),
+plus guidance injected as the agent's next turn when off-track. A run of consecutive off-track
+verdicts tightens the judge's own check-in cadence (a drifting task gets checked more often, not left
+to the original interval) and, near budget exhaustion, switches into a "triage mode" notice rather
+than its ordinary guidance. Every checkpoint's own reply is written to
+`judge/<taskId>-<attempt>-turn<N>.md` for later inspection (the per-task Judge tab in the UI, §14,
+reads these). Task-scoped only — p0/p1/PARALLEL_PLAN/wrap-up/handoff/review sessions never run it.
+`judge_enabled` defaults to **on** for every run (`RunSpec.argv()` always emits either `--judge` or
+`--no-judge` explicitly, so an operator's deliberate opt-out survives the round trip); it is also one
+of the few knobs a paused job's per-task Restart tab can retroactively enable.
+
+## 10. Cross-task knowledge sharing — lessons.md
+
+Also not part of the original design. The handoff mechanism (the per-task packs §7/§13 describe)
+only ever propagates a task's own notes along its OWN dependency edges, so a host-level quirk or
+discovered constraint one task finds has no channel to reach a LATER, unrelated task that never
+depended on it — every task was independently rediscovering the same facts. `record_lesson(text)`
+(#332) is a tool offered to the main task session, a parallel-wave task session, and both the fast
+in-session and cold timed-out-task handoff paths, letting the agent itself report a cross-cutting
+finding mid-task. `RunBench.recordLesson()` is the one canonical write path — judge's own off-track
+recommendations and a budget-rescue reconnect's own reason are ALSO recorded through it, not a
+separate mechanism — into a single run-wide `lessons.md`, which `readLessons()` folds into every
+downstream task's own pack (`Packs.taskPack()`) and the final `INTEGRATION` task's pack alike,
+independent of the dependency graph. Since this file is a shared, run-wide resource potentially
+written by a dozen or more tasks, its size is capped (`lessons_max_chars`, default 6000, 0 =
+unlimited): crossing that ceiling triggers a deterministic, zero-LLM tier-1 compaction pass that
+dedups near-identical entries, keeping the MOST RECENT of any duplicate group. An LLM-based tier-2
+compaction (for when dedup alone isn't enough) is a known, deliberately deferred gap, not yet built,
+because an LLM pass risks corrupting the exact kind of factual record this feature exists to make
+trustworthy. `lesson_recording_enabled` is its own dedicated toggle — not a `CompactionStrategies`
+member, despite briefly living there during this feature's own first implementation, found not worth
+the conceptual mixing it caused — defaulting to **on**, mirroring `judge_enabled`'s exact pattern
+(`RunSpec.argv()` always emits `--lesson-recording` or `--no-lesson-recording`).
+
+## 11. Operator intervention and pause-after-task
+
+Neither is in the original design. `runner/Intervene.java` is a plain in-memory mailbox, keyed by
+(runId, taskId), that lets an operator inject a live steering message into a running task as its next
+instruction — delivered through the same per-turn check Judge already uses, but with no LLM call and
+no run-level enablement gate; an operator can intervene on any task at any time regardless of that
+task's own `judge_enabled`. Not persisted (a live command, not state meant to survive an
+`ace-service` restart), but delivery itself IS durably logged: the injected text lands in the task's
+own session JSONL via the same `session.user(...)` call Judge's own recommendations already use,
+searchable later via `grep -rl "Operator intervention" results/<run>/sessions/`. `runner/PauseAfterTask.java`
+is a graceful stop request for a RUNNING job — unlike the existing `/pause` endpoint's immediate
+interrupt, which can discard a task's own in-progress turns, this waits for the task currently running
+to actually finish, then calls the exact same `JobQueue.pause()` the immediate path already uses, just
+at a safer, between-tasks checkpoint. Both are exposed on the Live tab (§14).
+
+## 12. Recording and metrics
 
 `proxy/RecordingProxy.java` is the port of `record_proxy.py`: it sits between the agent and the model
 server and journals requests/responses; `SseAssembler.java` handles the streamed-response
@@ -248,7 +331,7 @@ comparability key — window, derived knobs, budgets, system-prompt SHA) is also
 named (this is an "A/B" as in *model* A/B testing, unrelated to this project's own "AB → ACE" rename;
 it was deliberately left alone during that rename for exactly that reason).
 
-## 9. Harness modes
+## 13. Harness modes
 
 Both modes described in the original design are present in `RunBench.java`:
 
@@ -264,31 +347,57 @@ Both modes described in the original design are present in `RunBench.java`:
   appears to have been carried into this port, though its correctness under load was not
   independently re-verified here.
 
-This design document does not restate the original's specific historical benchmark numbers (see §10)
+This design document does not restate the original's specific historical benchmark numbers (see §15)
 since those were produced by the Python implementation on specific models and are not this port's own
 results.
 
-## 10. Results so far
+## 14. The Vaadin front end
 
-Unlike the original Python harness, **this port has not yet produced a recorded benchmark run**: there
-is no `results/<run>/` directory anywhere in `ace-service`, which is where `RunBench` would write a
-run's manifest/oracle/metrics/trajectory output. What exists instead, and is real, verifiable evidence
-of this port's own correctness work:
+Reduced in earlier drafts of this document to one line in §2's directory tree — `ace-ui-vaadin` is a
+substantial module, ~8,400 LOC across 14 routed views: `RunsView`/`RunDetailView` (imported run
+results), `JobsView`/`JobNewView`/`JobDetailView` (the live job queue — creation, per-task plan/status
+grid, and Prompt/Changes/Restart/History/Judge/Stats/Live tabs per task), `ExperimentsView`/
+`ExperimentNewView`/`ExperimentDetailView` (multi-arm A/B experiments), `GroupsView`, `CompareView`
+(cross-run comparison), `PreflightView`, `FileViewerView`, `DiffView`, and `RootView`. Live state on
+the Jobs/Job-detail pages is SSE-driven, not polling alone: `JobEventLoop.java` and
+`TaskTranscriptLoop.java` stream a running job's own events and a task's live transcript respectively.
+`CompareView` does not do a naive id-for-id task match between two runs — `runner/TaskMatcher.java` is
+an LLM-based matcher (#339) that semantically aligns two independently-decomposed
+`--plan-source=agent` plans (same goal, different task ids/granularity) before the UI can compare
+them task-by-task at all. The operator-intervention controls (§11) live on the Job-detail page's Live
+tab.
+
+## 15. Results so far
+
+This port has since produced a substantial number of recorded benchmark runs — `ace-service/results/`
+holds dozens of them as of this revision, spanning model A/B pairs (`ab-*`), direct named
+service-build runs (`svc-*`), and task-granularity-ladder experiments (`l2-gran-*`), with
+manifest/oracle/metrics/trajectory output written by `RunBench` exactly as designed. Exact run
+counts and scores are not restated here — unlike §3's fixed, versioned scoring design, this is live,
+continuously-growing state, queryable via the UI's Runs page or `GET /api/runs`, not a fixed
+historical table worth freezing into a design document. What was true when this section was first
+written, and remains real, durable evidence of this port's own correctness work independent of any
+one live run:
 
 - **66 code-review findings, all fixed** (`review.txt`, `review_fixes.txt`), spanning bugs, resource
   leaks, race conditions, and dead code across the agent/runner/oracle/service packages, each closed
   with a cited commit.
 - **139+ unit and integration tests passing** (`./gradlew test`), covering the oracle checks, the
   scorer, plan parsing, the recording proxy, journal-fact extraction, and the service layer (job
-  queue, worker, experiments, importer) against a stub server and Testcontainers Postgres.
-  `./gradlew dockerTest` additionally builds this service's own Dockerfile into a real image and
-  drives it end-to-end (git preflight, JDK pin, a real HTTP round trip) — verified passing against a
-  live Docker daemon during this port's development.
-- **No functional/composite scores against a live model yet.** Running the harness against an actual
-  local or hosted model — the thing the original's §10 table reports — has not happened in this
-  repository as far as its own artifacts show.
+  queue, worker, experiments, importer) against a stub server and a fresh, real SQLite database per
+  test (Flyway-migrated, queried through jOOQ's `DSLContext`) — `ace-service`'s own operational store
+  moved from Postgres to SQLite partway through this port's development, so no external DB server or
+  Testcontainers container backs these anymore. `./gradlew dockerTest` additionally builds this
+  service's own Dockerfile into a real image (Testcontainers' `GenericContainer`/`ImageFromDockerfile`
+  — still a real dependency, just for this, not for any database) and drives it end-to-end (git
+  preflight, JDK pin, a real HTTP round trip) — verified passing against a live Docker daemon during
+  this port's development.
+- **Functional/composite scores against live local/hosted models now exist**, recorded in `results/`
+  by real runs — but, per the "live state" note above, this document does not restate them inline;
+  read a run's own manifest/oracle output directly, or the UI's Run-detail page, rather than trusting
+  a number frozen into this document at some earlier point in time.
 
-## 11. Known limitations
+## 16. Known limitations
 
 Carried over from the original design, and still true of this port as far as could be verified:
 
@@ -303,11 +412,11 @@ Carried over from the original design, and still true of this port as far as cou
   confirming that `Packs.java` carries `reviewPack`/`trajectoryReviewPack`/`fixPack` methods; treat
   their exact behaviour as unconfirmed until read directly.
 
-## 12. How to run
+## 17. How to run
 
 ```bash
 # from the repo root (agentic-coding-evaluation/) — ace-service is a Gradle subproject
-./gradlew :ace-service:test                 # unit + stub-server + Testcontainers-Postgres integration tests
+./gradlew :ace-service:test                 # unit + stub-server + fresh-SQLite integration tests
 ./gradlew :ace-service:dockerTest           # builds this service's own Dockerfile into a real image and
                                              # drives it end-to-end (needs a running Docker daemon)
 ./gradlew :ace-service:bootRun              # run the service directly
@@ -318,16 +427,16 @@ The original's Python CLI entry points (`runner/run_bench.py --task ... --mode o
 verified 1:1 Gradle-task equivalent in this port as of this document — `RunSpec.java` builds a
 `--harness=` style argument list suggesting an analogous CLI/queue-driven run path exists via the
 service's job queue (`service/JobQueue.java`, `service/WorkerService.java`) and the Vaadin UI's job
-pages, but the exact command surface was not enumerated here.
+pages (§14), but the exact command surface was not enumerated here.
 
-## 13. Design rules distilled
+## 18. Design rules distilled
 
 These are the original project's design rules. They are methodology, not code, and remain the
 standard this port is held to regardless of language:
 
 1. Fix the denominator; absence is failure; a crash can never raise a score; partial runs are never quoted.
 2. The only correctness evidence is an oracle-owned test against the *running* system; self-authored green is not evidence; mutation-test the suite; freeze the contract or there is nothing to test against.
-3. Build a positive control before trusting a negative gate: it finds the oracle's own bugs. (Not yet built in this port — §6, §10.)
+3. Build a positive control before trusting a negative gate: it finds the oracle's own bugs. (Built in this port — see §6.)
 4. Separate infrastructure failure from agent failure, and never charge the machine to the model.
 5. Pin what you claim: sampler parameters via the proxy, packages by version, prompts by hash; record what was *sent*, not what was configured.
 6. Kill process trees, mark run processes in the environment, never read a child's stdout through a pipe its grandchildren can inherit.
