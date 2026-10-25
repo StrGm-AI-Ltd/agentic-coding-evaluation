@@ -38,7 +38,11 @@ public final class ModelPricing {
             // family ACE's hackathon-reviewer positioning actually targets
             Map.entry("nvidia/nemotron-3.5-lightning-30b-a3b", new Rate(0.06, 0.24)),
             Map.entry("nvidia/nemotron-3-super-120b-a12b", new Rate(0.30, 0.90)),
-            Map.entry("nvidia/nemotron-3-ultra-550b-a55b", new Rate(1.00, 3.00)));
+            Map.entry("nvidia/nemotron-3-ultra-550b-a55b", new Rate(1.00, 3.00)),
+            // Nebius Token Factory (nebius.com/services/token-factory/models/glm-models-inference,
+            // verified 2026-10-25) - not part of the hackathon-reviewer positioning above, added for
+            // cost-estimation against a run already recorded under a different (local) model
+            Map.entry("zai-org/glm-5.3-flash", new Rate(0.15, 0.50)));
 
     /** null when the model has no known rate (don't guess) or usage carries no token counts. */
     public static Double costUsd(final String model, final Map<String, Long> usage) {
