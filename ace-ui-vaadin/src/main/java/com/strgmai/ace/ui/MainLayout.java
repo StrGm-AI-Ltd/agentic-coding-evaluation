@@ -30,6 +30,7 @@ public class MainLayout extends AppLayout implements BeforeEnterObserver {
         tab("Queue", JobsView.class, JobDetailView.class, JobNewView.class);
         tab("Experiments", ExperimentsView.class, ExperimentDetailView.class, ExperimentNewView.class);
         tab("Preflight", PreflightView.class);
+        tab("LLM Providers", LlmProvidersView.class);
 
         addToNavbar(brand, tabs);
     }

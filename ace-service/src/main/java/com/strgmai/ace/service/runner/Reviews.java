@@ -29,9 +29,10 @@ public class Reviews {
     private final BenchProperties props;
     private final ReferenceAgent agent;
     private final Intervene intervene;
+    private final com.strgmai.ace.service.agent.ProviderStore providerStore;
 
-    public Reviews(BenchProperties props, ReferenceAgent agent, Intervene intervene) {
-        this.props = props; this.agent = agent; this.intervene = intervene;
+    public Reviews(BenchProperties props, ReferenceAgent agent, Intervene intervene, com.strgmai.ace.service.agent.ProviderStore providerStore) {
+        this.props = props; this.agent = agent; this.intervene = intervene; this.providerStore = providerStore;
     }
 
     /** files `git status` reports as changed, minus build artefacts and the given prefixes (a
@@ -61,8 +62,7 @@ public class Reviews {
     public Map<String, Object> selfReview(Map<String, Object> cfg, Path ws, Path rd, Map<String, Object> manifest,
                                           List<PlanTask> tasks, String promptText, RecordingProxyFactory proxies,
                                           String reviewerModel, boolean blind) throws Exception {
-        String reviewer = reviewerModel == null || reviewerModel.isBlank()
-                ? "omlx/" + cfg.getOrDefault("model", props.model()) : reviewerModel;
+        String reviewer = providerStore.resolveModel(reviewerModel, "omlx/" + cfg.getOrDefault("model", props.model()));
         final boolean external = !reviewer.startsWith("omlx/");
         // only one local model fits: a second local reviewer falls back to the run's own model
         if (!external && !reviewer.equals("omlx/" + cfg.getOrDefault("model", props.model()))) reviewer = "omlx/" + cfg.getOrDefault("model", props.model());
@@ -126,8 +126,7 @@ public class Reviews {
      *  then review the agent's process against the objective index. */
     public Map<String, Object> trajectoryReview(Map<String, Object> cfg, Path ws, Path rd, Map<String, Object> manifest,
                                                  String reviewerModel, RecordingProxyFactory proxies) throws Exception {
-        String reviewer = reviewerModel == null || reviewerModel.isBlank()
-                ? "omlx/" + cfg.getOrDefault("model", props.model()) : reviewerModel;
+        String reviewer = providerStore.resolveModel(reviewerModel, "omlx/" + cfg.getOrDefault("model", props.model()));
         final boolean external = !reviewer.startsWith("omlx/");
         if (!external && !reviewer.equals("omlx/" + cfg.getOrDefault("model", props.model()))) reviewer = "omlx/" + cfg.getOrDefault("model", props.model());
         final Path tdir = ws.resolve("trajectory");
@@ -259,7 +258,7 @@ public class Reviews {
         final String model = reviewer.startsWith("omlx/") ? reviewer.substring("omlx/".length()) : reviewer.substring(reviewer.indexOf('/') + 1);
         final RecordingProxyFactory.ProxySession proxy = external ? null
                 : proxies.start(rd.resolve("interactions.jsonl"), tokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
-        final Map<String, String> extraEnv = external ? externalCredentials(reviewCfg) : null;
+        final Map<String, String> extraEnv = external ? externalCredentials() : null;
         final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 0L;
         final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
         final int maxTurns = cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS;
@@ -305,13 +304,13 @@ public class Reviews {
         }
     }
 
-    Map<String, String> externalCredentials(Map<String, Object> reviewCfg) {
-        final List<String> defaultKeys = java.util.Arrays.stream(com.strgmai.ace.service.agent.ProviderConfig.values())
-                .map(p -> p.credentialEnvVar).toList();
-        final Map<String, String> extra = new LinkedHashMap<>();
-        for (String k : (List<String>) reviewCfg.getOrDefault("credential_env", defaultKeys))
-            if (System.getenv(k) != null) extra.put(k, System.getenv(k));
-        return extra;
+    /** #106/LLM-Providers: was its own copy of the provider table (duplicated across Reviews/Judge/
+     *  TaskMatcher); now a direct call into the shared registry. `reviewCfg`'s own "credential_env"
+     *  override was never wired to any real config path (JobCfgFactory/RunSpec never set it - only
+     *  this class's own tests exercised it directly) and had no equivalent once credentials became
+     *  real stored values rather than env-var names to re-read, so it is gone, not reimplemented. */
+    Map<String, String> externalCredentials() {
+        return providerStore.allCredentials();
     }
 
     /** external providers bypass the proxy (their credentials and endpoints are their own) */
@@ -324,8 +323,8 @@ public class Reviews {
         // other unknown provider name - fall back to the configured endpoint instead of crashing.
         final int slash = reviewer.indexOf('/');
         final String provider = slash < 0 ? "" : reviewer.substring(0, slash);
-        final var known = com.strgmai.ace.service.agent.ProviderConfig.byName(provider);
-        return known != null ? known.baseUrl : String.valueOf(cfg.getOrDefault("endpoint", props.endpoint()));
+        final var known = providerStore.byKey(provider);
+        return known != null ? known.baseUrl() : String.valueOf(cfg.getOrDefault("endpoint", props.endpoint()));
     }
 
     @SuppressWarnings("unchecked")

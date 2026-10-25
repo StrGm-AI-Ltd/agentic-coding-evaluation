@@ -1,6 +1,6 @@
 package com.strgmai.ace.service.runner;
 
-import com.strgmai.ace.service.agent.ProviderConfig;
+import com.strgmai.ace.service.agent.ProviderStore;
 import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.agent.AgentSession;
 import com.strgmai.ace.service.config.BenchProperties;
@@ -41,8 +41,11 @@ public class Judge {
     private static final Logger log = LoggerFactory.getLogger(Judge.class);
     private final BenchProperties props;
     private final ReferenceAgent agent;
+    private final ProviderStore providerStore;
 
-    public Judge(final BenchProperties props, final ReferenceAgent agent) { this.props = props; this.agent = agent; }
+    public Judge(final BenchProperties props, final ReferenceAgent agent, final ProviderStore providerStore) {
+        this.props = props; this.agent = agent; this.providerStore = providerStore;
+    }
 
     // character caps (not token caps, same convention Packs.cap/capTail already use elsewhere) -
     // an unbounded dump of every file plus the whole history is exactly the shape that caused
@@ -102,15 +105,15 @@ public class Judge {
         final long elapsedSec = (System.currentTimeMillis() - taskStartMs) / 1000;
         final String prompt = buildPrompt(ws, taskId, goal, taskWallSec, taskTokens, elapsedSec, trajectory);
 
-        String reviewer = judgeCfg.get("model") instanceof String m && !m.isBlank()
-                ? m : "omlx/" + cfg.getOrDefault("model", props.model());
+        final String rawModel = judgeCfg.get("model") instanceof String m && !m.isBlank() ? m : null;
+        final String reviewer = providerStore.resolveModel(rawModel, "omlx/" + cfg.getOrDefault("model", props.model()));
         final boolean external = !reviewer.startsWith("omlx/");
         final long wallSec = judgeCfg.get("wall_sec") instanceof Number w ? w.longValue() : 0L;
         final long tokens = judgeCfg.get("tokens") instanceof Number t ? t.longValue() : 0L;
         final String model = reviewer.startsWith("omlx/") ? reviewer.substring("omlx/".length()) : reviewer.substring(reviewer.indexOf('/') + 1);
         final RecordingProxyFactory.ProxySession proxy = external ? null
                 : proxies.start(rd.resolve("interactions.jsonl"), tokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
-        final Map<String, String> extraEnv = external ? externalCredentials(judgeCfg) : null;
+        final Map<String, String> extraEnv = external ? externalCredentials() : null;
         final long firstTokenTimeoutMs = cfg.get("first_token_timeout_ms") instanceof Number n ? n.longValue() : 0L;
         final int compactionTrigger = cfg.get("compaction_trigger") instanceof Number ct ? ct.intValue() : props.compactionTrigger();
         final String name = taskId + "-judge-turn" + turn;
@@ -255,12 +258,11 @@ public class Judge {
         return text.length() <= n ? text : "… [" + (text.length() - n) + " older chars omitted]\n" + text.substring(text.length() - n);
     }
 
-    Map<String, String> externalCredentials(final Map<String, Object> judgeCfg) {
-        final List<String> defaultKeys = java.util.Arrays.stream(ProviderConfig.values()).map(p -> p.credentialEnvVar).toList();
-        final Map<String, String> extra = new LinkedHashMap<>();
-        for (final String k : judgeCfg.get("credential_env") instanceof List<?> l ? (List<String>) l : defaultKeys)
-            if (System.getenv(k) != null) extra.put(k, System.getenv(k));
-        return extra;
+    /** #106/LLM-Providers: was its own copy of the provider table (duplicated across Reviews/Judge/
+     *  TaskMatcher); now a direct call into the shared registry - see Reviews.externalCredentials()'s
+     *  own identical comment for why the old "credential_env" override is gone, not reimplemented. */
+    Map<String, String> externalCredentials() {
+        return providerStore.allCredentials();
     }
 
     /** external providers bypass the proxy (their credentials and endpoints are their own) -
@@ -272,7 +274,7 @@ public class Judge {
         // "no recommendation this turn"; fixed anyway so the twins stay structurally identical.
         final int slash = reviewer.indexOf('/');
         final String provider = slash < 0 ? "" : reviewer.substring(0, slash);
-        final var known = ProviderConfig.byName(provider);
-        return known != null ? known.baseUrl : String.valueOf(cfg.getOrDefault("endpoint", props.endpoint()));
+        final var known = providerStore.byKey(provider);
+        return known != null ? known.baseUrl() : String.valueOf(cfg.getOrDefault("endpoint", props.endpoint()));
     }
 }

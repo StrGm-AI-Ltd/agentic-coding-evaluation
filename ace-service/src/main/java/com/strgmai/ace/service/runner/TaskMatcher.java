@@ -1,7 +1,7 @@
 package com.strgmai.ace.service.runner;
 
 import com.strgmai.ace.service.agent.AgentSession;
-import com.strgmai.ace.service.agent.ProviderConfig;
+import com.strgmai.ace.service.agent.ProviderStore;
 import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.plan.PlanTask;
@@ -38,10 +38,12 @@ public class TaskMatcher {
     private static final Logger log = LoggerFactory.getLogger(TaskMatcher.class);
     private final BenchProperties props;
     private final ReferenceAgent agent;
+    private final ProviderStore providerStore;
 
-    public TaskMatcher(final BenchProperties props, final ReferenceAgent agent) {
+    public TaskMatcher(final BenchProperties props, final ReferenceAgent agent, final ProviderStore providerStore) {
         this.props = props;
         this.agent = agent;
+        this.providerStore = providerStore;
     }
 
     private static final int MAX_GOAL_CHARS = 400;   // same "character caps, not token caps" convention Judge uses
@@ -71,7 +73,7 @@ public class TaskMatcher {
                                   final String reviewerModel, final Path rd) throws Exception {
         if (aTasks.isEmpty() || bTasks.isEmpty()) return List.of();
         final String prompt = buildPrompt(aTasks, bTasks);
-        final String reviewer = reviewerModel == null || reviewerModel.isBlank() ? "omlx/" + props.model() : reviewerModel;
+        final String reviewer = providerStore.resolveModel(reviewerModel, "omlx/" + props.model());
         final boolean external = !reviewer.startsWith("omlx/");
         final String model = reviewer.startsWith("omlx/") ? reviewer.substring("omlx/".length()) : reviewer.substring(reviewer.indexOf('/') + 1);
         final Map<String, String> extraEnv = external ? externalCredentials() : null;
@@ -127,11 +129,10 @@ public class TaskMatcher {
         return out;
     }
 
+    /** #106/LLM-Providers: was its own copy of the provider table (duplicated across Reviews/Judge/
+     *  TaskMatcher); now a direct call into the shared registry. */
     Map<String, String> externalCredentials() {
-        final Map<String, String> extra = new LinkedHashMap<>();
-        for (final ProviderConfig p : ProviderConfig.values())
-            if (System.getenv(p.credentialEnvVar) != null) extra.put(p.credentialEnvVar, System.getenv(p.credentialEnvVar));
-        return extra;
+        return providerStore.allCredentials();
     }
 
     /** external providers bypass the proxy (their credentials and endpoints are their own) -
@@ -140,7 +141,7 @@ public class TaskMatcher {
     String externalBase(final String reviewer) {
         final int slash = reviewer.indexOf('/');
         final String provider = slash < 0 ? "" : reviewer.substring(0, slash);
-        final var known = ProviderConfig.byName(provider);
-        return known != null ? known.baseUrl : props.endpoint();
+        final var known = providerStore.byKey(provider);
+        return known != null ? known.baseUrl() : props.endpoint();
     }
 }

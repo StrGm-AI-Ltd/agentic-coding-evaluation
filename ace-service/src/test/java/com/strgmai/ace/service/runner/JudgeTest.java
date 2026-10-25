@@ -1,9 +1,15 @@
 package com.strgmai.ace.service.runner;
 
+import com.strgmai.ace.service.agent.ProviderStore;
 import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.config.BenchProperties;
+import org.flywaydb.core.Flyway;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
 
@@ -17,11 +23,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *  deliberately duplicates rather than shares - see Judge's own class javadoc). */
 class JudgeTest {
 
+    private static DSLContext freshDb(final String name) throws Exception {
+        final var ds = new org.sqlite.SQLiteDataSource();
+        ds.setUrl("jdbc:sqlite:" + Files.createTempFile(name, ".db") + "?foreign_keys=on");
+        Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
+        return DSL.using(ds, SQLDialect.SQLITE);
+    }
+
     private final BenchProperties props = new BenchProperties(null, "http://127.0.0.1:9191/v1", null, null, null, null, null, null, null, null,
             null, null, null, null, null, null, null);
-    private final Judge judge = new Judge(props,
-            new ReferenceAgent(new BenchProperties(null, null, null, null, null, null, null, null, null, null,
-                    null, null, null, null, null, null, null)));
+    private final ProviderStore providerStore;
+    private final Judge judge;
+
+    JudgeTest() throws Exception {
+        providerStore = new ProviderStore(freshDb("judge-test"));
+        judge = new Judge(props,
+                new ReferenceAgent(new BenchProperties(null, null, null, null, null, null, null, null, null, null,
+                        null, null, null, null, null, null, null), providerStore),
+                providerStore);
+    }
 
     @Test
     void capLeavesShortTextUntouchedAndTruncatesLongTextWithAVisibleMarker() {
@@ -119,10 +139,14 @@ class JudgeTest {
         assertEquals("http://127.0.0.1:9191/v1", judge.externalBase("bare-model-name-no-slash", Map.of()));
     }
 
+    /** #106/LLM-Providers: see ReviewsTest's identical-reasoning twin - the old "credential_env"
+     *  override is gone, not reimplemented. */
     @Test
-    void externalCredentialsHonoursAnExplicitCredentialEnvOverride() {
-        final var extra = judge.externalCredentials(Map.of("credential_env", List.of("PATH")));
-        assertTrue(extra.containsKey("PATH"));
+    void externalCredentialsReturnsOnlyProvidersWithARealKeyConfigured() {
+        assertTrue(judge.externalCredentials().isEmpty(), "none of the seeded providers have a key set in this fresh test DB");
+        providerStore.update(providerStore.byKey("openai").id(), "OpenAI", "openai",
+                "https://api.openai.com/v1", "sk-openai-test", null);
+        assertEquals(Map.of("openai", "sk-openai-test"), judge.externalCredentials());
     }
 
     // ---- #267: renderTrajectory() - the one piece of the prompt-construction pipeline that is

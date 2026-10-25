@@ -53,13 +53,16 @@ public class BenchController {
     private final Intervene intervene;
     private final TaskMatcher taskMatcher;
     private final PauseAfterTask pauseAfterTask;
+    private final com.strgmai.ace.service.agent.ProviderStore providerStore;
 
     public BenchController(DSLContext dsl, JobQueue queue, ImporterService importer, ExperimentsService experiments,
                            StatsService stats, WorkerService worker, BenchProperties props, Preflight preflight,
-                           TreatmentPin pin, Intervene intervene, TaskMatcher taskMatcher, PauseAfterTask pauseAfterTask) {
+                           TreatmentPin pin, Intervene intervene, TaskMatcher taskMatcher, PauseAfterTask pauseAfterTask,
+                           com.strgmai.ace.service.agent.ProviderStore providerStore) {
         this.dsl = dsl; this.queue = queue; this.importer = importer; this.experiments = experiments;
         this.stats = stats; this.worker = worker; this.props = props; this.preflight = preflight; this.pin = pin;
         this.intervene = intervene; this.taskMatcher = taskMatcher; this.pauseAfterTask = pauseAfterTask;
+        this.providerStore = providerStore;
     }
 
     @GetMapping("/api/preflight")
@@ -1571,6 +1574,52 @@ public class BenchController {
         if (!(summary.get("functional") instanceof Map<?, ?> functional)) return 0;
         return functional.get("mean") instanceof Number n ? n.doubleValue() : 0;
     }
+
+    /** The "LLM Providers" registry - replaces the old hardcoded ProviderConfig enum. Never returns
+     *  the raw api_key value, only whether one is set - the UI's own edit form starts that field
+     *  blank regardless, so a round-tripped secret would serve no purpose but to leak it. */
+    private static Map<String, Object> providerRow(final com.strgmai.ace.service.agent.ProviderStore.Provider p) {
+        final Map<String, Object> row = new LinkedHashMap<>();
+        row.put("id", p.id());
+        row.put("name", p.name());
+        row.put("provider_key", p.providerKey());
+        row.put("base_url", p.baseUrl());
+        row.put("default_model", p.defaultModel());
+        row.put("has_api_key", p.apiKey() != null && !p.apiKey().isBlank());
+        return row;
+    }
+
+    @GetMapping("/api/providers")
+    public List<Map<String, Object>> providers() {
+        return providerStore.list().stream().map(BenchController::providerRow).toList();
+    }
+
+    @PostMapping("/api/providers")
+    public Map<String, Object> createProvider(final @RequestBody Map<String, Object> body) {
+        final var p = providerStore.create(str(body.get("name")), str(body.get("provider_key")), str(body.get("base_url")),
+                str(body.get("api_key")), str(body.get("default_model")));
+        return providerRow(p);
+    }
+
+    @PutMapping("/api/providers/{id}")
+    public Map<String, Object> updateProvider(final @PathVariable UUID id, final @RequestBody Map<String, Object> body) {
+        // #api_key is the one field where "absent from the request" and "present but blank" mean
+        // different things (leave unchanged vs clear it) - containsKey, not getOrDefault, is the
+        // only way to tell them apart; the UI never round-trips the real value back, so it can
+        // only ever send a NEW key, omit the field entirely, or send "" to clear it.
+        final String apiKey = body.containsKey("api_key") ? str(body.get("api_key")) : null;
+        return providerRow(providerStore.update(id, str(body.get("name")), str(body.get("provider_key")), str(body.get("base_url")),
+                apiKey, str(body.get("default_model"))));
+    }
+
+    @DeleteMapping("/api/providers/{id}")
+    public void deleteProvider(final @PathVariable UUID id) {
+        // no cascade needed: a job's own reviewer_model/judge_model strings are plain text frozen
+        // into its argv at enqueue time, never a live reference back to this table
+        providerStore.delete(id);
+    }
+
+    private static String str(final Object o) { return o == null ? null : String.valueOf(o); }
 
     /** One bounded, daemon pool for ALL SSE connections: an unbounded raw Thread per client is a
      *  DoS vector, and non-daemon threads block JVM shutdown. A timed-out emitter makes the loop's

@@ -149,8 +149,9 @@ public class ReferenceAgent {
     }
 
     private final BenchProperties props;
+    private final ProviderStore providerStore;
 
-    public ReferenceAgent(BenchProperties props) { this.props = props; }
+    public ReferenceAgent(BenchProperties props, ProviderStore providerStore) { this.props = props; this.providerStore = providerStore; }
 
     /** #424: `recallEnabled=false` leaves recall_tool_output out of the offered tools entirely -
      *  the model structurally cannot call a tool it was never told exists, matching
@@ -343,6 +344,7 @@ public class ReferenceAgent {
     /** #332: `lessonRecorder` offers the record_lesson tool at all - see LessonRecorder's own
      *  javadoc. null (every call site above) means the tool is unavailable for this session;
      *  only RunBench's own task-loop and handoff call sites build a real one. */
+    //todo ReferenceAgent should be LangChain AiService
     public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
                              Path sessionDir, String sessionId, boolean continueSession,
                              String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, int maxTurns, String model, Map<String, String> extraEnv, JudgeCheckpoint judge, boolean advisoryOnly, FinalTurn finalTurn, Integer compactOnLoadKeepRecentTurns, List<String> compactionStrategies, LessonRecorder lessonRecorder) throws Exception {
@@ -903,11 +905,12 @@ public class ReferenceAgent {
         return false;
     }
 
-    /** the oMLX key for the proxy; an EXTERNAL reviewer's provider key from its env var (run_bench Agent.run) */
+    /** the oMLX key for the proxy; an EXTERNAL reviewer's own key, from the LLM Providers registry
+     *  (#106 note: ProviderStore replaced the old hardcoded ProviderConfig enum here). */
     String apiKeyFor(String proxyBase, String model, Map<String, String> extraEnv) {
         if (extraEnv != null && (proxyBase == null || !proxyBase.contains("127.0.0.1"))) {
-            final ProviderConfig provider = ProviderConfig.byBaseUrl(proxyBase);
-            if (provider != null && extraEnv.containsKey(provider.credentialEnvVar)) return extraEnv.get(provider.credentialEnvVar);
+            final ProviderStore.Provider provider = providerStore.byBaseUrl(proxyBase);
+            if (provider != null && extraEnv.containsKey(provider.providerKey())) return extraEnv.get(provider.providerKey());
         }
         return props.apiKey() == null || props.apiKey().isBlank() ? "none" : props.apiKey();
     }

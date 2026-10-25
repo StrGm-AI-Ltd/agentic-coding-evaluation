@@ -35,6 +35,7 @@ class RoutesReflectionTest {
             java.util.Map.entry("experiments/:experimentId", ExperimentDetailView.class),
             java.util.Map.entry("experiments/new", ExperimentNewView.class),
             java.util.Map.entry("preflight", PreflightView.class),
+            java.util.Map.entry("providers", LlmProvidersView.class),
             java.util.Map.entry("file-view", FileViewerView.class));
 
     /** Routes that deliberately render standalone, without the app layout. */
