@@ -1934,11 +1934,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         // caught on its very next attempt without waiting for a fresh run.
         final var judgeEnabled = new com.vaadin.flow.component.checkbox.Checkbox("Mid-task judge");
         final var judgeEveryNTurns = new com.vaadin.flow.component.textfield.IntegerField("Every N turns");
-        final var judgeModel = new com.vaadin.flow.component.textfield.TextField("Judge model");
+        final var judgeModel = new ProviderModelPicker(client, "Judge model").useOmlxPrefixForLocal();
         judgeEveryNTurns.setPlaceholder("run default (10)");
         judgeEveryNTurns.setWidth("140px");
-        judgeModel.setPlaceholder("run default (local)");
-        judgeModel.setWidth("200px");
         final var judgeForm = new HorizontalLayout(judgeEnabled, judgeEveryNTurns, judgeModel);
         judgeForm.getStyle().set("flex-wrap", "wrap").set("align-items", "center").set("margin-top", "4px");
 

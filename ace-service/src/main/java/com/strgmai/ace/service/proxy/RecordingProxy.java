@@ -61,11 +61,17 @@ public class RecordingProxy {
      *  (#92) is not a sampler param, but bounds forward()'s own upstream connect wait - null or 0
      *  means unlimited (no upstream connect timeout is applied at all). contextWindow: the run's
      *  own usable-context ceiling, used only to refuse a request whose max_tokens plus its own
-     *  (estimated) prompt size would obviously overshoot it - null skips that check entirely. */
+     *  (estimated) prompt size would obviously overshoot it - null skips that check entirely.
+     *  upstreamBaseUrl/upstreamApiKey: not sampler params either, riding the same "pinned once per
+     *  run, threaded to every proxies.start() call" vehicle as firstTokenTimeoutSec/contextWindow
+     *  above - null means relay to props.upstreamBase()/props.apiKey() as usual (the local model
+     *  server); set means relay to an external LLM provider instead, with every other proxy
+     *  behavior (budget enforcement, sampler injection, the context-window check, journaling)
+     *  unchanged - see forward()'s own use of these two fields. */
     public record SamplerOverrides(Double temperature, Double topP, Integer topK, Double repetitionPenalty,
                                     Integer maxOutputTokens, String reasoningEffort, Integer firstTokenTimeoutSec,
-                                    Integer contextWindow) {
-        public static final SamplerOverrides NONE = new SamplerOverrides(null, null, null, null, null, null, null, null);
+                                    Integer contextWindow, String upstreamBaseUrl, String upstreamApiKey) {
+        public static final SamplerOverrides NONE = new SamplerOverrides(null, null, null, null, null, null, null, null, null, null);
     }
 
     /** the proxy's own upstream connect wait is kept a little more generous than the run's
@@ -263,7 +269,11 @@ public class RecordingProxy {
             }
         }
         final long t0 = System.nanoTime();
-        HttpRequest.Builder ub = HttpRequest.newBuilder(URI.create(props.upstreamBase() + path))
+        // relay to an external provider's own base URL instead of the local model server when this
+        // run's model resolved to one (ProviderStore.route()) - every other behavior here (budget
+        // enforcement, sampler injection, the context-window check, journaling) is unchanged.
+        final String relayBase = overrides.upstreamBaseUrl() != null ? overrides.upstreamBaseUrl() : props.upstreamBase();
+        HttpRequest.Builder ub = HttpRequest.newBuilder(URI.create(relayBase + path))
                 .method(x.getRequestMethod(), HttpRequest.BodyPublishers.ofByteArray(body.length > 0 ? body : new byte[0]));
         // bounds only the wait for oMLX to start responding (headers), not a streamed body read
         // afterward - without this, an upstream hang here blocks this handler thread forever, same
@@ -279,9 +289,16 @@ public class RecordingProxy {
         // request (the agent's own JDK HttpClient sends it for h2c negotiation) throw before ever
         // reaching upstream - the exchange closed with no response, read by the client as a
         // connection failure and retried into the ground (R9).
+        // the agent always talks to this proxy as "local" (ReferenceAgent.apiKeyFor() treats any
+        // 127.0.0.1 base as the local model server, regardless of where THIS proxy actually
+        // relays), so whatever Authorization header it sent is the local key, not the external
+        // provider's own - skip it here and set the real one below instead.
+        final boolean overridingAuth = overrides.upstreamApiKey() != null;
         x.getRequestHeaders().forEach((k, v) -> {
-            if (!RESTRICTED_HEADERS.contains(k.toLowerCase(Locale.ROOT))) ub.header(k, v.get(0));
+            if (!RESTRICTED_HEADERS.contains(k.toLowerCase(Locale.ROOT)) && !(overridingAuth && "authorization".equalsIgnoreCase(k)))
+                ub.header(k, v.get(0));
         });
+        if (overridingAuth) ub.header("Authorization", "Bearer " + (overrides.upstreamApiKey().isBlank() ? "none" : overrides.upstreamApiKey()));
         if (body.length > 0 && x.getRequestHeaders().getFirst("Content-Type") == null) ub.header("Content-Type", "application/json");
         try {
             final HttpResponse<InputStream> up = http.send(ub.build(), HttpResponse.BodyHandlers.ofInputStream());

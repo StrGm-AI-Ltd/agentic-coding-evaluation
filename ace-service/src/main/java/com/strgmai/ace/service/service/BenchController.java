@@ -1619,6 +1619,23 @@ public class BenchController {
         providerStore.delete(id);
     }
 
+    /** The external-provider counterpart of GET /api/models above - same OpenAIOkHttpClient-based
+     *  listing call, just pointed at a registered provider's own base URL/key instead of the local
+     *  model server's. Unlike BenchProperties.upstreamBase(), a provider's base_url already includes
+     *  "/v1" (see V7's seed data), so it is used as-is, never concatenated with another "/v1". A
+     *  provider with no/invalid key, or whose own API doesn't expose this listing shape, throws -
+     *  ApiExceptionHandler maps that to a clean error the UI already knows how to show. */
+    @GetMapping("/api/providers/{id}/models")
+    public List<String> providerModels(final @PathVariable UUID id) {
+        final var provider = providerStore.list().stream().filter(p -> p.id().equals(id)).findFirst()
+                .orElseThrow(() -> new NoSuchElementException("no such provider: " + id));
+        final var client = com.openai.client.okhttp.OpenAIOkHttpClient.builder()
+                .baseUrl(provider.baseUrl())
+                .apiKey(provider.apiKey() == null || provider.apiKey().isBlank() ? "none" : provider.apiKey())
+                .build();
+        return client.models().list().data().stream().map(Model::id).sorted().toList();
+    }
+
     private static String str(final Object o) { return o == null ? null : String.valueOf(o); }
 
     /** One bounded, daemon pool for ALL SSE connections: an unbounded raw Thread per client is a

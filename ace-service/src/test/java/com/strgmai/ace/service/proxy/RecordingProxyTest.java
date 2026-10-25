@@ -213,7 +213,7 @@ class RecordingProxyTest {
         final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
         try {
             final var proxyBase = proxy.start(journal, 1000L, null,
-                    new RecordingProxy.SamplerOverrides(null, null, null, null, 555, null, null, null));
+                    new RecordingProxy.SamplerOverrides(null, null, null, null, 555, null, null, null, null, null));
             sendPlainChatRequest(proxyBase);
             assertEquals(555, upstreamSawMaxTokens.get(), "the run's own derived cap must reach the actual request");
         } finally {
@@ -264,7 +264,7 @@ class RecordingProxyTest {
         final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
         try {
             final var proxyBase = proxy.start(journal, 1000L, null,
-                    new RecordingProxy.SamplerOverrides(0.7, 0.9, 40, 1.1, null, "high", null, null));
+                    new RecordingProxy.SamplerOverrides(0.7, 0.9, 40, 1.1, null, "high", null, null, null, null));
             sendPlainChatRequest(proxyBase);
             final var body = sawBody.get();
             assertEquals(0.7, body.path("temperature").asDouble(), 0.001);
@@ -288,12 +288,12 @@ class RecordingProxyTest {
         // omits HttpRequest.Builder.timeout(...) entirely rather than a degenerate near-zero duration
         assertNull(RecordingProxy.upstreamTimeoutSec(RecordingProxy.SamplerOverrides.NONE));
         assertNull(RecordingProxy.upstreamTimeoutSec(
-                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 0, null)));
+                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 0, null, null, null)));
         assertEquals(600 + 30, RecordingProxy.upstreamTimeoutSec(
-                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 600, null)),
+                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 600, null, null, null)),
                 "an operator-configured value well above the old hardcoded 290s ceiling must actually apply");
         assertEquals(60 + 30, RecordingProxy.upstreamTimeoutSec(
-                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 60, null)));
+                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 60, null, null, null)));
     }
 
     @Test
@@ -356,7 +356,7 @@ class RecordingProxyTest {
         try {
             // maxOutputTokens=9000 alone already exceeds a 8000-token window, whatever the prompt is
             final var proxyBase = proxy.start(journal, 1000L, null,
-                    new RecordingProxy.SamplerOverrides(null, null, null, null, 9000, null, null, 8000));
+                    new RecordingProxy.SamplerOverrides(null, null, null, null, 9000, null, null, 8000, null, null));
             final var client = HttpClient.newHttpClient();
             final var request = HttpRequest.newBuilder(URI.create(proxyBase + "/chat/completions"))
                     .header("Content-Type", "application/json")
@@ -384,7 +384,7 @@ class RecordingProxyTest {
         final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
         try {
             final var proxyBase = proxy.start(journal, 1000L, null,
-                    new RecordingProxy.SamplerOverrides(null, null, null, null, 100, null, null, 65536));
+                    new RecordingProxy.SamplerOverrides(null, null, null, null, 100, null, null, 65536, null, null));
             sendPlainChatRequest(proxyBase);
             assertEquals(100, upstreamSawMaxTokens.get(), "well within the window - forwarded, not refused");
         } finally {
@@ -403,7 +403,7 @@ class RecordingProxyTest {
         try {
             // a huge max_tokens with no contextWindow set (null) - nothing to check against, must not refuse
             final var proxyBase = proxy.start(journal, 1000L, null,
-                    new RecordingProxy.SamplerOverrides(null, null, null, null, 999_999, null, null, null));
+                    new RecordingProxy.SamplerOverrides(null, null, null, null, 999_999, null, null, null, null, null));
             sendPlainChatRequest(proxyBase);
             assertEquals(999_999, upstreamSawMaxTokens.get());
         } finally {
@@ -443,6 +443,87 @@ class RecordingProxyTest {
         } finally {
             proxy.stop();
             upstream.stop(0);
+        }
+    }
+
+    /** An external-provider-routed session (ProviderStore.route() resolved the model to a registered
+     *  provider) must relay to THAT provider's own base URL, not props.upstreamBase() - and must send
+     *  THAT provider's own API key, not whatever Authorization the agent itself sent (the agent always
+     *  talks to this proxy as "local", so its own header is the local key, never the right one here).
+     *  The override base URL is bare (no "/v1") here, matching what ProviderStore.route() actually
+     *  hands back - path (as seen from the agent's own request) already starts with "/v1". */
+    @Test
+    void anUpstreamOverrideRelaysToTheExternalProviderWithItsOwnApiKey() throws Exception {
+        final AtomicReference<List<String>> sawAuth = new AtomicReference<>();
+        final HttpServer external = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        external.createContext("/v1/chat/completions", ex -> {
+            sawAuth.set(ex.getRequestHeaders().get("Authorization"));
+            ex.getRequestBody().readAllBytes();
+            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().set("Content-Type", "application/json");
+            ex.sendResponseHeaders(200, resp.length);
+            try (var os = ex.getResponseBody()) { os.write(resp); }
+        });
+        external.start();
+        final AtomicReference<Boolean> localWasCalled = new AtomicReference<>(false);
+        final HttpServer local = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        local.createContext("/", ex -> {
+            localWasCalled.set(true);
+            ex.getRequestBody().readAllBytes();
+            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(200, resp.length);
+            try (var os = ex.getResponseBody()) { os.write(resp); }
+        });
+        local.start();
+        final var journal = Files.createTempFile("proxy-test", ".jsonl");
+        // props() points at `local` - the override below must win instead
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + local.getAddress().getPort()));
+        try {
+            final var proxyBase = proxy.start(journal, 1000L, null,
+                    new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, null, null,
+                            "http://127.0.0.1:" + external.getAddress().getPort(), "external-key-123"));
+            final var client = HttpClient.newHttpClient();
+            final var request = HttpRequest.newBuilder(URI.create(proxyBase + "/chat/completions"))
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer local-key-the-agent-sent")
+                    .POST(HttpRequest.BodyPublishers.ofString("{\"messages\":[],\"stream\":false}"))
+                    .build();
+            final var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, response.statusCode(), response.body());
+            assertFalse(localWasCalled.get(), "an externally-routed session must never reach the local server");
+            assertEquals(List.of("Bearer external-key-123"), sawAuth.get(),
+                    "the external provider's own key must be sent, not the agent's own local-proxy key");
+        } finally {
+            proxy.stop();
+            external.stop(0);
+            local.stop(0);
+        }
+    }
+
+    @Test
+    void anUpstreamOverrideWithNoApiKeySendsNoneRatherThanABlankBearerToken() throws Exception {
+        final AtomicReference<List<String>> sawAuth = new AtomicReference<>();
+        final HttpServer external = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        external.createContext("/v1/chat/completions", ex -> {
+            sawAuth.set(ex.getRequestHeaders().get("Authorization"));
+            ex.getRequestBody().readAllBytes();
+            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().set("Content-Type", "application/json");
+            ex.sendResponseHeaders(200, resp.length);
+            try (var os = ex.getResponseBody()) { os.write(resp); }
+        });
+        external.start();
+        final var journal = Files.createTempFile("proxy-test", ".jsonl");
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + external.getAddress().getPort()));
+        try {
+            final var proxyBase = proxy.start(journal, 1000L, null,
+                    new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, null, null,
+                            "http://127.0.0.1:" + external.getAddress().getPort(), ""));
+            sendPlainChatRequest(proxyBase);
+            assertEquals(List.of("Bearer none"), sawAuth.get());
+        } finally {
+            proxy.stop();
+            external.stop(0);
         }
     }
 

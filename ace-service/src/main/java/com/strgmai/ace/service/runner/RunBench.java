@@ -59,10 +59,12 @@ public class RunBench {
     private final Judge judge;
     private final Intervene intervene;
     private final PauseAfterTask pauseAfterTask;
+    private final com.strgmai.ace.service.agent.ProviderStore providerStore;
     private final ObjectMapper json = new ObjectMapper();
 
-    public RunBench(BenchProperties props, ReferenceAgent agent, PiAgent piAgent, RecordingProxyFactory proxies, RunOracle oracle, Reviews reviews, ContextProbe probe, Judge judge, Intervene intervene, PauseAfterTask pauseAfterTask) {
+    public RunBench(BenchProperties props, ReferenceAgent agent, PiAgent piAgent, RecordingProxyFactory proxies, RunOracle oracle, Reviews reviews, ContextProbe probe, Judge judge, Intervene intervene, PauseAfterTask pauseAfterTask, com.strgmai.ace.service.agent.ProviderStore providerStore) {
         this.props = props; this.agent = agent; this.piAgent = piAgent; this.proxies = proxies; this.oracle = oracle; this.reviews = reviews; this.probe = probe; this.judge = judge; this.intervene = intervene; this.pauseAfterTask = pauseAfterTask;
+        this.providerStore = providerStore;
     }
 
     //todo phases should not be hardcoded
@@ -251,7 +253,7 @@ public class RunBench {
                 override.get("repetition_penalty") instanceof Number rp ? rp.doubleValue() : base.repetitionPenalty(),
                 override.get("max_tokens") instanceof Number mt ? mt.intValue() : base.maxOutputTokens(),
                 override.get("reasoning_effort") instanceof String re && !re.isBlank() ? re : base.reasoningEffort(),
-                base.firstTokenTimeoutSec(), base.contextWindow());
+                base.firstTokenTimeoutSec(), base.contextWindow(), base.upstreamBaseUrl(), base.upstreamApiKey());
     }
 
     /** #258: a session that died on a `length` finish gets one continuation with what is LEFT of
@@ -617,13 +619,20 @@ public class RunBench {
             // 0 means unlimited (the system-wide "0 = no budget" convention)
             final int firstTokenTimeoutSec = cfg.get("first_token_timeout_sec") instanceof Number n3 ? n3.intValue() : 0;
             cfg.put("first_token_timeout_ms", firstTokenTimeoutSec * 1000L);
+            // the main model's own routing: a bare string stays local, unchanged; a registered
+            // provider_key prefix routes externally (see ProviderStore.route()). cfg's own "model"
+            // entry is left untouched (manifest provenance below still wants the full string); every
+            // actual session call uses _bare_model instead.
+            final var routed = providerStore.route((String) cfg.getOrDefault("model", props.model()));
+            cfg.put("_bare_model", routed.model());
             // pinned once per run and reused at every proxies.start(...) call site (RunBench, Reviews) -
             // the run's own sampler knobs (#72): null fields fall back to the operator-wide ace.*
             // default, or are simply omitted from the request when no such default exists (see
             // RecordingProxy.forward()). firstTokenTimeoutSec (#92) is not a sampler knob, but rides the
             // same "one bag of per-run proxy config, pinned once" vehicle rather than a second one -
             // it bounds RecordingProxy's own upstream connect wait, which used to be a hardcoded 290s
-            // regardless of what --first-token-timeout was actually set to.
+            // regardless of what --first-token-timeout was actually set to. upstreamBaseUrl/upstreamApiKey
+            // ride the same vehicle - null unless routed.upstream() says this run's model is external.
             cfg.put("_sampler_overrides", new RecordingProxy.SamplerOverrides(
                     cfg.get("temperature") instanceof Number t ? t.doubleValue() : null,
                     cfg.get("top_p") instanceof Number tp ? tp.doubleValue() : null,
@@ -632,7 +641,9 @@ public class RunBench {
                     cfg.get("max_output_tokens") instanceof Number mo ? mo.intValue() : null,
                     cfg.get("reasoning_effort") instanceof String re && !re.isBlank() ? re : null,
                     firstTokenTimeoutSec,
-                    cfg.get("usable_context") instanceof Number uc ? uc.intValue() : null));
+                    cfg.get("usable_context") instanceof Number uc ? uc.intValue() : null,
+                    routed.upstream() == null ? null : routed.upstream().baseUrl(),
+                    routed.upstream() == null ? null : routed.upstream().apiKey()));
             // 0 means unlimited (the system-wide "0 = no budget" convention)
             final int taskWall = cfg.get("task_wall_sec") instanceof Number n ? n.intValue() : 0;
             long taskTokens = cfg.get("task_tokens") instanceof Number n2 ? n2.longValue()
@@ -1139,7 +1150,7 @@ public class RunBench {
         // turn, so the operator-wide default (props.model()) is not per-run - passing null here would
         // silently run every task against whatever model happens to be configured process-wide instead
         // of the model this run actually asked for (a real, previously silent mismatch)
-        final String runModel = (String) cfg.get("model");
+        final String runModel = (String) cfg.get("_bare_model");
         // #263: taskOverride is Map.of() for every non-task session name (p0_definition, FIX ids,
         // INTEGRATION, ...) - the lookup is naturally a no-op there, only a restarted plan task's
         // own id ever has an entry.
@@ -1648,7 +1659,7 @@ public class RunBench {
             ReferenceAgent.SessionResult h = RunBenchSupport.runBounded(handoffWall, t.id + "-handoff", rd.resolve("sessions"), handoffSid, proxy.abort(),
                     () -> runAgentSession(cfg, t.id + "-handoff", Packs.handoffInstruction(t.id), handoffWall, handoffTokens,
                             rd.resolve("sessions"), handoffSid, true, rd.resolve("packs/stable.md").toString(), ws.toString(),
-                            proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("model"),
+                            proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("_bare_model"),
                             (Map<String, String>) cfg.get("_agent_env"), null, null, null, buildLessonRecorder(cfg, override, rd, t.id)));
             recordHandoffContent(ws, manifest, rec, t.id, hp);
             rec.put("handoff_seconds", h.seconds());
@@ -1916,7 +1927,7 @@ public class RunBench {
             final ReferenceAgent.SessionResult h = RunBenchSupport.runBounded(rescueWall, t.id + "-rescue", rd.resolve("sessions"), sid, proxy.abort(),
                     () -> agent.run(t.id + "-rescue", Packs.rescueInstruction(t.id, reason, verificationSummary), rescueWall, rescueTokens,
                             rd.resolve("sessions"), sid, true, rd.resolve("packs/stable.md").toString(), ws.toString(),
-                            proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("model"),
+                            proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("_bare_model"),
                             (Map<String, String>) cfg.get("_agent_env"), null, false, null, keepRecentTurns));
             rec.put("rescue_seconds", h.seconds());
             rec.put("rescue_rc", h.rc());
@@ -2161,7 +2172,7 @@ public class RunBench {
                         // `true` now, not a hardcoded `false`
                         () -> runAgentSession(cfg, "PARALLEL_PLAN", Packs.parallelPlanPack(tasks) + "\n\n" + Packs.PARALLEL_PLAN_INSTRUCTION, parallelPlanWall, parallelPlanTokens,
                                 rd.resolve("sessions"), planSid, true, rd.resolve("packs/stable.md").toString(), ws.toString(),
-                                proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("model"),
+                                proxy.base(), proxy.abort(), firstTokenTimeoutMs, compactionTrigger, maxTurns, (String) cfg.get("_bare_model"),
                                 (Map<String, String>) cfg.get("_agent_env")));
             } finally { proxy.stop(); }
             rc = prec.rc(); seconds = prec.seconds();

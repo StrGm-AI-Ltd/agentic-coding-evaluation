@@ -57,7 +57,8 @@ class RunBenchTest {
 
     private static RunBench runBench(BenchProperties props) {
         return new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class),
-                mock(RunOracle.class), mock(Reviews.class), mock(ContextProbe.class), mock(Judge.class), new Intervene(), mock(PauseAfterTask.class));
+                mock(RunOracle.class), mock(Reviews.class), mock(ContextProbe.class), mock(Judge.class), new Intervene(), mock(PauseAfterTask.class),
+                mock(com.strgmai.ace.service.agent.ProviderStore.class));
     }
 
     @Test
@@ -681,7 +682,8 @@ class RunBenchTest {
     @Test
     void effectiveSamplerOverridesMergesOnlyTheFieldsATaskOverrideActuallySets() {
         final Map<String, Object> cfg = new java.util.HashMap<>();
-        final var base = new com.strgmai.ace.service.proxy.RecordingProxy.SamplerOverrides(0.6, 0.95, 20, 1.0, 20000, "medium", 1000, 210000);
+        final var base = new com.strgmai.ace.service.proxy.RecordingProxy.SamplerOverrides(0.6, 0.95, 20, 1.0, 20000, "medium", 1000, 210000,
+                "https://api.example.com/v1", "sk-test");
         cfg.put("_sampler_overrides", base);
 
         assertSame(base, RunBench.effectiveSamplerOverrides(cfg, Map.of()), "no override - the exact same pinned instance comes back");
@@ -695,6 +697,8 @@ class RunBenchTest {
         assertEquals(1.0, merged.repetitionPenalty());
         assertEquals(1000, merged.firstTokenTimeoutSec(), "never task-overridable - the agent-loop side already has its own override");
         assertEquals(210000, merged.contextWindow(), "never task-overridable - a fact about the model server, not a per-task choice");
+        assertEquals("https://api.example.com/v1", merged.upstreamBaseUrl(), "never task-overridable - which provider a run uses is a run-wide choice");
+        assertEquals("sk-test", merged.upstreamApiKey());
     }
 
     @Test

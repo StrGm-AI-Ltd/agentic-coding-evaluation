@@ -96,6 +96,49 @@ class ProviderStoreTest {
     }
 
     @Test
+    void routeKeepsABareStringLocalWithNoUpstream() throws Exception {
+        final var store = freshStore("provider-store-route-bare");
+        final var routed = store.route("Qwen3.8-27B-graft");
+        assertEquals("Qwen3.8-27B-graft", routed.model());
+        assertNull(routed.upstream());
+    }
+
+    @Test
+    void routeTreatsNullAsLocal() throws Exception {
+        final var routed = freshStore("provider-store-route-null").route(null);
+        assertNull(routed.model());
+        assertNull(routed.upstream());
+    }
+
+    @Test
+    void routeStripsARegisteredProviderPrefixAndResolvesItsUpstream() throws Exception {
+        final var store = freshStore("provider-store-route-known");
+        final var routed = store.route("nebius/zai-org/GLM-5.3-Flash");
+        assertEquals("zai-org/GLM-5.3-Flash", routed.model());
+        assertNotNull(routed.upstream());
+        // bare, no "/v1" - see routeStripsTheProviderBaseUrlsOwnTrailingV1ForTheProxyRelay() below for why
+        assertEquals("https://api.tokenfactory.us-central1.nebius.com", routed.upstream().baseUrl());
+    }
+
+    @Test
+    void routeStripsTheProviderBaseUrlsOwnTrailingV1ForTheProxyRelay() throws Exception {
+        // RecordingProxy.forward() relays to upstreamBaseUrl() + path, and path (from the agent's
+        // own request against the proxy) already starts with "/v1" - the stored base_url must come
+        // back bare here, or a real relay ends up at ".../v1/v1/chat/completions".
+        final var store = freshStore("provider-store-route-strips-v1");
+        final var routed = store.route("openai/gpt-5");
+        assertEquals("https://api.openai.com", routed.upstream().baseUrl());
+    }
+
+    @Test
+    void routeTreatsAnUnregisteredPrefixAsALocalModelIdThatHappensToContainASlash() throws Exception {
+        final var store = freshStore("provider-store-route-unknown-prefix");
+        final var routed = store.route("mlx-community/Llama-3-70b");
+        assertEquals("mlx-community/Llama-3-70b", routed.model());
+        assertNull(routed.upstream());
+    }
+
+    @Test
     void createInsertsANewProviderRow() throws Exception {
         final var store = freshStore("provider-store-create");
         final var p = store.create("Custom", "custom", "https://custom.example/v1", "sk-custom", "some/model");

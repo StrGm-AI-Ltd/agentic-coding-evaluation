@@ -23,7 +23,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Stream;
 
 /**
  * New experiment form — the Vaadin twin of /experiments/new in the service UI.
@@ -51,13 +50,13 @@ public class ExperimentNewView extends VerticalLayout {
     private final IntegerField reviewTokens = new IntegerField("Review token budget");
     private final IntegerField contextWindow = new IntegerField("Context window");
     private final Checkbox noContextProbe = new Checkbox("Skip context probe");
-    private final ComboBox<String> model = modelPicker("Model");
-    private final ComboBox<String> modelA = modelPicker("Model A");
-    private final ComboBox<String> modelB = modelPicker("Model B");
-    private final ComboBox<String> reviewerModel = modelPicker("Reviewer model");
+    private final ProviderModelPicker model;
+    private final ProviderModelPicker modelA;
+    private final ProviderModelPicker modelB;
+    private final ProviderModelPicker reviewerModel;
     private final NumberField reviewWeight = weightField("Review weight");
     private final Checkbox reviewBlind = new Checkbox("Blind review");
-    private final ComboBox<String> trajectoryReviewerModel = modelPicker("Trajectory reviewer model");
+    private final ProviderModelPicker trajectoryReviewerModel;
     private final NumberField trajectoryWeight = weightField("Trajectory weight");
     private final Select<String> trajectoryUse = new Select<>();
     private final NumberField temperature = new NumberField("Temperature");
@@ -103,6 +102,11 @@ public class ExperimentNewView extends VerticalLayout {
 
     public ExperimentNewView(final ServiceClient client) {
         this.client = client;
+        model = new ProviderModelPicker(client, "Model");
+        modelA = new ProviderModelPicker(client, "Model A");
+        modelB = new ProviderModelPicker(client, "Model B");
+        reviewerModel = new ProviderModelPicker(client, "Reviewer model").useOmlxPrefixForLocal();
+        trajectoryReviewerModel = new ProviderModelPicker(client, "Trajectory reviewer model").useOmlxPrefixForLocal();
         setPadding(true);
 
         template.setLabel("Template");
@@ -154,7 +158,7 @@ public class ExperimentNewView extends VerticalLayout {
         noContextProbe.setTooltipText(Tooltips.NO_CONTEXT_PROBE);
         name.setPlaceholder("optional, defaults to template + timestamp");
         name.setTooltipText(Tooltips.EXPERIMENT_NAME);
-        model.setTooltipText(Tooltips.MODEL);
+        model.withTooltipText(Tooltips.MODEL);
         parallel.setValue(3);
         parallel.setMin(2);
         parallel.setMax(20);
@@ -164,8 +168,8 @@ public class ExperimentNewView extends VerticalLayout {
         mono.setTooltipText(Tooltips.ARM_MONO);
         monoRules.setTooltipText(Tooltips.ARM_MONO_RULES);
         par.setTooltipText(Tooltips.ARM_PAR);
-        modelA.setTooltipText(Tooltips.MODEL_A);
-        modelB.setTooltipText(Tooltips.MODEL_B);
+        modelA.withTooltipText(Tooltips.MODEL_A);
+        modelB.withTooltipText(Tooltips.MODEL_B);
         agentMode.setLabel("Mode");
         agentMode.setItems("orchestrated", "monolithic");
         agentMode.setValue("orchestrated");
@@ -179,11 +183,11 @@ public class ExperimentNewView extends VerticalLayout {
         agentB.setValue("pi");
         agentA.setTooltipText(Tooltips.AGENT_A);
         agentB.setTooltipText(Tooltips.AGENT_B);
-        reviewerModel.setTooltipText(Tooltips.REVIEWER_MODEL);
+        reviewerModel.withTooltipText(Tooltips.REVIEWER_MODEL);
         reviewWeight.setPlaceholder("blank = default (0.1)");
         reviewWeight.setTooltipText(Tooltips.REVIEW_WEIGHT);
         reviewBlind.setTooltipText(Tooltips.REVIEW_BLIND);
-        trajectoryReviewerModel.setTooltipText(Tooltips.TRAJECTORY_REVIEWER_MODEL);
+        trajectoryReviewerModel.withTooltipText(Tooltips.TRAJECTORY_REVIEWER_MODEL);
         trajectoryWeight.setPlaceholder("blank = default (0.1)");
         trajectoryWeight.setTooltipText(Tooltips.TRAJECTORY_WEIGHT);
         trajectoryUse.setLabel("Trajectory use");
@@ -308,36 +312,12 @@ public class ExperimentNewView extends VerticalLayout {
         addAttachListener(e -> loadSuggestions());
     }
 
-    /**
-     * The curated reviewer ids from experiments.py REVIEWER_MODELS, as provider/id.
-     * Nebius ids are org-prefixed (verified against the real API — bare ids 404).
-     */
-    static List<String> reviewerSuggestions() {
-        return List.of(
-                "anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "anthropic/claude-haiku-4-5-20251001",
-                "anthropic/claude-fable-5-1", "openai/gpt-5",
-                "nebius/nvidia/Nemotron-3-Ultra-550b-a55b", "nebius/zai-org/GLM-5.3-Flash");
-    }
-
     private static String templateLabel(final String template) {
         return switch (template) {
             case "model_ab" -> "model_ab — model A vs model B, same harness/budgets";
             case "agent_ab" -> "agent_ab — reference agent vs Pi, same model/budgets";
             default -> "harness_effect — orchestrated vs monolithic (vs parallel, vs prompt-only rules)";
         };
-    }
-
-    private static ComboBox<String> modelPicker(final String label) {
-        // returned as ComboBox<String>; the constructor arg doesn't fix the diamond's type
-        // parameter, so empty-diamond under var would infer ComboBox<Object> and fail on return
-        final ComboBox<String> picker = new ComboBox<>(label);
-        picker.setAllowCustomValue(true);
-        if (label.startsWith("Reviewer") || label.startsWith("Trajectory")) {
-            picker.setPlaceholder("provider/model — " + reviewerSuggestions().get(0) + "…");
-        } else {
-            picker.setPlaceholder("local model id, or pick a seen model");
-        }
-        return picker;
     }
 
     private void updateVisibility() {
@@ -360,28 +340,12 @@ public class ExperimentNewView extends VerticalLayout {
             log.warn("could not load the rung list: {}", e.toString());
         }
         try {
-            final var runs = client.runs(null, null, null, null, null);
-            final var models = Links.distinctRuns(runs, Api.Run::model);
-            model.setItems(models);
-            modelA.setItems(models);
-            modelB.setItems(models);
-            reviewerModel.setItems(reviewerSuggestions());
-            trajectoryReviewerModel.setItems(reviewerSuggestions());
+            final var models = Links.distinctRuns(client.runs(null, null, null, null, null), Api.Run::model);
+            model.withPastRunHistory(models);
+            modelA.withPastRunHistory(models);
+            modelB.withPastRunHistory(models);
         } catch (final Exception e) {
-            log.warn("could not load past-run model/reviewer suggestions: {}", e.toString());
-        }
-        try {
-            // the model server's own list, merged in on top of past-run models (GET /api/models) -
-            // a cold backend with zero run history still gets a useful picker, not an empty one
-            final var live = client.models();
-            final var merged = Stream.concat(model.getGenericDataView().getItems(), live.stream())
-                    .distinct().sorted().toList();
-            model.setItems(merged);
-            modelA.setItems(merged);
-            modelB.setItems(merged);
-        } catch (final Exception e) {
-            // the model server may be unreachable; past-run suggestions (if any) still stand
-            log.warn("could not reach the model server for live model suggestions: {}", e.toString());
+            log.warn("could not load past-run model suggestions: {}", e.toString());
         }
     }
 
@@ -460,8 +424,7 @@ public class ExperimentNewView extends VerticalLayout {
                 Map.entry("first_token_timeout", firstTokenTimeout), Map.entry("compaction_trigger", compactionTrigger),
                 Map.entry("review_wall_sec", reviewWallSec), Map.entry("review_tokens", reviewTokens),
                 Map.entry("context_window", contextWindow),
-                Map.entry("reviewer_model", reviewerModel), Map.entry("review_weight", reviewWeight),
-                Map.entry("trajectory_reviewer_model", trajectoryReviewerModel), Map.entry("trajectory_weight", trajectoryWeight),
+                Map.entry("review_weight", reviewWeight), Map.entry("trajectory_weight", trajectoryWeight),
                 Map.entry("temperature", temperature), Map.entry("top_p", topP), Map.entry("top_k", topK),
                 Map.entry("repetition_penalty", repetitionPenalty), Map.entry("max_tokens", maxTokens),
                 Map.entry("parallel_plan_wall", parallelPlanWall), Map.entry("handoff_wall", handoffWall),
@@ -471,8 +434,7 @@ public class ExperimentNewView extends VerticalLayout {
                 Map.entry("fix_wall", fixWall), Map.entry("fix_tokens", fixTokens),
                 Map.entry("rescue_wall_sec", rescueWallSec), Map.entry("rescue_tokens", rescueTokens),
                 Map.entry("rescue_keep_recent_turns", rescueKeepRecentTurns),
-                Map.entry("model", model), Map.entry("model_a", modelA),
-                Map.entry("model_b", modelB), Map.entry("parallel", parallel));
+                Map.entry("parallel", parallel));
     }
 
     /** ExperimentParams.build names the offending field as a "key: message" prefix for most of
