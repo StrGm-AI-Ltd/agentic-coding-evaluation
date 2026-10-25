@@ -316,7 +316,7 @@ public class ExperimentNewView extends VerticalLayout {
         return List.of(
                 "anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "anthropic/claude-haiku-4-5-20251001",
                 "anthropic/claude-fable-5-1", "openai/gpt-5",
-                "nebius/nvidia/Nemotron-3-Ultra-550b-a55b", "nebius/zai-org/GLM-5.3");
+                "nebius/nvidia/Nemotron-3-Ultra-550b-a55b", "nebius/zai-org/GLM-5.3-Flash");
     }
 
     private static String templateLabel(final String template) {

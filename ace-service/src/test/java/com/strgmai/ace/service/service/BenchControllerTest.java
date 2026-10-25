@@ -36,6 +36,7 @@ import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.emptyString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -62,6 +63,7 @@ class BenchControllerTest {
     private Intervene intervene;
     private com.strgmai.ace.service.runner.TaskMatcher taskMatcher;
     private com.strgmai.ace.service.runner.PauseAfterTask pauseAfterTask;
+    private com.strgmai.ace.service.agent.ProviderStore providerStore;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -80,7 +82,8 @@ class BenchControllerTest {
         intervene = new Intervene();
         taskMatcher = mock(com.strgmai.ace.service.runner.TaskMatcher.class);
         pauseAfterTask = new com.strgmai.ace.service.runner.PauseAfterTask(queue);
-        final var controller = new BenchController(dsl, queue, importer, experiments, stats, worker, props, preflight, pin, intervene, taskMatcher, pauseAfterTask);
+        providerStore = new com.strgmai.ace.service.agent.ProviderStore(dsl);
+        final var controller = new BenchController(dsl, queue, importer, experiments, stats, worker, props, preflight, pin, intervene, taskMatcher, pauseAfterTask, providerStore);
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ApiExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter())
@@ -182,6 +185,61 @@ class BenchControllerTest {
                 assertEquals("agent suite FAILS on a seeded mutation", check.get("description").asText());
             }
         assertTrue(foundB3, "L3p_point_in_time must include B3");
+    }
+
+    /** The LLM Providers registry (V7's seed data) - list/create/update/delete, and the one
+     *  invariant that matters most: a raw api_key value must never reach the client, only whether
+     *  one is set. */
+    @Test
+    void providersListsTheFiveSeededRowsNeverLeakingARawApiKey() throws Exception {
+        mvc.perform(get("/api/providers"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(5))
+                .andExpect(jsonPath("$[?(@.provider_key == 'nebius')].default_model").value("zai-org/GLM-5.3-Flash"))
+                .andExpect(jsonPath("$[?(@.provider_key == 'nebius')].has_api_key").value(false))
+                .andExpect(jsonPath("$..api_key").doesNotExist());
+    }
+
+    @Test
+    void createProviderInsertsANewRowAndNeverEchoesTheApiKeyBack() throws Exception {
+        mvc.perform(post("/api/providers").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Custom\",\"provider_key\":\"custom\",\"base_url\":\"https://custom.example/v1\",\"api_key\":\"sk-secret\",\"default_model\":\"some/model\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.provider_key").value("custom"))
+                .andExpect(jsonPath("$.has_api_key").value(true))
+                .andExpect(jsonPath("$.api_key").doesNotExist());
+    }
+
+    @Test
+    void updateProviderWithNoApiKeyFieldLeavesTheStoredKeyUnchanged() throws Exception {
+        final var created = providerStore.create("Custom", "custom", "https://custom.example/v1", "sk-original", null);
+
+        mvc.perform(put("/api/providers/" + created.id()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Renamed\",\"provider_key\":\"custom\",\"base_url\":\"https://custom.example/v2\",\"default_model\":\"other/model\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Renamed"))
+                .andExpect(jsonPath("$.base_url").value("https://custom.example/v2"))
+                // omitting api_key entirely must leave the stored secret untouched
+                .andExpect(jsonPath("$.has_api_key").value(true));
+    }
+
+    @Test
+    void updateProviderWithABlankApiKeyClearsIt() throws Exception {
+        final var created = providerStore.create("Custom", "custom", "https://custom.example/v1", "sk-original", null);
+
+        mvc.perform(put("/api/providers/" + created.id()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Custom\",\"provider_key\":\"custom\",\"base_url\":\"https://custom.example/v1\",\"api_key\":\"\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.has_api_key").value(false));
+    }
+
+    @Test
+    void deleteProviderRemovesItFromTheList() throws Exception {
+        final var created = providerStore.create("Custom", "custom", "https://custom.example/v1", null, null);
+
+        mvc.perform(delete("/api/providers/" + created.id())).andExpect(status().isOk());
+
+        assertNull(providerStore.byKey("custom"));
     }
 
     @Test

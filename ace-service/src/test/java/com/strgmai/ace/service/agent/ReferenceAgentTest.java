@@ -8,8 +8,13 @@ import dev.langchain4j.model.chat.response.ChatResponseMetadata;
 import dev.langchain4j.model.openai.OpenAiTokenUsage;
 import dev.langchain4j.model.output.FinishReason;
 import dev.langchain4j.model.output.TokenUsage;
+import org.flywaydb.core.Flyway;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
 
@@ -22,6 +27,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *  refactor can't silently drop a phase back to the "implement" fallback (which is exactly the bug
  *  this class was fixed for: reasoning effort was computed nowhere and never sent to the model). */
 class ReferenceAgentTest {
+
+    private static DSLContext freshDb(final String name) throws Exception {
+        final var ds = new org.sqlite.SQLiteDataSource();
+        ds.setUrl("jdbc:sqlite:" + Files.createTempFile(name, ".db") + "?foreign_keys=on");
+        Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
+        return DSL.using(ds, SQLDialect.SQLITE);
+    }
 
     @Test
     void phaseIdsMapToTheirReasoningKind() {
@@ -144,15 +156,19 @@ class ReferenceAgentTest {
      *  .contains(...) (Gemini/Nebius); a URL variant a human would still call "OpenAI" (trailing
      *  slash, a versioned/regional path) silently fell through to "" for the exact-matched three only. */
     @Test
-    void apiKeyForRecognisesProviderUrlVariantsConsistently() {
+    void apiKeyForRecognisesProviderUrlVariantsConsistently() throws Exception {
         final var agent = new ReferenceAgent(new BenchProperties(
-                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null));
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null),
+                new ProviderStore(freshDb("reference-agent-apikey-test")));
+        // extraEnv is keyed by the provider's own providerKey now (ProviderStore.allCredentials()'s
+        // own shape), not an env-var name - see ProviderStore's javadoc for why that indirection
+        // was dropped once a provider's credential became a real stored value, not a name to re-read.
         assertEquals("sk-openai", agent.apiKeyFor("https://api.openai.com/v1/", "m",
-                Map.of("OPENAI_API_KEY", "sk-openai")));
+                Map.of("openai", "sk-openai")));
         assertEquals("sk-anthropic", agent.apiKeyFor("https://api.anthropic.com/v1/2023-06-01", "m",
-                Map.of("ANTHROPIC_API_KEY", "sk-anthropic")));
+                Map.of("anthropic", "sk-anthropic")));
         assertEquals("sk-openrouter", agent.apiKeyFor("https://openrouter.ai/api/v1/chat", "m",
-                Map.of("OPENROUTER_API_KEY", "sk-openrouter")));
+                Map.of("openrouter", "sk-openrouter")));
     }
 
     @Test

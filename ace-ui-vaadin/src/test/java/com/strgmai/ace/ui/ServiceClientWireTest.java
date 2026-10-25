@@ -81,6 +81,11 @@ class ServiceClientWireTest {
              "jobs":[{"id":"5","arm":"orch","repeat":1,"run_id":"r1","status":"queued","result_line":null},
                      {"id":"6","arm":"mono","repeat":1,"run_id":"r2","status":"queued","result_line":null}]}""";
 
+    private static final String PROVIDER_JSON = """
+            {"id":"p1","name":"Nebius","provider_key":"nebius",
+             "base_url":"https://api.tokenfactory.us-central1.nebius.com/v1",
+             "default_model":"zai-org/GLM-5.3-Flash","has_api_key":true}""";
+
     // #108: the REAL shape BenchController.preflight() returns - the old async
     // {running, started_at, finished_at, results, error} fixture was the pre-port Python/FastAPI
     // service's contract, which this backend never implemented (masking that the client's DTO
@@ -210,6 +215,10 @@ class ServiceClientWireTest {
         if (uri.equals("/api/experiments")) return experimentListJson();
         if (uri.equals("/api/preflight")) return PREFLIGHT_JSON;
         if (uri.equals("/api/models")) return "[\"Qwen3.6-27B-graft\",\"Qwen3.8-27B-graft\"]";
+        if ("GET /api/providers".equals(method + " " + uri)) return "[" + PROVIDER_JSON + "]";
+        if ("POST /api/providers".equals(method + " " + uri)) return PROVIDER_JSON;
+        if ("PUT /api/providers/p1".equals(method + " " + uri)) return PROVIDER_JSON;
+        if ("DELETE /api/providers/p1".equals(method + " " + uri)) return "";
         throw new IllegalStateException("unexpected " + method + " " + uri);
     }
 
@@ -640,5 +649,56 @@ class ServiceClientWireTest {
         assertEquals(1, received.size(), "only the well-formed block is delivered");
         assertEquals("status", received.get(0).type());
         assertEquals(7, received.get(0).data().path("pid").intValue());
+    }
+
+    @Test
+    void providers_parsesTheListResponse() {
+        List<Api.Provider> providers = client.providers();
+        assertEquals("GET", last().method());
+        assertEquals("/api/providers", last().uri());
+        assertEquals(1, providers.size());
+        assertEquals("nebius", providers.get(0).provider_key());
+        assertEquals("zai-org/GLM-5.3-Flash", providers.get(0).default_model());
+        assertTrue(providers.get(0).has_api_key());
+    }
+
+    @Test
+    void createProvider_bodyShapeMatchesRequest() {
+        Api.Provider provider = client.createProvider("Nebius", "nebius",
+                "https://api.tokenfactory.us-central1.nebius.com/v1", "sk-test", "zai-org/GLM-5.3-Flash");
+        assertEquals("POST", last().method());
+        assertEquals("/api/providers", last().uri());
+        JsonNode body = Json.MAPPER.readTree(last().body());
+        assertEquals("Nebius", body.path("name").asText());
+        assertEquals("nebius", body.path("provider_key").asText());
+        assertEquals("sk-test", body.path("api_key").asText());
+        assertEquals("zai-org/GLM-5.3-Flash", body.path("default_model").asText());
+        assertEquals("p1", provider.id());
+    }
+
+    /** The one invariant the whole "apiKey == null means leave unchanged" convention depends on:
+     *  a null apiKey must not even APPEAR in the request body, or the backend could not tell
+     *  "unchanged" apart from "explicitly set to null/blank" on its own end. */
+    @Test
+    void updateProvider_omitsApiKeyFieldEntirelyWhenNull() {
+        client.updateProvider("p1", "Nebius", "nebius", "https://api.tokenfactory.us-central1.nebius.com/v1", null, "zai-org/GLM-5.3-Flash");
+        assertEquals("PUT", last().method());
+        assertEquals("/api/providers/p1", last().uri());
+        JsonNode body = Json.MAPPER.readTree(last().body());
+        assertFalse(body.has("api_key"), "a null apiKey must be omitted from the body, not sent as JSON null");
+    }
+
+    @Test
+    void updateProvider_sendsABlankApiKeyToClearIt() {
+        client.updateProvider("p1", "Nebius", "nebius", "https://api.tokenfactory.us-central1.nebius.com/v1", "", "zai-org/GLM-5.3-Flash");
+        JsonNode body = Json.MAPPER.readTree(last().body());
+        assertEquals("", body.path("api_key").asText());
+    }
+
+    @Test
+    void deleteProvider_sendsADeleteToTheProvidersPath() {
+        client.deleteProvider("p1");
+        assertEquals("DELETE", last().method());
+        assertEquals("/api/providers/p1", last().uri());
     }
 }

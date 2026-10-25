@@ -1,10 +1,16 @@
 package com.strgmai.ace.service.runner;
 
+import com.strgmai.ace.service.agent.ProviderStore;
 import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.plan.PlanTask;
+import org.flywaydb.core.Flyway;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -16,11 +22,24 @@ import static org.junit.jupiter.api.Assertions.assertNull;
  *  externalCredentials() (all deliberately duplicated here, not shared - see the class javadoc). */
 class TaskMatcherTest {
 
+    private static DSLContext freshDb(final String name) throws Exception {
+        final var ds = new org.sqlite.SQLiteDataSource();
+        ds.setUrl("jdbc:sqlite:" + Files.createTempFile(name, ".db") + "?foreign_keys=on");
+        Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
+        return DSL.using(ds, SQLDialect.SQLITE);
+    }
+
     private final BenchProperties props = new BenchProperties(null, "http://127.0.0.1:9191/v1", null, null, null, null, null, null, null, null,
             null, null, null, null, null, null, null);
-    private final TaskMatcher matcher = new TaskMatcher(props,
-            new ReferenceAgent(new BenchProperties(null, null, null, null, null, null, null, null, null, null,
-                    null, null, null, null, null, null, null)));
+    private final TaskMatcher matcher;
+
+    TaskMatcherTest() throws Exception {
+        final var providerStore = new ProviderStore(freshDb("task-matcher-test"));
+        matcher = new TaskMatcher(props,
+                new ReferenceAgent(new BenchProperties(null, null, null, null, null, null, null, null, null, null,
+                        null, null, null, null, null, null, null), providerStore),
+                providerStore);
+    }
 
     private static PlanTask task(final String id, final String title) {
         return new PlanTask(id, title);

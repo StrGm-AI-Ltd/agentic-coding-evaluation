@@ -139,6 +139,48 @@ public class ServiceClient implements Serializable {
         return http.get().uri("/api/groups").retrieve().body(Api.GroupResponse.class);
     }
 
+    public List<Api.Provider> providers() {
+        return http.get().uri("/api/providers").retrieve().body(new ParameterizedTypeReference<List<Api.Provider>>() {
+        });
+    }
+
+    /** `apiKey` null means "leave it unchanged" on an update, blank means "clear it" - the LLM
+     *  Providers edit dialog's own API-key field always starts blank, so it has no third way to
+     *  say "I didn't touch this field" versus "I want it cleared" without that distinction. */
+    public Api.Provider createProvider(final String name, final String providerKey, final String baseUrl,
+                                        final String apiKey, final String defaultModel) {
+        final var body = new java.util.LinkedHashMap<String, Object>();
+        body.put("name", name);
+        body.put("provider_key", providerKey);
+        body.put("base_url", baseUrl);
+        body.put("api_key", apiKey);
+        body.put("default_model", defaultModel);
+        return http.post().uri("/api/providers")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(Api.Provider.class);
+    }
+
+    public Api.Provider updateProvider(final String id, final String name, final String providerKey, final String baseUrl,
+                                        final String apiKey, final String defaultModel) {
+        final var body = new java.util.LinkedHashMap<String, Object>();
+        body.put("name", name);
+        body.put("provider_key", providerKey);
+        body.put("base_url", baseUrl);
+        if (apiKey != null) body.put("api_key", apiKey);   // omitted entirely, not just null, when unchanged
+        body.put("default_model", defaultModel);
+        return http.put().uri("/api/providers/{id}", id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(Api.Provider.class);
+    }
+
+    public void deleteProvider(final String id) {
+        http.delete().uri("/api/providers/{id}", id).retrieve().toBodilessEntity();
+    }
+
     public Api.CompareResponse compare(final Api.CompareRequest request) {
         return http.post().uri("/api/compare")
                 .contentType(MediaType.APPLICATION_JSON)
