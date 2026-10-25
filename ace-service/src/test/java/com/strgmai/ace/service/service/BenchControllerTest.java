@@ -243,6 +243,37 @@ class BenchControllerTest {
     }
 
     @Test
+    void providerModelsListsAProvidersOwnLiveModels() throws Exception {
+        final var upstream = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        upstream.createContext("/v1/models", ex -> {
+            final byte[] body = ("{\"object\":\"list\",\"data\":[{\"id\":\"model-b\",\"object\":\"model\",\"created\":0,\"owned_by\":\"x\"},"
+                    + "{\"id\":\"model-a\",\"object\":\"model\",\"created\":0,\"owned_by\":\"x\"}]}").getBytes();
+            ex.getResponseHeaders().set("Content-Type", "application/json");
+            ex.sendResponseHeaders(200, body.length);
+            try (var os = ex.getResponseBody()) { os.write(body); }
+        });
+        upstream.start();
+        try {
+            final var created = providerStore.create("Custom", "custom",
+                    "http://127.0.0.1:" + upstream.getAddress().getPort() + "/v1", "sk-test", null);
+
+            mvc.perform(get("/api/providers/" + created.id() + "/models"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$", hasSize(2)))
+                    .andExpect(jsonPath("$[0]").value("model-a"))
+                    .andExpect(jsonPath("$[1]").value("model-b"));
+        } finally {
+            upstream.stop(0);
+        }
+    }
+
+    @Test
+    void providerModelsOnAnUnknownIdReturnsAnError() throws Exception {
+        mvc.perform(get("/api/providers/" + UUID.randomUUID() + "/models"))
+                .andExpect(status().is4xxClientError());
+    }
+
+    @Test
     void importAllServesRunIdListsAsJsonArraysNotCounts() throws Exception {
         // the actual bug reported: the Vaadin UI's Api.ImportResult expects List<String>, and this
         // endpoint used to serve {"imported": 2, "skipped": 1} - a JSON parse error on the UI side

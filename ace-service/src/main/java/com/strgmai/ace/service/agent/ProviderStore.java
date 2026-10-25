@@ -83,6 +83,36 @@ public class ProviderStore {
         return p.providerKey() + "/" + p.defaultModel();
     }
 
+    /** The main coding model's own routing target: baseUrl/apiKey to relay through, or null for local. */
+    public record Upstream(String baseUrl, String apiKey) {}
+
+    /** model: the bare, upstream-ready model name (prefix stripped when external). upstream: null means local. */
+    public record Routed(String model, Upstream upstream) {}
+
+    /** The MAIN model field's own convention - distinct from resolveModel() above (which exists for
+     *  the reviewer/judge "blank defaults to local, bare key is shorthand" case): a bare string (no
+     *  "/") is always a local model id, unchanged. A "prefix/rest" string whose prefix matches a
+     *  REGISTERED provider's own provider_key routes to that provider (model = rest); any other
+     *  "/"-containing string (an unknown prefix, or a local model id that just happens to contain a
+     *  slash, e.g. an org/Model-style name) stays local, unchanged - tolerant by construction, never
+     *  throws, matching the model ComboBox's own long-standing allowCustomValue=true freedom. */
+    public Routed route(final String raw) {
+        final int slash = raw == null ? -1 : raw.indexOf('/');
+        if (slash < 0) return new Routed(raw, null);
+        final Provider p = byKey(raw.substring(0, slash));
+        return p == null ? new Routed(raw, null) : new Routed(raw.substring(slash + 1), new Upstream(bareBaseUrl(p.baseUrl()), p.apiKey()));
+    }
+
+    /** RecordingProxy.forward() relays to upstreamBaseUrl() + path, where path (as seen from the
+     *  agent's own request against this proxy) already starts with "/v1" - the same reason
+     *  props.upstreamBase() is itself bare, with no "/v1" suffix, today. A provider's own stored
+     *  base_url DOES include "/v1" (see V7's seed data - it's handed as-is to the openai-java SDK
+     *  elsewhere, e.g. providerModels(), which has no such path-already-has-it quirk) - strip it
+     *  here so the proxy relay doesn't end up with ".../v1/v1/chat/completions". */
+    private static String bareBaseUrl(final String baseUrl) {
+        return baseUrl.endsWith("/v1") ? baseUrl.substring(0, baseUrl.length() - "/v1".length()) : baseUrl;
+    }
+
     public Provider create(final String name, final String providerKey, final String baseUrl, final String apiKey, final String defaultModel) {
         final var rec = dsl.insertInto(PROVIDERS)
                 .set(PROVIDERS.ID, UUID.randomUUID())

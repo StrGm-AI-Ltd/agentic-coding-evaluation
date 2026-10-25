@@ -181,6 +181,17 @@ public class ServiceClient implements Serializable {
         http.delete().uri("/api/providers/{id}", id).retrieve().toBodilessEntity();
     }
 
+    /** Live model list for one registered provider, per GET /api/providers/{id}/models. Throws
+     *  (not an empty-list fallback) on failure - the model server's own models() call above treats
+     *  "unreachable" as empty because that's its one, expected failure mode; an external provider
+     *  can fail for many different reasons (no/bad key, unsupported endpoint), each worth showing
+     *  to the operator via errorText() rather than collapsing into the same silent empty list. */
+    public List<String> providerModels(final String providerId) {
+        return http.get().uri("/api/providers/{id}/models", providerId)
+                .retrieve().body(new ParameterizedTypeReference<List<String>>() {
+                });
+    }
+
     public Api.CompareResponse compare(final Api.CompareRequest request) {
         return http.post().uri("/api/compare")
                 .contentType(MediaType.APPLICATION_JSON)

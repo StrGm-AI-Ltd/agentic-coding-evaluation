@@ -33,9 +33,9 @@ public class JobNewView extends VerticalLayout {
     private final ServiceClient client;
 
     private final ComboBox<String> task = new ComboBox<>("Task");
-    private final ComboBox<String> model = new ComboBox<>("Model");
-    private final ComboBox<String> reviewerModel = new ComboBox<>("Reviewer model");
-    private final ComboBox<String> trajectoryReviewerModel = new ComboBox<>("Trajectory reviewer model");
+    private final ProviderModelPicker model;
+    private final ProviderModelPicker reviewerModel;
+    private final ProviderModelPicker trajectoryReviewerModel;
     private final Select<String> harness = new Select<>();
     private final Select<String> mode = new Select<>();
     private final Select<String> planSource = new Select<>();
@@ -92,7 +92,7 @@ public class JobNewView extends VerticalLayout {
     // not only on the per-task Restart tab (JobDetailView.buildRestartTab()).
     private final Checkbox judgeEnabled = new Checkbox("Mid-task judge");
     private final IntegerField judgeEveryNTurns = new IntegerField("Judge every N turns");
-    private final TextField judgeModel = new TextField("Judge model");
+    private final ProviderModelPicker judgeModel;
     private final IntegerField judgeWallSec = new IntegerField("Judge wall-clock budget");
     private final IntegerField judgeTokens = new IntegerField("Judge token budget");
     // #307: the budget-exhaustion rescue step - same run-level-baseline reasoning as the judge above
@@ -108,6 +108,11 @@ public class JobNewView extends VerticalLayout {
 
     public JobNewView(final ServiceClient client) {
         this.client = client;
+        model = new ProviderModelPicker(client, "Model").withTooltipText(Tooltips.MODEL);
+        reviewerModel = new ProviderModelPicker(client, "Reviewer model").useOmlxPrefixForLocal().withTooltipText(Tooltips.REVIEWER_MODEL);
+        trajectoryReviewerModel = new ProviderModelPicker(client, "Trajectory reviewer model").useOmlxPrefixForLocal()
+                .withTooltipText(Tooltips.TRAJECTORY_REVIEWER_MODEL);
+        judgeModel = new ProviderModelPicker(client, "Judge model").useOmlxPrefixForLocal().withTooltipText(Tooltips.JUDGE_MODEL);
         setPadding(true);
 
         task.setAllowCustomValue(true);
@@ -119,14 +124,6 @@ public class JobNewView extends VerticalLayout {
         task.addValueChangeListener(e -> task.setInvalid(false));
         task.addValueChangeListener(e -> renderTaskInfo(e.getValue()));
         taskInfo.setVisible(false);
-        for (final var picker : List.of(model, reviewerModel, trajectoryReviewerModel)) {
-            picker.setAllowCustomValue(true);
-        }
-        reviewerModel.setPlaceholder("provider/model — openrouter/…, gpt-5, claude-opus-5…");
-        trajectoryReviewerModel.setPlaceholder(reviewerModel.getPlaceholder());
-        model.setTooltipText(Tooltips.MODEL);
-        reviewerModel.setTooltipText(Tooltips.REVIEWER_MODEL);
-        trajectoryReviewerModel.setTooltipText(Tooltips.TRAJECTORY_REVIEWER_MODEL);
         runIdField.setPlaceholder("blank = auto-generated");
         runIdField.setTooltipText(Tooltips.RUN_ID);
 
@@ -274,8 +271,6 @@ public class JobNewView extends VerticalLayout {
         judgeEveryNTurns.setMin(1);
         judgeEveryNTurns.setPlaceholder("blank = default (10)");
         judgeEveryNTurns.setTooltipText(Tooltips.JUDGE_EVERY_N_TURNS);
-        judgeModel.setPlaceholder("blank = the run's own model, routed locally");
-        judgeModel.setTooltipText(Tooltips.JUDGE_MODEL);
         judgeWallSec.setMin(1);
         judgeWallSec.setPlaceholder("blank = unlimited");
         judgeWallSec.setTooltipText(Tooltips.JUDGE_WALL_SEC);
@@ -353,25 +348,11 @@ public class JobNewView extends VerticalLayout {
             final var tasks = new java.util.TreeSet<String>(client.tasks());
             tasks.addAll(Links.distinctRuns(runs, Api.Run::task));
             task.setItems(tasks);
-            model.setItems(Links.distinctRuns(runs, Api.Run::model));
-            reviewerModel.setItems(ExperimentNewView.reviewerSuggestions());
-            trajectoryReviewerModel.setItems(ExperimentNewView.reviewerSuggestions());
+            model.withPastRunHistory(Links.distinctRuns(runs, Api.Run::model));
             rungDetails = client.taskDetails();
             renderTaskInfo(task.getValue());
         } catch (final Exception e) {
             log.warn("could not load task/model suggestions: {}", e.toString());
-        }
-        try {
-            // the model server's own list, merged in on top of past-run models (GET /api/models) -
-            // a DB-only list used to hide every model this dataset had never happened to run yet,
-            // same fix as #225 applied to task - a cold backend with zero run history still gets a
-            // useful picker, not an empty one
-            final var live = client.models();
-            final var merged = java.util.stream.Stream.concat(model.getGenericDataView().getItems(), live.stream())
-                    .distinct().sorted().toList();
-            model.setItems(merged);
-        } catch (final Exception e) {
-            log.warn("could not reach the model server for live model suggestions: {}", e.toString());
         }
     }
 
