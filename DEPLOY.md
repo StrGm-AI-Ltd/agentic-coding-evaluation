@@ -41,11 +41,15 @@ curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker "$USER"   # log out/in (or newgrp docker) for this to take effect
 ```
 
-## 3. Clone the repo and configure
+## 3. Fetch the compose file and configure
+
+The deploy host only ever pulls pre-built images from `ghcr.io` - it never reads the app's own
+source, so a full `git clone` isn't needed. `docker-compose.yml` (plus the `.env` you create below)
+is the only file this box requires:
 
 ```bash
-git clone https://github.com/StrGm-AI-Ltd/agentic-coding-evaluation.git
-cd agentic-coding-evaluation
+mkdir agentic-coding-evaluation && cd agentic-coding-evaluation
+curl -fsSL -O https://raw.githubusercontent.com/StrGm-AI-Ltd/agentic-coding-evaluation/main/docker-compose.yml
 stat -c '%g' /var/run/docker.sock   # note this number - it's your DOCKER_GID
 cat > .env <<EOF
 DOCKER_GID=<the number from above>
@@ -97,11 +101,11 @@ from any local setup. Confirm it resolves live models: pick Nebius in any model-
 ## Redeploying
 
 ```bash
-git pull
 docker compose pull
 docker compose up -d
 ```
 
-`git pull` only matters when `docker-compose.yml` itself changed; the application images always
-come from whatever's newest on `ghcr.io` (pushed automatically on the next push to `main`). The
+The application images always come from whatever's newest on `ghcr.io` (pushed automatically on
+every push to `main`) - just re-running the above picks up the latest. Only re-fetch
+`docker-compose.yml` itself (step 3's `curl`) if you know that file specifically changed. The
 `ace-data` volume (DB, results, workspaces) is untouched by any of this.
