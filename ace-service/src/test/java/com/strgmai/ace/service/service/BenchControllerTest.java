@@ -267,6 +267,33 @@ class BenchControllerTest {
         }
     }
 
+    /** Found live (#466): a provider with no/invalid key 401s, and that exception used to fall
+     *  through to the generic catch-all 500 - which deliberately strips the real message (#86) -
+     *  hiding "the key is wrong" behind an opaque "internal error" with no way for the operator to
+     *  tell what to fix. */
+    @Test
+    void providerModelsOnAnAuthFailureReturnsTheRealReasonNotAGenericInternalError() throws Exception {
+        final var upstream = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        upstream.createContext("/v1/models", ex -> {
+            final byte[] body = "{\"detail\":\"Couldn't authenticate. Reason: Unable authenticate\"}".getBytes();
+            ex.getResponseHeaders().set("Content-Type", "application/json");
+            ex.sendResponseHeaders(401, body.length);
+            try (var os = ex.getResponseBody()) { os.write(body); }
+        });
+        upstream.start();
+        try {
+            final var created = providerStore.create("Custom", "custom",
+                    "http://127.0.0.1:" + upstream.getAddress().getPort() + "/v1", "sk-bad", null);
+
+            mvc.perform(get("/api/providers/" + created.id() + "/models"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.detail", containsString("Custom")))
+                    .andExpect(jsonPath("$.detail", containsString("authenticate")));
+        } finally {
+            upstream.stop(0);
+        }
+    }
+
     @Test
     void providerModelsOnAnUnknownIdReturnsAnError() throws Exception {
         mvc.perform(get("/api/providers/" + UUID.randomUUID() + "/models"))

@@ -1624,7 +1624,11 @@ public class BenchController {
      *  model server's. Unlike BenchProperties.upstreamBase(), a provider's base_url already includes
      *  "/v1" (see V7's seed data), so it is used as-is, never concatenated with another "/v1". A
      *  provider with no/invalid key, or whose own API doesn't expose this listing shape, throws -
-     *  ApiExceptionHandler maps that to a clean error the UI already knows how to show. */
+     *  rethrown below as an IllegalArgumentException (ApiExceptionHandler's own "client-correctable
+     *  configuration problem" bucket - a bad/missing key is exactly that) carrying the SDK's own
+     *  message, rather than left to fall into the generic catch-all 500, which deliberately strips
+     *  the real exception message (#86) and would otherwise hide "the key is wrong" behind an opaque
+     *  "internal error" the operator has no way to act on. */
     @GetMapping("/api/providers/{id}/models")
     public List<String> providerModels(final @PathVariable UUID id) {
         final var provider = providerStore.list().stream().filter(p -> p.id().equals(id)).findFirst()
@@ -1633,7 +1637,11 @@ public class BenchController {
                 .baseUrl(provider.baseUrl())
                 .apiKey(provider.apiKey() == null || provider.apiKey().isBlank() ? "none" : provider.apiKey())
                 .build();
-        return client.models().list().data().stream().map(Model::id).sorted().toList();
+        try {
+            return client.models().list().data().stream().map(Model::id).sorted().toList();
+        } catch (final com.openai.errors.OpenAIException e) {
+            throw new IllegalArgumentException("could not list models for " + provider.name() + ": " + e.getMessage(), e);
+        }
     }
 
     private static String str(final Object o) { return o == null ? null : String.valueOf(o); }
