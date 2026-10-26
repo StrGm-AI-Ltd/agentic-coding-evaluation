@@ -1,8 +1,15 @@
 # Runs ace-service + ace-ui-vaadin as containers - the deployable counterpart of
 # scripts/dev.sh's local launchd-based setup, same two services/ports/env vars.
 #
-# Build+run from the repo root: docker compose up --build
+# Local dev, build from source: docker compose up --build
+# Deploy host (e.g. EC2): docker compose pull && docker compose up -d
 #
+# Both `image` and `build` are set per service on purpose: `--build` builds locally and tags the
+# result with `image`, while a plain `pull`/`up` (no `--build`) fetches the pre-built image from
+# ghcr.io instead - pushed there by .github/workflows/docker-publish.yml on every push to main.
+# This keeps the deploy host from ever running the in-image Gradle + Vaadin-frontend build itself.
+#
+
 # DOCKER_GID (required): ace-service mounts the host's /var/run/docker.sock so DockerService.java
 # can reach the host's real Docker daemon from inside the container (Docker-outside-of-Docker -
 # this container never runs its own daemon). The appuser inside the container needs the socket's
@@ -13,6 +20,7 @@
 # quietly stops grading anything that needs a real build/compose check.
 services:
   ace-service:
+    image: ghcr.io/strgm-ai-ltd/ace-service:latest
     build:
       context: .
       dockerfile: ace-service/Dockerfile
@@ -46,6 +54,7 @@ services:
     restart: unless-stopped
 
   ace-ui-vaadin:
+    image: ghcr.io/strgm-ai-ltd/ace-ui-vaadin:latest
     build:
       context: .
       dockerfile: ace-ui-vaadin/Dockerfile

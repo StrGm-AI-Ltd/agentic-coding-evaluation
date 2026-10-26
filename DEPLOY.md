@@ -4,6 +4,10 @@ Runs the exact same `ace-service` + `ace-ui-vaadin` pair as `scripts/dev.sh` doe
 containers on a single host, via `docker-compose.yml` at the repo root. No code changes, no new
 routes, no authentication (that's a deliberately separate, later step) - this deploys ACE as-is.
 
+Images are built by `.github/workflows/docker-publish.yml` on every push to `main` and pushed to
+`ghcr.io/strgm-ai-ltd/ace-service` and `ghcr.io/strgm-ai-ltd/ace-ui-vaadin`. The deploy host never
+runs the Gradle/Vaadin-frontend build itself - it only pulls the already-built images.
+
 ## Why a plain VM, not a managed container service
 
 Two hard requirements rule out ECS/Fargate/App Runner/similar:
@@ -20,10 +24,11 @@ the right fit.
 ## 1. Provision the instance
 
 - **AMI**: Ubuntu 24.04 LTS (or any recent Ubuntu/Debian - matches the containers' own base).
-- **Size**: at least 2 vCPU / 8 GB RAM. The images are built *inside* the instance
-  (`docker compose up --build` runs the full Gradle + Vaadin-frontend build) - undersizing this
-  makes the first build slow or OOM; there's no separate build-and-push step to avoid it with.
-- **Disk**: 30+ GB (Docker images, build caches, and the persistent data volume all land here).
+- **Size**: `t3.large` (2 vCPU / 8 GB) comfortably covers this. The instance only *runs* the two
+  containers (two JVMs, plus whatever a live agent run's own generated docker-compose stacks need
+  via the socket mount below) - it never builds them, so sizing is a runtime concern, not a build
+  one.
+- **Disk**: 20+ GB (pulled images + the persistent data volume; no build cache needed here).
 - **Security group**: open 22 (your own SSH access) and **8800** only (the UI). `ace-service`'s
   own 8765 never needs to be open to the internet - the UI reaches it over the compose-internal
   network, and nothing external talks to it directly.
@@ -50,15 +55,19 @@ EOF
 this box, and nothing on this deployment needs one (the LLM Providers registry, configured in the
 next step, is what any job actually runs against).
 
-## 4. Build and start
+## 4. Pull and start
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
-First build takes a while (full Gradle build + npm/webpack frontend bundling, inside the image,
-with no layer cache yet). Subsequent rebuilds (after `git pull`) are much faster - only the
-`src`-copy layer and anything after it re-runs when just application code changed.
+**One-time step after the very first push to `main`**: GitHub Container Registry packages are
+private by default on first publish, regardless of the repo's own visibility - a plain
+`docker compose pull` with no credentials on this box will fail until that's changed. In the
+repo's GitHub page, open the **Packages** sidebar entry for each of `ace-service` and
+`ace-ui-vaadin`, then *Package settings* → *Change visibility* → **Public** (optionally also
+*Link to repository* so it inherits this going forward). Only needed once, ever.
 
 ## 5. Configure a provider
 
@@ -87,8 +96,10 @@ from any local setup. Confirm it resolves live models: pick Nebius in any model-
 
 ```bash
 git pull
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
-The `ace-data` volume (DB, results, workspaces) is untouched by this - only the application
-images get rebuilt.
+`git pull` only matters when `docker-compose.yml` itself changed; the application images always
+come from whatever's newest on `ghcr.io` (pushed automatically on the next push to `main`). The
+`ace-data` volume (DB, results, workspaces) is untouched by any of this.
