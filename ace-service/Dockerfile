@@ -43,14 +43,33 @@ FROM eclipse-temurin:21-jre
 # git is a FATAL preflight check (Preflight.java): a deployed container without it can never pass
 # guard() and would refuse every job forever - this is not test-only scaffolding, a real deployment
 # needs this to do its actual job
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    # DockerService.java execs `docker`/`docker compose` directly against the HOST's own daemon
+    # (its socket is bind-mounted in by docker-compose.yml - this image never runs its own daemon,
+    # it is Docker-outside-of-Docker) - without the CLI/plugin here, every Docker-gated oracle
+    # check (B1/B2/C2/F5/F6/F7) silently reports "docker unavailable" and skips, the same failure
+    # class as the launchd PATH bug fixed this session (#455), just a missing binary this time.
+    && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
+    && rm -rf /var/lib/apt/lists/*
 # least privilege: an app compromise (e.g. RCE) must not start as root and be able to touch
 # system files or /root/.ssh - a dedicated unprivileged user runs the service instead
 RUN adduser --disabled-password --gecos '' appuser
 WORKDIR /app
 # /app doubles as the writable results/ home, so the whole tree (plus the jar) must be owned by
-# the unprivileged user - the app cannot create or write under a root-owned /app
-RUN mkdir -p /app/results && chown -R appuser /app
+# the unprivileged user - the app cannot create or write under a root-owned /app.
+# /app/data/{db,results,workspaces} is where docker-compose.yml mounts the persistent volume -
+# pre-creating it (chown'd) here matters even though a volume mount overlays it at runtime:
+# Docker copies an image directory's own existing content (ownership included) into a NAMED
+# volume the first time it's used if the volume starts empty, which is the only way appuser
+# (non-root) ever gets write access to it. Without this, SQLite's own JDBC driver fails outright
+# ("path to '...': '...' does not exist" - it never creates its own parent directory) or the
+# unprivileged user simply can't write there (found live - both failure modes hit in testing).
+RUN mkdir -p /app/results /app/data/db /app/data/results /app/data/workspaces && chown -R appuser /app
 COPY --from=build /src/app.jar app.jar
 RUN chown appuser /app/app.jar
 USER appuser

@@ -73,7 +73,8 @@ class PreflightTest {
     void allFatalChecksPassingIsNotBlocked() throws Exception {
         final HttpServer server = fakeModelServer("target-model");
         try (MockedStatic<DockerService> docker = mockDocker(0, 0, 0)) {
-            final var pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()));
+            final var pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()),
+                    new com.strgmai.ace.service.agent.ProviderStore(null));
             final Preflight.Report r = pf.check(null);
 
             assertFalse(r.blocked());
@@ -93,7 +94,8 @@ class PreflightTest {
     void missingGitBlocksEvenThoughDockerIsUp() throws Exception {
         final HttpServer server = fakeModelServer("target-model");
         try (MockedStatic<DockerService> docker = mockDocker(0, 0, 1)) {
-            final var pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()));
+            final var pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()),
+                    new com.strgmai.ace.service.agent.ProviderStore(null));
             final Preflight.Report r = pf.check(null);
 
             assertTrue(r.blocked());
@@ -115,7 +117,8 @@ class PreflightTest {
             // silently ignored (the hardcoded URL always won), so this scenario was never really
             // exercised at all - it only "passed" by accident, against whatever real server the
             // hardcoded address happened to reach.
-            final var pf = new Preflight(props("target-model", "http://127.0.0.1:1/v1", fakeJavaHome()));
+            final var pf = new Preflight(props("target-model", "http://127.0.0.1:1/v1", fakeJavaHome()),
+                    new com.strgmai.ace.service.agent.ProviderStore(null));
             final Preflight.Report r = pf.check(null);
 
             assertTrue(r.blocked());
@@ -127,13 +130,45 @@ class PreflightTest {
         }
     }
 
+    /** #466, found live: a job's --model may be "providerKey/model" (ProviderStore.route()'s own
+     *  convention) - "model server"/"target model served" must check THAT provider's own live
+     *  endpoint, not the operator-wide local default. Before this fix, every job aimed at an
+     *  external provider was refused here on a deployment with no local model server at all - the
+     *  local default (port 1, refuses instantly) stays deliberately wrong/unreachable in this test
+     *  so a pass can only mean the external provider's own endpoint was actually used. */
+    @Test
+    void aProviderPrefixedModelIsCheckedAgainstThatProvidersOwnEndpoint() throws Exception {
+        final var server = fakeModelServer("zai-org/GLM-5.3-Flash");
+        try (MockedStatic<DockerService> docker = mockDocker(0, 0, 0)) {
+            final var ds = new org.sqlite.SQLiteDataSource();
+            ds.setUrl("jdbc:sqlite:" + Files.createTempFile("preflight-provider", ".db") + "?foreign_keys=on");
+            org.flywaydb.core.Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
+            final var providerStore = new com.strgmai.ace.service.agent.ProviderStore(org.jooq.impl.DSL.using(ds, org.jooq.SQLDialect.SQLITE));
+            providerStore.create("Custom", "custom", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", "sk-test", null);
+
+            // props' own endpoint is deliberately unreachable - a pass can only come from the
+            // provider's own endpoint actually being used, never a silent fallback to this
+            final var pf = new Preflight(props("irrelevant", "http://127.0.0.1:1/v1", fakeJavaHome()), providerStore);
+            final Preflight.Report r = pf.check("custom/zai-org/GLM-5.3-Flash");
+
+            assertFalse(r.blocked());
+            assertTrue(byName(r, "model server").ok());
+            final Preflight.Check target = byName(r, "target model served");
+            assertTrue(target.ok(), target.detail());
+            assertEquals("zai-org/GLM-5.3-Flash", target.detail(), "checked against the stripped, bare model id");
+        } finally {
+            server.stop(0);
+        }
+    }
+
     // todo issue 25: fix broken test
     @Disabled
     @Test
     void dockerDaemonDownAloneDoesNotBlock() throws Exception {
         final HttpServer server = fakeModelServer("target-model");
         try (MockedStatic<DockerService> docker = mockDocker(1, 0, 0)) {
-            final var pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()));
+            final var pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()),
+                    new com.strgmai.ace.service.agent.ProviderStore(null));
             final Preflight.Report r = pf.check(null);
 
             assertFalse(r.blocked());
@@ -151,7 +186,8 @@ class PreflightTest {
     void anExplicitModelArgumentOverridesThePropsDefault() throws Exception {
         final HttpServer server = fakeModelServer("explicit-model");
         try (MockedStatic<DockerService> docker = mockDocker(0, 0, 0)) {
-            final var pf = new Preflight(props("props-default-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()));
+            final var pf = new Preflight(props("props-default-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()),
+                    new com.strgmai.ace.service.agent.ProviderStore(null));
             Preflight.Report r = pf.check("explicit-model");   // the model THIS job will request, not props.model()
 
             assertFalse(r.blocked());

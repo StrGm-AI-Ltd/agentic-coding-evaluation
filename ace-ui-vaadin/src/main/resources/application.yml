@@ -7,4 +7,7 @@ ace:
     # The Java/Spring/LangChain4j service from ace-service, run on a non-default
     # port/DB (ACE_JLS_PORT/ACE_JLS_DSN) precisely so it can coexist with the Python service instead of
     # colliding with it on 8765/agentbench. Was http://127.0.0.1:8765 (the Python FastAPI service).
-    base-url: http://127.0.0.1:8765
+    # Overridable (e.g. docker-compose's own service-name DNS, "http://ace-service:8765", when the
+    # two run as separate containers) - explicit placeholder, matching every other overridable
+    # setting in this codebase, rather than relying on Spring's relaxed env-var binding alone.
+    base-url: ${ACE_SERVICE_BASE_URL:http://127.0.0.1:8765}
