@@ -1,0 +1,62 @@
+# Runs ace-service + ace-ui-vaadin as containers - the deployable counterpart of
+# scripts/dev.sh's local launchd-based setup, same two services/ports/env vars.
+#
+# Build+run from the repo root: docker compose up --build
+#
+# DOCKER_GID (required): ace-service mounts the host's /var/run/docker.sock so DockerService.java
+# can reach the host's real Docker daemon from inside the container (Docker-outside-of-Docker -
+# this container never runs its own daemon). The appuser inside the container needs the socket's
+# HOST group to actually read/write it. Find it with `stat -c '%g' /var/run/docker.sock` (Linux) on
+# the actual deploy host, then either export DOCKER_GID before running compose, or put it in a
+# .env file next to this one (DOCKER_GID=999). Get this wrong and every Docker-gated oracle check
+# (B1/B2/C2/F5/F6/F7) silently reports "docker unavailable" and skips - the app still runs, it just
+# quietly stops grading anything that needs a real build/compose check.
+services:
+  ace-service:
+    build:
+      context: .
+      dockerfile: ace-service/Dockerfile
+    ports:
+      - "8765:8765"
+    environment:
+      # unset here on purpose: this deployment runs exactly like a local setup with no oMLX
+      # server reachable from it - Preflight will honestly report that, same as it would for
+      # anyone running ace-service without a model server up. Jobs targeting an external
+      # provider (Nebius, etc. - configured via the LLM Providers UI tab, stored in the DB on the
+      # volume below) are unaffected either way.
+      OMLX_API_KEY: ${OMLX_API_KEY:-}
+      ACE_ENDPOINT: ${ACE_ENDPOINT:-}
+      # everything that needs to survive a redeploy (the SQLite DB - including the LLM Providers
+      # registry and its API keys - the results directory, and the workspace root) lives under
+      # one mounted volume instead of the image's own ephemeral filesystem.
+      ACE_JLS_DB_PATH: /app/data/db/ace-service.db
+      ACE_RESULTS_DIR: /app/data/results
+      ACE_WORKSPACE_ROOT: /app/data/workspaces
+      # Preflight.java's "pinned JDK 21" check is a FATAL gate (WorkerService's own guard() -
+      # it genuinely blocks every job, not just advisory UI) and falls back to macOS's
+      # /usr/libexec/java_home when this is unset - which doesn't exist on this (Linux) image, so
+      # every job would be refused forever without this. /opt/java/openjdk is eclipse-temurin's
+      # own JAVA_HOME (confirmed inside the built image) - reusing it, not a new path to maintain.
+      ACE_JAVA_HOME: /opt/java/openjdk
+    volumes:
+      - ace-data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID}"
+    restart: unless-stopped
+
+  ace-ui-vaadin:
+    build:
+      context: .
+      dockerfile: ace-ui-vaadin/Dockerfile
+    ports:
+      - "8800:8800"
+    environment:
+      # compose's own service-name DNS - the two containers share this network by default
+      ACE_SERVICE_BASE_URL: http://ace-service:8765
+    depends_on:
+      - ace-service
+    restart: unless-stopped
+
+volumes:
+  ace-data:
