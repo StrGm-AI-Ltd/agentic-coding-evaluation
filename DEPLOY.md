@@ -29,9 +29,10 @@ the right fit.
   via the socket mount below) - it never builds them, so sizing is a runtime concern, not a build
   one.
 - **Disk**: 20+ GB (pulled images + the persistent data volume; no build cache needed here).
-- **Security group**: open 22 (your own SSH access) and **8800** only (the UI). `ace-service`'s
-  own 8765 never needs to be open to the internet - the UI reaches it over the compose-internal
-  network, and nothing external talks to it directly.
+- **Security group**: open 22 (your own SSH access, ideally restricted to your own IP) and **80**
+  only (the UI, published there via `ACE_UI_PORT` below instead of 8800 - a clean judge-facing URL
+  with no port in it). `ace-service`'s own 8765 never needs to be open to the internet - the UI
+  reaches it over the compose-internal network, and nothing external talks to it directly.
 
 ## 2. Install Docker on the instance
 
@@ -48,6 +49,7 @@ cd agentic-coding-evaluation
 stat -c '%g' /var/run/docker.sock   # note this number - it's your DOCKER_GID
 cat > .env <<EOF
 DOCKER_GID=<the number from above>
+ACE_UI_PORT=80
 EOF
 ```
 
@@ -71,7 +73,7 @@ repo's GitHub page, open the **Packages** sidebar entry for each of `ace-service
 
 ## 5. Configure a provider
 
-Open `http://<instance-public-ip>:8800/providers` and add (or edit, if it's one of the five
+Open `http://<instance-public-ip>/providers` and add (or edit, if it's one of the five
 seeded rows) Nebius's own API key - the DB is fresh on a new volume, so this doesn't carry over
 from any local setup. Confirm it resolves live models: pick Nebius in any model-provider dropdown
 (e.g. on `/jobs/new`) and confirm the model combo populates.

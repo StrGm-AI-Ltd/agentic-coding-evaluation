@@ -59,7 +59,11 @@ services:
       context: .
       dockerfile: ace-ui-vaadin/Dockerfile
     ports:
-      - "8800:8800"
+      # ACE_UI_PORT lets a deploy host publish on the standard HTTP port (80) for a clean
+      # judge-facing URL with no :8800 in it, without changing what the container itself listens
+      # on (still 8800, same as scripts/dev.sh locally) - local dev is unaffected by default
+      # (defaults to 8800, so it never needs root to bind), set ACE_UI_PORT=80 in .env to opt in.
+      - "${ACE_UI_PORT:-8800}:8800"
     environment:
       # compose's own service-name DNS - the two containers share this network by default
       ACE_SERVICE_BASE_URL: http://ace-service:8765
