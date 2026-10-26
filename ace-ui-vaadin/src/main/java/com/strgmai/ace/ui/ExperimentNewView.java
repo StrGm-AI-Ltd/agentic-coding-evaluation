@@ -105,8 +105,8 @@ public class ExperimentNewView extends VerticalLayout {
         model = new ProviderModelPicker(client, "Model");
         modelA = new ProviderModelPicker(client, "Model A");
         modelB = new ProviderModelPicker(client, "Model B");
-        reviewerModel = new ProviderModelPicker(client, "Reviewer model").useOmlxPrefixForLocal();
-        trajectoryReviewerModel = new ProviderModelPicker(client, "Trajectory reviewer model").useOmlxPrefixForLocal();
+        reviewerModel = new ProviderModelPicker(client, "Reviewer model");
+        trajectoryReviewerModel = new ProviderModelPicker(client, "Trajectory reviewer model");
         setPadding(true);
 
         template.setLabel("Template");
@@ -340,7 +340,7 @@ public class ExperimentNewView extends VerticalLayout {
             log.warn("could not load the rung list: {}", e.toString());
         }
         try {
-            final var models = Links.distinctRuns(client.runs(null, null, null, null, null), Api.Run::model);
+            final var models = Links.distinctModelsForProvider(client.runs(null, null, null, null, null), "omlx");
             model.withPastRunHistory(models);
             modelA.withPastRunHistory(models);
             modelB.withPastRunHistory(models);

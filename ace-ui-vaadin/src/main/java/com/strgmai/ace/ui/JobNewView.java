@@ -109,10 +109,10 @@ public class JobNewView extends VerticalLayout {
     public JobNewView(final ServiceClient client) {
         this.client = client;
         model = new ProviderModelPicker(client, "Model").withTooltipText(Tooltips.MODEL);
-        reviewerModel = new ProviderModelPicker(client, "Reviewer model").useOmlxPrefixForLocal().withTooltipText(Tooltips.REVIEWER_MODEL);
-        trajectoryReviewerModel = new ProviderModelPicker(client, "Trajectory reviewer model").useOmlxPrefixForLocal()
+        reviewerModel = new ProviderModelPicker(client, "Reviewer model").withTooltipText(Tooltips.REVIEWER_MODEL);
+        trajectoryReviewerModel = new ProviderModelPicker(client, "Trajectory reviewer model")
                 .withTooltipText(Tooltips.TRAJECTORY_REVIEWER_MODEL);
-        judgeModel = new ProviderModelPicker(client, "Judge model").useOmlxPrefixForLocal().withTooltipText(Tooltips.JUDGE_MODEL);
+        judgeModel = new ProviderModelPicker(client, "Judge model").withTooltipText(Tooltips.JUDGE_MODEL);
         setPadding(true);
 
         task.setAllowCustomValue(true);
@@ -348,7 +348,7 @@ public class JobNewView extends VerticalLayout {
             final var tasks = new java.util.TreeSet<String>(client.tasks());
             tasks.addAll(Links.distinctRuns(runs, Api.Run::task));
             task.setItems(tasks);
-            model.withPastRunHistory(Links.distinctRuns(runs, Api.Run::model));
+            model.withPastRunHistory(Links.distinctModelsForProvider(runs, "omlx"));
             rungDetails = client.taskDetails();
             renderTaskInfo(task.getValue());
         } catch (final Exception e) {

@@ -1,0 +1,14 @@
+-- The main model field is switching from "a bare string always means local" to "a bare string is
+-- local, but a registered provider_key/ prefix (including the new 'omlx' row) routes externally" -
+-- see ProviderStore.route(). Every historical run's own model string was recorded bare (it always
+-- ran against the local server; there was no other kind of "local" before now), so it needs the
+-- same "omlx/" prefix a future local run will submit, or /api/groups' exact-string pooling
+-- ((task, model, key_hash), see BenchController.groups()) would silently split what is really one
+-- model into two separate groups - the bare historical rows and the newly-prefixed ones never
+-- comparing against each other again. key_hash itself does not include the model string
+-- (StatsService.KEY_FIELDS has no "model" entry), so it needs no recomputation here.
+--
+-- NOT LIKE '%/%' is the exact same "no slash = local" rule ProviderStore.route() itself uses - a
+-- row already containing a slash (an external-provider run, or a local model id that happens to
+-- look like "org/Model") is left untouched.
+UPDATE runs SET model = 'omlx/' || model WHERE model NOT LIKE '%/%';

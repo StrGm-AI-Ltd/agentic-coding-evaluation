@@ -17,11 +17,18 @@ import java.util.List;
  *  hardcoded list. Mirrors CompactionStrategyList's own precedent: a plain getValue()/setValue(),
  *  no HasValue, slots into Forms.row(...) like any other field.
  *
- *  Wire format: a bare model id when Local is selected (the existing "no provider/ prefix means
- *  local" convention used throughout ace-service - see ProviderStore.route()/resolveModel()), or
- *  "providerKey/model" otherwise. Blank/null means nothing is selected - a legal, distinct state
- *  for the optional reviewer/judge fields (and, for judge fields specifically, the existing
- *  "blank = inherit the run's own model" meaning - this control never forces a selection).
+ *  Every registered provider - including the local model server's own "omlx" row - is treated
+ *  uniformly: no synthetic "Local" entry (there used to be one, duplicating the real "omlx" row
+ *  once an operator registered it - see #463). Wire format is always "providerKey/model";
+ *  blank/null means nothing is selected - a legal, distinct state for the optional reviewer/judge
+ *  fields (and, for judge fields specifically, the existing "blank = inherit the run's own model"
+ *  meaning - this control never forces a selection). A historical run's own model string may still
+ *  be bare (pre-#465 backfill, or a stray manual entry) - setValue() treats a bare string as
+ *  "omlx/" + itself, the same "no prefix means the local server" assumption the rest of
+ *  ace-service already made before every provider got a real registry row.
+ *
+ *  If no provider with key "omlx" is registered, there is currently no way to pick a local model
+ *  through this control at all - the LLM Providers tab is expected to always carry that row.
  *
  *  The provider list is loaded eagerly in the constructor (a fast, local DB read, unlike the
  *  model list) rather than attach-deferred like every other view's own loadSuggestions() - so a
@@ -31,21 +38,15 @@ import java.util.List;
 public class ProviderModelPicker extends HorizontalLayout {
     private static final Logger log = LoggerFactory.getLogger(ProviderModelPicker.class);
 
-    /** provider_key == null marks this synthetic entry - checked by isLocal(), never sent to the backend. */
-    private static final Api.Provider LOCAL = new Api.Provider("local", "Local", null, null, null, false);
-
     private final ServiceClient client;
     private final ComboBox<Api.Provider> provider = new ComboBox<>();
     private final ComboBox<String> model = new ComboBox<>();
     private final Span error = new Span();
-    private List<String> pastRunModels = List.of();   // merged into the Local model list - see withPastRunHistory()
-    // ProviderStore.route() (the main model field's own convention - JobNewView.model,
-    // ExperimentNewView.model/modelA/modelB) treats a BARE string as local, no prefix needed. The
-    // reviewer/judge model fields go through the older, separate ProviderStore.resolveModel()
-    // instead, which reserves a bare string for a provider-key shorthand (e.g. typing "nebius")
-    // and needs an explicit "omlx/" prefix to mean "a specific local model" - see
-    // useOmlxPrefixForLocal() for those fields' own wire convention.
-    private boolean omlxPrefixedLocal = false;
+    // bare model ids (no "providerKey/" prefix) - merged into the omlx provider's own model list
+    // only, since that's the one provider past-run history has ever meant anything for. See
+    // withPastRunHistory() and Links.distinctModelsForProvider(runs, "omlx"), which callers use to
+    // build this list from Api.Run::model.
+    private List<String> pastRunModels = List.of();
 
     public ProviderModelPicker(final ServiceClient client, final String label) {
         this.client = client;
@@ -73,32 +74,21 @@ public class ProviderModelPicker extends HorizontalLayout {
         return this;
     }
 
-    /** Opts this picker's Local branch into merging past-run model history on top of the live
-     *  model-server list - the perk the 3 main-model fields had before conversion to this
-     *  component; skipped by default (reviewer/judge fields never had it). Call before the
-     *  operator can plausibly have picked Local already (right after construction, same as every
-     *  other field's own loadSuggestions() timing) - it does not retroactively refresh an
+    /** Past-run model history (bare ids, already filtered to the omlx provider - see
+     *  Links.distinctModelsForProvider) merged into the omlx provider's own model list, on top of
+     *  its live models() response - the perk the 3 main-model fields had before this component
+     *  existed. Skipped by default (reviewer/judge fields never had it). Call before the operator
+     *  can plausibly have picked omlx already (right after construction, same as every other
+     *  field's own loadSuggestions() timing) - it does not retroactively refresh an
      *  already-populated model list. */
     public ProviderModelPicker withPastRunHistory(final List<String> models) {
         this.pastRunModels = models;
         return this;
     }
 
-    /** Switches this picker's wire convention to match ProviderStore.resolveModel() (the reviewer/
-     *  judge model fields) instead of ProviderStore.route() (the main model fields' own default):
-     *  Local + a model now submits "omlx/" + model rather than the bare model id, and setValue()
-     *  recognizes an incoming "omlx/..." string as Local too. */
-    public ProviderModelPicker useOmlxPrefixForLocal() {
-        this.omlxPrefixedLocal = true;
-        return this;
-    }
-
     private void loadProviders() {
         try {
-            final var items = new ArrayList<Api.Provider>();
-            items.add(LOCAL);
-            items.addAll(client.providers());
-            provider.setItems(items);
+            provider.setItems(client.providers());
         } catch (final Exception e) {
             log.warn("could not load providers: {}", e.toString());
             error.setText("could not load providers: " + client.errorText(e));
@@ -116,13 +106,9 @@ public class ProviderModelPicker extends HorizontalLayout {
         }
         error.setVisible(false);
         try {
-            if (isLocal(p)) {
-                final var items = new LinkedHashSet<>(client.models());
-                items.addAll(pastRunModels);
-                model.setItems(items);
-            } else {
-                model.setItems(client.providerModels(p.id()));
-            }
+            final var items = new LinkedHashSet<>(client.providerModels(p.id()));
+            if ("omlx".equals(p.provider_key())) items.addAll(pastRunModels);
+            model.setItems(items);
             model.setEnabled(true);
         } catch (final Exception e) {
             log.warn("could not load models for provider {}: {}", p.name(), e.toString());
@@ -133,51 +119,37 @@ public class ProviderModelPicker extends HorizontalLayout {
         }
     }
 
-    private static boolean isLocal(final Api.Provider p) {
-        return p.provider_key() == null;
-    }
-
-    /** The final wire string - bare model id for Local, "providerKey/model" otherwise; blank when
-     *  nothing is selected (a legal state - see the class javadoc). */
+    /** The final wire string - "providerKey/model"; blank when nothing is selected (a legal state -
+     *  see the class javadoc). */
     public String getValue() {
         final var p = provider.getValue();
         final var m = model.getValue();
         if (p == null || m == null || m.isBlank()) return "";
-        if (isLocal(p)) return omlxPrefixedLocal ? "omlx/" + m : m;
         return p.provider_key() + "/" + m;
     }
 
     /** Parses an existing wire string back into provider+model selection, for pre-fill. Blank/null
-     *  leaves both unselected. An unrecognized provider prefix (e.g. a deleted provider) falls back
-     *  to Local with the raw string as the model - tolerant, matching ProviderStore.route()'s own
-     *  "an unknown prefix just stays a local model id" convention. */
+     *  leaves both unselected. A bare string (no "/") is pre-#465-backfill data or a stray manual
+     *  entry - treated as the omlx provider's own model, the same "no prefix means local" rule the
+     *  rest of ace-service already used before every provider had a real row. An unrecognized
+     *  prefix (e.g. a deleted provider) logs a warning and leaves the picker unselected - there is
+     *  no sensible provider to fall back to once "Local" is no longer always present. */
     public void setValue(final String wireValue) {
         if (wireValue == null || wireValue.isBlank()) return;
         final int slash = wireValue.indexOf('/');
-        if (slash < 0) {
-            // a bare string: under the omlx-prefixed convention this isn't a legal "specific local
-            // model" shape at all (resolveModel() would treat it as an unrecognized provider key
-            // and throw) - shown as Local anyway, best-effort, same tolerant fallback as elsewhere.
-            selectProviderAndModel(LOCAL, wireValue);
-            return;
-        }
-        final var prefix = wireValue.substring(0, slash);
-        final var rest = wireValue.substring(slash + 1);
-        if (omlxPrefixedLocal && "omlx".equals(prefix)) {
-            selectProviderAndModel(LOCAL, rest);
-            return;
-        }
+        final String key = slash < 0 ? "omlx" : wireValue.substring(0, slash);
+        final String modelValue = slash < 0 ? wireValue : wireValue.substring(slash + 1);
         final var match = provider.getGenericDataView().getItems()
-                .filter(p -> prefix.equals(p.provider_key())).findFirst();
-        selectProviderAndModel(match.orElse(LOCAL), match.isPresent() ? rest : wireValue);
-    }
-
-    /** provider.setValue(...) fires onProviderChanged() synchronously, which already populates
-     *  (or, on a fetch failure, disables/empties) the model combo - addModelItemIfMissing() then
-     *  guarantees THIS value is selectable either way, so a pre-fill always sticks even when the
-     *  live list doesn't happen to include it (a now-retired model, or the fetch failed outright). */
-    private void selectProviderAndModel(final Api.Provider p, final String modelValue) {
-        provider.setValue(p);
+                .filter(p -> key.equals(p.provider_key())).findFirst();
+        if (match.isEmpty()) {
+            log.warn("could not pre-fill \"{}\": no registered provider with key \"{}\"", wireValue, key);
+            return;
+        }
+        // provider.setValue(...) fires onProviderChanged() synchronously, which already populates
+        // (or, on a fetch failure, disables/empties) the model combo - addModelItemIfMissing() then
+        // guarantees THIS value is selectable either way, so a pre-fill always sticks even when the
+        // live list doesn't happen to include it (a now-retired model, or the fetch failed outright).
+        provider.setValue(match.get());
         addModelItemIfMissing(modelValue);
         model.setValue(modelValue);
     }
