@@ -49,9 +49,12 @@ public class ProviderModelPicker extends HorizontalLayout {
 
     public ProviderModelPicker(final ServiceClient client, final String label) {
         this.client = client;
-        provider.setLabel(label);
+        // label names the FIELD (e.g. "Reviewer model") - the left combo only picks the provider,
+        // so it needs its own, distinct caption rather than inheriting the field's name wholesale
+        // (previously made it look like "Reviewer model" itself selected a provider, not a model).
+        provider.setLabel(label + " provider");
         provider.setItemLabelGenerator(Api.Provider::name);
-        model.setLabel("Model");
+        model.setLabel(label);
         model.setAllowCustomValue(true);
         model.setEnabled(false);
         error.getStyle().set("color", "var(--lumo-error-color)").set("font-size", "0.8em");
