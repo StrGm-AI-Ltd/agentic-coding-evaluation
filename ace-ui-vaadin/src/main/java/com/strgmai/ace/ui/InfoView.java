@@ -24,11 +24,13 @@ public class InfoView extends Div {
         final var goal = new Paragraph();
         goal.add(new Span("ACE (Agentic Coding Evaluation) is a reproducible framework for evaluating AI "
                 + "coding agents, models, and agent harnesses under controlled conditions. It drives a "
-                + "coding agent through a frozen, non-trivial build task, then scores the result with an "
-                + "oracle that never trusts the agent's own word for anything."));
+                + "coding agent through a frozen, non-trivial build "), taskLadderLink("task"), new Span(", then "
+                + "scores the result with an oracle that never trusts the agent's own word for anything."));
         add(goal);
 
         add(new H3("User manual"));
+        add(new Paragraph(new Span("See the "), taskLadderLink("Task Ladder"),
+                new Span(" for what each task actually asks the agent to build.")));
         final var list = new UnorderedList();
         list.add(manualItem(new RouterLink("Runs", RunsView.class), "browse every run and its full scorecard"));
         list.add(manualItem(new RouterLink("Groups", GroupsView.class), "the pooled leaderboard, comparable runs ranked together"));
@@ -50,5 +52,14 @@ public class InfoView extends Div {
         final var item = new ListItem();
         item.add(link, new Span(" — " + description));
         return item;
+    }
+
+    /** A fresh Anchor instance every call - the same Vaadin component can't be attached to the
+     *  component tree twice, and this is used twice on this page (the goal paragraph and the
+     *  User manual section's own lead-in), each with its own link text. */
+    private static Anchor taskLadderLink(final String text) {
+        final var link = new Anchor("https://github.com/StrGm-AI-Ltd/agentic-coding-evaluation/wiki/Task-Ladder", text);
+        link.setTarget("_blank");
+        return link;
     }
 }
