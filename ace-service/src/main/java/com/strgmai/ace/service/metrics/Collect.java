@@ -148,6 +148,43 @@ public final class Collect {
         // how prefill/decode speed depends on context size, bucketed by JournalFacts over the whole
         // run - a chart data blob, not a leaderboard scalar, so it lives alongside "steps"
         out.put("speed_by_context", jf.getOrDefault("speed_by_context", List.of()));
+        // #472/#475 follow-up: RunDetailView's own "Plan tasks" table
+        out.put("per_task", perTask(journal, (List<Map<String, Object>>) manifest.getOrDefault("tasks", List.of())));
+        return out;
+    }
+
+    /** #472/#475 follow-up: the finished-run "Plan tasks" table's own per-task rows
+     *  (RunDetailView.perTaskRows()) - read since that table was built, but never written by any
+     *  real run: this port of collect.py never carried the block over, so the table was
+     *  permanently empty. Every manifest.tasks[] entry already carries most of what's needed
+     *  directly (reported/done_verified/requests/seconds/rc) - a task resumed past on a later
+     *  attempt (its own bare {id, rc, resumed} entry, see BenchController.taskStatsForRun()'s own
+     *  javadoc) just contributes a row with those fields missing, the same graceful "–"/blank
+     *  fallback RunDetailView.perTaskRows() already has for a genuinely absent key.
+     *  completion_tokens/max_prompt aren't on the manifest entry itself - read from the journal's
+     *  own per-task time window instead, the same windowed mechanism this class already uses for
+     *  phases above (so a parallel wave's several concurrent tasks each get their OWN figures, not
+     *  the whole wave's combined traffic). files_changed is deliberately left unset: a real git
+     *  diff against the task's own phase/&lt;id&gt; tag needs the run's live workspace, not
+     *  available here - RunDetailView.perTaskRows() already renders a missing files_changed as
+     *  "–", the same fallback a too-old run already gets. */
+    static Map<String, Object> perTask(final Path journal, final List<Map<String, Object>> tasks) {
+        final Map<String, Object> out = new LinkedHashMap<>();
+        for (final Map<String, Object> t : tasks) {
+            final Map<String, Object> row = new LinkedHashMap<>();
+            row.put("reported", t.get("reported"));
+            row.put("done_verified", t.get("done_verified"));
+            row.put("requests", t.get("requests"));
+            row.put("task_wall_sec", t.get("seconds"));
+            row.put("over_budget", Integer.valueOf(124).equals(t.get("rc")));
+            final String startIso = Objects.toString(t.get("start_iso"), null), endIso = Objects.toString(t.get("end_iso"), null);
+            if (startIso != null && endIso != null) {
+                final Map<String, Object> f = com.strgmai.ace.service.runner.JournalFacts.facts(journal.toString(), startIso, endIso, null, null, null);
+                row.put("completion_tokens", f.get("completion_tokens"));
+                if (f.containsKey("max_prompt_tokens")) row.put("max_prompt", f.get("max_prompt_tokens"));
+            }
+            out.put(String.valueOf(t.get("id")), row);
+        }
         return out;
     }
 
