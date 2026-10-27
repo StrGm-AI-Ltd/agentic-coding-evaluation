@@ -56,7 +56,7 @@ public class ExperimentsView extends VerticalLayout {
         grid.addItemClickListener(e -> e.getSource().getUI()
                 .ifPresent(ui -> ui.navigate("experiments/" + e.getItem().id())));
 
-        add(TabManual.banner("Run several configurations as one batch.", "User-Manual-Results"));
+        add(TabManual.banner(this, "Run several configurations as one batch.", "User-Manual-Results"));
         add(new H2("Experiments"),
                 new com.vaadin.flow.component.orderedlayout.HorizontalLayout(newExperiment, error),
                 emptyState, grid);

@@ -63,7 +63,7 @@ public class PreflightView extends VerticalLayout {
 
     private void render() {
         removeAll();
-        add(TabManual.banner("A one-click readiness check before trusting any run.", "User-Manual-Providers"));
+        add(TabManual.banner(this, "A one-click readiness check before trusting any run.", "User-Manual-Providers"));
 
         final var start = new Button(running ? "Running…" : "Run preflight", VaadinIcon.PLAY.create(), e -> runPreflight());
         start.setEnabled(!running);

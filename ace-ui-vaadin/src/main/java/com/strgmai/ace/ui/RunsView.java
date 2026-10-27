@@ -118,7 +118,7 @@ public class RunsView extends VerticalLayout {
             e.getSource().getUI().ifPresent(ui -> ui.navigate("runs/" + e.getItem().run_id()));
         });
 
-        add(TabManual.banner("Browse every run and its full scorecard.", "User-Manual-Results"));
+        add(TabManual.banner(this, "Browse every run and its full scorecard.", "User-Manual-Results"));
         add(new H2("Runs"), filters, error, emptyState, grid);
         setSizeFull();
         expand(grid);

@@ -48,7 +48,7 @@ public class LlmProvidersView extends VerticalLayout {
         grid.addColumn(new ComponentRenderer<>(this::actions)).setHeader("").setAutoWidth(true).setFlexGrow(0);
         grid.getColumns().forEach(c -> c.setResizable(true));
 
-        add(TabManual.banner("Configure which models ACE can target.", "User-Manual-Providers"));
+        add(TabManual.banner(this, "Configure which models ACE can target.", "User-Manual-Providers"));
         add(new H2("LLM Providers"), new HorizontalLayout(addProvider, error), grid);
         setSizeFull();
         expand(grid);
