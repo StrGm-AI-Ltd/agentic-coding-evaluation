@@ -1,16 +1,17 @@
 package com.strgmai.ace.ui;
 
+import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.Html;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
-import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.icon.VaadinIcon;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
+import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,29 +21,28 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 
-/** #474: a short "what this tab does" banner, shown at the top of every tab except Info (which IS
- *  the manual's own landing page - see InfoView). "Full manual" opens the matching wiki page as
- *  rendered markdown in a side panel docked to the right edge.
+/** #474/#485: a short "what this tab does" banner, shown at the top of every tab except Info
+ *  (which IS the manual's own landing page - see InfoView). "Full manual" opens the matching wiki
+ *  page as rendered markdown in a side pane - a real MainLayout.split (SplitLayout) secondary
+ *  pane with a draggable divider, not a floating overlay, so its width is operator-adjustable
+ *  (#485 - the original #474 dialog-overlay version had a fixed width).
  *
  *  Not a literal iframe of the wiki: GitHub sends "x-frame-options: deny" and
  *  "frame-ancestors 'none'" on wiki pages (confirmed live) - there is no way to embed the real
  *  page. Instead this fetches the page's raw markdown directly from raw.githubusercontent.com and
- *  renders it through the same Markdown/md-body pipeline FileViewerView already uses, for a
- *  consistent look. Relative image paths (every wiki image is written as "images/foo.png") are
- *  rewritten to absolute raw-content URLs first, or they'd 404 against this app's own origin.
- *  Known gap: in-page links to OTHER wiki pages (e.g. "see Architecture") are not rewritten and
- *  will mis-navigate if clicked from inside the panel - "Open in GitHub" is the correct escape
- *  hatch for that until this is worth the extra regex.
+ *  renders it through the same Markdown/md-body pipeline FileViewerView already uses (that view's
+ *  own @CssImport("./styles/md-viewer.css") is what actually styles ".md-body" - Flow's frontend
+ *  bundle is app-wide, not per-route, so nothing extra is needed here), for a consistent look.
+ *  Relative image paths (every wiki image is written as "images/foo.png") are rewritten to
+ *  absolute raw-content URLs first, or they'd 404 against this app's own origin. Known gap:
+ *  in-page links to OTHER wiki pages (e.g. "see Architecture") are not rewritten and will
+ *  mis-navigate if clicked from inside the pane - "Open in GitHub" is the correct escape hatch
+ *  for that until this is worth the extra regex.
  *
  *  ace-ui-vaadin is otherwise a pure REST/SSE client of ace-service only (see Architecture.md) -
  *  this is a deliberate, narrowly-scoped exception: a documentation fetch has nothing to do with
  *  the benchmark domain ace-service owns, and a new ace-service endpoint just to proxy a GitHub
- *  fetch would be the wrong place to put it.
- *
- *  <p>Its positioning CSS (./styles/manual-panel.css) is imported on MainLayout, not here - every
- *  view this banner appears on is already wrapped by MainLayout, which is guaranteed to actually
- *  be instantiated (unlike this plain static-method class, which Vaadin's annotation scanner may
- *  not treat the same way a real Component gets treated for frontend-resource bundling). */
+ *  fetch would be the wrong place to put it. */
 final class TabManual {
     private static final Logger log = LoggerFactory.getLogger(TabManual.class);
     private static final String REPO = "StrGm-AI-Ltd/agentic-coding-evaluation";
@@ -53,12 +53,15 @@ final class TabManual {
     private TabManual() {
     }
 
-    /** @param wikiPage the wiki page's bare name, e.g. "User-Manual-Jobs" (no ".md", no slashes). */
-    static Div banner(final String description, final String wikiPage) {
+    /** @param view the tab's own root component - used only to find its owning MainLayout, lazily,
+     *              at click time (the view isn't attached yet when banner() itself runs, since
+     *              every call site builds this banner from its own constructor).
+     *  @param wikiPage the wiki page's bare name, e.g. "User-Manual-Jobs" (no ".md", no slashes). */
+    static Div banner(final Component view, final String description, final String wikiPage) {
         final var text = new Span(description);
         text.getStyle().set("color", "var(--lumo-secondary-text-color)");
 
-        final var full = new Button("Full manual", VaadinIcon.BOOK.create(), e -> openPanel(wikiPage));
+        final var full = new Button("Full manual", VaadinIcon.BOOK.create(), e -> ownerLayout(view).openManual(wikiPage));
         full.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL);
 
         final var row = new HorizontalLayout(text, full);
@@ -75,33 +78,45 @@ final class TabManual {
         return wrapper;
     }
 
-    private static void openPanel(final String wikiPage) {
-        final var dialog = new Dialog();
-        dialog.addClassName("manual-side-panel");
-        dialog.setWidth("520px");
-        dialog.setCloseOnEsc(true);
-        dialog.setCloseOnOutsideClick(true);
-        dialog.setDraggable(false);
-        dialog.setResizable(false);
+    /** Walks the COMPONENT tree (not just the immediate parent) up from a tab's own root - Flow
+     *  keeps Component.getParent() in sync with element-level appendChild, which is how
+     *  MainLayout.showRouterLayoutContent() attaches each routed view (see its own comment), so
+     *  this reaches MainLayout regardless of how many plain Divs sit in between. */
+    private static MainLayout ownerLayout(final Component view) {
+        var c = view.getParent();
+        while (c.isPresent() && !(c.get() instanceof MainLayout)) {
+            c = c.get().getParent();
+        }
+        return (MainLayout) c.orElseThrow(() -> new IllegalStateException(view + " is not attached under a MainLayout"));
+    }
+
+    /** Builds the pane's own header (title, Open in GitHub, close) and a growing/scrolling body,
+     *  into the container MainLayout.openManual() just revealed, then kicks off the async fetch.
+     *  Mirrors FileViewerView's own "flex-grow:1 + overflow:auto, then expand()" markdown-body
+     *  pattern exactly, for the same reason: a fixed-height pane with its OWN internal scroll,
+     *  independent of the main content pane's scroll position. */
+    static void renderInto(final VerticalLayout container, final String wikiPage, final Runnable onClose) {
+        container.removeAll();
 
         final var title = new Span(wikiPage.replace('-', ' '));
         title.getStyle().set("font-weight", "600");
         final var openInGithub = new Anchor(WIKI_BASE + wikiPage, "Open in GitHub");
         openInGithub.setTarget("_blank");
-        final var close = new Button(VaadinIcon.CLOSE_SMALL.create(), e -> dialog.close());
+        final var close = new Button(VaadinIcon.CLOSE_SMALL.create(), e -> onClose.run());
         close.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL);
         final var header = new HorizontalLayout(title, openInGithub, close);
         header.setAlignItems(FlexComponent.Alignment.CENTER);
         header.setJustifyContentMode(FlexComponent.JustifyContentMode.BETWEEN);
         header.setWidthFull();
-        header.addClassName("manual-side-panel-header");
-        dialog.add(header);
+        header.getStyle().set("border-bottom", "1px solid var(--lumo-contrast-10pct)")
+                .set("padding-bottom", "8px");
+        container.add(header);
 
         final var body = new Div();
-        body.addClassName("manual-side-panel-body");
         body.setText("Loading…");
-        dialog.add(body);
-        dialog.open();
+        body.getStyle().set("flex-grow", "1").set("overflow", "auto");
+        container.add(body);
+        container.expand(body);
 
         final var ui = UI.getCurrent();
         final var thread = new Thread(() -> loadInto(ui, body, wikiPage), "wiki-manual-fetch");

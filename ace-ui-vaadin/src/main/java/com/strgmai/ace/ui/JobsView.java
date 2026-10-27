@@ -70,7 +70,7 @@ public class JobsView extends VerticalLayout {
         grid.addColumn(new ComponentRenderer<>(this::actions)).setHeader("actions").setFlexGrow(0)
                 .setAutoWidth(true).setFrozenToEnd(true);
 
-        add(TabManual.banner("Start a new benchmark run and watch it live.", "User-Manual-Jobs"));
+        add(TabManual.banner(this, "Start a new benchmark run and watch it live.", "User-Manual-Jobs"));
         add(new H2("Queue"), new HorizontalLayout(refresh, newJob, running, error), emptyState, grid);
         setSizeFull();
         expand(grid);
