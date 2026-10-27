@@ -231,6 +231,11 @@ public class Reviews {
         final var idx = Trajectory.objectiveIndex(s, manifest);
         s.put("harness_trajectory_pct", idx.getKey());
         s.put("harness_trajectory_penalties", idx.getValue());
+        // #327: WHY a tool call failed, not just the one flat isError bit analyze() above already
+        // reports via tool_profile/identical_calls_repeated - read straight from the session files
+        // (see toolFailuresByCategory()'s own javadoc for why that data can't come from the proxy
+        // journal turns/analyze() already work from).
+        s.put("tool_failures_by_category", Trajectory.toolFailuresByCategory(rd.resolve("sessions")));
         final Path traj = rd.resolve("trajectory/TRAJECTORY.md");
         Files.createDirectories(traj.getParent());
         final Map<String, String[]> windows = new LinkedHashMap<>();

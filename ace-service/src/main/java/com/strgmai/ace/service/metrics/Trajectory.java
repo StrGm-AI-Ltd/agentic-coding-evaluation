@@ -273,6 +273,42 @@ public final class Trajectory {
     }
     static double median(List<Double> xs) { List<Double> s = new ArrayList<>(xs); Collections.sort(s); return s.get(s.size() / 2); }
 
+    /** #327: WHY a tool call failed (AgentTools.FailureCategory) is harness-local, only ever
+     *  journaled into the SESSION file's own "toolResult" messages (AgentSession.toolResult()) -
+     *  it never reaches the proxy journal at all (the model only ever sees the OUTPUT TEXT of a
+     *  failed call, via toolResults() above, never a structured category), so this reads every
+     *  session file directly rather than being folded into turnsFromProxy()/analyze()'s own
+     *  proxy-journal-only pipeline. Counts across the WHOLE run (every session file under
+     *  sessionsDir, task and non-task alike), same "one pass over every .jsonl file" idiom
+     *  Collect.compactionOverhead() already uses from a different package. A category absent on
+     *  an older session (recorded before this field existed) is simply not counted - best-effort,
+     *  never throws, same convention as every other session-reading helper in this codebase. */
+    public static Map<String, Integer> toolFailuresByCategory(final Path sessionsDir) {
+        final Map<String, Integer> out = new LinkedHashMap<>();
+        if (!Files.isDirectory(sessionsDir)) return out;
+        try (var stream = Files.list(sessionsDir)) {
+            for (final Path f : stream.filter(p -> p.getFileName().toString().endsWith(".jsonl")).toList()) {
+                try {
+                    for (final String line : Files.readAllLines(f)) {
+                        if (line.isBlank()) continue;
+                        final JsonNode r;
+                        try { r = JSON.readTree(line); } catch (final Exception ignore) { continue; }
+                        if (!"message".equals(r.path("type").asText())) continue;
+                        final JsonNode m = r.path("message");
+                        if (!"toolResult".equals(m.path("role").asText())) continue;
+                        final String category = m.path("failureCategory").asText(null);
+                        if (category != null) out.merge(category, 1, Integer::sum);
+                    }
+                } catch (final Exception e) {
+                    log.debug("could not read session file {} for its own tool-failure breakdown: {}", f, e.toString());
+                }
+            }
+        } catch (final Exception e) {
+            log.debug("could not list {} for its own tool-failure breakdown: {}", sessionsDir, e.toString());
+        }
+        return out;
+    }
+
     /** tool results are visible in the NEXT request's trailing `tool` messages: map seq -> result texts */
     public static Map<Object, List<String>> toolResults(final List<Map<String, Object>> recs) {
         final Map<Object, List<String>> out = new LinkedHashMap<>();

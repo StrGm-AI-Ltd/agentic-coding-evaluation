@@ -215,7 +215,7 @@ class ReferenceAgentTest {
     void recallToolOutputRefusesWhenTheStrategyIsDisabledEvenIfCalledDirectly() throws java.io.IOException {
         final var dir = java.nio.file.Files.createTempDirectory("session");
         final var session = new AgentSession(dir, "s1b", false);
-        session.toolResult("c1", "bash", "the archived output", false);
+        session.toolResult("c1", "bash", "the archived output", null);
         final var out = ReferenceAgent.executeTool("recall_tool_output", Map.of("tool_call_id", "c1"), "/task/ws", Map.of(), "T1", session,
                 new java.util.HashMap<>(), List.of(CompactionStrategies.TOOL_RESULT_MASK));
         assertTrue(out.isError());
@@ -282,7 +282,7 @@ class ReferenceAgentTest {
     void recallToolOutputCapsHowManyTimesTheSameIdCanBeRecalledThisSession() throws java.io.IOException {
         final var dir = java.nio.file.Files.createTempDirectory("session");
         final var session = new AgentSession(dir, "s2", false);
-        session.toolResult("c1", "bash", "the archived output", false);
+        session.toolResult("c1", "bash", "the archived output", null);
         final var recallCounts = new java.util.HashMap<String, Integer>();
 
         for (int i = 0; i < 3; i++) {
@@ -295,7 +295,7 @@ class ReferenceAgentTest {
         assertTrue(refused.output().contains("already been recalled"), refused.output());
 
         // a DIFFERENT id must be entirely unaffected by the first id's own cap
-        session.toolResult("c2", "bash", "a different archived output", false);
+        session.toolResult("c2", "bash", "a different archived output", null);
         final var other = ReferenceAgent.executeTool("recall_tool_output", Map.of("tool_call_id", "c2"), "/task/ws", Map.of(), "T1", session, recallCounts, CompactionStrategies.DEFAULT);
         assertFalse(other.isError(), "the cap is per-id, not session-wide");
         assertEquals("a different archived output", other.output());

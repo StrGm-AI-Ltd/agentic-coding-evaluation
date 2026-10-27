@@ -106,8 +106,13 @@ final class TaskTranscript {
                 yield switch (m.path("role").asText()) {
                     case "user" -> "USER:\n" + firstText(m);
                     case "assistant" -> renderAssistant(m.path("content"));
+                    // #327: the failure category (when present - absent on a session recorded
+                    // before this field existed, or on a success) names WHY, not just THAT, a tool
+                    // call failed - directly visible here, no separate UI surface needed.
                     case "toolResult" -> "TOOL RESULT (" + m.path("toolName").asText("?")
-                            + (m.path("isError").asBoolean(false) ? ", ERROR" : "") + "):\n" + cap(firstText(m), 2000);
+                            + (m.path("isError").asBoolean(false) ? ", ERROR"
+                                    + (m.path("failureCategory").isTextual() ? ": " + m.path("failureCategory").asText() : "") : "")
+                            + "):\n" + cap(firstText(m), 2000);
                     default -> null; // "system" - boilerplate, repeated on every message
                 };
             }

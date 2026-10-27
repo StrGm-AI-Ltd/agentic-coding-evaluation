@@ -21,9 +21,11 @@ class AgentToolsTest {
         final AgentTools.Outcome notFound = AgentTools.edit(ws.toString(), Map.of("path", "code.java", "old_string", "missing", "new_string", "x"));
         assertTrue(notFound.isError());
         assertTrue(notFound.output().contains("not found"));
+        assertEquals(AgentTools.FailureCategory.NOT_FOUND, notFound.failureCategory());
         final AgentTools.Outcome ambiguous = AgentTools.edit(ws.toString(), Map.of("path", "code.java", "old_string", "int total", "new_string", "x"));
         assertTrue(ambiguous.isError());
         assertTrue(ambiguous.output().contains("occurs 2 times"));
+        assertEquals(AgentTools.FailureCategory.AMBIGUOUS_MATCH, ambiguous.failureCategory());
         final AgentTools.Outcome ok = AgentTools.edit(ws.toString(), Map.of("path", "code.java", "old_string", "int total = 1;", "new_string", "long total = 1;"));
         assertFalse(ok.isError());
         assertEquals("long total = 1;\nint total = 2;\n", Files.readString(f));
@@ -60,6 +62,8 @@ class AgentToolsTest {
         final AgentTools.Outcome fail = AgentTools.bash(ws.toString(), Map.of("command", "exit 3"), Map.of());
         assertTrue(fail.isError());
         assertTrue(fail.output().contains("[exit 3]"));
+        // #327: the command RAN and reported its own failure - COMMAND_FAILED, never COMMAND_CRASHED
+        assertEquals(AgentTools.FailureCategory.COMMAND_FAILED, fail.failureCategory());
         final AgentTools.Outcome ansi = AgentTools.bash(ws.toString(), Map.of("command", "printf '\\033[31mred\\033[0m\\n'"), Map.of());
         assertFalse(ansi.output().contains("\u001b[31m"), "ANSI must be stripped");
     }
@@ -301,15 +305,18 @@ class AgentToolsTest {
         final AgentTools.Outcome readOutside = AgentTools.read(ws.toString(), Map.of("path", outside.toString()));
         assertTrue(readOutside.isError());
         assertTrue(readOutside.output().contains("escapes the task workspace"));
+        assertEquals(AgentTools.FailureCategory.WORKSPACE_ESCAPE, readOutside.failureCategory());
 
         final AgentTools.Outcome writeOutside = AgentTools.write(ws.toString(), Map.of("path", outside.toString(), "content", "pwned"));
         assertTrue(writeOutside.isError());
         assertTrue(writeOutside.output().contains("escapes the task workspace"));
+        assertEquals(AgentTools.FailureCategory.WORKSPACE_ESCAPE, writeOutside.failureCategory());
         assertEquals("secret", Files.readString(outside), "the write must never reach the file outside the workspace");
 
         final AgentTools.Outcome editOutside = AgentTools.edit(ws.toString(), Map.of("path", outside.toString(), "old_string", "secret", "new_string", "pwned"));
         assertTrue(editOutside.isError());
         assertTrue(editOutside.output().contains("escapes the task workspace"));
+        assertEquals(AgentTools.FailureCategory.WORKSPACE_ESCAPE, editOutside.failureCategory());
         assertEquals("secret", Files.readString(outside));
 
         // a ".."-climbing relative path is exactly as much an escape as an absolute one
@@ -322,6 +329,40 @@ class AgentToolsTest {
         assertFalse(ok.isError());
     }
 
+    /** #327: a missing/invalid required argument - across all four tools - is a distinct failure
+     *  mode from NOT_FOUND/AMBIGUOUS_MATCH/WORKSPACE_ESCAPE: the model's own call was malformed,
+     *  not a correct call against the wrong target. */
+    @Test
+    void missingOrInvalidRequiredArgumentsAreCategorisedAsMalformedArgsAcrossEveryTool() throws IOException {
+        final var ws = Files.createTempDirectory("ws");
+        Files.writeString(ws.resolve("f.txt"), "one line\n");
+
+        final AgentTools.Outcome noContent = AgentTools.write(ws.toString(), Map.of("path", "new.txt"));
+        assertEquals(AgentTools.FailureCategory.MALFORMED_ARGS, noContent.failureCategory());
+
+        final AgentTools.Outcome emptyOldString = AgentTools.edit(ws.toString(), Map.of("path", "f.txt", "old_string", "", "new_string", "x"));
+        assertEquals(AgentTools.FailureCategory.MALFORMED_ARGS, emptyOldString.failureCategory());
+
+        final AgentTools.Outcome pastEnd = AgentTools.read(ws.toString(), Map.of("path", "f.txt", "start_line", 99));
+        assertEquals(AgentTools.FailureCategory.MALFORMED_ARGS, pastEnd.failureCategory());
+
+        final AgentTools.Outcome emptyCommand = AgentTools.bash(ws.toString(), Map.of("command", ""), Map.of());
+        assertEquals(AgentTools.FailureCategory.MALFORMED_ARGS, emptyCommand.failureCategory());
+    }
+
+    /** #327: a genuine I/O failure is the tool itself hitting a filesystem problem, not a model
+     *  mistake - distinct from every argument-validation category above. Triggered deterministically
+     *  (no OS permission bits, no root-bypass risk any CI/container user could sidestep): the
+     *  target's own PARENT path already exists as a plain file, so Files.createDirectories() can
+     *  never create a directory there, on any platform or privilege level. */
+    @Test
+    void aGenuineIoFailureIsCategorisedAsIoErrorNotAnArgumentProblem() throws IOException {
+        final var ws = Files.createTempDirectory("ws");
+        Files.writeString(ws.resolve("blocker"), "I am a file, not a directory");
+        final AgentTools.Outcome out = AgentTools.write(ws.toString(), Map.of("path", "blocker/nested.txt", "content", "new"));
+        assertEquals(AgentTools.FailureCategory.IO_ERROR, out.failureCategory());
+    }
+
     @Test
     void theSessionFileResumesWithItsMessages() throws IOException {
         final var dir = Files.createTempDirectory("sessions");
@@ -331,7 +372,7 @@ class AgentToolsTest {
         s.user("do it");
         final var req = dev.langchain4j.agent.tool.ToolExecutionRequest.builder().id("c1").name("bash").arguments("{\"command\":\"ls\"}").build();
         s.assistant(null, "thinking", java.util.List.of(req), "tool_calls", Map.of("input", 10, "output", 5));
-        s.toolResult("c1", "bash", "the output", false);
+        s.toolResult("c1", "bash", "the output", null);
         final var resumed = new AgentSession(dir, "sid-1", true);
         assertEquals(s.path(), resumed.path());
         final var msgs = resumed.loadMessages();

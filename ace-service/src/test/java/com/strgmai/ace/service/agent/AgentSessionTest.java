@@ -228,7 +228,7 @@ class AgentSessionTest {
         session.user("the pack");
         final var req = ToolExecutionRequest.builder().id("c1").name("bash").arguments("{}").build();
         session.assistant(null, "doing it", List.of(req), "tool_calls", Map.of());
-        session.toolResult("c1", "bash", "result text", false);
+        session.toolResult("c1", "bash", "result text", null);
 
         final List<ChatMessage> msgs = session.loadMessages();
         assertEquals(4, msgs.size());
@@ -246,7 +246,7 @@ class AgentSessionTest {
         final var session = new AgentSession(dir, "s2", false);
         session.user("the pack");
         Files.writeString(session.path(), "not valid json\n", StandardOpenOption.APPEND);
-        session.toolResult("c1", "bash", "after the corrupt line", false);
+        session.toolResult("c1", "bash", "after the corrupt line", null);
 
         final List<ChatMessage> msgs = session.loadMessages();
         assertEquals(2, msgs.size(), "the malformed line is skipped, not thrown");
@@ -330,7 +330,7 @@ class AgentSessionTest {
     void recallToolOutputFindsTheOriginalTextByToolCallId() throws IOException {
         final var dir = Files.createTempDirectory("session");
         final var session = new AgentSession(dir, "s4", false);
-        session.toolResult("c1", "bash", "the real, original output", false);
+        session.toolResult("c1", "bash", "the real, original output", null);
         assertEquals("the real, original output", AgentSession.recallToolOutput(session.path(), "c1"));
     }
 
@@ -339,7 +339,7 @@ class AgentSessionTest {
         final var dir = Files.createTempDirectory("session");
         final var session = new AgentSession(dir, "s5", false);
         final var req = ToolExecutionRequest.builder().id("c1").name("bash").arguments("{}").build();
-        session.toolResult("c1", "bash", "the real, original output", false);
+        session.toolResult("c1", "bash", "the real, original output", null);
         final List<ChatMessage> msgs = new ArrayList<>(List.of(
                 SystemMessage.from("system"), UserMessage.from("pack"),
                 AiMessage.from("turn", List.of(req)), ToolExecutionResultMessage.from(req, "the real, original output")));

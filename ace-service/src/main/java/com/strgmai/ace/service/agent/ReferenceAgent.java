@@ -559,7 +559,7 @@ public class ReferenceAgent {
                 final AgentTools.Outcome out = executeTool(c.name(), args, cwd, env, name, session, recallCounts, compactionStrategies, lessonRecorder);
                 if (out.isError()) toolErrors++;
                 msgs.add(ToolExecutionResultMessage.from(c, out.output()));
-                session.toolResult(c.id(), c.name(), out.output(), out.isError());
+                session.toolResult(c.id(), c.name(), out.output(), out.failureCategory());
                 // #326: checked AFTER the call executes (a repeated call that keeps erroring out is
                 // the single most common real thrash shape) - last one wins if a turn somehow trips
                 // it on more than one of its own calls.
@@ -641,11 +641,11 @@ public class ReferenceAgent {
                     // below. Not a CompactionStrategies member (see toolSpecs' own call site) -
                     // null alone, same convention judge/finalTurn already use, means disabled.
                     if (lessonRecorder == null)
-                        yield new AgentTools.Outcome("error: record_lesson is disabled for this session", true);
+                        yield new AgentTools.Outcome("error: record_lesson is disabled for this session", AgentTools.FailureCategory.MALFORMED_ARGS);
                     final String text = String.valueOf(args.getOrDefault("text", "")).strip();
-                    if (text.isBlank()) yield new AgentTools.Outcome("error: text is required", true);
+                    if (text.isBlank()) yield new AgentTools.Outcome("error: text is required", AgentTools.FailureCategory.MALFORMED_ARGS);
                     lessonRecorder.record(text);
-                    yield new AgentTools.Outcome("recorded", false);
+                    yield new AgentTools.Outcome("recorded", null);
                 }
                 case "recall_tool_output" -> {
                     // #423/#424: structurally unreachable once toolSpecs()'s own identical check
@@ -654,19 +654,19 @@ public class ReferenceAgent {
                     // that already has this id in context from before the toggle flipped, could
                     // still try calling it directly).
                     if (!enabledStrategies.contains(CompactionStrategies.TOOL_OUTPUT_RECALL))
-                        yield new AgentTools.Outcome("error: recall_tool_output is disabled for this session", true);
+                        yield new AgentTools.Outcome("error: recall_tool_output is disabled for this session", AgentTools.FailureCategory.MALFORMED_ARGS);
                     final String id = String.valueOf(args.getOrDefault("tool_call_id", ""));
                     // #417 follow-up review (C14): a blank id used to fall through to "error: no
                     // archived output for tool_call_id " with a confusing trailing space - callable
                     // in practice if the model omits the required argument (MAPPER.readValue above
                     // can still hand this method an empty Map on a malformed tool call).
-                    if (id.isBlank()) yield new AgentTools.Outcome("error: tool_call_id is required", true);
+                    if (id.isBlank()) yield new AgentTools.Outcome("error: tool_call_id is required", AgentTools.FailureCategory.MALFORMED_ARGS);
                     final int seen = recallCounts.merge(id, 1, Integer::sum);
                     if (seen > MAX_RECALLS_PER_ID) {
                         log.info("session {} refused a repeated recall of {} (requested {} times this session)", sessionName, id, seen);
                         yield new AgentTools.Outcome("error: tool_call_id " + id + " has already been recalled " + (seen - 1)
                                 + " time(s) this session - repeatedly re-reading the same dropped output usually means a "
-                                + "different approach is needed (e.g. reading the relevant file/state directly instead)", true);
+                                + "different approach is needed (e.g. reading the relevant file/state directly instead)", AgentTools.FailureCategory.MALFORMED_ARGS);
                     }
                     final String text = AgentSession.recallToolOutput(session.path(), id);
                     // #424: a usage metric the review found missing - MemGPT/Letta's own result
@@ -674,12 +674,12 @@ public class ReferenceAgent {
                     // there would be no way to tell whether a local model ever does, versus this
                     // whole mechanism quietly doing nothing
                     log.info("session {} recalled archived tool output {} ({}, attempt {})", sessionName, id, text == null ? "not found" : "found", seen);
-                    yield text == null ? new AgentTools.Outcome("error: no archived output for tool_call_id " + id, true)
-                            : new AgentTools.Outcome(text, false);
+                    yield text == null ? new AgentTools.Outcome("error: no archived output for tool_call_id " + id, AgentTools.FailureCategory.NOT_FOUND)
+                            : new AgentTools.Outcome(text, null);
                 }
-                default -> new AgentTools.Outcome("error: unknown tool " + name, true);
+                default -> new AgentTools.Outcome("error: unknown tool " + name, AgentTools.FailureCategory.MALFORMED_ARGS);
             };
-        } catch (Exception e) { return new AgentTools.Outcome("error: " + e, true); }
+        } catch (Exception e) { return new AgentTools.Outcome("error: " + e, AgentTools.FailureCategory.COMMAND_CRASHED); }
     }
 
     /** port of chat_retry: 4 attempts with backoff on transient (5xx/connection) errors; 4xx are
