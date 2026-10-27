@@ -746,12 +746,25 @@ public class ReferenceAgent {
 
     /** default cap on time-to-FIRST-token, before any chunk has arrived at all: a cold model server
      *  (loading weights, queued behind another request, prefill on a long prompt) stalls for a
-     *  structurally different reason than a mid-response stall does, and unlike a mid-stream stall
-     *  (see awaitStream below - no longer bounded in here at all, only by the harness's own
-     *  preemptive task-wall enforcement in RunBench.sessionWithPolicy) a request that never starts
-     *  producing anything has no other signal to wait on. Per-run override: RunSpec.firstTokenTimeout
-     *  / --first-token-timeout. 0 means unlimited (the system-wide "0 = no budget" convention). */
+     *  structurally different reason than a mid-response stall does (see MID_STREAM_IDLE_TIMEOUT_MS
+     *  below for that one) - a request that never starts producing anything has no other signal to
+     *  wait on. Per-run override: RunSpec.firstTokenTimeout / --first-token-timeout. 0 means
+     *  unlimited (the system-wide "0 = no budget" convention). */
     static final long DEFAULT_FIRST_TOKEN_TIMEOUT_MS = 0;
+
+    /** #466, found live 2026-10-27: a stream that genuinely died mid-response - a dead SSH-tunneled
+     *  connection, a crashed upstream - had no bound at all once past its first token, only the
+     *  harness's own task-wall budget (hours, not minutes). One dead stream sat idle for ~6 hours
+     *  before anything noticed (confirmed dead, not slow: near-zero CPU on the model server process
+     *  the whole time, not throttled computation). A mid-stream idle ceiling existed here once and
+     *  was removed 2026-09-25 after it fired on oMLX's own legitimate memory-pressure throttling
+     *  (prefill LRU eviction cycles running well past whatever fixed value it used) - discarding real
+     *  partial generation. 30 minutes of LITERAL zero new chunks is deliberately far more generous
+     *  than that: legitimate throttling still produces some progress within tens of minutes, a truly
+     *  dead stream produces none at all, ever. Unconditional (not gated behind firstTokenTimeoutMs>0
+     *  the way the first-token check is) - a dead connection should never be allowed to run out the
+     *  clock regardless of whether the operator wants an unlimited time-to-first-token. */
+    private static final long MID_STREAM_IDLE_TIMEOUT_MS = 30 * 60 * 1000L;
     private static final long POLL_MS = 2_000;
 
     /** provider API keys that may reach {@code extraEnv} (an external reviewer's own credential, or a
@@ -793,28 +806,28 @@ public class ReferenceAgent {
      *  (cancellation, or the harness's own task-wall timeout - see RunBench.sessionWithPolicy) is
      *  noticed within POLL_MS instead of depending on the HTTP call itself honoring
      *  Thread.interrupt() - which the old synchronous client did not (see the chatModel comment
-     *  above). Once a first token of any kind has arrived, this polls indefinitely: there used to be
-     *  a second, fixed mid-stream idle ceiling here (IDLE_TIMEOUT_MS) that aborted-and-retried a
-     *  request still making real progress - found live 2026-09-25 firing on oMLX's own legitimate
-     *  memory-pressure throttling (prefill LRU eviction cycles running well past any fixed idle
-     *  value), discarding real partial generation and restarting the request from scratch each time.
-     *  Removed rather than re-tuned: the harness's own task-wall budget (enforced preemptively, not
-     *  just between turns - see sessionWithPolicy) is the only time limit a request needs; a second,
-     *  shorter, ReferenceAgent-local one can only fire earlier than that budget and cut off work the
-     *  operator already chose to pay for. */
+     *  above). Two independent idle ceilings, both measured off the same collector.lastActivityMs:
+     *  firstTokenTimeoutMs (only before anything has arrived - see its own comment) and
+     *  MID_STREAM_IDLE_TIMEOUT_MS (only after - see its own comment on why 30 minutes doesn't repeat
+     *  2026-09-25's false-positive). Past both, only the harness's task-wall timeout (an external
+     *  interrupt) bounds this further. */
     private static ChatResponse awaitStream(final StreamCollector collector, final long firstTokenTimeoutMs) throws InterruptedException {
         while (true) {
             try {
                 return collector.future.get(POLL_MS, TimeUnit.MILLISECONDS);
             } catch (java.util.concurrent.TimeoutException pollTimeout) {
+                final long idleMs = System.currentTimeMillis() - collector.lastActivityMs;
                 // firstTokenTimeoutMs <= 0 means unlimited (the system-wide "0 = no budget"
                 // convention) - never time out waiting for a first token in that case
-                if (firstTokenTimeoutMs > 0 && !collector.gotFirstToken && System.currentTimeMillis() - collector.lastActivityMs > firstTokenTimeoutMs) {
+                if (firstTokenTimeoutMs > 0 && !collector.gotFirstToken && idleMs > firstTokenTimeoutMs) {
                     collector.cancelIfPossible();   // real abort now (R10), not just walking away
                     throw new RuntimeException("no first token from the model in " + (firstTokenTimeoutMs / 1000) + "s");
                 }
-                // still within the first-token budget, or a first token has already arrived - once it
-                // has, only the harness's task-wall timeout (an external interrupt) may cut this off
+                if (collector.gotFirstToken && idleMs > MID_STREAM_IDLE_TIMEOUT_MS) {
+                    collector.cancelIfPossible();
+                    throw new RuntimeException("no new output from the model in " + (MID_STREAM_IDLE_TIMEOUT_MS / 1000) + "s - stream appears dead");
+                }
+                // still within both budgets
             } catch (ExecutionException ee) {
                 final var cause = ee.getCause();
                 if (cause instanceof RuntimeException re) throw re;
