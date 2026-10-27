@@ -1,0 +1,3 @@
+ace.strgm-ai.com {
+	reverse_proxy ace-ui-vaadin:8800
+}

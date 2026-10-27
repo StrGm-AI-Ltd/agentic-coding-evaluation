@@ -1,8 +1,9 @@
 # Deploying ACE
 
 Runs the exact same `ace-service` + `ace-ui-vaadin` pair as `scripts/dev.sh` does locally, as two
-containers on a single host, via `docker-compose.yml` at the repo root. No code changes, no new
-routes, no authentication (that's a deliberately separate, later step) - this deploys ACE as-is.
+containers on a single host, via `docker-compose.yml` at the repo root, plus a `caddy` service in
+front handling HTTPS. No code changes, no new routes, no authentication (that's a deliberately
+separate, later step) - this deploys ACE as-is, just with TLS termination and a real domain.
 
 Images are built by `.github/workflows/docker-publish.yml` on every push to `main` and pushed to
 `ghcr.io/strgm-ai-ltd/ace-service` and `ghcr.io/strgm-ai-ltd/ace-ui-vaadin`. The deploy host never
@@ -29,10 +30,11 @@ the right fit.
   via the socket mount below) - it never builds them, so sizing is a runtime concern, not a build
   one.
 - **Disk**: 20+ GB (pulled images + the persistent data volume; no build cache needed here).
-- **Security group**: open 22 (your own SSH access, ideally restricted to your own IP) and **80**
-  only (the UI, published there via `ACE_UI_PORT` below instead of 8800 - a clean judge-facing URL
-  with no port in it). `ace-service`'s own 8765 never needs to be open to the internet - the UI
-  reaches it over the compose-internal network, and nothing external talks to it directly.
+- **Security group**: open 22 (your own SSH access, ideally restricted to your own IP), **80**, and
+  **443** - both needed by the `caddy` service (80 for the Let's Encrypt ACME challenge and the
+  HTTP→HTTPS redirect, 443 for the real traffic). `ace-service`'s own 8765 and `ace-ui-vaadin`'s own
+  8800 never need to be open to the internet - Caddy is the only public entry point, and it reaches
+  `ace-ui-vaadin` over the compose-internal network.
 
 ## 2. Install Docker on the instance
 
@@ -44,22 +46,26 @@ sudo usermod -aG docker "$USER"   # log out/in (or newgrp docker) for this to ta
 ## 3. Fetch the compose file and configure
 
 The deploy host only ever pulls pre-built images from `ghcr.io` - it never reads the app's own
-source, so a full `git clone` isn't needed. `docker-compose.yml` (plus the `.env` you create below)
-is the only file this box requires:
+source, so a full `git clone` isn't needed. `docker-compose.yml` and `Caddyfile` (plus the `.env`
+you create below) are the only files this box requires:
 
 ```bash
 mkdir agentic-coding-evaluation && cd agentic-coding-evaluation
 curl -fsSL -O https://raw.githubusercontent.com/StrGm-AI-Ltd/agentic-coding-evaluation/main/docker-compose.yml
+curl -fsSL -O https://raw.githubusercontent.com/StrGm-AI-Ltd/agentic-coding-evaluation/main/Caddyfile
 stat -c '%g' /var/run/docker.sock   # note this number - it's your DOCKER_GID
 cat > .env <<EOF
 DOCKER_GID=<the number from above>
-ACE_UI_PORT=80
 EOF
 ```
 
 `OMLX_API_KEY`/`ACE_ENDPOINT` are deliberately left unset - there's no oMLX server reachable from
 this box, and nothing on this deployment needs one (the LLM Providers registry, configured in the
 next step, is what any job actually runs against).
+
+**Before starting anything**, point `Caddyfile`'s domain (`ace.strgm-ai.com`) at this instance's
+public IP via an A record with your DNS provider, and give it a few minutes to propagate. Caddy
+needs that to resolve correctly *before* it can complete its first HTTPS certificate request.
 
 ## 4. Pull and start
 
@@ -77,14 +83,17 @@ repo's GitHub page, open the **Packages** sidebar entry for each of `ace-service
 
 ## 5. Configure a provider
 
-Open `http://<instance-public-ip>/providers` and add (or edit, if it's one of the five
+Open `https://ace.strgm-ai.com/providers` and add (or edit, if it's one of the five
 seeded rows) Nebius's own API key - the DB is fresh on a new volume, so this doesn't carry over
 from any local setup. Confirm it resolves live models: pick Nebius in any model-provider dropdown
 (e.g. on `/jobs/new`) and confirm the model combo populates.
 
 ## 6. Smoke test
 
-- UI loads at `/`. The generic Preflight tab (`/preflight`, no model selected) will show the
+- `https://ace.strgm-ai.com/` loads over HTTPS with a valid cert and no browser warning - if it
+  doesn't, check `docker compose logs caddy` first (almost always a DNS-not-propagated-yet issue;
+  Caddy retries the ACME challenge on its own, no restart needed once DNS catches up).
+- The generic Preflight tab (`/preflight`, no model selected) will show the
   model-server check as unavailable - **expected and harmless**, this box has no local model
   server. Preflight checks a *job's own* `--model` against whichever provider it's prefixed with
   (falling back to the local default only for a bare model name), so this generic view staying
