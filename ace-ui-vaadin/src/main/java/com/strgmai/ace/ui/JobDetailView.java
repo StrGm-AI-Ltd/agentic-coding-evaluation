@@ -191,6 +191,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
         add(new RouterLink("← Queue", JobsView.class));
 
+        add(TabManual.banner(this, "Watch a single run's live progress, plan, and per-task detail.", "User-Manual-Jobs"));
+
         final var title = new H2(job.run_id());
         title.getStyle().set("margin", "4px 0").set("font-size", "1.6em");
         add(title);
