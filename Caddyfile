@@ -1,3 +1,11 @@
 ace.strgm-ai.com {
 	reverse_proxy ace-ui-vaadin:8800
 }
+
+# Reaches the operator's own local oMLX server via an SSH reverse tunnel landing on THIS HOST's
+# own port 9191 (host.docker.internal, not localhost - this container's loopback is its own, not
+# the host's). Only reachable while that tunnel is actually connected - see the LaunchAgent that
+# keeps it alive from the operator's Mac.
+omlx.strgm-ai.com {
+	reverse_proxy host.docker.internal:9191
+}
