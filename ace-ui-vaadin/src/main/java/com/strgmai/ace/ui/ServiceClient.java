@@ -268,6 +268,38 @@ public class ServiceClient implements Serializable {
         return http.get().uri("/api/jobs/{id}/tasks/{taskId}/stats", jobId, taskId).retrieve().body(JsonNode.class);
     }
 
+    /** #472/#475: the finished-run counterparts of the six taskXxx() methods above, hitting
+     *  BenchController's own /api/runs/{runId}/tasks/{taskId}/... siblings - used by RunTaskDialog
+     *  so a finished run's own per-task dialog gets the same prompt/diff/history/judge/stats/
+     *  transcript detail the live job page already has, with no job UUID involved at all. */
+    public Api.TaskPrompt runTaskPrompt(final String runId, final String taskId) {
+        return http.get().uri("/api/runs/{runId}/tasks/{taskId}/prompt", runId, taskId).retrieve().body(Api.TaskPrompt.class);
+    }
+
+    public Api.TaskDiff runTaskDiff(final String runId, final String taskId) {
+        return http.get().uri("/api/runs/{runId}/tasks/{taskId}/diff", runId, taskId).retrieve().body(Api.TaskDiff.class);
+    }
+
+    public List<Api.TaskAttempt> runTaskAttempts(final String runId, final String taskId) {
+        return http.get().uri("/api/runs/{runId}/tasks/{taskId}/attempts", runId, taskId)
+                .retrieve().body(new ParameterizedTypeReference<List<Api.TaskAttempt>>() {
+                });
+    }
+
+    public List<Api.JudgeCheckpoint> runTaskJudge(final String runId, final String taskId) {
+        return http.get().uri("/api/runs/{runId}/tasks/{taskId}/judge", runId, taskId)
+                .retrieve().body(new ParameterizedTypeReference<List<Api.JudgeCheckpoint>>() {
+                });
+    }
+
+    public JsonNode runTaskStats(final String runId, final String taskId) {
+        return http.get().uri("/api/runs/{runId}/tasks/{taskId}/stats", runId, taskId).retrieve().body(JsonNode.class);
+    }
+
+    public Api.TaskTranscript runTaskTranscript(final String runId, final String taskId) {
+        return http.get().uri("/api/runs/{runId}/tasks/{taskId}/transcript", runId, taskId).retrieve().body(Api.TaskTranscript.class);
+    }
+
     /** Sends an operator's own steering message for this task - queued, delivered at the agent's
      *  own next turn boundary (see BenchController.intervene()/RunBench.buildJudgeCheckpoint()). */
     public void sendIntervention(final String jobId, final String taskId, final String text) {

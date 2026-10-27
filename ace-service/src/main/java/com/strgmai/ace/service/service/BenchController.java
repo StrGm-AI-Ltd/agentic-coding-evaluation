@@ -581,8 +581,19 @@ public class BenchController {
     @GetMapping("/api/jobs/{id}/tasks/{taskId}/attempts")
     public List<Map<String, Object>> taskAttempts(@PathVariable UUID id, @PathVariable String taskId) {
         final Map<String, Object> job = queue.get(id);
+        return taskAttemptsForRun(String.valueOf(job.get("run_id")), taskId);
+    }
+
+    /** #472/#475: the finished-run counterpart of every taskXxx() endpoint in this file - a
+     *  results directory has always been the real unit these operate on (job.get("run_id")
+     *  was only ever a lookup key to FIND it), so a run_id-scoped route needs nothing new, just
+     *  the same core skipping the queue.get(id) indirection. Used by RunDetailView's own per-task
+     *  dialog so a finished (or externally-imported/rescanned) run gets the exact same
+     *  prompt/diff/history/judge/stats detail the live job page already has - #472's own ask. */
+    @GetMapping("/api/runs/{runId}/tasks/{taskId}/attempts")
+    public List<Map<String, Object>> taskAttemptsForRun(@PathVariable String runId, @PathVariable String taskId) {
         try {
-            final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
+            final var base = Path.of(props.resultsDir(), runId).toRealPath();
             final List<Map<String, Object>> all = new ArrayList<>(readTaskAttempts(base, taskId));
             Collections.reverse(all);
             return all;
@@ -1076,8 +1087,14 @@ public class BenchController {
     @GetMapping("/api/jobs/{id}/tasks/{taskId}/stats")
     public Map<String, Object> taskStats(@PathVariable UUID id, @PathVariable String taskId) {
         final Map<String, Object> job = queue.get(id);
+        return taskStatsForRun(String.valueOf(job.get("run_id")), taskId);
+    }
+
+    /** #472/#475: the finished-run counterpart of taskStats() above - see taskAttemptsForRun(). */
+    @GetMapping("/api/runs/{runId}/tasks/{taskId}/stats")
+    public Map<String, Object> taskStatsForRun(@PathVariable String runId, @PathVariable String taskId) {
         try {
-            final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
+            final var base = Path.of(props.resultsDir(), runId).toRealPath();
             final var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             Map<String, Object> entry = null;
             final Path manifestFile = base.resolve("manifest.json");
@@ -1113,7 +1130,7 @@ public class BenchController {
             }
             return out;
         } catch (final Exception e) {
-            log.warn("could not read stats for job {} task {}: {}", id, taskId, e.toString());
+            log.warn("could not read stats for run {} task {}: {}", runId, taskId, e.toString());
             return Map.of("state", "not_started");
         }
     }
@@ -1134,8 +1151,14 @@ public class BenchController {
     @GetMapping("/api/jobs/{id}/tasks/{taskId}/judge")
     public List<Map<String, Object>> taskJudge(@PathVariable UUID id, @PathVariable String taskId) {
         final Map<String, Object> job = queue.get(id);
+        return taskJudgeForRun(String.valueOf(job.get("run_id")), taskId);
+    }
+
+    /** #472/#475: the finished-run counterpart of taskJudge() above - see taskAttemptsForRun(). */
+    @GetMapping("/api/runs/{runId}/tasks/{taskId}/judge")
+    public List<Map<String, Object>> taskJudgeForRun(@PathVariable String runId, @PathVariable String taskId) {
         try {
-            final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
+            final var base = Path.of(props.resultsDir(), runId).toRealPath();
             final Path dir = base.resolve("judge");
             if (!Files.isDirectory(dir) || !isContainedEvenViaSymlinks(base, dir)) return List.of();
             final Pattern pattern = Pattern.compile(Pattern.quote(taskId) + "-(?:(.+)-)?turn(\\d+)\\.md");
@@ -1286,6 +1309,12 @@ public class BenchController {
     @GetMapping("/api/jobs/{id}/tasks/{taskId}/prompt")
     public Map<String, Object> taskPrompt(@PathVariable UUID id, @PathVariable String taskId) {
         final Map<String, Object> job = queue.get(id);
+        return taskPromptForRun(String.valueOf(job.get("run_id")), taskId);
+    }
+
+    /** #472/#475: the finished-run counterpart of taskPrompt() above - see taskAttemptsForRun(). */
+    @GetMapping("/api/runs/{runId}/tasks/{taskId}/prompt")
+    public Map<String, Object> taskPromptForRun(@PathVariable String runId, @PathVariable String taskId) {
         // INTEGRATION/FIX-W* are stage rows now too (see plan()'s own INTEGRATION_STAGE/FIX-W
         // handling) - Packs.taskInstruction()'s generic "Implement task X only" framing is wrong
         // for either (they're not real plan tasks), so each gets its own REAL instruction instead,
@@ -1296,7 +1325,7 @@ public class BenchController {
                 : taskId.startsWith("FIX-W") ? Packs.FIX_INSTRUCTION.replace("{id}", taskId).replace("{tasks}", "the merged tasks")
                 : Packs.taskInstruction(taskId);
         try {
-            final var base = Path.of(props.resultsDir(), String.valueOf(job.get("run_id"))).toRealPath();
+            final var base = Path.of(props.resultsDir(), runId).toRealPath();
             final Path pack = base.resolve("packs").resolve(taskId + ".md");
             if (!Files.isRegularFile(pack) || !isContainedEvenViaSymlinks(base, pack))
                 return Map.of("started", false, "text", instruction);
@@ -1326,13 +1355,24 @@ public class BenchController {
         return diffAgainstTag(id, "phase/" + taskId);
     }
 
+    /** #472/#475: the finished-run counterpart of taskDiff() above - see taskAttemptsForRun(). */
+    @GetMapping("/api/runs/{runId}/tasks/{taskId}/diff")
+    public Map<String, Object> taskDiffForRun(@PathVariable String runId, @PathVariable String taskId) {
+        return diffAgainstTagForRun(runId, "phase/" + taskId);
+    }
+
     /** the shared core of taskDiff() (above) and sessionDiff() (phase sessions: Definition/Plan/
      *  Parallel plan) - identical boundary logic either way, just parameterized by which tag marks
      *  "done" for the thing being diffed. See taskDiff's own javadoc for why "before" is always the
      *  nearest ANCESTOR phase/* tag, never a literal ^-parent. */
     private Map<String, Object> diffAgainstTag(final UUID id, final String tag) {
         final Map<String, Object> job = queue.get(id);
-        final Path ws = Path.of(props.workspaceRoot(), String.valueOf(job.get("run_id")), "workspace");
+        return diffAgainstTagForRun(String.valueOf(job.get("run_id")), tag);
+    }
+
+    /** #472/#475: the run_id-scoped core of diffAgainstTag() above - see taskAttemptsForRun(). */
+    private Map<String, Object> diffAgainstTagForRun(final String runId, final String tag) {
+        final Path ws = Path.of(props.workspaceRoot(), runId, "workspace");
         if (!Files.exists(ws.resolve(".git")))
             return Map.of("started", false, "finished", false, "diff", "", "new_files", List.of());
         try {
@@ -1793,6 +1833,17 @@ public class BenchController {
             }
         });
         return emitter;
+    }
+
+    /** #472/#475: the finished-run counterpart of taskTranscript() above - a plain one-shot GET
+     *  instead of an SSE stream, since nothing is "live" once a run is done. A fresh TaskTranscript
+     *  instance renders the task's whole session (tail-capped) on its very first poll() call - see
+     *  that class's own javadoc - so there's no polling loop to run here. */
+    @GetMapping("/api/runs/{runId}/tasks/{taskId}/transcript")
+    public Map<String, Object> taskTranscriptForRun(@PathVariable String runId, @PathVariable String taskId) {
+        final var sessionsDir = Path.of(props.resultsDir(), runId, "sessions");
+        final String block = new TaskTranscript().poll(sessionsDir, taskId, TRANSCRIPT_TAIL_CAP_CHARS);
+        return Map.of("text", block == null ? "" : block);
     }
 
     @GetMapping("/api/status")
