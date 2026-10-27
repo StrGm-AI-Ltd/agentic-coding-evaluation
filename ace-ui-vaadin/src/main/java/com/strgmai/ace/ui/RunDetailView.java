@@ -353,6 +353,10 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         grid.addColumn(PerTaskRow::overBudget).setHeader("over budget").setAutoWidth(true);
         grid.setItems(rows);
         grid.setAllRowsVisible(true);
+        // #472/#475: the same per-task depth (prompt/diff/history/judge/stats/transcript) the live
+        // job page already offers, now available here too - see RunTaskDialog.
+        grid.addItemClickListener(e -> RunTaskDialog.open(client, runId, e.getItem().tid()));
+        grid.getStyle().set("cursor", "pointer");
         add(grid);
     }
 

@@ -198,6 +198,12 @@ public final class Api {
     public record JudgeCheckpoint(int turn, String prompt, String recommendation) {
     }
 
+    /** #472/#475: GET /api/runs/{runId}/tasks/{taskId}/transcript — a one-shot rendering of the
+     *  task's whole session (tail-capped), text-only (unlike the job-scoped endpoint, there's no
+     *  SSE stream here since nothing is "live" once a run is done). */
+    public record TaskTranscript(String text) {
+    }
+
     /** One queue job — GET /api/jobs, /api/jobs/{id}, and the job-mutating endpoints. */
     public record Job(
             String id,

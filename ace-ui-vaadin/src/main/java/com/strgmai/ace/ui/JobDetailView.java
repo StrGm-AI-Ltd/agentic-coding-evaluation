@@ -1518,7 +1518,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  (confirmed via its source, modules/CoreUtils.js's setSeriesYAxisMappings()) merges any
      *  yaxis entries that share one seriesName into a single scale. Added to `container`
      *  directly, same as every other Stats-tab element. */
-    private void addRequestSpeedChart(final List<RequestSpeedPoint> points, final List<Integer> compactionsBeforeRequest,
+    static void addRequestSpeedChart(final List<RequestSpeedPoint> points, final List<Integer> compactionsBeforeRequest,
                                        final List<Integer> judgeOnTrackRequests, final List<Integer> judgeOffTrackRequests,
                                        final Div container, final String title) {
         if (points.isEmpty()) return;
@@ -1627,7 +1627,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  judge both marked the same way as addRequestSpeedChart() - real column series, not
      *  annotations (see compactionColumnData()'s own javadoc for why), legend hidden and tooltip
      *  custom for the same reason that chart's is. */
-    private void addRequestTimingChart(final List<RequestSpeedPoint> points, final List<Integer> compactionsBeforeRequest,
+    static void addRequestTimingChart(final List<RequestSpeedPoint> points, final List<Integer> compactionsBeforeRequest,
                                         final List<Integer> judgeOnTrackRequests, final List<Integer> judgeOffTrackRequests,
                                         final Div container, final String title) {
         if (points.isEmpty()) return;
@@ -1702,7 +1702,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  enough not to need their own redraw-throttling. A fixed height (not setAllRowsVisible), same
      *  reasoning as buildRequestsGrid()'s own: a long attempt can have dozens of compactions, and an
      *  unbounded-height table would dominate the page instead of scrolling internally. */
-    private void addCompactionEffectivenessTables(final AttemptSection section, final Div container) {
+    static void addCompactionEffectivenessTables(final AttemptSection section, final Div container) {
         if (section.compactionDistribution().isEmpty()) return;
         container.add(Panels.sectionTitle("Compaction distribution (" + section.compactionDistribution().size() + " compactions)"));
         final var distribution = new Grid<>(CompactionDistributionRow.class, false);
