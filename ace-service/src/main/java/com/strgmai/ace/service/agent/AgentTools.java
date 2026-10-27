@@ -40,7 +40,22 @@ public final class AgentTools {
             "\\bFAILED\\b|\\bERROR\\b|\\bFAILURE:|Caused by:|[A-Z][\\w$]*(?:Exception|Error)\\b|expected:.*but was:|^\\s*at [\\w./$]+\\(");
     private static final int MAX_ERROR_LINES_KEPT = 20;
 
-    public record Outcome(String output, boolean isError) {}
+    /** #327: a flat isError boolean collapsed every distinct failure mode into one bit - most
+     *  sharply, a bash command that genuinely crashed (COMMAND_CRASHED) read identically to one
+     *  that ran fine and correctly reported a failing test suite (COMMAND_FAILED), so a model
+     *  doing its job correctly was scored the same as a tool genuinely malfunctioning.
+     *  MALFORMED_ARGS covers both a missing/invalid required argument (e.g. edit's own empty
+     *  old_string, bash's own empty command) and the model calling a tool that doesn't exist -
+     *  genuinely malformed tool-call JSON (the model's whole arguments blob failing to parse) is
+     *  a related but distinct failure this harness doesn't yet detect at all; see #330. */
+    public enum FailureCategory { WORKSPACE_ESCAPE, NOT_FOUND, AMBIGUOUS_MATCH, MALFORMED_ARGS, IO_ERROR, TIMEOUT, COMMAND_FAILED, COMMAND_CRASHED }
+
+    /** `failureCategory` is null on success - the ONLY source of truth for isError(), which is
+     *  derived rather than stored, so the two can never silently drift out of sync the way two
+     *  independent fields could. */
+    public record Outcome(String output, FailureCategory failureCategory) {
+        public boolean isError() { return failureCategory != null; }
+    }
 
     public static Path resolve(final String cwd, final String path) {
         final Path p = Paths.get(path == null ? "" : path);
@@ -59,15 +74,15 @@ public final class AgentTools {
 
     public static Outcome read(final String cwd, final Map<String, Object> a) {
         final Path p = resolve(cwd, String.valueOf(a.getOrDefault("path", "")));
-        if (!withinWorkspace(cwd, p)) return new Outcome("error: path escapes the task workspace: " + a.get("path"), true);
-        if (!Files.isRegularFile(p)) return new Outcome("error: no such file: " + a.get("path"), true);
+        if (!withinWorkspace(cwd, p)) return new Outcome("error: path escapes the task workspace: " + a.get("path"), FailureCategory.WORKSPACE_ESCAPE);
+        if (!Files.isRegularFile(p)) return new Outcome("error: no such file: " + a.get("path"), FailureCategory.NOT_FOUND);
         List<String> lines;
         try { lines = Files.readAllLines(p, StandardCharsets.UTF_8); }
-        catch (IOException e) { return new Outcome("error: " + e, true); }
+        catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
         // clamp the lower bound: a 0/negative start_line would index lines.get(-1) and throw
         final int s = Math.max(1, a.get("start_line") instanceof Number n ? n.intValue() : 1);
         if (!lines.isEmpty() && s > lines.size())
-            return new Outcome("error: start_line " + s + " is past the end of the file (" + lines.size() + " lines)", true);
+            return new Outcome("error: start_line " + s + " is past the end of the file (" + lines.size() + " lines)", FailureCategory.MALFORMED_ARGS);
         int e = a.get("end_line") instanceof Number n ? Math.min(n.intValue(), lines.size()) : lines.size();
         if (e - s + 1 > READ_MAX_LINES && !a.containsKey("end_line")) e = s + READ_MAX_LINES - 1;
         final var out = new StringBuilder();
@@ -75,40 +90,40 @@ public final class AgentTools {
         String text = out.toString();
         if (text.length() > READ_MAX_CHARS) text = text.substring(0, READ_MAX_CHARS) + "\n… [truncated at " + READ_MAX_CHARS + " chars; read a narrower range]";
         if (e < lines.size()) text += "\n… [" + (lines.size() - e) + " more lines; the file has " + lines.size() + "]";
-        return new Outcome(text.isEmpty() ? "(empty file)" : text, false);
+        return new Outcome(text.isEmpty() ? "(empty file)" : text, null);
     }
 
     public static Outcome write(final String cwd, final Map<String, Object> a) {
         final String content = a.get("content") == null ? null : String.valueOf(a.get("content"));
-        if (content == null) return new Outcome("error: content is required", true);
+        if (content == null) return new Outcome("error: content is required", FailureCategory.MALFORMED_ARGS);
         final Path p = resolve(cwd, String.valueOf(a.getOrDefault("path", "")));
-        if (!withinWorkspace(cwd, p)) return new Outcome("error: path escapes the task workspace: " + a.get("path"), true);
+        if (!withinWorkspace(cwd, p)) return new Outcome("error: path escapes the task workspace: " + a.get("path"), FailureCategory.WORKSPACE_ESCAPE);
         try {
             Files.createDirectories(p.getParent() == null ? Paths.get(".") : p.getParent());
             Files.writeString(p, content, StandardCharsets.UTF_8);
-            return new Outcome("wrote " + content.getBytes(StandardCharsets.UTF_8).length + " bytes to " + a.get("path"), false);
-        } catch (IOException e) { return new Outcome("error: " + e, true); }
+            return new Outcome("wrote " + content.getBytes(StandardCharsets.UTF_8).length + " bytes to " + a.get("path"), null);
+        } catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
     }
 
     /** exact-match replace: the match must be unique (or replace_all); include context to make it unique */
     public static Outcome edit(final String cwd, final Map<String, Object> a) {
         final Path p = resolve(cwd, String.valueOf(a.getOrDefault("path", "")));
-        if (!withinWorkspace(cwd, p)) return new Outcome("error: path escapes the task workspace: " + a.get("path"), true);
-        if (!Files.isRegularFile(p)) return new Outcome("error: no such file: " + a.get("path"), true);
+        if (!withinWorkspace(cwd, p)) return new Outcome("error: path escapes the task workspace: " + a.get("path"), FailureCategory.WORKSPACE_ESCAPE);
+        if (!Files.isRegularFile(p)) return new Outcome("error: no such file: " + a.get("path"), FailureCategory.NOT_FOUND);
         String src;
-        try { src = Files.readString(p, StandardCharsets.UTF_8); } catch (IOException e) { return new Outcome("error: " + e, true); }
+        try { src = Files.readString(p, StandardCharsets.UTF_8); } catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
         // explicit null check: getOrDefault returns null when the key is present with a JSON null,
         // and String.valueOf(null) would search for the literal text "null"
         final String old = a.get("old_string") == null ? "" : String.valueOf(a.get("old_string"));
         final String neu = a.get("new_string") == null ? "" : String.valueOf(a.get("new_string"));
-        if (old.isEmpty()) return new Outcome("error: old_string is empty", true);
+        if (old.isEmpty()) return new Outcome("error: old_string is empty", FailureCategory.MALFORMED_ARGS);
         final int n = countOccurrences(src, old);
         final boolean all = Boolean.TRUE.equals(a.get("replace_all")) || "true".equals(String.valueOf(a.get("replace_all")));
-        if (n == 0) return new Outcome("error: old_string not found (the match must be exact, including whitespace)", true);
-        if (n > 1 && !all) return new Outcome("error: old_string occurs " + n + " times; add context to make it unique or set replace_all", true);
+        if (n == 0) return new Outcome("error: old_string not found (the match must be exact, including whitespace)", FailureCategory.NOT_FOUND);
+        if (n > 1 && !all) return new Outcome("error: old_string occurs " + n + " times; add context to make it unique or set replace_all", FailureCategory.AMBIGUOUS_MATCH);
         final String out = all ? src.replace(old, neu) : src.replaceFirst(Pattern.quote(old), Matcher.quoteReplacement(neu));
-        try { Files.writeString(p, out, StandardCharsets.UTF_8); } catch (IOException e) { return new Outcome("error: " + e, true); }
-        return new Outcome("edited " + a.get("path") + " (" + (all ? n : 1) + " replacement)", false);
+        try { Files.writeString(p, out, StandardCharsets.UTF_8); } catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
+        return new Outcome("edited " + a.get("path") + " (" + (all ? n : 1) + " replacement)", null);
     }
 
     static int countOccurrences(final String s, final String sub) {
@@ -132,7 +147,7 @@ public final class AgentTools {
         final String cmd = String.valueOf(a.getOrDefault("command", ""));
         int to = 600;
         if (a.get("timeout_sec") instanceof Number n) to = Math.min(1800, Math.max(5, n.intValue()));
-        if (cmd.isBlank()) return new Outcome("error: empty command", true);
+        if (cmd.isBlank()) return new Outcome("error: empty command", FailureCategory.MALFORMED_ARGS);
         String out; int rc;
         try {
             Map<String, String> full = new LinkedHashMap<>(env);   // drain concurrently: >64KB output would deadlock a read-after-wait
@@ -154,9 +169,9 @@ public final class AgentTools {
             out = r.out() + (r.err().isBlank() ? "" : "\n[stderr]\n" + r.err());
             out = ANSI.matcher(out).replaceAll("");
             out = tidyWhitespace(out);
-            if (rc == 124 && out.contains("[timeout")) return new Outcome("[timeout after " + to + "s]\n[exit 124]", true);
+            if (rc == 124 && out.contains("[timeout")) return new Outcome("[timeout after " + to + "s]\n[exit 124]", FailureCategory.TIMEOUT);
         } catch (Exception e) {
-            return new Outcome("error: " + e, true);
+            return new Outcome("error: " + e, FailureCategory.COMMAND_CRASHED);
         }
         final List<String> lines = Arrays.asList(out.split("\n", -1));
         // #417 follow-up review: this used to be `out.length() > BASH_MAX_CHARS || lines.size() > ...`
@@ -195,7 +210,12 @@ public final class AgentTools {
                     + String.join("\n", lines.subList(midEnd, lines.size()));
         }
         if (out.length() > BASH_MAX_CHARS) out = out.substring(0, BASH_MAX_CHARS / 2) + "\n… [truncated] …\n" + out.substring(out.length() - BASH_MAX_CHARS / 2);
-        return new Outcome((out.isBlank() ? "(no output)" : out.strip()) + "\n[exit " + rc + "]", rc != 0);
+        // #327: the command itself RAN (we have a real exit code, not an execution failure) - a
+        // non-zero rc here means it reported a failure, not that the tool malfunctioned. See the
+        // catch block above for "couldn't even execute" (COMMAND_CRASHED) and the rc==124 branch
+        // for a timeout - the two shapes this class's own javadoc already distinguishes from an
+        // ordinary non-zero exit.
+        return new Outcome((out.isBlank() ? "(no output)" : out.strip()) + "\n[exit " + rc + "]", rc != 0 ? FailureCategory.COMMAND_FAILED : null);
     }
 
     /** POSIX single-quoting: safe against anything the value contains, including spaces and `$`. */

@@ -101,13 +101,19 @@ public final class AgentSession {
         write(rec);
     }
 
-    public void toolResult(final String toolCallId, final String toolName, String text, final boolean isError) throws IOException {
+    /** #327: `failureCategory` is null on success - the SAME derivation AgentTools.Outcome itself
+     *  uses (isError() = failureCategory != null), kept as its own "isError" key too (unchanged
+     *  shape, still a plain boolean every existing raw-JSON reader - BenchController.sessionCounts(),
+     *  TaskTranscript.renderLine() - already expects) so this is purely additive, never a breaking
+     *  change to the session file's own format. */
+    public void toolResult(final String toolCallId, final String toolName, String text, final AgentTools.FailureCategory failureCategory) throws IOException {
         final Map<String, Object> msg = new LinkedHashMap<>();
         msg.put("role", "toolResult");
         msg.put("toolCallId", toolCallId);
         msg.put("toolName", toolName);
         msg.put("content", List.of(Map.of("type", "text", "text", text)));
-        msg.put("isError", isError);
+        msg.put("isError", failureCategory != null);
+        if (failureCategory != null) msg.put("failureCategory", failureCategory.name());
         write(Map.of("type", "message", "message", msg, "ts", Instant.now().toString()));
     }
 

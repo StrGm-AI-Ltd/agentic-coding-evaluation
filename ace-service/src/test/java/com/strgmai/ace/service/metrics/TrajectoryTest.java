@@ -1,7 +1,10 @@
 package com.strgmai.ace.service.metrics;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -160,5 +163,51 @@ class TrajectoryTest {
     private static Map<String, Object> rec(final int seq, final String task, final String result) {
         return Map.of("seq", seq, "task", task, "path", "/v1/chat/completions",
                 "request", Map.of("messages", List.of(Map.of("role", "tool", "content", result))));
+    }
+
+    private static void writeSession(final Path sessionsDir, final String fileName, final String label, final String... toolResultLines) throws Exception {
+        Files.createDirectories(sessionsDir);
+        final var all = new java.util.ArrayList<String>();
+        all.add("{\"label\":\"" + label + "\"}");
+        all.addAll(List.of(toolResultLines));
+        Files.writeString(sessionsDir.resolve(fileName), String.join("\n", all) + "\n");
+    }
+
+    private static String toolResult(final String category) {
+        return "{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolName\":\"bash\","
+                + "\"content\":[{\"type\":\"text\",\"text\":\"x\"}],\"isError\":" + (category != null)
+                + (category == null ? "" : ",\"failureCategory\":\"" + category + "\"") + "}}";
+    }
+
+    /** #327: WHY a tool call failed is journaled only in the SESSION file's own toolResult
+     *  messages, never in the proxy journal turnsFromProxy()/analyze() work from - this reads
+     *  straight from every session file under sessionsDir instead, pooling counts run-wide. */
+    @Test
+    void toolFailuresByCategoryCountsAcrossEverySessionFileInTheRun(@TempDir final Path runDir) throws Exception {
+        final var sessions = runDir.resolve("sessions");
+        writeSession(sessions, "a.jsonl", "T1",
+                toolResult("NOT_FOUND"), toolResult(null), toolResult("NOT_FOUND"), toolResult("COMMAND_FAILED"));
+        writeSession(sessions, "b.jsonl", "T2",
+                toolResult("WORKSPACE_ESCAPE"), toolResult("NOT_FOUND"));
+        final Map<String, Integer> breakdown = Trajectory.toolFailuresByCategory(sessions);
+        assertEquals(3, breakdown.get("NOT_FOUND"), "2 from T1 + 1 from T2, pooled across the whole run");
+        assertEquals(1, breakdown.get("COMMAND_FAILED"));
+        assertEquals(1, breakdown.get("WORKSPACE_ESCAPE"));
+        assertFalse(breakdown.containsKey("MALFORMED_ARGS"), "a category with zero occurrences is simply absent, not zero");
+    }
+
+    @Test
+    void toolFailuresByCategoryIgnoresSuccessfulCallsAndNonToolResultMessages() throws Exception {
+        assertEquals(Map.of(), Trajectory.toolFailuresByCategory(Path.of("/does/not/exist")), "a missing sessions dir reads as no failures, never throws");
+    }
+
+    @Test
+    void toolFailuresByCategoryOlderSessionsWithNoFailureCategoryFieldAtAllAreNotCounted(@TempDir final Path runDir) throws Exception {
+        final var sessions = runDir.resolve("sessions");
+        // a pre-#327 session: isError:true but no failureCategory key at all
+        writeSession(sessions, "old.jsonl", "T1",
+                "{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolName\":\"bash\","
+                        + "\"content\":[{\"type\":\"text\",\"text\":\"x\"}],\"isError\":true}}");
+        assertEquals(Map.of(), Trajectory.toolFailuresByCategory(sessions), "no category to attribute the failure to - correctly uncounted, not miscounted");
     }
 }

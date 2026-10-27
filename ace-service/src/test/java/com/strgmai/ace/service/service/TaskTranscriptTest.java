@@ -47,6 +47,16 @@ class TaskTranscriptTest {
         assertEquals("TOOL RESULT (read, ERROR):\nno such file", TaskTranscript.renderLine(err));
     }
 
+    /** #327: when a failureCategory IS present (every session recorded after that fix), it's
+     *  shown directly alongside the plain "ERROR" flag the previous test above still pins for an
+     *  older session with no such field - WHY the call failed, not just THAT it did. */
+    @Test
+    void renderLineShowsTheFailureCategoryWhenPresent() {
+        final var err = "{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolName\":\"edit\","
+                + "\"content\":[{\"type\":\"text\",\"text\":\"old_string not found\"}],\"isError\":true,\"failureCategory\":\"NOT_FOUND\"}}";
+        assertEquals("TOOL RESULT (edit, ERROR: NOT_FOUND):\nold_string not found", TaskTranscript.renderLine(err));
+    }
+
     @Test
     void renderLineSkipsTheSystemMessageAndTheSessionHeader() {
         final var system = "{\"type\":\"message\",\"message\":{\"role\":\"system\",\"content\":[{\"type\":\"text\",\"text\":\"boilerplate\"}]}}";
