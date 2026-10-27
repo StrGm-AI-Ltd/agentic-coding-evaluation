@@ -290,6 +290,7 @@ public class JobNewView extends VerticalLayout {
 
         add(new H2("New job"));
         add(new RouterLink("← Queue", JobsView.class));
+        add(TabManual.banner(this, "Configure every flag for a new benchmark run.", "User-Manual-Jobs"));
         errors.setPadding(false);
         add(errors);
 
