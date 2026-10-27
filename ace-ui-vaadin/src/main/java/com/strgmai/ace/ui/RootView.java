@@ -5,12 +5,13 @@ import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.Route;
 
-/** "/" redirects to the runs list. */
+/** #473: "/" redirects to Info - the project's goal and a user-manual landing page, the first
+ *  thing an operator (or a hackathon judge) should see, not a bare runs list. */
 @Route(value = "", layout = MainLayout.class)
 public class RootView extends Div implements BeforeEnterObserver {
 
     @Override
     public void beforeEnter(final BeforeEnterEvent event) {
-        event.forwardTo("runs");
+        event.forwardTo("info");
     }
 }
