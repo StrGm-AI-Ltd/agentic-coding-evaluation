@@ -1223,6 +1223,58 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.attempts[0].judge_off_track_requests[0]").value(4));
     }
 
+    /** #493, found live on a real run's T11: one real, continuous session (a single session file,
+     *  confirmed - never archived/discarded, so sessionCounts() reports it as ONE attempt) can span
+     *  TWO judge attempt stamps when the underlying agent session is silently interrupted and
+     *  reconnected (continueSession=true) partway through - NOT a user-triggered Restart, which
+     *  would instead archive the old session file entirely. Each reconnect gets its own fresh
+     *  attempt stamp (RunBench.buildJudgeCheckpoint()/Judge.checkpoint() capture
+     *  System.currentTimeMillis() fresh on every top-level task-loop entry), so the task's real
+     *  checkpoint history ends up split across two stamp groups even though it is all the SAME,
+     *  still-current attempt. The old "pick whichever stamp sorts lexically latest" logic silently
+     *  dropped the earlier stamp's own real checkpoints (3 of them, on the real T11) whenever the
+     *  later reconnect's own stamp happened to sort after it - both taskJudge() (the Judge tab) and
+     *  attemptSections() (the Stats tab's chart markers) shared this bug. Both must now return
+     *  checkpoints from BOTH stamps, since both genuinely fall inside this one attempt's own
+     *  [started, ended] window. */
+    @Test
+    void taskJudgeAndStatsRecoverCheckpointsFromBothAttemptStampsAfterASilentMidSessionReconnect() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.createDirectories(runDir.resolve("judge"));
+        Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": []}");
+        // one continuous session file: header -> assistant turn -> (reconnect, invisible here -
+        // continueSession just keeps appending) -> another assistant turn -> end. Real span: 10
+        // minutes, wide enough that both judge stamps below genuinely fall inside it.
+        Files.writeString(runDir.resolve("sessions/a.jsonl"), String.join("\n",
+                "{\"type\":\"session\",\"id\":\"session-t11\",\"label\":\"T11\",\"ts\":\"2026-10-16T10:00:00Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"ts\":\"2026-10-16T10:02:00Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"ts\":\"2026-10-16T10:08:00Z\"}",
+                "{\"type\":\"end\",\"turns\":2,\"ts\":\"2026-10-16T10:10:00Z\"}") + "\n");
+        // first reconnect's own attempt stamp: 3 real checkpoints
+        Files.writeString(runDir.resolve("judge/T11-2026-10-16T10-00-01.000Z-turn2.md"),
+                "# Judge checkpoint\n\n## Prompt\n\np\n\n## Recommendation\n\nON TRACK - first stamp, turn 2\n");
+        // second (reconnect) attempt stamp: 1 more real checkpoint, later in the SAME session's span
+        Files.writeString(runDir.resolve("judge/T11-2026-10-16T10-07-00.000Z-turn2.md"),
+                "# Judge checkpoint\n\n## Prompt\n\np\n\n## Recommendation\n\nOFF TRACK - second stamp, its own turn 2\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T11/judge"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].recommendation").value("ON TRACK - first stamp, turn 2"))
+                .andExpect(jsonPath("$[1].recommendation").value("OFF TRACK - second stamp, its own turn 2"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T11/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attempts[0].judge_on_track_requests", hasSize(1)))
+                .andExpect(jsonPath("$.attempts[0].judge_on_track_requests[0]").value(2))
+                .andExpect(jsonPath("$.attempts[0].judge_off_track_requests", hasSize(1)))
+                .andExpect(jsonPath("$.attempts[0].judge_off_track_requests[0]").value(2));
+    }
+
     @Test
     void taskStatsReturnsEmptyRequestSpeedsPerAttemptWhenThereIsNoInteractionsFileAtAll() throws Exception {
         final var resultsDir = Files.createTempDirectory("results");
