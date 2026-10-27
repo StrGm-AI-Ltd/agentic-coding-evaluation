@@ -34,10 +34,19 @@ import java.time.Duration;
  *  own @CssImport("./styles/md-viewer.css") is what actually styles ".md-body" - Flow's frontend
  *  bundle is app-wide, not per-route, so nothing extra is needed here), for a consistent look.
  *  Relative image paths (every wiki image is written as "images/foo.png") are rewritten to
- *  absolute raw-content URLs first, or they'd 404 against this app's own origin. Known gap:
- *  in-page links to OTHER wiki pages (e.g. "see Architecture") are not rewritten and will
- *  mis-navigate if clicked from inside the pane - "Open in GitHub" is the correct escape hatch
- *  for that until this is worth the extra regex.
+ *  absolute raw-content URLs first, or they'd 404 against this app's own origin. Cross-page wiki
+ *  links (e.g. "[Architecture](Architecture#3-job-queue-and-worker-model)" - GitHub wiki's own
+ *  bare-page-name convention, confirmed against every page's real markdown source) get the same
+ *  treatment, rewritten to the real wiki page's URL - #487, found live: every such link rendered
+ *  as href="#" instead (Markdown.java's own sanitizer neuters anything that isn't literally
+ *  http(s)://, which a bare page name never is), and clicking a bare "#" landed on Info
+ *  specifically because of this app's own <base href="."> tag (standard Vaadin SPA boilerplate)
+ *  resolving it against the page's ORIGINAL load URL rather than the client-router's current
+ *  path - "/" is exactly RootView's own forward-to-Info route. A same-page anchor
+ *  ("[Groups](#groups--the-pooled-leaderboard)", confirmed used once, in User-Manual-Results.md's
+ *  own self-reference) is deliberately left untouched - it has no page name to rewrite, and
+ *  Markdown.java's own sanitizer fix (see that class) now lets a schemeless fragment through
+ *  unmolested instead of neutering it too.
  *
  *  ace-ui-vaadin is otherwise a pure REST/SSE client of ace-service only (see Architecture.md) -
  *  this is a deliberate, narrowly-scoped exception: a documentation fetch has nothing to do with
@@ -49,6 +58,15 @@ final class TabManual {
     private static final String RAW_BASE = "https://raw.githubusercontent.com/wiki/" + REPO + "/";
     private static final String WIKI_BASE = "https://github.com/" + REPO + "/wiki/";
     private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+
+    /** A markdown link TARGET that's a bare wiki page cross-reference - "PageName" or
+     *  "PageName#anchor-fragment" - never one that's already absolute (http/https), a same-page
+     *  anchor alone ("#foo" - doesn't start with a letter), or an image path (contains "/", which
+     *  this charset excludes; also already rewritten to an absolute raw-content URL by the time
+     *  this runs, see loadInto()). Matches every real cross-page link this wiki's own markdown
+     *  source actually uses (verified against every page's raw content, not guessed). */
+    private static final java.util.regex.Pattern WIKI_PAGE_LINK =
+            java.util.regex.Pattern.compile("\\]\\((?!https?://)([A-Za-z][A-Za-z0-9_.-]*(?:#[^)]*)?)\\)");
 
     private TabManual() {
     }
@@ -140,7 +158,8 @@ final class TabManual {
                 ui.access(() -> { body.removeAll(); body.setText("Could not load the manual (HTTP " + resp.statusCode() + ")."); });
                 return;
             }
-            final var markdown = resp.body().replace("](images/", "](" + RAW_BASE + "images/");
+            final var withImages = resp.body().replace("](images/", "](" + RAW_BASE + "images/");
+            final var markdown = WIKI_PAGE_LINK.matcher(withImages).replaceAll("](" + WIKI_BASE + "$1)");
             final var html = "<div class=\"md-body\">" + Markdown.toHtml(markdown) + "</div>";
             ui.access(() -> { body.removeAll(); body.add(new Html(html)); });
         } catch (final Exception e) {
