@@ -59,10 +59,10 @@ services:
       context: .
       dockerfile: ace-ui-vaadin/Dockerfile
     ports:
-      # ACE_UI_PORT lets a deploy host publish on the standard HTTP port (80) for a clean
-      # judge-facing URL with no :8800 in it, without changing what the container itself listens
-      # on (still 8800, same as scripts/dev.sh locally) - local dev is unaffected by default
-      # (defaults to 8800, so it never needs root to bind), set ACE_UI_PORT=80 in .env to opt in.
+      # ACE_UI_PORT only matters for a plain-HTTP deploy with no Caddy in front (or local dev,
+      # where it defaults to 8800, same as scripts/dev.sh - never needs root to bind). With Caddy
+      # below handling 80/443, this container's own host port is never reached directly from the
+      # internet - Caddy talks to it over the compose-internal network by service name instead.
       - "${ACE_UI_PORT:-8800}:8800"
     environment:
       # compose's own service-name DNS - the two containers share this network by default
@@ -71,5 +71,22 @@ services:
       - ace-service
     restart: unless-stopped
 
+  # Reverse proxy + automatic HTTPS (Let's Encrypt, auto-renewed) for the domain in ./Caddyfile.
+  # Needs that domain's DNS already pointed at this host before it can complete the ACME HTTP-01
+  # challenge on port 80 - starting this before DNS propagates just means the first cert request
+  # fails; Caddy retries on its own once DNS catches up, no restart needed.
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - ace-ui-vaadin
+    restart: unless-stopped
+
 volumes:
   ace-data:
+  caddy-data:
