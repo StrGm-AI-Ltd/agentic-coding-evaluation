@@ -24,12 +24,13 @@ public class InfoView extends Div {
         final var goal = new Paragraph();
         goal.add(new Span("ACE (Agentic Coding Evaluation) is a reproducible framework for evaluating AI "
                 + "coding agents, models, and agent harnesses under controlled conditions. It drives a "
-                + "coding agent through a frozen, non-trivial build "), taskLadderLink("task"), new Span(", then "
-                + "scores the result with an oracle that never trusts the agent's own word for anything."));
+                + "coding agent through a frozen, non-trivial build "), wikiLink("task", TASK_LADDER_URL),
+                new Span(", then "), wikiLink("scores", CHECK_REGISTRY_URL),
+                new Span(" the result with an oracle that never trusts the agent's own word for anything."));
         add(goal);
 
         add(new H3("User manual"));
-        add(new Paragraph(new Span("See the "), taskLadderLink("Task Ladder"),
+        add(new Paragraph(new Span("See the "), wikiLink("Task Ladder", TASK_LADDER_URL),
                 new Span(" for what each task actually asks the agent to build.")));
         final var list = new UnorderedList();
         list.add(manualItem(new RouterLink("Runs", RunsView.class), "browse every run and its full scorecard"));
@@ -54,11 +55,14 @@ public class InfoView extends Div {
         return item;
     }
 
+    private static final String TASK_LADDER_URL = "https://github.com/StrGm-AI-Ltd/agentic-coding-evaluation/wiki/Task-Ladder";
+    private static final String CHECK_REGISTRY_URL = "https://github.com/StrGm-AI-Ltd/agentic-coding-evaluation/wiki/Check-Registry";
+
     /** A fresh Anchor instance every call - the same Vaadin component can't be attached to the
-     *  component tree twice, and this is used twice on this page (the goal paragraph and the
-     *  User manual section's own lead-in), each with its own link text. */
-    private static Anchor taskLadderLink(final String text) {
-        final var link = new Anchor("https://github.com/StrGm-AI-Ltd/agentic-coding-evaluation/wiki/Task-Ladder", text);
+     *  component tree twice, and the Task Ladder link is used twice on this page (the goal
+     *  paragraph and the User manual section's own lead-in), each with its own link text. */
+    private static Anchor wikiLink(final String text, final String url) {
+        final var link = new Anchor(url, text);
         link.setTarget("_blank");
         return link;
     }
