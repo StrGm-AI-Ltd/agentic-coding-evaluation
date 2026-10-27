@@ -52,6 +52,7 @@ public class CompareView extends VerticalLayout {
         this.client = client;
         setPadding(true);
 
+        add(TabManual.banner("Compare two runs or two models task-by-task.", "User-Manual-Results"));
         add(new H2("Compare — StatsService on two run groups"));
 
         groupA.setPlaceholder("pick one or more run ids");
