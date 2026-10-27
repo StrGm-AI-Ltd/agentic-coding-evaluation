@@ -137,11 +137,24 @@ public class TaskMatcher {
 
     /** external providers bypass the proxy (their credentials and endpoints are their own) -
      *  same convention as Judge.externalBase()/Reviews.externalBase(), duplicated rather than
-     *  shared; simpler here since there is no run `cfg` to fall back to. */
+     *  shared; simpler here since there is no run `cfg` to fall back to.
+     *
+     *  Found live: an unrecognized provider prefix (including the historical "omlx" convention
+     *  baked into resolveModel()'s own local-fallback string - see match() above - on a
+     *  deployment whose local provider happens to be registered under a DIFFERENT key, e.g.
+     *  "omlx-local") used to fall through to props.endpoint() directly. That property returns
+     *  the raw ACE_ENDPOINT value with no blank-check of its own - an empty string (not unset;
+     *  Spring treats "set to empty" as a real value, never falling through to the Java-side
+     *  default) reached the OpenAI SDK client builder as-is, which rejects it outright with a
+     *  bare "baseUrl cannot be null or blank", no indication of WHICH provider lookup actually
+     *  failed. props.upstreamBase() has its own real fallback for exactly this blank case
+     *  (confirmed live in Preflight.java's own equivalent fix) - using it here can't produce a
+     *  blank baseUrl, so a genuinely misconfigured/renamed provider now fails with a real
+     *  connection error against a real (if possibly unreachable) address instead. */
     String externalBase(final String reviewer) {
         final int slash = reviewer.indexOf('/');
         final String provider = slash < 0 ? "" : reviewer.substring(0, slash);
         final var known = providerStore.byKey(provider);
-        return known != null ? known.baseUrl() : props.endpoint();
+        return known != null ? known.baseUrl() : props.upstreamBase() + "/v1";
     }
 }

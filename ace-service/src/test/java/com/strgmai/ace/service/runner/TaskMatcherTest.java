@@ -118,4 +118,25 @@ class TaskMatcherTest {
         assertEquals("http://127.0.0.1:9191/v1", matcher.externalBase("omlx/some-local-model"));
         assertEquals("http://127.0.0.1:9191/v1", matcher.externalBase("not-a-real-provider/model"));
     }
+
+    /** Found live: ACE_ENDPOINT set to a blank string (not unset - docker-compose.yml's own
+     *  ${ACE_ENDPOINT:-}) is how the deploy host's own compose file runs this deliberately, since
+     *  it has no local model server reachable. Spring resolves "set to blank" as a real, blank
+     *  value - props.endpoint() itself returns "", never falling through to the Java-side
+     *  default the way props.upstreamBase() does. externalBase() used to pass that blank string
+     *  straight to the OpenAI SDK client builder, which rejected it outright
+     *  ("baseUrl cannot be null or blank") for ANY unrecognized provider prefix - including the
+     *  historical "omlx" convention baked into resolveModel()'s own local-fallback string when
+     *  the deployment's actual local provider happens to be registered under a different key
+     *  (confirmed live: "omlx-local"). */
+    @Test
+    void externalBaseNeverProducesABlankBaseUrlEvenWhenAceEndpointIsSetButBlank() throws Exception {
+        final var blankEndpointProps = new BenchProperties(null, "", null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null);
+        final var providerStore = new ProviderStore(freshDb("task-matcher-blank-endpoint-test"));
+        final var blankEndpointMatcher = new TaskMatcher(blankEndpointProps,
+                new ReferenceAgent(blankEndpointProps, providerStore), providerStore);
+
+        assertEquals("http://127.0.0.1:9191/v1", blankEndpointMatcher.externalBase("omlx/some-local-model"));
+    }
 }
