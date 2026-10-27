@@ -434,6 +434,10 @@ public class ReferenceAgent {
         // the SAME archived tool-call id can be recalled this session (C12 below).
         final CompactionStrategies.State compactionState = new CompactionStrategies.State();
         final Map<String, Integer> recallCounts = new HashMap<>();
+        // #326: a cheap, deterministic, same-turn circuit breaker for literal tool-call repetition -
+        // see ThrashGuard's own javadoc for why this is a loop mechanic (always on, zero config),
+        // not routed through JudgeCheckpoint the way the policy-configurable LLM judge is.
+        final ThrashGuard.State thrashState = new ThrashGuard.State();
         // wallSec <= 0 means unlimited (the harness's own runBounded() is the real enforcement for
         // that - see its javadoc); deadline here only clamps chatWithRetry's exponential backoff
         // sleep, so it must stay far in the future rather than collapsing to "now" (which would
@@ -542,6 +546,7 @@ public class ReferenceAgent {
                 session.end(turns, toolErrors, compactions, finish);
                 return result(name, rc, t0, finish, turns, toolErrors, compactions, session, start);   // done: answered without a tool call
             }
+            String thrashWarning = null;
             for (ToolExecutionRequest c : calls) {
                 Map<String, Object> args;
                 try { args = MAPPER.readValue(c.arguments(), Map.class); }
@@ -555,6 +560,15 @@ public class ReferenceAgent {
                 if (out.isError()) toolErrors++;
                 msgs.add(ToolExecutionResultMessage.from(c, out.output()));
                 session.toolResult(c.id(), c.name(), out.output(), out.isError());
+                // #326: checked AFTER the call executes (a repeated call that keeps erroring out is
+                // the single most common real thrash shape) - last one wins if a turn somehow trips
+                // it on more than one of its own calls.
+                final String w = ThrashGuard.check(c.name(), c.arguments(), args, thrashState);
+                if (w != null) thrashWarning = w;
+            }
+            if (thrashWarning != null) {
+                msgs.add(UserMessage.from(thrashWarning));
+                session.user(thrashWarning);
             }
             // #265: a mid-task judge checkpoint - this turn's own output/tool-results are already
             // appended to msgs above, so the judge sees the full, settled trajectory through right
