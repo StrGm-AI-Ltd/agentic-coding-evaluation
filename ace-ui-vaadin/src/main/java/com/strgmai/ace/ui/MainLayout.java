@@ -22,7 +22,8 @@ public class MainLayout extends AppLayout implements BeforeEnterObserver {
         setPrimarySection(Section.NAVBAR);
 
         final var brand = new Span("ACE");
-        brand.getStyle().set("font-weight", "700").set("font-size", "large").set("margin-right", "24px");
+        brand.getStyle().set("font-weight", "700").set("font-size", "large")
+                .set("margin-left", "24px").set("margin-right", "24px");
 
         tab("Runs", RunsView.class, RunDetailView.class);
         tab("Groups", GroupsView.class);
