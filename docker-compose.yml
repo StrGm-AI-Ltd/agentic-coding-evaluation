@@ -83,6 +83,11 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
+    extra_hosts:
+      # Linux doesn't define host.docker.internal by default the way Docker Desktop does - this is
+      # what lets the omlx.strgm-ai.com site block in ./Caddyfile reach the SSH reverse tunnel
+      # landing on the HOST's own port 9191 (not this container's own, unrelated loopback).
+      - "host.docker.internal:host-gateway"
     depends_on:
       - ace-ui-vaadin
     restart: unless-stopped
