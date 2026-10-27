@@ -3,6 +3,7 @@ package com.strgmai.ace.ui;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.HasElement;
 import com.vaadin.flow.component.applayout.AppLayout;
+import com.vaadin.flow.component.dependency.CssImport;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
@@ -25,7 +26,22 @@ import java.util.Map;
  *  showRouterLayoutContent to redirect into contentSlot instead of ever calling super, keeps the
  *  split itself as AppLayout's one permanent content component while each navigated view swaps in
  *  and out underneath it - the same "childHolder" pattern Vaadin's own RouterLayout docs show for
- *  a plain Div, just inside AppLayout's slot instead. */
+ *  a plain Div, just inside AppLayout's slot instead.
+ *
+ *  Found live (deployed only, never reproduced in dev mode): manual-pane images rendered at their
+ *  full natural width instead of scaling to the pane, overflowing with a horizontal scrollbar -
+ *  TabManual's own class javadoc assumed FileViewerView's @CssImport("./styles/md-viewer.css")
+ *  styles ".md-body" app-wide "since Flow's frontend bundle is app-wide, not per-route" - true only
+ *  in DEV mode, which eagerly scans and injects every @CssImport found anywhere on the classpath
+ *  regardless of which routes were ever visited. A PRODUCTION build code-splits per component
+ *  instead: that chunk, and so its CSS, only loads once FileViewerView's own standalone
+ *  (layout-less) /file-view route is actually opened - confirmed directly against the deployed
+ *  jar's own bundle (the compiled ".md-body img{max-width:100%}" rule IS present in it) and the
+ *  live DOM (no matching style tag or adoptedStyleSheet - never injected). Repeating the
+ *  SAME import here - MainLayout is instantiated for every route under the app chrome, including
+ *  every TabManual-opened manual pane - is the fix: duplicate annotations on the same frontend
+ *  file across classes are a normal, deduped-by-Vite Vaadin pattern, not a real duplicate. */
+@CssImport("./styles/md-viewer.css")
 public class MainLayout extends AppLayout implements BeforeEnterObserver {
 
     private final Map<Class<?>, Tab> tabsByView = new HashMap<>();
