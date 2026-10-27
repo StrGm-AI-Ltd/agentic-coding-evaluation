@@ -806,31 +806,11 @@ public class BenchController {
             matchedRecordIdx[ai] = ri;
             recordConsumed[ri] = true;
         }
-        // same nearest-timestamp, greedy-consume match as records above, just against each judge
-        // attempt-stamp's own parsed Instant instead of a task_attempts.jsonl record's "attempt_started"
+        // #493: every judge attempt stamp that falls inside THIS attempt's own [started, ended]
+        // window, not just the single nearest one - see judgeStampsInAttemptWindow()'s own javadoc
+        // (a silent mid-session reconnect, not a Restart, can legitimately produce more than one
+        // stamp for the same real attempt).
         final Map<String, List<JudgeCheckpoint>> judgeByStamp = judgeCheckpointsByAttemptStamp(base, taskId);
-        final List<String> judgeStamps = new ArrayList<>(judgeByStamp.keySet());
-        final String[] matchedJudgeStamp = new String[attempts.size()];
-        final List<long[]> judgeCandidates = new ArrayList<>();   // [attemptIdx, stampIdx, diffMs]
-        for (int ai = 0; ai < attempts.size(); ai++) {
-            final Instant sessionStart = parseInstantOrNull(attempts.get(ai).startedIso());
-            if (sessionStart == null) continue;
-            for (int si = 0; si < judgeStamps.size(); si++) {
-                final Instant stampInstant;
-                try { stampInstant = Instant.from(JUDGE_ATTEMPT_STAMP_FORMAT.parse(judgeStamps.get(si))); }
-                catch (final Exception e) { continue; }
-                judgeCandidates.add(new long[]{ai, si, Math.abs(Duration.between(sessionStart, stampInstant).toMillis())});
-            }
-        }
-        judgeCandidates.sort(Comparator.comparingLong(c -> c[2]));
-        final boolean[] stampConsumed = new boolean[judgeStamps.size()];
-        for (final long[] c : judgeCandidates) {
-            if (c[2] > 300_000) break;   // same 5-minute tolerance as the records match above
-            final int ai = (int) c[0], si = (int) c[1];
-            if (matchedJudgeStamp[ai] != null || stampConsumed[si]) continue;
-            matchedJudgeStamp[ai] = judgeStamps.get(si);
-            stampConsumed[si] = true;
-        }
         final List<Map<String, Object>> out = new ArrayList<>();
         for (int ai = 0; ai < attempts.size(); ai++) {
             final AttemptCounts a = attempts.get(ai);
@@ -872,8 +852,10 @@ public class BenchController {
             am.put("compaction_count", a.compactionEvents().size());
             am.put("compaction_distribution", compactionDistribution);
             am.put("compaction_reclaimed", compactionReclaimed);
-            final List<JudgeCheckpoint> checkpoints = matchedJudgeStamp[ai] != null
-                    ? judgeByStamp.getOrDefault(matchedJudgeStamp[ai], List.of()) : List.of();
+            final List<JudgeCheckpoint> checkpoints = new ArrayList<>();
+            for (final String stamp : judgeStampsInAttemptWindow(judgeByStamp.keySet(), a))
+                checkpoints.addAll(judgeByStamp.getOrDefault(stamp, List.of()));
+            checkpoints.sort(Comparator.comparingInt(JudgeCheckpoint::turn));
             final List<Integer> judgeOnTrack = new ArrayList<>();
             final List<Integer> judgeOffTrack = new ArrayList<>();
             for (final JudgeCheckpoint c : checkpoints) (c.offTrack() ? judgeOffTrack : judgeOnTrack).add(c.turn());
@@ -1137,23 +1119,74 @@ public class BenchController {
                 }
             }
             if (byAttempt.isEmpty()) return List.of();
-            final String latest = byAttempt.keySet().stream().max(Comparator.naturalOrder()).orElseThrow();
-            final List<Map<String, Object>> out = new ArrayList<>();
-            for (final Path f : byAttempt.get(latest)) {
-                final var m = pattern.matcher(f.getFileName().toString());
-                m.matches();
-                final int turn = Integer.parseInt(m.group(2));
-                final String content = Files.readString(f);
-                final int promptIdx = content.indexOf("## Prompt");
-                final int recIdx = content.indexOf("## Recommendation");
-                final String prompt = promptIdx >= 0 && recIdx > promptIdx
-                        ? content.substring(promptIdx + "## Prompt".length(), recIdx).strip() : "";
-                final String recommendation = recIdx >= 0 ? content.substring(recIdx + "## Recommendation".length()).strip() : content.strip();
-                out.add(Map.of("turn", turn, "prompt", prompt, "recommendation", recommendation));
+
+            // #493, found live (T11: one real session, 4 real checkpoints across two judge
+            // attempt stamps - a silent mid-session reconnect, not a Restart): every stamp that
+            // falls inside a REAL (current, non-archived) attempt's own [started, ended] window,
+            // not just whichever stamp sorts lexically latest - see
+            // judgeStampsInAttemptWindow()'s own javadoc for why.
+            final var attempts = sessionCounts(base, taskId).attempts();
+            final Set<String> wanted = new LinkedHashSet<>();
+            for (final AttemptCounts a : attempts) wanted.addAll(judgeStampsInAttemptWindow(byAttempt.keySet(), a));
+            if (wanted.isEmpty()) wanted.add(byAttempt.keySet().stream().max(Comparator.naturalOrder()).orElseThrow());
+
+            record Entry(String stamp, int turn, String prompt, String recommendation) {}
+            final List<Entry> entries = new ArrayList<>();
+            for (final String stamp : wanted) {
+                for (final Path f : byAttempt.getOrDefault(stamp, List.of())) {
+                    final var m = pattern.matcher(f.getFileName().toString());
+                    m.matches();
+                    final int turn = Integer.parseInt(m.group(2));
+                    final String content = Files.readString(f);
+                    final int promptIdx = content.indexOf("## Prompt");
+                    final int recIdx = content.indexOf("## Recommendation");
+                    final String prompt = promptIdx >= 0 && recIdx > promptIdx
+                            ? content.substring(promptIdx + "## Prompt".length(), recIdx).strip() : "";
+                    final String recommendation = recIdx >= 0 ? content.substring(recIdx + "## Recommendation".length()).strip() : content.strip();
+                    entries.add(new Entry(stamp, turn, prompt, recommendation));
+                }
             }
-            out.sort(Comparator.comparingInt(m -> (Integer) m.get("turn")));
-            return out;
+            // stamp first (true chronological order across reconnects), then turn within a stamp -
+            // two reconnects of the same task can each independently reach "turn 5" (the judge's own
+            // interval state resets per reconnect, same root cause as the missing-checkpoints bug
+            // this fixes), so a plain turn-only sort would interleave them confusingly
+            entries.sort(Comparator.comparing(Entry::stamp).thenComparingInt(Entry::turn));
+            return entries.stream().map(e -> Map.<String, Object>of(
+                    "turn", e.turn(), "prompt", e.prompt(), "recommendation", e.recommendation())).toList();
         } catch (final Exception e) { return List.of(); }
+    }
+
+    /** #493: a stamp belongs to an attempt if it falls inside that attempt's own [started, ended]
+     *  window, padded by the same 5-minute tolerance the task_attempts.jsonl match above uses - a
+     *  judge checkpoint file is written some real wall-clock time (the judge's own LLM call) after
+     *  the turn that triggered it, so its stamp can legitimately land a little outside the session's
+     *  own first/last MESSAGE timestamps, especially for a short session or one whose final turn is
+     *  also its last judge check. Open-ended on the end side while the attempt is still running. See
+     *  taskJudge()'s own javadoc for why this, not nearest-single-match, is the right test at all:
+     *  a task's session can be silently interrupted and reconnected (continueSession=true, NOT a
+     *  user-triggered Restart) - each reconnect gets its own fresh judge attempt stamp
+     *  (RunBench.buildJudgeCheckpoint()/Judge.checkpoint() both capture System.currentTimeMillis()
+     *  fresh on every top-level task-loop entry) even though the underlying session (and so the
+     *  task's real progress) is continuous, so more than one stamp can legitimately belong to the
+     *  SAME one real attempt. Still correctly excludes a genuinely abandoned pre-Restart attempt's
+     *  stale checkpoints, since a real Restart's new attempt starts well outside their tolerance. */
+    private static final Duration JUDGE_STAMP_TOLERANCE = Duration.ofMinutes(5);
+
+    private static List<String> judgeStampsInAttemptWindow(final Collection<String> stamps, final AttemptCounts a) {
+        final Instant start = parseInstantOrNull(a.startedIso());
+        if (start == null) return List.of();
+        final Instant windowStart = start.minus(JUDGE_STAMP_TOLERANCE);
+        final Instant end = parseInstantOrNull(a.endedIso());   // null (still running): window stays open-ended
+        final Instant windowEnd = end == null ? null : end.plus(JUDGE_STAMP_TOLERANCE);
+        final List<String> out = new ArrayList<>();
+        for (final String stamp : stamps) {
+            if (stamp.isEmpty()) continue;   // the legacy, unstamped shape has no timestamp to test
+            final Instant stampInstant;
+            try { stampInstant = Instant.from(JUDGE_ATTEMPT_STAMP_FORMAT.parse(stamp)); }
+            catch (final Exception e) { continue; }
+            if (!stampInstant.isBefore(windowStart) && (windowEnd == null || !stampInstant.isAfter(windowEnd))) out.add(stamp);
+        }
+        return out;
     }
 
     private record JudgeCheckpoint(int turn, boolean offTrack) {
