@@ -926,6 +926,24 @@ public class BenchController {
      *  a moment before/after the session file's own first/last message - real skew, not an
      *  error). "ts"/"session_id" are stripped from the final per-request maps - both were only
      *  ever needed for this split, not part of the Stats tab's own response shape. */
+    /** #497, found live on a real run's T12 (explicitly Restarted earlier in its own run): a
+     *  request/judge/compaction ordinal mismatch's root cause, one level up from #493's judge-
+     *  checkpoint fix - interactions.jsonl is a per-run log, and RunBenchSupport's own session-id
+     *  scheme is deterministic per (runId, taskId), so a Restart's own DISCARDED, archived attempt
+     *  shares the identical session id with whatever attempt replaced it. sessionCounts() never
+     *  sees the archived file (it only scans the live sessions/ directory), so that abandoned
+     *  attempt's own proxy calls - sometimes hours of them - still land in the SAME interactions.
+     *  jsonl bucket as the current attempt's real ones. The single-sharer branch used to take that
+     *  WHOLE bucket unconditionally, silently mixing in the abandoned attempt's traffic: T12's real
+     *  25-turn attempt ended up with a 76-entry request_speeds list, the extra ~51 being the
+     *  archived attempt's own hours-earlier calls (sorted first by the proxy's global seq counter)
+     *  - which is exactly why its compaction/judge markers (1-based ordinals among the real 25
+     *  turns) landed on the wrong, unrelated request entirely instead of a visible line at the
+     *  right spot. A missing "ts" (only ever a hand-written test fixture shape - every real
+     *  interactions.jsonl line has one) still passes through unfiltered: there is no timestamp to
+     *  test, and - in the single-sharer case - no second candidate to confuse it with either. */
+    private static final Duration REQUEST_SPEED_WINDOW_TOLERANCE = Duration.ofMinutes(30);
+
     private List<List<Map<String, Object>>> requestSpeedsPerAttempt(final Path base, final List<AttemptCounts> attempts) {
         final Map<String, List<Map<String, Object>>> bySession = requestSpeedsBySession(base,
                 attempts.stream().map(AttemptCounts::sessionUuid).filter(Objects::nonNull).collect(Collectors.toSet()));
@@ -940,23 +958,34 @@ public class BenchController {
             final List<Map<String, Object>> sessionEntries = bySession.getOrDefault(group.getKey(), List.of());
             final List<Integer> sharingIndices = group.getValue();
             if (sharingIndices.size() == 1) {
-                perAttempt.set(sharingIndices.get(0), new ArrayList<>(sessionEntries));
+                final int idx = sharingIndices.get(0);
+                final Instant start = parseInstantOrNull(attempts.get(idx).startedIso());
+                final Instant windowStart = start == null ? null : start.minus(REQUEST_SPEED_WINDOW_TOLERANCE);
+                final Instant end = parseInstantOrNull(attempts.get(idx).endedIso());
+                final Instant windowEnd = end == null ? null : end.plus(REQUEST_SPEED_WINDOW_TOLERANCE);
+                for (final Map<String, Object> reqEntry : sessionEntries) {
+                    final Instant reqTs = parseInstantOrNull((String) reqEntry.get("ts"));
+                    final boolean inWindow = reqTs == null || windowStart == null
+                            || (!reqTs.isBefore(windowStart) && (windowEnd == null || !reqTs.isAfter(windowEnd)));
+                    if (inWindow) perAttempt.get(idx).add(reqEntry);
+                }
                 continue;
             }
             for (final Map<String, Object> reqEntry : sessionEntries) {
                 final Instant reqTs = parseInstantOrNull((String) reqEntry.get("ts"));
-                int bestIdx = sharingIndices.get(0);
+                if (reqTs == null) { perAttempt.get(sharingIndices.get(0)).add(reqEntry); continue; }
+                int bestIdx = -1;
                 long bestDist = Long.MAX_VALUE;
                 for (final int idx : sharingIndices) {
                     final AttemptCounts att = attempts.get(idx);
                     final Instant start = parseInstantOrNull(att.startedIso());
                     final Instant end = parseInstantOrNull(att.endedIso());
-                    if (reqTs == null || start == null || end == null) continue;
+                    if (start == null || end == null) continue;
                     final long dist = !reqTs.isBefore(start) && !reqTs.isAfter(end) ? 0
                             : Math.min(Math.abs(Duration.between(start, reqTs).toMillis()), Math.abs(Duration.between(end, reqTs).toMillis()));
                     if (dist < bestDist) { bestDist = dist; bestIdx = idx; }
                 }
-                perAttempt.get(bestIdx).add(reqEntry);
+                if (bestIdx >= 0 && bestDist <= REQUEST_SPEED_WINDOW_TOLERANCE.toMillis()) perAttempt.get(bestIdx).add(reqEntry);
             }
         }
         for (final List<Map<String, Object>> list : perAttempt) {

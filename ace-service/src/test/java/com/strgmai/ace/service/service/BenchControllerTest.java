@@ -1126,6 +1126,43 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.attempts[0].request_speeds[0].ts").doesNotExist());
     }
 
+    /** #497, found live on a real run's T12: unlike the two-attempt case above, a task explicitly
+     *  Restarted leaves its OLD attempt's own session file ARCHIVED (moved aside, not deleted -
+     *  see BenchController.doRestart()), so sessionCounts() (which only scans the live sessions/
+     *  directory) reports just ONE current attempt - the "single sharer" branch. But
+     *  interactions.jsonl is a per-run log with no concept of archived-vs-live, and
+     *  RunBenchSupport's session-id scheme is deterministic per (runId, taskId) - so the discarded
+     *  attempt's own hours-earlier proxy calls still share the identical session id and must NOT
+     *  silently ride along into the one attempt sessionCounts() still knows about. */
+    @Test
+    void taskStatsExcludesAnArchivedRestartedAttemptsOwnRequestsFromTheCurrentAttemptsChart() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        // the archived file lives OUTSIDE sessions/ (sessions/archived/, per doRestart()) - not
+        // even listed here, since sessionCounts() never looks there; its own interactions.jsonl
+        // entries below are what must be excluded, with nothing on disk "claiming" them
+        Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": []}");
+        Files.writeString(runDir.resolve("sessions/current.jsonl"), String.join("\n",
+                "{\"type\":\"session\",\"id\":\"session-t12\",\"label\":\"T12\",\"ts\":\"2026-10-27T17:40:00Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"ts\":\"2026-10-27T19:54:00Z\"}") + "\n");
+        Files.writeString(runDir.resolve("interactions.jsonl"), String.join("\n",
+                // the ARCHIVED, discarded attempt's own calls - same session id, hours earlier
+                "{\"seq\":199,\"session_id\":\"session-t12\",\"ts\":\"2026-10-27T13:03:07Z\",\"response\":{\"usage\":{\"prompt_tokens\":500,\"prompt_tokens_per_second\":10.0}}}",
+                "{\"seq\":200,\"session_id\":\"session-t12\",\"ts\":\"2026-10-27T13:04:48Z\",\"response\":{\"usage\":{\"prompt_tokens\":600,\"prompt_tokens_per_second\":11.0}}}",
+                // the CURRENT attempt's own real call, inside its own session window
+                "{\"seq\":320,\"session_id\":\"session-t12\",\"ts\":\"2026-10-27T17:45:00Z\",\"response\":{\"usage\":{\"prompt_tokens\":700,\"prompt_tokens_per_second\":90.0}}}") + "\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T12/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attempts", hasSize(1)))
+                .andExpect(jsonPath("$.attempts[0].request_speeds", hasSize(1)))
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].seq").value(320))
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].prefill_tok_per_sec").value(90.0));
+    }
+
     /** #355-followup-5: the operator asked for vertical lines on the chart marking which requests
      *  landed right after a compaction. scanAttempt() must report the 1-based ordinal of every
      *  assistant turn immediately preceded by a compaction (turn 2 here: compaction, then the
