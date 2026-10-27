@@ -25,6 +25,7 @@ public class MainLayout extends AppLayout implements BeforeEnterObserver {
         brand.getStyle().set("font-weight", "700").set("font-size", "large")
                 .set("margin-left", "24px").set("margin-right", "24px");
 
+        tab("Info", InfoView.class);
         tab("Runs", RunsView.class, RunDetailView.class);
         tab("Groups", GroupsView.class);
         tab("Compare", CompareView.class);

@@ -24,6 +24,7 @@ class RoutesReflectionTest {
 
     private static final Map<String, Class<?>> EXPECTED = java.util.Map.ofEntries(
             java.util.Map.entry("", RootView.class),
+            java.util.Map.entry("info", InfoView.class),
             java.util.Map.entry("runs", RunsView.class),
             java.util.Map.entry("runs/:runId", RunDetailView.class),
             java.util.Map.entry("groups", GroupsView.class),
