@@ -74,6 +74,7 @@ public final class JournalFacts {
         final boolean window = lo != null || hi != null || !ex.isEmpty();
         double latencySum = 0; int latencyN = 0;
         long ttftSum = 0; int ttftN = 0;
+        long maxPromptTokens = 0;
         final Map<Integer, long[]> bucketRequests = new TreeMap<>();
         final Map<Integer, double[]> bucketPrefill = new TreeMap<>();   // bucket -> [sum, n]
         final Map<Integer, double[]> bucketDecode = new TreeMap<>();    // bucket -> [sum, n]
@@ -102,6 +103,7 @@ public final class JournalFacts {
             // context-size proxy, oMLX's own reported tok/s per request - bucketed so the run page can
             // chart a trend without re-parsing the (possibly tens-of-MB) journal itself
             if (e.pt() instanceof Long pt) {
+                if (pt > maxPromptTokens) maxPromptTokens = pt;
                 final int bucket = contextBucket(pt);
                 bucketRequests.computeIfAbsent(bucket, k -> new long[1])[0]++;
                 if (e.prefillTps() != null) {
@@ -145,6 +147,7 @@ public final class JournalFacts {
         }
         if (latencyN > 0) f.put("avg_latency_sec", Math.round(latencySum / latencyN * 100) / 100.0);
         if (ttftN > 0) f.put("avg_first_byte_ms", Math.round((double) ttftSum / ttftN));
+        if (maxPromptTokens > 0) f.put("max_prompt_tokens", maxPromptTokens);
         if (!bucketRequests.isEmpty()) {
             final List<Map<String, Object>> buckets = new ArrayList<>();
             for (final var b : bucketRequests.entrySet()) {

@@ -11,6 +11,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 /** total_wall_sec: an orchestrated run's real execution time lives in manifest.tasks/waves, not
  *  manifest.phases (that only ever holds p0_definition/p1_plan) - every orchestrated run reported
@@ -222,6 +223,61 @@ class CollectTest {
         assertEquals(50.0, ((Number) leaderboard.get("efficiency_pct")).doubleValue(), 0.001, "the figure is still reported");
         // base = 90 x (1 - 0.1 - 0.1 - 0.1 - 0) = 63.0, no efficiency term added
         assertEquals(63.0, ((Number) leaderboard.get("agent_result_pct")).doubleValue(), 0.001);
+    }
+
+    /** #472/#475: RunDetailView's own "Plan tasks" table (and the per-task dialog it opens) needs
+     *  a real per_task row for every manifest task - until now this port of collect.py never wrote
+     *  the block at all, so the table had nothing to show on any real run. reported/done_verified/
+     *  requests/task_wall_sec come straight off the manifest entry; completion_tokens/max_prompt are
+     *  read from the journal within the task's own [start_iso, end_iso] window, the same windowed
+     *  mechanism this class already uses for phases. */
+    @Test
+    void perTaskReflectsManifestFieldsAndTheTasksOwnJournalWindow(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);
+        Files.writeString(runDir.resolve("interactions.jsonl"),
+                "{\"ts\": \"2026-01-01T00:00:30Z\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
+                        + "\"request\": {}, \"response\": {\"usage\": {\"completion_tokens\": 40, \"prompt_tokens\": 500}}}\n"
+                        + "{\"ts\": \"2026-01-01T00:00:45Z\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
+                        + "\"request\": {}, \"response\": {\"usage\": {\"completion_tokens\": 60, \"prompt_tokens\": 9000}}}\n");
+        final Map<String, Object> manifest = Map.of("phases", List.of(), "waves", List.of(),
+                "tasks", List.of(Map.of("id", "T1", "reported", "done", "done_verified", true, "requests", 2,
+                        "seconds", 61.0, "rc", 0, "start_iso", "2026-01-01T00:00:00Z", "end_iso", "2026-01-01T00:01:00Z")));
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        final Map<String, Object> t1 = (Map<String, Object>) ((Map<String, Object>) out.get("per_task")).get("T1");
+        assertEquals("done", t1.get("reported"));
+        assertEquals(true, t1.get("done_verified"));
+        assertEquals(2, t1.get("requests"));
+        assertEquals(61.0, ((Number) t1.get("task_wall_sec")).doubleValue(), 0.001);
+        assertEquals(100L, ((Number) t1.get("completion_tokens")).longValue(), "40 + 60, both requests fall inside the task's own window");
+        assertEquals(9000L, ((Number) t1.get("max_prompt")).longValue());
+        assertEquals(false, t1.get("over_budget"));
+    }
+
+    @Test
+    void perTaskOverBudgetReflectsTheTaskWallTimeoutExitCode(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);
+        final Map<String, Object> manifest = Map.of("phases", List.of(), "waves", List.of(),
+                "tasks", List.of(Map.of("id", "T1", "rc", 124)));
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        final Map<String, Object> t1 = (Map<String, Object>) ((Map<String, Object>) out.get("per_task")).get("T1");
+        assertEquals(true, t1.get("over_budget"));
+    }
+
+    /** A task resumed past on a later attempt (RunBench finds its phase/&lt;id&gt; tag already
+     *  committed and skips re-running it) gets a bare {id, rc, resumed} manifest entry - see
+     *  BenchController.taskStatsForRun()'s own javadoc. Its per_task row must degrade gracefully
+     *  (every other field simply absent), never crash on the missing start_iso/end_iso/seconds. */
+    @Test
+    void perTaskDegradesGracefullyForABareResumedTaskEntry(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);
+        final Map<String, Object> manifest = Map.of("phases", List.of(), "waves", List.of(),
+                "tasks", List.of(Map.of("id", "T1", "rc", 0, "resumed", true)));
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        final Map<String, Object> t1 = (Map<String, Object>) ((Map<String, Object>) out.get("per_task")).get("T1");
+        assertNull(t1.get("reported"));
+        assertNull(t1.get("completion_tokens"));
+        assertNull(t1.get("max_prompt"));
+        assertEquals(false, t1.get("over_budget"));
     }
 
     private static void writeSession(final Path runDir, final String fileName, final String label, final String... lines) throws Exception {

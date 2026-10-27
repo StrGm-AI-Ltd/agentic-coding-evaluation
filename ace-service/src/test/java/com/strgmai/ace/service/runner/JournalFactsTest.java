@@ -246,6 +246,29 @@ class JournalFactsTest {
         assertEquals(90.0, ((Number) buckets.get(1).get("avg_prefill_tok_per_sec")).doubleValue(), 0.001);
     }
 
+    /** #472/#475 follow-up: Collect.perTask()'s own "max_prompt" column needs the single highest
+     *  prompt_tokens value seen in a task's own window, not an average - the bucket averages above
+     *  answer a different question (how speed trends with context size as a whole). */
+    @Test
+    void maxPromptTokensIsTheHighestPromptTokensSeenInWindow() throws Exception {
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
+        Files.writeString(j,
+                chat("2026-09-14T10:00:00Z", "", "\"usage\": {\"completion_tokens\": 1, \"prompt_tokens\": 500}", REQ)
+                        + chat("2026-09-14T10:01:00Z", "", "\"usage\": {\"completion_tokens\": 1, \"prompt_tokens\": 9000}", REQ)
+                        + chat("2026-09-14T10:02:00Z", "", "\"usage\": {\"completion_tokens\": 1, \"prompt_tokens\": 3000}", REQ));
+        final Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null);
+        assertEquals(9000L, ((Number) f.get("max_prompt_tokens")).longValue());
+    }
+
+    @Test
+    void maxPromptTokensIsAbsentWithNoPromptTokensAnywhere() throws Exception {
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
+        Files.writeString(j, "{\"ts\": \"2026-09-14T10:00:00Z\", \"path\": \"/v1/chat/completions\", \"status\": 429, "
+                + "\"budget_exceeded\": true}\n");
+        final Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null);
+        assertFalse(f.containsKey("max_prompt_tokens"));
+    }
+
     /** A run capped at a small context window (e.g. 8K) must not be flattened into 1-2 buckets by a
      *  fixed scheme - a run capped at a small context window (e.g. 8K) still gets a full spread of
      *  1024-token points, not just 1-2 buckets. Eight requests, one exactly at the start of each
