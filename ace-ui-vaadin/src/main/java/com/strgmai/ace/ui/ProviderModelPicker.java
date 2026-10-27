@@ -7,7 +7,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 
 /** Cascading "pick a provider, then a model from its own live list" control - the shared
@@ -42,11 +41,6 @@ public class ProviderModelPicker extends HorizontalLayout {
     private final ComboBox<Api.Provider> provider = new ComboBox<>();
     private final ComboBox<String> model = new ComboBox<>();
     private final Span error = new Span();
-    // bare model ids (no "providerKey/" prefix) - merged into the omlx provider's own model list
-    // only, since that's the one provider past-run history has ever meant anything for. See
-    // withPastRunHistory() and Links.distinctModelsForProvider(runs, "omlx"), which callers use to
-    // build this list from Api.Run::model.
-    private List<String> pastRunModels = List.of();
 
     public ProviderModelPicker(final ServiceClient client, final String label) {
         this.client = client;
@@ -74,18 +68,6 @@ public class ProviderModelPicker extends HorizontalLayout {
         return this;
     }
 
-    /** Past-run model history (bare ids, already filtered to the omlx provider - see
-     *  Links.distinctModelsForProvider) merged into the omlx provider's own model list, on top of
-     *  its live models() response - the perk the 3 main-model fields had before this component
-     *  existed. Skipped by default (reviewer/judge fields never had it). Call before the operator
-     *  can plausibly have picked omlx already (right after construction, same as every other
-     *  field's own loadSuggestions() timing) - it does not retroactively refresh an
-     *  already-populated model list. */
-    public ProviderModelPicker withPastRunHistory(final List<String> models) {
-        this.pastRunModels = models;
-        return this;
-    }
-
     private void loadProviders() {
         try {
             provider.setItems(client.providers());
@@ -106,8 +88,7 @@ public class ProviderModelPicker extends HorizontalLayout {
         }
         error.setVisible(false);
         try {
-            final var items = new LinkedHashSet<>(client.providerModels(p.id()));
-            if ("omlx".equals(p.provider_key())) items.addAll(pastRunModels);
+            final var items = client.providerModels(p.id());
             model.setItems(items);
             model.setEnabled(true);
         } catch (final Exception e) {

@@ -348,7 +348,6 @@ public class JobNewView extends VerticalLayout {
             final var tasks = new java.util.TreeSet<String>(client.tasks());
             tasks.addAll(Links.distinctRuns(runs, Api.Run::task));
             task.setItems(tasks);
-            model.withPastRunHistory(Links.distinctModelsForProvider(runs, "omlx"));
             rungDetails = client.taskDetails();
             renderTaskInfo(task.getValue());
         } catch (final Exception e) {
