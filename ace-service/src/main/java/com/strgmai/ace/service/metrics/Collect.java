@@ -148,44 +148,134 @@ public final class Collect {
         // how prefill/decode speed depends on context size, bucketed by JournalFacts over the whole
         // run - a chart data blob, not a leaderboard scalar, so it lives alongside "steps"
         out.put("speed_by_context", jf.getOrDefault("speed_by_context", List.of()));
-        // #472/#475 follow-up: RunDetailView's own "Plan tasks" table
-        out.put("per_task", perTask(journal, (List<Map<String, Object>>) manifest.getOrDefault("tasks", List.of())));
+        // #472/#475/#501 follow-up: RunDetailView's own "Plan tasks" table
+        out.put("per_task", perTask(runDir, journal, (List<Map<String, Object>>) manifest.getOrDefault("tasks", List.of())));
         return out;
     }
 
-    /** #472/#475 follow-up: the finished-run "Plan tasks" table's own per-task rows
-     *  (RunDetailView.perTaskRows()) - read since that table was built, but never written by any
-     *  real run: this port of collect.py never carried the block over, so the table was
-     *  permanently empty. Every manifest.tasks[] entry already carries most of what's needed
-     *  directly (reported/done_verified/requests/seconds/rc) - a task resumed past on a later
-     *  attempt (its own bare {id, rc, resumed} entry, see BenchController.taskStatsForRun()'s own
-     *  javadoc) just contributes a row with those fields missing, the same graceful "–"/blank
-     *  fallback RunDetailView.perTaskRows() already has for a genuinely absent key.
-     *  completion_tokens/max_prompt aren't on the manifest entry itself - read from the journal's
-     *  own per-task time window instead, the same windowed mechanism this class already uses for
-     *  phases above (so a parallel wave's several concurrent tasks each get their OWN figures, not
-     *  the whole wave's combined traffic). files_changed is deliberately left unset: a real git
-     *  diff against the task's own phase/&lt;id&gt; tag needs the run's live workspace, not
-     *  available here - RunDetailView.perTaskRows() already renders a missing files_changed as
-     *  "–", the same fallback a too-old run already gets. */
-    static Map<String, Object> perTask(final Path journal, final List<Map<String, Object>> tasks) {
-        final Map<String, Object> out = new LinkedHashMap<>();
-        for (final Map<String, Object> t : tasks) {
-            final Map<String, Object> row = new LinkedHashMap<>();
-            row.put("reported", t.get("reported"));
-            row.put("done_verified", t.get("done_verified"));
-            row.put("requests", t.get("requests"));
-            row.put("task_wall_sec", t.get("seconds"));
-            row.put("over_budget", Integer.valueOf(124).equals(t.get("rc")));
-            final String startIso = Objects.toString(t.get("start_iso"), null), endIso = Objects.toString(t.get("end_iso"), null);
-            if (startIso != null && endIso != null) {
-                final Map<String, Object> f = com.strgmai.ace.service.runner.JournalFacts.facts(journal.toString(), startIso, endIso, null, null, null);
-                row.put("completion_tokens", f.get("completion_tokens"));
-                if (f.containsKey("max_prompt_tokens")) row.put("max_prompt", f.get("max_prompt_tokens"));
+    /** #472/#475/#501 follow-up: the finished-run "Plan tasks" table's own per-task rows
+     *  (RunDetailView.perTaskRows()). A task that ran within THIS invocation has everything on its
+     *  own manifest.tasks[] entry directly - used as-is, the authoritative, directly-observed
+     *  figures. A task resumed past on a later attempt (RunBench finds its phase/&lt;id&gt; tag
+     *  already committed and skips re-running it - see BenchController.taskStatsForRun()'s own
+     *  javadoc) gets a bare {id, rc, resumed} entry instead, missing reported/requests/seconds/
+     *  start_iso/end_iso entirely - #501, found live: on a once-resumed run (l2-gran-fine-4) that
+     *  left MOST of its own Plan tasks grid blank, not just a task or two. Falls back to that
+     *  task_id's own LATEST entry in task_attempts.jsonl (reported_status/seconds/attempt_started/
+     *  attempt_ended - written for every attempt regardless of which invocation ran it, unlike the
+     *  manifest's own per-invocation snapshot) for everything except done_verified, which is
+     *  genuinely never persisted there - a harness-verification result from an earlier, now-
+     *  overwritten manifest, with no artifact in this run's own directory to recover it from; stays
+     *  "–" for a resumed task, same graceful fallback as every other genuinely-missing field.
+     *  completion_tokens/max_prompt (never on either source directly) are read from the journal's
+     *  own per-task time window - the same windowed mechanism this class already uses for phases
+     *  above - using whichever window (manifest's or the attempt's own) was actually found.
+     *  files_changed comes from a real `git diff --name-only` against the task's own phase/&lt;id&gt;
+     *  tag, run against a throwaway clone of runDir/workspace.bundle (bundleWorkspace() already
+     *  writes this durable git-bundle copy of the FULL run history, tags included, into the results
+     *  directory itself - no dependency on the live workspace, which may be long gone by the time
+     *  this runs again for an older run). Absent (not zero) when the bundle doesn't exist (a run
+     *  from before #306) or the clone/diff itself fails - never a false "0 files changed". */
+    static Map<String, Object> perTask(final Path runDir, final Path journal, final List<Map<String, Object>> tasks) {
+        final Map<String, Map<String, Object>> latestAttempt = latestTaskAttempts(runDir);
+        final Path filesChangedRepo = cloneBundleForDiffing(runDir);
+        try {
+            final Map<String, Object> out = new LinkedHashMap<>();
+            for (final Map<String, Object> t : tasks) {
+                final String id = String.valueOf(t.get("id"));
+                final Map<String, Object> attempt = latestAttempt.get(id);
+                final String startIso = t.get("start_iso") != null ? Objects.toString(t.get("start_iso"))
+                        : attempt == null ? null : Objects.toString(attempt.get("attempt_started"), null);
+                final String endIso = t.get("end_iso") != null ? Objects.toString(t.get("end_iso"))
+                        : attempt == null ? null : Objects.toString(attempt.get("attempt_ended"), null);
+
+                final Map<String, Object> row = new LinkedHashMap<>();
+                row.put("reported", t.get("reported") != null ? t.get("reported") : attempt == null ? null : attempt.get("reported_status"));
+                row.put("done_verified", t.get("done_verified"));
+                row.put("task_wall_sec", t.get("seconds") != null ? t.get("seconds") : attempt == null ? null : attempt.get("seconds"));
+                row.put("over_budget", Integer.valueOf(124).equals(t.get("rc")));
+                if (t.get("requests") != null) row.put("requests", t.get("requests"));
+                if (startIso != null && endIso != null) {
+                    final Map<String, Object> f = com.strgmai.ace.service.runner.JournalFacts.facts(journal.toString(), startIso, endIso, null, null, null);
+                    row.putIfAbsent("requests", f.get("requests"));
+                    row.put("completion_tokens", f.get("completion_tokens"));
+                    if (f.containsKey("max_prompt_tokens")) row.put("max_prompt", f.get("max_prompt_tokens"));
+                }
+                if (filesChangedRepo != null) {
+                    final Integer filesChanged = filesChanged(filesChangedRepo, id);
+                    if (filesChanged != null) row.put("files_changed", filesChanged);
+                }
+                out.put(id, row);
             }
-            out.put(String.valueOf(t.get("id")), row);
+            return out;
+        } finally {
+            if (filesChangedRepo != null) deleteRecursively(filesChangedRepo.getParent());
         }
-        return out;
+    }
+
+    /** task_attempts.jsonl grouped by task_id, keeping only each id's LATEST (last-written, file is
+     *  append-only chronological) entry - the real outcome of whichever attempt actually finished
+     *  this task, whether that happened in this invocation or an earlier one this run was resumed
+     *  from. Empty on any read failure, same best-effort convention as taskEffortCounts() above. */
+    private static Map<String, Map<String, Object>> latestTaskAttempts(final Path runDir) {
+        final Map<String, Map<String, Object>> latest = new LinkedHashMap<>();
+        final Path file = runDir.resolve("task_attempts.jsonl");
+        if (!Files.isRegularFile(file)) return latest;
+        try {
+            for (final String line : Files.readAllLines(file)) {
+                if (line.isBlank()) continue;
+                final Map<String, Object> entry = JSON.readValue(line, Map.class);
+                if (entry.get("task_id") != null) latest.put(String.valueOf(entry.get("task_id")), entry);
+            }
+        } catch (final Exception e) { /* best effort - a task_attempts-dependent fallback simply has nothing to fall back to */ }
+        return latest;
+    }
+
+    /** A plain (non-bare) clone of runDir/workspace.bundle, so every phase/* tag (and the ordinary
+     *  git plumbing filesChanged() below needs - tagExists()'s own .git-subdirectory check among
+     *  them) is available with no dependency on the run's live workspace. null when the bundle
+     *  doesn't exist (a run from before #306 started writing it) or the clone itself fails - the
+     *  caller's own files_changed then stays absent, never a false zero. Caller must delete the
+     *  returned path's PARENT once done (the clone lives in parent/repo/). */
+    private static Path cloneBundleForDiffing(final Path runDir) {
+        final Path bundle = runDir.resolve("workspace.bundle");
+        if (!Files.isRegularFile(bundle)) return null;
+        try {
+            final Path parent = Files.createTempDirectory("ace-per-task-files-changed-");
+            com.strgmai.ace.service.runner.RunBenchSupport.gitOut(parent, "clone", "--quiet", bundle.toString(), "repo");
+            return parent.resolve("repo");
+        } catch (final Exception e) {
+            return null;
+        }
+    }
+
+    /** The task's own net file count - `git diff --name-only` between the nearest ancestor phase/*
+     *  tag and the task's own phase/&lt;id&gt; tag, same before/after boundary convention
+     *  BenchController.diffAgainstTagForRun() already uses for the Changes tab, with the same
+     *  vendored-path exclusions (diffArgs()'s own reasoning: a vendored toolchain/build dir would
+     *  otherwise dwarf the agent's own real file count). null (not zero) when the task's own tag
+     *  doesn't exist in this bundle, or anything about the diff itself fails. */
+    private static Integer filesChanged(final Path repo, final String taskId) {
+        final String tag = "phase/" + taskId;
+        try {
+            if (!com.strgmai.ace.service.runner.RunBenchSupport.tagExists(repo, tag)) return null;
+            final String after = com.strgmai.ace.service.runner.RunBenchSupport.gitOut(repo, "rev-parse", tag);
+            final String before = com.strgmai.ace.service.runner.RunBenchSupport.nearestPhaseTagSha(repo, tag + "^");
+            final var args = new ArrayList<String>(List.of("diff", "--name-only", before, after, "--", "."));
+            for (final String vendored : com.strgmai.ace.service.runner.RunBenchSupport.VENDORED_PATHS) args.add(":!" + vendored + "**");
+            final String diffOut = com.strgmai.ace.service.runner.RunBenchSupport.gitOut(repo, args.toArray(new String[0]));
+            return diffOut.isBlank() ? 0 : (int) diffOut.lines().count();
+        } catch (final Exception e) {
+            return null;
+        }
+    }
+
+    private static void deleteRecursively(final Path dir) {
+        try (var stream = Files.walk(dir)) {
+            stream.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try { Files.delete(p); } catch (final Exception ignored) { /* best-effort cleanup of a scratch temp dir */ }
+            });
+        } catch (final Exception ignored) { /* best-effort cleanup of a scratch temp dir */ }
     }
 
     /** #337: groups runDir/task_attempts.jsonl by task_id - tasks_with_retries counts task ids with

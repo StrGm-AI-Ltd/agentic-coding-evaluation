@@ -280,6 +280,64 @@ class CollectTest {
         assertEquals(false, t1.get("over_budget"));
     }
 
+    /** #501, found live: a run resumed past most of its own tasks (l2-gran-fine-4) left most of its
+     *  own Plan tasks grid blank, not just one or two rows - a bare manifest entry has nothing but
+     *  id/rc, but the task's own LATEST task_attempts.jsonl record (written for every attempt
+     *  regardless of which invocation actually ran it) still carries its real reported outcome,
+     *  wall time, and attempt window - recovered from there instead. */
+    @Test
+    void perTaskFallsBackToTaskAttemptsJsonlForABareResumedEntry(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);
+        Files.writeString(runDir.resolve("task_attempts.jsonl"),
+                "{\"task_id\":\"T1\",\"attempt_number\":1,\"attempt_started\":\"2026-01-01T00:00:00Z\","
+                        + "\"attempt_ended\":\"2026-01-01T00:01:00Z\",\"rc\":0,\"seconds\":55.0,"
+                        + "\"reported_status\":\"done\",\"reported_detail\":\"ok\"}\n");
+        Files.writeString(runDir.resolve("interactions.jsonl"),
+                "{\"ts\": \"2026-01-01T00:00:30Z\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
+                        + "\"request\": {}, \"response\": {\"usage\": {\"completion_tokens\": 40, \"prompt_tokens\": 500}}}\n");
+        final Map<String, Object> manifest = Map.of("phases", List.of(), "waves", List.of(),
+                "tasks", List.of(Map.of("id", "T1", "rc", 0, "resumed", true)));
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        final Map<String, Object> t1 = (Map<String, Object>) ((Map<String, Object>) out.get("per_task")).get("T1");
+        assertEquals("done", t1.get("reported"));
+        assertEquals(55.0, ((Number) t1.get("task_wall_sec")).doubleValue(), 0.001);
+        assertEquals(1, ((Number) t1.get("requests")).intValue());
+        assertEquals(40L, ((Number) t1.get("completion_tokens")).longValue());
+        assertEquals(500L, ((Number) t1.get("max_prompt")).longValue());
+        assertNull(t1.get("done_verified"), "never recorded in task_attempts.jsonl - genuinely unrecoverable");
+    }
+
+    /** #501: files_changed comes from a real `git diff` against the task's own phase/&lt;id&gt; tag,
+     *  run against a throwaway clone of workspace.bundle - the durable git-history copy
+     *  bundleWorkspace() already writes into the results directory, with no dependency on the run's
+     *  live (possibly long-gone) workspace. */
+    @Test
+    void perTaskComputesFilesChangedFromTheWorkspaceBundle(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);
+        final var ws = Files.createTempDirectory("ws-for-bundle");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/start");
+        Files.writeString(ws.resolve("App.java"), "class App {}");
+        Files.writeString(ws.resolve("Util.java"), "class Util {}");
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T1");
+        assertEquals(0, new ProcessBuilder("git", "-C", ws.toString(), "bundle", "create",
+                runDir.resolve("workspace.bundle").toString(), "--all").start().waitFor());
+        final Map<String, Object> manifest = Map.of("phases", List.of(), "waves", List.of(),
+                "tasks", List.of(Map.of("id", "T1", "rc", 0)));
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        final Map<String, Object> t1 = (Map<String, Object>) ((Map<String, Object>) out.get("per_task")).get("T1");
+        assertEquals(2, ((Number) t1.get("files_changed")).intValue());
+    }
+
+    @Test
+    void perTaskFilesChangedIsAbsentWithNoWorkspaceBundle(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);
+        final Map<String, Object> manifest = Map.of("phases", List.of(), "waves", List.of(),
+                "tasks", List.of(Map.of("id", "T1", "rc", 0, "seconds", 10.0, "reported", "done")));
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        final Map<String, Object> t1 = (Map<String, Object>) ((Map<String, Object>) out.get("per_task")).get("T1");
+        assertFalse(t1.containsKey("files_changed"));
+    }
+
     private static void writeSession(final Path runDir, final String fileName, final String label, final String... lines) throws Exception {
         final Path sessions = runDir.resolve("sessions");
         Files.createDirectories(sessions);
