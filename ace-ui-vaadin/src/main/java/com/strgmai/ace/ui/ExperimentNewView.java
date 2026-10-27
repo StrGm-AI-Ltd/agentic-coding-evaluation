@@ -339,14 +339,6 @@ public class ExperimentNewView extends VerticalLayout {
         } catch (final Exception e) {
             log.warn("could not load the rung list: {}", e.toString());
         }
-        try {
-            final var models = Links.distinctModelsForProvider(client.runs(null, null, null, null, null), "omlx");
-            model.withPastRunHistory(models);
-            modelA.withPastRunHistory(models);
-            modelB.withPastRunHistory(models);
-        } catch (final Exception e) {
-            log.warn("could not load past-run model suggestions: {}", e.toString());
-        }
     }
 
     /** Raw field values by param key, normalized by ExperimentParams.build (unit-tested). */

@@ -52,14 +52,4 @@ public final class Links {
         return runs.stream().map(getter).filter(Objects::nonNull).distinct().sorted().toList();
     }
 
-    /** Past runs' own model choices for one specific provider, stripped of its "providerKey/"
-     *  prefix - ProviderModelPicker.withPastRunHistory() wants bare model ids to merge into that
-     *  ONE provider's own model list, not the full wire string every run's model column now
-     *  carries (every run's own model is "providerKey/model" - see V8's backfill for the historical
-     *  "omlx/" case). */
-    public static List<String> distinctModelsForProvider(final List<Api.Run> runs, final String providerKey) {
-        final String prefix = providerKey + "/";
-        return runs.stream().map(Api.Run::model).filter(m -> m != null && m.startsWith(prefix))
-                .map(m -> m.substring(prefix.length())).distinct().sorted().toList();
-    }
 }
