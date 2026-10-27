@@ -141,7 +141,14 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             }
             pollRegistration = ui.addPollListener(e -> refresh());
             ui.setPollInterval(JobStatuses.isTerminal(status()) ? -1 : 2000);
-            if (jobId != null && !JobStatuses.isTerminal(status())) {
+            // #499: connect even for an already-finished job, not just a still-running one - this is
+            // the ONLY path that ever populates live.sessions() (taskStats() below reads it, never a
+            // completed job's own real wall-time/token/token figures from anywhere else), and
+            // BenchController.events() already replays a finished job's full history in one shot
+            // before self-terminating the stream, so this costs exactly one round trip, not an
+            // open-ended connection - a plain job id was the only real gate; terminal vs. running
+            // never needed to be.
+            if (jobId != null) {
                 ensureSse(ui);
             }
         });
