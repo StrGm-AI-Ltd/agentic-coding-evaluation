@@ -1,6 +1,7 @@
 package com.strgmai.ace.ui;
 
 import com.vaadin.flow.component.applayout.AppLayout;
+import com.vaadin.flow.component.dependency.CssImport;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.tabs.Tab;
 import com.vaadin.flow.component.tabs.Tabs;
@@ -13,6 +14,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /** App chrome: brand + horizontal nav, mirroring the Jinja2 top bar. */
+@CssImport("./styles/manual-panel.css")
 public class MainLayout extends AppLayout implements BeforeEnterObserver {
 
     private final Map<Class<?>, Tab> tabsByView = new HashMap<>();

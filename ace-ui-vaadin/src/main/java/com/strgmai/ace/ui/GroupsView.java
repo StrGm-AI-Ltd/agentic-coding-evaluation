@@ -26,6 +26,7 @@ public class GroupsView extends VerticalLayout {
 
     private void render() {
         removeAll();
+        add(TabManual.banner("The pooled leaderboard — comparable runs ranked together.", "User-Manual-Results"));
         add(new H2("Groups — pooled by task · model · key"));
         add(new Span("A leaderboard entry needs k ≥ 5 comparable valid runs; smaller groups are indicative and never ranked."));
 
