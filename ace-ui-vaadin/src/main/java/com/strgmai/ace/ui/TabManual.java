@@ -114,7 +114,14 @@ final class TabManual {
 
         final var body = new Div();
         body.setText("Loading…");
-        body.getStyle().set("flex-grow", "1").set("overflow", "auto");
+        // #486, found live: flex-grow/overflow alone left this Div at its own unconstrained
+        // content width (~1600px for a real wiki page) instead of the pane's actual, resizable
+        // width - manualSlot itself correctly shrank to match the pane, but this child never
+        // did, so it just rendered wide and got silently clipped rather than reflowing (the
+        // same root cause broke embedded images "scaling" to the pane: max-width:100% has
+        // nothing to constrain against when the box it's 100% OF was never width-constrained
+        // itself). width:100% is what was missing.
+        body.getStyle().set("flex-grow", "1").set("overflow", "auto").set("width", "100%");
         container.add(body);
         container.expand(body);
 

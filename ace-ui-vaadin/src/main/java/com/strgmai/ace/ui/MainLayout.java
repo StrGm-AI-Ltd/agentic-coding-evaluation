@@ -53,7 +53,14 @@ public class MainLayout extends AppLayout implements BeforeEnterObserver {
 
         addToNavbar(brand, tabs);
 
+        // #486, found live: a plain Div with setSizeFull() has no scroll mechanism of its own -
+        // its default overflow is "clip", not "auto" - so a routed view taller than the fixed
+        // height split/contentSlot now impose (previously AppLayout's own content slot grew with
+        // its content; this wrapper doesn't) left everything past the first screenful completely
+        // unreachable, no scrollbar anywhere. contentSlot is now the one scroll container for
+        // every tab's own main content.
         contentSlot.setSizeFull();
+        contentSlot.getStyle().set("overflow-y", "auto");
         manualSlot.setSizeFull();
         manualSlot.setPadding(true);
         manualSlot.setSpacing(false);
