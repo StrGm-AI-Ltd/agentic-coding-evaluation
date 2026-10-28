@@ -89,13 +89,21 @@ public class MainLayout extends AppLayout {
         final var brand = new HorizontalLayout();
         brand.setAlignItems(FlexComponent.Alignment.CENTER);
         brand.setPadding(true);
-        // #476 PR 3/3: a small logo mark beside the wordmark, matching the approved mockup -
-        // a plain styled Span rather than an image asset, so there's nothing new to host/cache.
+        // #527: the mockup's own .brand rule adds extra bottom padding plus a low-contrast
+        // divider under the whole row, before the nav starts - setPadding(true) alone gives a
+        // uniform pad, so the extra bottom space and the rule are layered on top of it here.
+        brand.getStyle().set("padding-bottom", "18px").set("margin-bottom", "6px")
+                .set("border-bottom", "1px solid var(--lumo-contrast-10pct)");
+        // #476 PR 3/3 (#527: size/gradient now matched exactly to the mockup's own .brand-mark -
+        // 28px, and the SAME two tokens - primary-text-color/primary-color - the mockup's own
+        // --accent-bright/--accent pair resolve to, replacing the old 22px box and hardcoded
+        // #4A47D1 second stop, which read as flat at that smaller size). A plain styled Span
+        // rather than an image asset, so there's nothing new to host/cache.
         final var logoMark = new Span("A");
         logoMark.getStyle().set("display", "inline-flex").set("align-items", "center").set("justify-content", "center")
-                .set("width", "22px").set("height", "22px").set("margin-right", "8px")
-                .set("background", "linear-gradient(135deg, var(--lumo-primary-color), #4A47D1)")
-                .set("color", "white").set("font-weight", "700").set("font-size", "0.85em")
+                .set("width", "28px").set("height", "28px").set("margin-right", "10px")
+                .set("background", "linear-gradient(145deg, var(--lumo-primary-text-color), var(--lumo-primary-color))")
+                .set("color", "white").set("font-weight", "700").set("font-size", "0.8em")
                 .set("border-radius", "var(--lumo-border-radius-m)");
         final var brandName = new Span("ACE");
         brandName.getStyle().set("font-weight", "700").set("font-size", "1.1em").set("letter-spacing", "0.02em");
