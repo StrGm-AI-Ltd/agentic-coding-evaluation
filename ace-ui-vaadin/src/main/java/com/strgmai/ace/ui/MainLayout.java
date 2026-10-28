@@ -161,7 +161,9 @@ public class MainLayout extends AppLayout {
         final var footer = new HorizontalLayout(footerStatusDot, footerStatusText);
         footer.setPadding(true);
         footer.setSpacing(false);
+        footer.setWidthFull();
         footer.setAlignItems(FlexComponent.Alignment.CENTER);
+        footer.setJustifyContentMode(FlexComponent.JustifyContentMode.CENTER);
 
         addToDrawer(brand, scroller, footer);
 
