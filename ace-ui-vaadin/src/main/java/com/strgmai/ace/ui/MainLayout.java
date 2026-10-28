@@ -177,9 +177,11 @@ public class MainLayout extends AppLayout {
         footerColumn.setPadding(false);
         footerColumn.setSpacing(false);
         footerColumn.setAlignItems(FlexComponent.Alignment.CENTER);
-        // 5px - the same vertical gap SideNavItem rows use within a group (confirmed via live
-        // measurement), applied both between the label and the logo, and below the logo
-        footerColumn.getStyle().set("gap", "5px").set("padding-bottom", "5px");
+        // the label-to-logo gap matches SideNavItem's own within-group row spacing (5px, confirmed
+        // via live measurement); the bottom padding instead matches the drawer's own top padding
+        // above "ACE" (23px, from .aura-view-header's own padding-top) so the logo sits exactly as
+        // far from the drawer's bottom edge as the brand sits from its top
+        footerColumn.getStyle().set("gap", "5px").set("padding-bottom", "23px");
 
         addToDrawer(brand, scroller, footerColumn);
 
