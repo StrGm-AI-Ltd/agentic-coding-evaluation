@@ -181,8 +181,13 @@ public class MainLayout extends AppLayout {
         final var footerLogo = new Image("icons/strgm-logo.png", "StrGm AI");
         footerLogo.setWidth("28px");
         footerLogo.setHeight("28px");
-        footerLogo.getStyle().set("border-radius", "50%");
-        final var footerColumn = new VerticalLayout(footer, footerLogo);
+        // display:block - an inline img (the default) inside the anchor below reserves descender
+        // space under its baseline, same as regular text; without this the wrapped image sat 5px
+        // further from the drawer's bottom edge than intended
+        footerLogo.getStyle().set("border-radius", "50%").set("display", "block");
+        final var footerLogoLink = new Anchor("https://www.strgm-ai.com", footerLogo);
+        footerLogoLink.setTarget("_blank");
+        final var footerColumn = new VerticalLayout(footer, footerLogoLink);
         footerColumn.setPadding(false);
         footerColumn.setSpacing(false);
         footerColumn.setAlignItems(FlexComponent.Alignment.CENTER);
