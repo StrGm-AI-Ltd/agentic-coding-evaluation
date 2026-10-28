@@ -36,13 +36,13 @@ public class InfoView extends Div {
                 + "model, harness mode, and hyperparameters actually get a coding task done well — on your "
                 + "own hardware if you're running a local model, or against whichever "),
                 new RouterLink("external provider", LlmProvidersView.class),
-                new Span(" you've configured. Set any of those per job via "),
+                new Span(" you've configured. Configure any of those per job in "),
                 new RouterLink("Queue", JobsView.class),
-                new Span(", or run a templated, repeated A/B batch via "),
+                new Span(", or run a templated, repeated A/B batch in "),
                 new RouterLink("Experiments", ExperimentsView.class),
-                new Span(" — then use "), new RouterLink("Compare", CompareView.class), new Span(" and "),
+                new Span(", then check "), new RouterLink("Compare", CompareView.class), new Span(" and "),
                 new RouterLink("Groups", GroupsView.class),
-                new Span(" to see which configuration actually wins for your setup."));
+                new Span(" to see which configuration wins for your setup."));
         add(purpose);
 
         add(new H3("User manual"));
