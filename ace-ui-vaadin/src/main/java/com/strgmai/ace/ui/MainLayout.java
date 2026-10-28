@@ -157,14 +157,15 @@ public class MainLayout extends AppLayout {
         // custom-color strip - the dot keeps its shape, just no longer color-codes live status.
         footerStatusDot.getStyle().set("display", "inline-block").set("width", "8px").set("height", "8px")
                 .set("border-radius", "50%").set("margin-right", "6px");
+        // no explicit font-size - inherits the app's own 14px base size, matching every
+        // SideNavItem label exactly rather than the smaller 0.8em this used to carry
         final var footerStatusText = new Span("StrGm AI");
-        footerStatusText.getStyle().set("font-size", "0.8em");
         final var footer = new HorizontalLayout(footerStatusDot, footerStatusText);
-        footer.setPadding(true);
         footer.setSpacing(false);
         footer.setWidthFull();
         footer.setAlignItems(FlexComponent.Alignment.CENTER);
         footer.setJustifyContentMode(FlexComponent.JustifyContentMode.CENTER);
+        footer.getStyle().set("padding", "20px 20px 0 20px");
 
         // the StrGm AI org's own GitHub avatar (github.com/StrGm-AI-Ltd), saved locally under
         // icons/ alongside the app's own favicon - served as a static resource, not fetched live
@@ -176,7 +177,9 @@ public class MainLayout extends AppLayout {
         footerColumn.setPadding(false);
         footerColumn.setSpacing(false);
         footerColumn.setAlignItems(FlexComponent.Alignment.CENTER);
-        footerColumn.getStyle().set("padding-bottom", "12px");
+        // 5px - the same vertical gap SideNavItem rows use within a group (confirmed via live
+        // measurement), applied both between the label and the logo, and below the logo
+        footerColumn.getStyle().set("gap", "5px").set("padding-bottom", "5px");
 
         addToDrawer(brand, scroller, footerColumn);
 
