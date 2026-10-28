@@ -184,7 +184,12 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
     }
 
     /** The "above the fold" status dashboard - every tile the SAME size, in a responsive CSS grid
-     *  that reflows by column COUNT (auto-fit) rather than by deliberately uneven tile sizing. */
+     *  that reflows by column COUNT (auto-fit) rather than by deliberately uneven tile sizing.
+     *  Each tile gets a visible border/surface/radius here - the official Vaadin Dashboard
+     *  widget's own look (vaadin.com/docs/latest/components/dashboard) - rather than through
+     *  Panels.statTile() itself, which JobDetailView (the real, live page) also depends on and
+     *  deliberately dropped all border/background chrome from during the Aura migration (#529);
+     *  changing that shared helper would have silently changed the real page's own stat tiles too. */
     private FlexibleGridLayout statTileGrid(final Api.Job job, final List<Api.PlanTask> tasks,
             final Map<String, Api.TaskAttempt> lastAttempt) {
         final var realTasks = tasks.stream().filter(t -> !t.stage()).toList();
@@ -197,14 +202,27 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
                 .withAutoRows(new Length("auto"))
                 .withGap(new Length("12px"))
                 .withItems(
-                        Panels.statTile("Kind", job.kind() + (job.arm() != null ? " · " + job.arm() + " r" + job.repeat() : ""), null),
-                        Panels.statTile("Model", modelOf(job), null),
-                        Panels.statTile("Priority", job.priority() == null ? "–" : String.valueOf(job.priority()), null),
-                        Panels.statTile("Enqueued", Fmt.when(job.enqueued_at()), null),
-                        Panels.statTile("Duration", durationOf(job), null),
-                        Panels.statTile("Tasks", done + " / " + realTasks.size(), null));
+                        dashboardTile("Kind", job.kind() + (job.arm() != null ? " · " + job.arm() + " r" + job.repeat() : "")),
+                        dashboardTile("Model", modelOf(job)),
+                        dashboardTile("Priority", job.priority() == null ? "–" : String.valueOf(job.priority())),
+                        dashboardTile("Enqueued", Fmt.when(job.enqueued_at())),
+                        dashboardTile("Duration", durationOf(job)),
+                        dashboardTile("Tasks", done + " / " + realTasks.size()));
         grid.getStyle().set("width", "100%").set("margin", "12px 0");
         return grid;
+    }
+
+    /** Panels.statTile() plus a visible border/surface/radius, via real Aura/base tokens
+     *  (--vaadin-border-color-secondary, --vaadin-radius-l, --vaadin-background-container - all
+     *  confirmed against the Aura styling docs) rather than hand-picked colors. */
+    private static Div dashboardTile(final String label, final String value) {
+        final var tile = Panels.statTile(label, value, null);
+        tile.getStyle()
+                .set("border", "1px solid var(--vaadin-border-color-secondary)")
+                .set("border-radius", "var(--vaadin-radius-l)")
+                .set("background", "var(--vaadin-background-container)")
+                .set("padding", "16px 18px");
+        return tile;
     }
 
     /** The real, available signal for a terminal task's outcome - see class javadoc for why this
