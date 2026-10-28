@@ -4,7 +4,6 @@ import com.vaadin.flow.component.HasValidation;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.combobox.ComboBox;
-import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.select.Select;
@@ -257,7 +256,7 @@ public class ExperimentNewView extends VerticalLayout {
         orch.setValue(true);
         mono.setValue(true);
 
-        add(new H2("New experiment"));
+        add(new ViewHeader("New experiment"));
         add(new RouterLink("← Experiments", ExperimentsView.class));
         errors.setPadding(false);
         add(errors);

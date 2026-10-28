@@ -1,6 +1,5 @@
 package com.strgmai.ace.ui;
 
-import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
@@ -27,7 +26,7 @@ public class GroupsView extends VerticalLayout {
     private void render() {
         removeAll();
         add(TabManual.banner(this, "The pooled leaderboard — comparable runs ranked together.", "User-Manual-Results"));
-        add(new H2("Groups — pooled by task · model · key"));
+        add(new ViewHeader("Groups — pooled by task · model · key"));
         add(new Span("A leaderboard entry needs k ≥ 5 comparable valid runs; smaller groups are indicative and never ranked."));
 
         final Api.GroupResponse groups;   // assigned exactly once below; a legal blank final

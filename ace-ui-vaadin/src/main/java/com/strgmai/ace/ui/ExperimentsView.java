@@ -4,7 +4,6 @@ import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.dependency.CssImport;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
-import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.data.renderer.ComponentRenderer;
@@ -55,7 +54,7 @@ public class ExperimentsView extends VerticalLayout {
                 .ifPresent(ui -> ui.navigate("experiments/" + e.getItem().id())));
 
         add(TabManual.banner(this, "Run several configurations as one batch.", "User-Manual-Results"));
-        add(new H2("Experiments"),
+        add(new ViewHeader("Experiments"),
                 new com.vaadin.flow.component.orderedlayout.HorizontalLayout(newExperiment, error),
                 emptyState, grid);
         setSizeFull();

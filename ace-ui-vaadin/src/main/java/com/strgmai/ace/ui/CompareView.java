@@ -7,7 +7,6 @@ import com.vaadin.flow.component.combobox.MultiSelectComboBox;
 import com.vaadin.flow.component.details.Details;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.Div;
-import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.notification.Notification;
@@ -53,7 +52,7 @@ public class CompareView extends VerticalLayout {
         setPadding(true);
 
         add(TabManual.banner(this, "Compare two runs or two models task-by-task.", "User-Manual-Results"));
-        add(new H2("Compare — StatsService on two run groups"));
+        add(new ViewHeader("Compare — StatsService on two run groups"));
 
         groupA.setPlaceholder("pick one or more run ids");
         groupB.setPlaceholder("pick one or more run ids");

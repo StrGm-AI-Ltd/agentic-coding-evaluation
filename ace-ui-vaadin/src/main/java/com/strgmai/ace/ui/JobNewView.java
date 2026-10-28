@@ -4,7 +4,6 @@ import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.combobox.MultiSelectComboBox;
-import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
@@ -289,7 +288,7 @@ public class JobNewView extends VerticalLayout {
         rescueKeepRecentTurns.setHelperText("blank = operator default");
         rescueKeepRecentTurns.setTooltipText(Tooltips.RESCUE_KEEP_RECENT_TURNS);
 
-        add(new H2("New job"));
+        add(new ViewHeader("New job"));
         add(new RouterLink("← Queue", JobsView.class));
         add(TabManual.banner(this, "Configure every flag for a new benchmark run.", "User-Manual-Jobs"));
         errors.setPadding(false);

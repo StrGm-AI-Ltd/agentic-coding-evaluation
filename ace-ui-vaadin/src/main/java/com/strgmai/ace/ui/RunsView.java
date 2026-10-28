@@ -4,7 +4,6 @@ import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
-import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.icon.VaadinIcon;
 import com.vaadin.flow.component.notification.Notification;
@@ -117,7 +116,7 @@ public class RunsView extends VerticalLayout {
         });
 
         add(TabManual.banner(this, "Browse every run and its full scorecard.", "User-Manual-Results"));
-        add(new H2("Runs"), filters, error, emptyState, grid);
+        add(new ViewHeader("Runs"), filters, error, emptyState, grid);
         setSizeFull();
         expand(grid);
 

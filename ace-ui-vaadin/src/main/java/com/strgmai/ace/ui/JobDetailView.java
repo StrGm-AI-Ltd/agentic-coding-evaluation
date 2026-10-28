@@ -17,8 +17,6 @@ import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.grid.GridSortOrder;
 import com.vaadin.flow.data.provider.SortDirection;
 import com.vaadin.flow.component.html.Div;
-import com.vaadin.flow.component.html.H2;
-import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
@@ -189,7 +187,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var raw = event.getRouteParameters().get("jobId").orElse(null);
         jobId = (raw == null || raw.isBlank()) ? null : raw;
         if (jobId == null) {
-            add(new H3("Job"), Panels.error("No valid job id in the URL."));
+            add(new ViewHeader("Job"), Panels.error("No valid job id in the URL."));
             chromeBuilt = true; // nothing else to build
             return;
         }
@@ -199,7 +197,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             update(job);
         } catch (final Exception e) {
             log.warn("could not load job {}: {}", jobId, e.toString());
-            add(new H3("Job #" + jobId), Panels.error(client.errorText(e)));
+            add(new ViewHeader("Job #" + jobId), Panels.error(client.errorText(e)));
             // #265: NOT chromeBuilt=true - buildChrome() genuinely never ran, so none of the live
             // components (liveSection, the grids, statusHolder) exist. loadFailed is the flag that
             // actually matters here; see its own field comment.
@@ -218,9 +216,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
         add(TabManual.banner(this, "Watch a single run's live progress, plan, and per-task detail.", "User-Manual-Jobs"));
 
-        final var title = new H2(job.run_id());
-        title.getStyle().set("margin", "4px 0").set("font-size", "1.6em");
-        add(title);
+        final var header = new ViewHeader(job.run_id());
+        header.getHeading().getStyle().set("margin", "4px 0").set("font-size", "1.6em");
+        add(header);
 
         statusHolder.getStyle().set("margin", "4px 0");
         add(statusHolder);
@@ -242,8 +240,6 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         liveSection.setPadding(false);
         liveSection.setSpacing(false);
         liveSection.getStyle().set("margin-top", "16px");
-        final var liveTitle = new H3("Live");
-        liveTitle.getStyle().set("margin", "0 0 4px 0");
 
         // #476 PR 3/3: current step + active time as stat tiles instead of flat text lines - both
         // toggle together via liveStatsRow itself (see updateLive()), not their own inner Spans, so
@@ -255,7 +251,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 Panels.statTile("Tasks done", tasksDoneLine), Panels.statTile("Current task turns", taskTurnsLine),
                 Panels.statTile("Tool errors", toolErrorsLine));
 
-        liveSection.add(liveTitle, plannedOrderLine, Panels.card("Plan", planGrid), liveStatsRow, sessionsGrid,
+        liveSection.add(plannedOrderLine, Panels.card("Plan", planGrid), liveStatsRow, sessionsGrid,
                 requestsLine, lostNotice, terminalNote, Panels.card("Recent requests", requestLatencyChart, requestsGrid), logTail);
         plannedOrderLine.getStyle().set("font-size", "0.9em");
         stepLine.getStyle().set("font-weight", "600");

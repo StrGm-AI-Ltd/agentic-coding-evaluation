@@ -63,3 +63,54 @@ vaadin-side-nav-item[current]::part(content) {
   --vaadin-side-nav-item-text-color: var(--aura-neutral);
   border-inline-start-color: var(--aura-accent-color);
 }
+
+/* Ported from vaadin/web-components:dev/aura/aura-view.css - the official Aura example's own
+   dev-only companion stylesheet, not part of the published Aura.STYLESHEET package. The
+   .aura-view-header convention: a view's own DrawerToggle+heading row (see ViewHeader.java and
+   MainLayout's drawer brand row), where the row carrying theme~="permanent" stays visible while
+   the drawer is open, and every other row's toggle is hidden unless there's otherwise no way to
+   reopen a closed drawer. */
+.aura-view-header {
+  padding-block: var(--vaadin-padding-m);
+  padding-inline: max(var(--vaadin-padding-m) - var(--safe-area-inset-left), 0px);
+  padding-top: max(var(--vaadin-padding-m), var(--safe-area-inset-top));
+  display: flex;
+  align-items: center;
+  gap: var(--vaadin-gap-xs);
+}
+
+.aura-view-header[slot='drawer'] {
+  margin-top: calc(var(--safe-area-inset-top) * -1);
+  padding-inline-end: var(--vaadin-padding-m);
+}
+
+.aura-view-header :is(h1, h2, h3, h4, h5, h6, .aura-view-heading) {
+  margin: 0;
+  padding-block: calc(var(--vaadin-padding-block-container) + var(--vaadin-button-border-width, 1px));
+  font-size: var(--aura-font-size-l);
+  font-weight: var(--aura-font-weight-semibold);
+  line-height: var(--aura-line-height-m);
+  color: var(--vaadin-text-color);
+  flex: 1;
+}
+
+.aura-view-header :is(h1, h2, h3, h4, h5, h6, .aura-view-heading):first-child {
+  padding-inline-start: var(--vaadin-padding-s);
+}
+
+.aura-view-header :is(h1, h2, h3, h4, h5, h6, .aura-view-heading):last-child {
+  padding-inline-end: var(--vaadin-padding-s);
+}
+
+vaadin-app-layout:is([drawer-opened]:not([overlay]), :has(> [slot='navbar'] vaadin-drawer-toggle))
+  .aura-view-header
+  vaadin-drawer-toggle:not([theme~='permanent']) {
+  display: none;
+}
+
+vaadin-app-layout:is([drawer-opened]:not([overlay]), :has(> [slot='navbar'] vaadin-drawer-toggle))
+  .aura-view-header
+  vaadin-drawer-toggle:not([theme~='permanent'])
+  + :is(h1, h2, h3, h4, h5, h6, .aura-view-heading) {
+  padding-inline-start: var(--vaadin-padding-s);
+}
