@@ -3,22 +3,33 @@ package com.strgmai.ace.ui;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.HasElement;
 import com.vaadin.flow.component.applayout.AppLayout;
+import com.vaadin.flow.component.applayout.DrawerToggle;
 import com.vaadin.flow.component.dependency.CssImport;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.Span;
+import com.vaadin.flow.component.icon.Icon;
+import com.vaadin.flow.component.icon.VaadinIcon;
+import com.vaadin.flow.component.orderedlayout.FlexComponent;
+import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
+import com.vaadin.flow.component.orderedlayout.Scroller;
+import com.vaadin.flow.component.orderedlayout.ScrollerVariant;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
+import com.vaadin.flow.component.sidenav.SideNav;
+import com.vaadin.flow.component.sidenav.SideNavItem;
 import com.vaadin.flow.component.splitlayout.SplitLayout;
-import com.vaadin.flow.component.tabs.Tab;
-import com.vaadin.flow.component.tabs.Tabs;
-import com.vaadin.flow.router.BeforeEnterEvent;
-import com.vaadin.flow.router.BeforeEnterObserver;
-import com.vaadin.flow.router.RouterLink;
 
-import java.util.HashMap;
-import java.util.Map;
-
-/** App chrome: brand + horizontal nav, mirroring the Jinja2 top bar - plus (#474/#485) the
- *  operator-resizable split between a tab's own content and its "Full manual" wiki pane.
+/** App chrome: brand + left sidebar nav - mirrors the Aura "Night operator" reference's own
+ *  layout (#476 PR 2/2; PR 1 shipped the dark palette/typography this sidebar now wears). The
+ *  drawer replaces the old top AppLayout/Tabs navbar: a standalone "Info" item, then two
+ *  collapsible SideNav groups (Benchmarking, System) matching the reference's own grouped-section
+ *  pattern, applied to ACE's real 8 views rather than the reference's literal SaaS labels.
+ *  SideNavItem's own setMatchNested(true) replaces the old hand-rolled tabsByView/beforeEnter()
+ *  highlighting - Vaadin's router already knows "runs/:runId" nests under "runs", "jobs/:jobId"
+ *  and "jobs/new" both nest under "jobs", etc. (confirmed against every view's own @Route), so
+ *  there's no longer a manual "alsoMapped" list to keep in sync by hand.
+ *
+ *  Plus (#474/#485) the operator-resizable split between a tab's own content and its "Full
+ *  manual" wiki pane.
  *
  *  AppLayout's own showRouterLayoutContent(HasElement) - decompiled and confirmed directly, no
  *  public doc covers this - just calls setContent((Component) content), replacing whatever
@@ -42,32 +53,56 @@ import java.util.Map;
  *  every TabManual-opened manual pane - is the fix: duplicate annotations on the same frontend
  *  file across classes are a normal, deduped-by-Vite Vaadin pattern, not a real duplicate. */
 @CssImport("./styles/md-viewer.css")
-public class MainLayout extends AppLayout implements BeforeEnterObserver {
+public class MainLayout extends AppLayout {
 
-    private final Map<Class<?>, Tab> tabsByView = new HashMap<>();
-    private final Tabs tabs = new Tabs();
     private final SplitLayout split = new SplitLayout();
     private final Div contentSlot = new Div();
     private final VerticalLayout manualSlot = new VerticalLayout();
     private boolean manualOpen;
 
     public MainLayout() {
-        setPrimarySection(Section.NAVBAR);
+        setPrimarySection(Section.DRAWER);
+        // the drawer auto-collapses to a hamburger-toggled overlay on narrow viewports (AppLayout's
+        // own built-in responsive behavior) - this is what reopens it there; always visible but
+        // inert (nothing to toggle) once the drawer is pinned open on a wide screen
+        addToNavbar(new DrawerToggle());
 
-        final var brand = new Span("ACE");
-        brand.getStyle().set("font-weight", "700").set("font-size", "large")
-                .set("margin-left", "24px").set("margin-right", "24px");
+        final var brand = new HorizontalLayout();
+        brand.setAlignItems(FlexComponent.Alignment.CENTER);
+        brand.setPadding(true);
+        final var brandName = new Span("ACE");
+        brandName.getStyle().set("font-weight", "700").set("font-size", "1.1em").set("letter-spacing", "0.02em");
+        brand.add(brandName);
 
-        tab("Info", InfoView.class);
-        tab("Runs", RunsView.class, RunDetailView.class);
-        tab("Groups", GroupsView.class);
-        tab("Compare", CompareView.class);
-        tab("Queue", JobsView.class, JobDetailView.class, JobNewView.class);
-        tab("Experiments", ExperimentsView.class, ExperimentDetailView.class, ExperimentNewView.class);
-        tab("Preflight", PreflightView.class);
-        tab("LLM Providers", LlmProvidersView.class);
+        // standalone, ungrouped - mirrors the reference's own "Overview" sitting outside any
+        // collapsible section. A bare `new SideNav()` (no label) renders with no group header.
+        final var info = new SideNav();
+        info.addItem(navItem("Info", InfoView.class, VaadinIcon.INFO_CIRCLE_O));
 
-        addToNavbar(brand, tabs);
+        final var benchmarking = new SideNav("Benchmarking");
+        benchmarking.setCollapsible(true);
+        benchmarking.addItem(
+                navItem("Runs", RunsView.class, VaadinIcon.PLAY),
+                navItem("Groups", GroupsView.class, VaadinIcon.GRID_SMALL),
+                navItem("Compare", CompareView.class, VaadinIcon.SPLIT),
+                navItem("Queue", JobsView.class, VaadinIcon.TASKS),
+                navItem("Experiments", ExperimentsView.class, VaadinIcon.FLASK));
+
+        final var system = new SideNav("System");
+        system.setCollapsible(true);
+        system.addItem(
+                navItem("Preflight", PreflightView.class, VaadinIcon.CHECK_CIRCLE),
+                navItem("LLM Providers", LlmProvidersView.class, VaadinIcon.CONNECT));
+
+        final var menu = new VerticalLayout(info, benchmarking, system);
+        menu.setPadding(false);
+        menu.setSpacing(false);
+
+        final var scroller = new Scroller(menu);
+        scroller.addThemeVariants(ScrollerVariant.OVERFLOW_INDICATORS);
+        scroller.setSizeFull();
+
+        addToDrawer(brand, scroller);
 
         // #486, found live: a plain Div with setSizeFull() has no scroll mechanism of its own -
         // its default overflow is "clip", not "auto" - so a routed view taller than the fixed
@@ -85,21 +120,10 @@ public class MainLayout extends AppLayout implements BeforeEnterObserver {
         setContent(split);
     }
 
-    private void tab(final String label, final Class<? extends Component> primary, final Class<?>... alsoMapped) {
-        final var tab = new Tab(new RouterLink(label, primary));
-        tabs.add(tab);
-        tabsByView.put(primary, tab);
-        for (final var view : alsoMapped) {
-            tabsByView.put(view, tab);
-        }
-    }
-
-    @Override
-    public void beforeEnter(final BeforeEnterEvent event) {
-        final var tab = tabsByView.get(event.getNavigationTarget());
-        if (tab != null) {
-            tabs.setSelectedTab(tab);
-        }
+    private static SideNavItem navItem(final String label, final Class<? extends Component> view, final VaadinIcon icon) {
+        final var item = new SideNavItem(label, view, new Icon(icon));
+        item.setMatchNested(true);
+        return item;
     }
 
     /** Overrides AppLayout's own default (setContent(routedView), replacing split wholesale) -
