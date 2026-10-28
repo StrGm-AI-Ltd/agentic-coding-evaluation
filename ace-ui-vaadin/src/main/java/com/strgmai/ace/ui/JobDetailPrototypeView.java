@@ -7,7 +7,6 @@ import com.github.appreciated.css.grid.sizes.Repeat;
 import com.github.appreciated.layout.FlexibleGridLayout;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
-import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.details.Details;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.Div;
@@ -147,22 +146,7 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         add(statTileGrid(job, tasks, lastAttempt));
 
         if (!tasks.isEmpty()) {
-            final var jumpTo = new ComboBox<Api.PlanTask>("Jump to task");
-            jumpTo.setItems(tasks);
-            jumpTo.setItemLabelGenerator(t -> t.id() + (t.title() == null || t.title().isBlank() ? "" : " — " + t.title()));
-            jumpTo.setWidth("320px");
-            jumpTo.setClearButtonVisible(true);
-            jumpTo.setPlaceholder("type to filter…");
-            add(jumpTo);
-
-            final var planGrid = buildPlanGrid(tasks, lastAttempt);
-            jumpTo.addValueChangeListener(e -> {
-                if (e.getValue() != null) {
-                    planGrid.select(e.getValue());
-                    planGrid.scrollToIndex(tasks.indexOf(e.getValue()));
-                }
-            });
-            add(Panels.card("Plan", planGrid));
+            add(Panels.card("Plan", buildPlanGrid(tasks, lastAttempt)));
         }
 
         final var argv = job.argv() == null ? List.<String>of() : job.argv();
