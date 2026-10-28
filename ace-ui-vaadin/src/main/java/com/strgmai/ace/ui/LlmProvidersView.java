@@ -43,7 +43,6 @@ public class LlmProvidersView extends VerticalLayout {
         setPadding(true);
 
         final var addProvider = new Button("Add provider", VaadinIcon.PLUS.create(), e -> openEditDialog(null));
-        error.getStyle().set("color", "var(--lumo-error-color)");
 
         grid.addColumn(Api.Provider::name).setHeader("name").setAutoWidth(true);
         grid.addColumn(Api.Provider::provider_key).setHeader("provider key").setAutoWidth(true);
@@ -148,7 +147,6 @@ public class LlmProvidersView extends VerticalLayout {
         }
 
         final var dialogError = new Span();
-        dialogError.getStyle().set("color", "var(--lumo-error-color)");
 
         final var save = new Button("Save", e -> {
             try {
@@ -180,7 +178,6 @@ public class LlmProvidersView extends VerticalLayout {
         dialog.add(new Span("This removes the provider from the registry. Any run already using it keeps working " +
                 "(its own job config carries a frozen model string, not a live reference back here)."));
         final var confirmError = new Span();
-        confirmError.getStyle().set("color", "var(--lumo-error-color)");
         dialog.add(confirmError);
         final var delete = new Button("Delete", e -> {
             try {
@@ -192,7 +189,6 @@ public class LlmProvidersView extends VerticalLayout {
                 confirmError.setText(client.errorText(ex));
             }
         });
-        delete.getStyle().set("color", "var(--lumo-error-text-color)");
         dialog.getFooter().add(new Button("Cancel", e -> dialog.close()), delete);
         dialog.open();
     }

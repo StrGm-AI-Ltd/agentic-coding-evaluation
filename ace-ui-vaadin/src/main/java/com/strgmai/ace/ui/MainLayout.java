@@ -34,8 +34,8 @@ import org.slf4j.LoggerFactory;
  *  Plus (#474/#485) the operator-resizable split between a tab's own content and its "Full
  *  manual" wiki pane.
  *
- *  #476 PR 3/3: the Queue/LLM Providers nav badges and the sidebar footer's connection-status dot
- *  are this layout's first-ever ServiceClient dependency - refreshed on a background thread (NOT
+ *  #476 PR 3/3: the Queue/LLM Providers nav badges are this layout's first-ever ServiceClient
+ *  dependency - refreshed on a background thread (NOT
  *  UI.setPollInterval(), which JobDetailView already owns for its own 2s live poll and which is
  *  one global value per UI, not layered) that calls ui.access() the same way JobEventLoop already
  *  does for job-page SSE, piggybacking on the app's existing @Push(AUTOMATIC) rather than adding a
@@ -86,28 +86,17 @@ public class MainLayout extends AppLayout {
         // inert (nothing to toggle) once the drawer is pinned open on a wide screen
         addToNavbar(new DrawerToggle());
 
+        // #529: Aura migration - #476/#527's hand-built brand-row CSS (the divider, the gradient
+        // logo-mark box sized/colored to match the mockup's own .brand-mark) removed outright
+        // rather than retargeted to Aura tokens, per the operator's own explicit call: don't
+        // recreate the Lumo-era custom look under Aura, rely on Aura's own standard appearance.
+        // Just the wordmark text now, no separate logo box.
         final var brand = new HorizontalLayout();
         brand.setAlignItems(FlexComponent.Alignment.CENTER);
         brand.setPadding(true);
-        // #527: the mockup's own .brand rule adds extra bottom padding plus a low-contrast
-        // divider under the whole row, before the nav starts - setPadding(true) alone gives a
-        // uniform pad, so the extra bottom space and the rule are layered on top of it here.
-        brand.getStyle().set("padding-bottom", "18px").set("margin-bottom", "6px")
-                .set("border-bottom", "1px solid var(--lumo-contrast-10pct)");
-        // #476 PR 3/3 (#527: size/gradient now matched exactly to the mockup's own .brand-mark -
-        // 28px, and the SAME two tokens - primary-text-color/primary-color - the mockup's own
-        // --accent-bright/--accent pair resolve to, replacing the old 22px box and hardcoded
-        // #4A47D1 second stop, which read as flat at that smaller size). A plain styled Span
-        // rather than an image asset, so there's nothing new to host/cache.
-        final var logoMark = new Span("A");
-        logoMark.getStyle().set("display", "inline-flex").set("align-items", "center").set("justify-content", "center")
-                .set("width", "28px").set("height", "28px").set("margin-right", "10px")
-                .set("background", "linear-gradient(145deg, var(--lumo-primary-text-color), var(--lumo-primary-color))")
-                .set("color", "white").set("font-weight", "700").set("font-size", "0.8em")
-                .set("border-radius", "var(--lumo-border-radius-m)");
         final var brandName = new Span("ACE");
         brandName.getStyle().set("font-weight", "700").set("font-size", "1.1em").set("letter-spacing", "0.02em");
-        brand.add(logoMark, brandName);
+        brand.add(brandName);
 
         // standalone, ungrouped - mirrors the reference's own "Overview" sitting outside any
         // collapsible section. A bare `new SideNav()` (no label) renders with no group header.
@@ -145,10 +134,13 @@ public class MainLayout extends AppLayout {
         // #476 PR 3/3: the local/oMLX backend's own connection status - a plain status dot kept
         // at the bottom of the drawer (scroller above flex-grows via setSizeFull(), leaving this
         // at its natural size pinned below it), updated by refreshLiveChrome().
+        // #529: the status-dependent background coloring (gray/green/red, set in
+        // refreshLiveChrome() below) removed outright, same as the rest of this migration's
+        // custom-color strip - the dot keeps its shape, just no longer color-codes live status.
         footerStatusDot.getStyle().set("display", "inline-block").set("width", "8px").set("height", "8px")
-                .set("border-radius", "50%").set("background", "var(--lumo-contrast-30pct)").set("margin-right", "6px");
+                .set("border-radius", "50%").set("margin-right", "6px");
         final var footerStatusText = new Span("ace.strgm-ai.com");
-        footerStatusText.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.8em");
+        footerStatusText.getStyle().set("font-size", "0.8em");
         final var footer = new HorizontalLayout(footerStatusDot, footerStatusText);
         footer.setPadding(true);
         footer.setSpacing(false);
@@ -229,13 +221,8 @@ public class MainLayout extends AppLayout {
             // all) - only a REMOTE provider missing one is actually something an operator must fix.
             final long misconfigured = providers.stream().filter(p -> !p.has_api_key() && !p.is_local()).count();
             providersNavItem.setSuffixComponent(misconfigured == 0 ? null : Badges.text(String.valueOf(misconfigured), Badges.WARNING));
-
-            final var local = providers.stream().filter(Api.Provider::is_local).findFirst();
-            final var ok = local.isPresent() && client.providerHealth(local.get().id()).ok();
-            footerStatusDot.getStyle().set("background", local.isEmpty() ? "var(--lumo-contrast-30pct)"
-                    : ok ? "var(--lumo-success-color)" : "var(--lumo-error-color)");
         } catch (final Exception e) {
-            log.debug("could not refresh the LLM Providers nav badge / footer connection status: {}", e.toString());
+            log.debug("could not refresh the LLM Providers nav badge: {}", e.toString());
         }
     }
 

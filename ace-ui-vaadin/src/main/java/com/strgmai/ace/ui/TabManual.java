@@ -77,10 +77,9 @@ final class TabManual {
      *  @param wikiPage the wiki page's bare name, e.g. "User-Manual-Jobs" (no ".md", no slashes). */
     static Div banner(final Component view, final String description, final String wikiPage) {
         final var text = new Span(description);
-        text.getStyle().set("color", "var(--lumo-secondary-text-color)");
 
         final var full = new Button("Full manual", VaadinIcon.BOOK.create(), e -> ownerLayout(view).openManual(wikiPage));
-        full.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL);
+        full.addThemeVariants(ButtonVariant.TERTIARY, ButtonVariant.SMALL);
 
         final var row = new HorizontalLayout(text, full);
         row.setAlignItems(FlexComponent.Alignment.CENTER);
@@ -89,8 +88,6 @@ final class TabManual {
 
         final var wrapper = new Div(row);
         wrapper.getStyle()
-                .set("background", "var(--lumo-contrast-5pct)")
-                .set("border-radius", "var(--lumo-border-radius-m)")
                 .set("padding", "8px 14px")
                 .set("margin-bottom", "16px");
         return wrapper;
@@ -121,13 +118,12 @@ final class TabManual {
         final var openInGithub = new Anchor(WIKI_BASE + wikiPage, "Open in GitHub");
         openInGithub.setTarget("_blank");
         final var close = new Button(VaadinIcon.CLOSE_SMALL.create(), e -> onClose.run());
-        close.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL);
+        close.addThemeVariants(ButtonVariant.TERTIARY, ButtonVariant.SMALL);
         final var header = new HorizontalLayout(title, openInGithub, close);
         header.setAlignItems(FlexComponent.Alignment.CENTER);
         header.setJustifyContentMode(FlexComponent.JustifyContentMode.BETWEEN);
         header.setWidthFull();
-        header.getStyle().set("border-bottom", "1px solid var(--lumo-contrast-10pct)")
-                .set("padding-bottom", "8px");
+        header.getStyle().set("padding-bottom", "8px");
         container.add(header);
 
         final var body = new Div();

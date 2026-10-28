@@ -18,7 +18,10 @@ import com.vaadin.flow.router.RouterLink;
 public class InfoView extends Div {
 
     public InfoView() {
-        getStyle().set("padding", "var(--lumo-space-m)").set("max-width", "720px");
+        // #529: Aura migration - --lumo-space-m (a Lumo-only sizing token) replaced with its own
+        // plain px value, same as the other structural (non-color) spacing already using literal
+        // values elsewhere in this app; only the var(--lumo-*) COLOR customizations are dropped.
+        getStyle().set("padding", "16px").set("max-width", "720px");
 
         add(new H2("ACE"));
         final var goal = new Paragraph();

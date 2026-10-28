@@ -53,7 +53,7 @@ public class ProviderModelPicker extends HorizontalLayout {
         model.setLabel(label);
         model.setAllowCustomValue(true);
         model.setEnabled(false);
-        error.getStyle().set("color", "var(--lumo-error-color)").set("font-size", "0.8em");
+        error.getStyle().set("font-size", "0.8em");
         error.setVisible(false);
 
         provider.addValueChangeListener(e -> onProviderChanged());

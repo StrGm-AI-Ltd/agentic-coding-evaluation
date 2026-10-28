@@ -80,7 +80,7 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         statusLine.getStyle().set("margin", "4px 0");
         if (!java.util.Objects.equals(effectiveStatus, experiment.status())) {
             final var raw = new Span("(table status: " + experiment.status() + " — derived from its jobs)");
-            raw.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em");
+            raw.getStyle().set("font-size", "0.85em");
             statusLine.add(raw);
         }
         statusLine.add(new Span(metaLine(experiment)));
@@ -109,8 +109,7 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
                 }
                 render();
             });
-            blockedPanel.add(Panels.callout("var(--lumo-warning-color)", "var(--lumo-warning-color-10pct)",
-                            blockedLine, requeueAll));
+            blockedPanel.add(Panels.callout(blockedLine, requeueAll));
             add(blockedPanel);
         }
 
@@ -274,14 +273,12 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         add(Panels.sectionTitle("Comparison"));
         if (!"finished".equals(experiment.status())) {
             final var note = new Span("Computed automatically once every job above is terminal.");
-            note.getStyle().set("color", "var(--lumo-secondary-text-color)");
             add(note);
             return;
         }
         final var cards = comparisonCards(experiment.comparison());
         if (cards.isEmpty()) {
             final var note = new Span("No comparison recorded.");
-            note.getStyle().set("color", "var(--lumo-secondary-text-color)");
             add(note);
             return;
         }
@@ -290,23 +287,20 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
             cardLayout.setPadding(false);
             cardLayout.setSpacing(true);
             cardLayout.getStyle()
-                    .set("border", "1px solid var(--lumo-contrast-20pct)")
-                    .set("border-radius", "8px")
                     .set("padding", "12px 16px")
                     .set("margin", "6px 0");
             final var header = new Span(card.label());
             header.getStyle().set("font-weight", "600");
             cardLayout.add(header);
             switch (card.calloutKind()) {
-                case "good" -> cardLayout.add(Panels.callout("var(--lumo-success-color)",
-                        "var(--lumo-success-color-10pct)", new Span(card.calloutText())));
+                case "good" -> cardLayout.add(Panels.callout(new Span(card.calloutText())));
                 case "error" -> cardLayout.add(Panels.error(card.calloutText()));
                 case "warn" -> cardLayout.add(Panels.warn(card.calloutText()));
                 default -> cardLayout.add(new Span(card.calloutText()));
             }
             for (final var speedLine : card.speedLines()) {
                 final var line = new Span(speedLine);
-                line.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.9em");
+                line.getStyle().set("font-size", "0.9em");
                 cardLayout.add(line);
             }
             if (card.printed() != null && !card.printed().isBlank()) {

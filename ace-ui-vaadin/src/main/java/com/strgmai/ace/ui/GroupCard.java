@@ -26,8 +26,6 @@ public class GroupCard extends VerticalLayout {
         setPadding(false);
         setSpacing(true);
         getStyle()
-                .set("border", "1px solid var(--lumo-contrast-20pct)")
-                .set("border-radius", "8px")
                 .set("padding", "12px 16px")
                 .set("margin", "6px 0");
 
@@ -39,7 +37,7 @@ public class GroupCard extends VerticalLayout {
         }
         final var key = new Span("key " + (group.key_hash() == null ? "" : group.key_hash().substring(0,
                 Math.min(10, group.key_hash().length()))));
-        key.getStyle().set("color", "var(--lumo-secondary-text-color)")
+        key.getStyle()
                 .set("font-family", "ui-monospace, 'SF Mono', Menlo, monospace").set("font-size", "12px");
         head.add(key);
         head.setAlignItems(Alignment.BASELINE);
@@ -129,7 +127,7 @@ public class GroupCard extends VerticalLayout {
         if (invalid > 0) parts.add(invalid + " invalid");
         if (partial > 0) parts.add(partial + " partial (docker skipped/infra)");
         final var excluded = new Span("excluded: " + String.join(", ", parts));
-        excluded.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "13px");
+        excluded.getStyle().set("font-size", "13px");
         add(excluded);
     }
 

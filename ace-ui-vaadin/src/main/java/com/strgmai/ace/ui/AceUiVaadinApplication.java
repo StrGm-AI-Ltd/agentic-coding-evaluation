@@ -6,7 +6,7 @@ import com.vaadin.flow.component.page.ColorScheme;
 import com.vaadin.flow.component.page.Push;
 import com.vaadin.flow.server.AppShellSettings;
 import com.vaadin.flow.shared.communication.PushMode;
-import com.vaadin.flow.theme.lumo.Lumo;
+import com.vaadin.flow.theme.aura.Aura;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
@@ -14,20 +14,20 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 /**
  * The Spring Boot application class doubles as Vaadin's app shell (vaadin-spring),
  * so it implements AppShellConfigurator directly and carries @Push — server push
- * flushes the job page's SSE events to the browser instantly. @StyleSheet(Lumo.STYLESHEET) is
- * required explicitly on Vaadin 25+ (Lumo is no longer auto-loaded without @Theme/@StyleSheet) -
- * every Badge theme variant and var(--lumo-*) style elsewhere in this app depends on it.
+ * flushes the job page's SSE events to the browser instantly. @StyleSheet(Aura.STYLESHEET) is
+ * required explicitly once an AppShellConfigurator is defined (Aura is otherwise loaded
+ * automatically, but only in the absence of one - confirmed against the Vaadin 25 docs
+ * directly, the same rigor previously applied to Lumo's own equivalent requirement).
  *
- * #476 (PR 1/2): @ColorScheme(DARK) commits the whole app to Lumo's dark color scheme, always -
- * no light/dark toggle, matching the "Night operator" direction. It sets theme="dark" on the
- * document, which is what makes the [theme~="dark"] selectors in styles.css (loaded right after
- * Lumo itself, so it wins the cascade - see the Vaadin styling docs' own "themes before other
- * styles" rule) apply the brand palette/typography on top of Lumo's own dark grayscale instead of
- * hand-deriving a full contrast scale from scratch.
+ * #529: migrated from Lumo to Aura - Aura's own built-in dark theme now provides the whole
+ * "Night operator" look (@ColorScheme(DARK) below works identically for both themes, confirmed
+ * against the docs). The hand-built styles.css palette/typography overrides and MainLayout's
+ * own hand-styled sidebar CSS (#476/#527/#528) are gone, not retargeted - every var(--lumo-*)
+ * customization across the app was removed outright per that decision, relying on Aura's own
+ * standard component styling instead of recreating the old Lumo-based custom look on top of it.
  */
 @Push(PushMode.AUTOMATIC)
-@StyleSheet(Lumo.STYLESHEET)
-@StyleSheet("styles.css")
+@StyleSheet(Aura.STYLESHEET)
 @ColorScheme(ColorScheme.Value.DARK)
 @SpringBootApplication
 @ConfigurationPropertiesScan

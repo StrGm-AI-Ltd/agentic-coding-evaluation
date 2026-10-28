@@ -79,8 +79,6 @@ public class RunsView extends VerticalLayout {
         filters.setDefaultVerticalComponentAlignment(Alignment.END);
         filters.getStyle().set("flex-wrap", "wrap");
 
-        error.getStyle().set("color", "var(--lumo-error-color)");
-        emptyState.getStyle().set("color", "var(--lumo-secondary-text-color)");
         emptyState.setVisible(false);
 
         grid.addColumn(new ComponentRenderer<>(run -> Links.runLink(run.run_id())))
