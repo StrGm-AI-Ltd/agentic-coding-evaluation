@@ -1,5 +1,6 @@
 package com.strgmai.ace.ui;
 
+import com.github.appreciated.apexcharts.ApexCharts;
 import com.github.appreciated.apexcharts.ApexChartsBuilder;
 import com.github.appreciated.apexcharts.config.builder.ChartBuilder;
 import com.github.appreciated.apexcharts.config.builder.SeriesBuilder;
@@ -8,6 +9,7 @@ import com.github.appreciated.apexcharts.config.builder.XAxisBuilder;
 import com.github.appreciated.apexcharts.config.builder.YAxisBuilder;
 import com.github.appreciated.apexcharts.config.chart.Type;
 import com.github.appreciated.apexcharts.config.theme.Mode;
+import com.github.appreciated.apexcharts.config.yaxis.builder.TitleBuilder;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
@@ -63,6 +65,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     private final Grid<JobLiveState.RequestRow> requestsGrid = buildRequestsGrid();
     private final Grid<JobLiveState.SessionRow> sessionsGrid = buildSessionsGrid();
     private final Grid<Api.PlanTask> planGrid = buildPlanGrid();
+    // #476 PR 3/3: a job-level (not per-task) live chart, built once and updated in place via
+    // ApexCharts' own updateSeries()/setXaxis() - see updateRequestLatencyChart().
+    private final ApexCharts requestLatencyChart = buildRequestLatencyChart();
     // fetched once and cached - the plan itself never changes once p1_plan has produced it; the
     // status column still refreshes every poll cycle from live.sessions(), re-rendered via setItems()
     private List<Api.PlanTask> planTasks = List.of();
@@ -108,6 +113,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     private final Div blockedHolder = new Div();
     private final Div actionsHolder = new Div();
     private final VerticalLayout liveSection = new VerticalLayout();
+    // #476 PR 3/3: wraps the current-step/active-time stat tiles so both hide together on a
+    // terminal job, instead of each tile's own inner Span hiding and leaving an empty tile shell.
+    private final HorizontalLayout liveStatsRow = new HorizontalLayout();
     private final Span plannedOrderLine = new Span();
     private final Span stepLine = new Span();
     private final Span activeTimeLine = new Span();
@@ -230,11 +238,21 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         liveSection.getStyle().set("margin-top", "16px");
         final var liveTitle = new H3("Live");
         liveTitle.getStyle().set("margin", "0 0 4px 0");
-        liveSection.add(liveTitle, plannedOrderLine, planGrid, stepLine, activeTimeLine, sessionsGrid, requestsLine, lostNotice,
-                terminalNote, requestsGrid, logTail);
+
+        // #476 PR 3/3: current step + active time as stat tiles instead of flat text lines - both
+        // toggle together via liveStatsRow itself (see updateLive()), not their own inner Spans, so
+        // a terminal job's tile shells disappear along with their values rather than going blank.
+        liveStatsRow.setPadding(false);
+        liveStatsRow.setSpacing(true);
+        liveStatsRow.getStyle().set("flex-wrap", "wrap").set("margin", "4px 0");
+        liveStatsRow.add(Panels.statTile("Current step", stepLine), Panels.statTile("Active time", activeTimeLine));
+
+        liveSection.add(liveTitle, plannedOrderLine, Panels.card("Plan", planGrid), liveStatsRow, sessionsGrid,
+                requestsLine, lostNotice, terminalNote, Panels.card("Recent requests", requestLatencyChart, requestsGrid), logTail);
         plannedOrderLine.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.9em");
         stepLine.getStyle().set("font-weight", "600");
         activeTimeLine.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.9em");
+        com.vaadin.flow.component.shared.Tooltip.forComponent(activeTimeLine).setText("excludes paused/stopped periods");
         lostNotice.getStyle().set("color", "var(--lumo-warning-text-color, orange)").set("font-size", "0.85em");
         terminalNote.getStyle().set("color", "var(--lumo-secondary-text-color)");
         logTail.getStyle().set("font-family", "ui-monospace, 'SF Mono', Menlo, monospace")
@@ -399,8 +417,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 && !terminal && !sseStopped);
         terminalNote.setVisible(terminal);
         plannedOrderLine.setVisible(!terminal && !live.executionOrder().isEmpty());
-        stepLine.setVisible(!terminal);
-        activeTimeLine.setVisible(!terminal);
+        liveStatsRow.setVisible(!terminal);
         sessionsGrid.setVisible(!terminal);
         requestsLine.setVisible(!terminal);
 
@@ -413,14 +430,18 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 logTail.setVisible(false);
             }
             requestsGrid.setVisible(false);
+            requestLatencyChart.setVisible(false);
             return;
         }
 
         if (!live.executionOrder().isEmpty()) {
             plannedOrderLine.setText("planned order: " + plannedOrderText(live.executionOrder()));
         }
-        stepLine.setText("current step: " + (live.currentStep() == null ? "–" : live.currentStep()));
-        activeTimeLine.setText("active time (excludes paused/stopped periods): " + Fmt.daysHoursMinutes(live.totalActiveSeconds()));
+        // #476 PR 3/3: no "current step: "/"active time: " prefix - each now lives inside a
+        // Panels.statTile() whose own label already says that (see buildChrome()); the "excludes
+        // paused/stopped periods" caveat moved to activeTimeLine's tooltip (set once, in buildChrome).
+        stepLine.setText(live.currentStep() == null ? "–" : live.currentStep());
+        activeTimeLine.setText(Fmt.daysHoursMinutes(live.totalActiveSeconds()));
         sessionsGrid.setItems(live.sessions());
         final var recent = live.recentRequests();
         // #109: recentRequests is capped (JobLiveState.MAX_RECENT_REQUESTS); say so once the total
@@ -436,6 +457,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
         requestsGrid.setVisible(!recent.isEmpty());
         requestsGrid.setItems(recent);
+        requestLatencyChart.setVisible(!recent.isEmpty());
+        updateRequestLatencyChart(recent);
 
         final var tail = live.logTail() != null ? live.logTail()
                 : (currentJob != null ? currentJob.result_line() : null);
@@ -489,6 +512,36 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         requests.setHeight("420px");
         requests.setVisible(false);
         return requests;
+    }
+
+    /** #476 PR 3/3: a job-level (not per-task) live chart sitting beside requestsGrid, built from
+     *  the SAME live.recentRequests() data already driving that grid - avoids the "which task's
+     *  chart" ambiguity the per-task dialog charts would have at this, whole-job scope. Built once;
+     *  see updateRequestLatencyChart() for how it's kept current without a full rebuild. */
+    private static ApexCharts buildRequestLatencyChart() {
+        final var chart = ApexChartsBuilder.get()
+                .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent").build())
+                .withTheme(ThemeBuilder.get().withMode(Mode.DARK).build())
+                .withXaxis(XAxisBuilder.get().withCategories(new String[0]).build())
+                .withYaxis(YAxisBuilder.get().withTitle(TitleBuilder.get().withText("latency (s)").build()).build())
+                .withSeries(SeriesBuilder.get().withName("latency (s)").withData(new Double[0]).build())
+                .build();
+        chart.setHeight("220px");
+        chart.setVisible(false);
+        return chart;
+    }
+
+    /** Updated in place via ApexCharts' own updateSeries()/setXaxis() rather than rebuilt from
+     *  scratch - a running job polls every 2s, and a full chart re-render that often would
+     *  flash/flicker the same way a full-DOM rebuild would steal focus elsewhere on this page. */
+    private void updateRequestLatencyChart(final List<JobLiveState.RequestRow> recent) {
+        final var categories = new String[recent.size()];
+        for (int i = 0; i < recent.size(); i++) {
+            categories[i] = String.valueOf(i + 1);
+        }
+        requestLatencyChart.setXaxis(XAxisBuilder.get().withCategories(categories).build());
+        requestLatencyChart.updateSeries(SeriesBuilder.get().withName("latency (s)")
+                .withData(recent.stream().map(JobLiveState.RequestRow::latencySec).toArray(Double[]::new)).build());
     }
 
     /** #47: the stage a session ended at, alongside its label - a session that outlives its own
