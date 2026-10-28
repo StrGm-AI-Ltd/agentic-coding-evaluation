@@ -944,4 +944,81 @@ class JobDetailViewTest {
         assertNull(data[0]);
         assertNull(data[1]);
     }
+
+    @Test
+    void isTaskDone_trueForAnExplicitDoneSelfReportRegardlessOfHandoffStatus() {
+        assertTrue(JobDetailView.isTaskDone(planTask("T1", true, true, "done")));
+        assertTrue(JobDetailView.isTaskDone(planTask("T1", true, false, "done")));
+    }
+
+    @Test
+    void isTaskDone_falseForAnyOtherSelfReportedOutcome() {
+        assertFalse(JobDetailView.isTaskDone(planTask("T1", true, true, "partial")));
+        assertFalse(JobDetailView.isTaskDone(planTask("T1", true, true, "blocked")));
+    }
+
+    @Test
+    void isTaskDone_fallsBackToHandoffDoneWhenThereIsNoSelfReportAtAll() {
+        assertTrue(JobDetailView.isTaskDone(planTask("T1", true, true, null)));
+        assertFalse(JobDetailView.isTaskDone(planTask("T1", true, false, null)));
+    }
+
+    @Test
+    void isTaskDone_falseWhenNotYetImplemented() {
+        assertFalse(JobDetailView.isTaskDone(planTask("T1", false, false, "done")));
+    }
+
+    @Test
+    void tasksDoneText_countsDoneTasksAgainstTheFullPlanIncludingStageRows() {
+        final var tasks = List.of(
+                planTask("T1", true, true, "done"),
+                planTask("T2", true, true, "partial"),
+                planTask("INTEGRATION", true, true, "done"));
+
+        assertEquals("2 / 3", JobDetailView.tasksDoneText(tasks));
+    }
+
+    @Test
+    void tasksDoneText_isADashForAnEmptyPlan() {
+        assertEquals("–", JobDetailView.tasksDoneText(List.of()));
+    }
+
+    @Test
+    void taskTurnsText_isADashBeforeTheFirstStatsResponseArrives() {
+        assertEquals("–", JobDetailView.taskTurnsText(null));
+    }
+
+    @Test
+    void taskTurnsText_pairsTurnsWithTheCurrentTasksOwnBashCallCount() {
+        final var stats = Json.MAPPER.readTree("""
+                {"state": "running", "turns": 137, "tool_calls": {"bash": {"count": 128, "errors": 18}}}""");
+
+        assertEquals("137 · 128 bash calls", JobDetailView.taskTurnsText(stats));
+    }
+
+    @Test
+    void taskTurnsText_isADashWhenTheResponseHasNoTurnsFieldAtAll() {
+        assertEquals("–", JobDetailView.taskTurnsText(Json.MAPPER.readTree("{\"state\": \"not_started\"}")));
+    }
+
+    @Test
+    void toolErrorsText_isADashBeforeTheFirstStatsResponseArrives() {
+        assertEquals("–", JobDetailView.toolErrorsText(null));
+    }
+
+    @Test
+    void toolErrorsText_showsTheBashErrorRateNotEveryToolsErrorsCombined() {
+        final var stats = Json.MAPPER.readTree("""
+                {"state": "running", "turns": 137,
+                 "tool_calls": {"bash": {"count": 128, "errors": 18}, "edit": {"count": 9, "errors": 9}}}""");
+
+        assertEquals("18 · 14% of bash calls", JobDetailView.toolErrorsText(stats));
+    }
+
+    @Test
+    void toolErrorsText_omitsTheRateWhenNoBashCallHasHappenedYet() {
+        final var stats = Json.MAPPER.readTree("{\"state\": \"running\", \"turns\": 1}");
+
+        assertEquals("0", JobDetailView.toolErrorsText(stats));
+    }
 }

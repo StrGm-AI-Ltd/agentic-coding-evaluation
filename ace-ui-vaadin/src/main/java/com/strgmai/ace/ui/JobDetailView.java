@@ -119,6 +119,14 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     private final Span plannedOrderLine = new Span();
     private final Span stepLine = new Span();
     private final Span activeTimeLine = new Span();
+    // #517 follow-up (design-mockup parity): tasksDoneLine is pure/local (planTasks + live.sessions(),
+    // no I/O); taskTurnsLine/toolErrorsLine come from currentTaskStats, which refresh() fetches
+    // (one extra GET per poll, same /api/jobs/{id}/tasks/{taskId}/stats the per-task dialog's own
+    // Stats tab already calls) - updateLive() only ever reads currentTaskStats, never fetches it.
+    private final Span tasksDoneLine = new Span();
+    private final Span taskTurnsLine = new Span();
+    private final Span toolErrorsLine = new Span();
+    private JsonNode currentTaskStats;
     private final Span requestsLine = new Span();
     private final Div logTail = new Div();
     private final Span terminalNote = new Span("This job has finished; nothing more to stream.");
@@ -245,7 +253,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         liveStatsRow.setPadding(false);
         liveStatsRow.setSpacing(true);
         liveStatsRow.getStyle().set("flex-wrap", "wrap").set("margin", "4px 0");
-        liveStatsRow.add(Panels.statTile("Current step", stepLine), Panels.statTile("Active time", activeTimeLine));
+        liveStatsRow.add(Panels.statTile("Current step", stepLine), Panels.statTile("Active time", activeTimeLine),
+                Panels.statTile("Tasks done", tasksDoneLine), Panels.statTile("Current task turns", taskTurnsLine),
+                Panels.statTile("Tool errors", toolErrorsLine));
 
         liveSection.add(liveTitle, plannedOrderLine, Panels.card("Plan", planGrid), liveStatsRow, sessionsGrid,
                 requestsLine, lostNotice, terminalNote, Panels.card("Recent requests", requestLatencyChart, requestsGrid), logTail);
@@ -253,6 +263,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         stepLine.getStyle().set("font-weight", "600");
         activeTimeLine.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.9em");
         com.vaadin.flow.component.shared.Tooltip.forComponent(activeTimeLine).setText("excludes paused/stopped periods");
+        tasksDoneLine.getStyle().set("font-weight", "600");
+        taskTurnsLine.getStyle().set("font-weight", "600");
+        toolErrorsLine.getStyle().set("font-weight", "600");
         lostNotice.getStyle().set("color", "var(--lumo-warning-text-color, orange)").set("font-size", "0.85em");
         terminalNote.getStyle().set("color", "var(--lumo-secondary-text-color)");
         logTail.getStyle().set("font-family", "ui-monospace, 'SF Mono', Menlo, monospace")
@@ -295,6 +308,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 ensureSse(ui); // m5: restart a dead loop (transient failures) instead of staying dark
             }
         });
+        refreshCurrentTaskStats(terminal);
         if (job.run_id() != null && shouldProbeRun(runImported, previousStatus, job.status())) {
             runImported = isRunImported(client, job.run_id());
         }
@@ -310,6 +324,27 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             blockedHolder.removeAll();
             blockedHolder.add(Panels.warn(job.blocked_reason()));
             lastBlockedReason = job.blocked_reason();
+        }
+    }
+
+    /** The current task's own turns/tool-call stats, via the same GET /api/jobs/{id}/tasks/{taskId}/
+     *  stats the per-task dialog's own Stats tab already calls - reused as-is rather than adding a
+     *  new job-wide aggregate endpoint (the backend's own sessionCounts() rescans every session file
+     *  in the job's directory per task; a naive all-tasks aggregate would cost O(tasks × files) on
+     *  every 2s poll for no real benefit, since taskTurnsLine/toolErrorsLine are about the CURRENT
+     *  task only - matching the design mockup's own "T17 turns"/"Tool errors" tiles, which named
+     *  the then-running task specifically, not a job-wide total). Best-effort: a transient fetch
+     *  failure leaves currentTaskStats at its last known value rather than flashing the tiles blank. */
+    private void refreshCurrentTaskStats(final boolean terminal) {
+        final var step = live.currentStep();
+        if (terminal || step == null) {
+            currentTaskStats = null;
+            return;
+        }
+        try {
+            currentTaskStats = client.taskStats(jobId, step);
+        } catch (final Exception e) {
+            log.debug("could not fetch current-task stats for job {} task {}: {}", jobId, step, e.toString());
         }
     }
 
@@ -442,6 +477,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         // paused/stopped periods" caveat moved to activeTimeLine's tooltip (set once, in buildChrome).
         stepLine.setText(live.currentStep() == null ? "–" : live.currentStep());
         activeTimeLine.setText(Fmt.daysHoursMinutes(live.totalActiveSeconds()));
+        tasksDoneLine.setText(tasksDoneText(planTasks));
+        taskTurnsLine.setText(taskTurnsText(currentTaskStats));
+        toolErrorsLine.setText(toolErrorsText(currentTaskStats));
         sessionsGrid.setItems(live.sessions());
         final var recent = live.recentRequests();
         // #109: recentRequests is capped (JobLiveState.MAX_RECENT_REQUESTS); say so once the total
@@ -727,6 +765,46 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         if (!task.implemented()) return null;
         final var detail = task.reported_detail();
         return detail == null || detail.isBlank() ? null : detail;
+    }
+
+    /** A task counts as "done" for the Tasks-done tile the same way taskStatus() itself detects a
+     *  clean success - implemented, and either an explicit "done" self-report or (no report at all)
+     *  a finished handoff - just without taskStatus()'s own "(handoff pending)" suffix formatting,
+     *  which the tile's plain X/Y count has no use for. */
+    static boolean isTaskDone(final Api.PlanTask task) {
+        if (!task.implemented()) return false;
+        final var reported = task.reported_status();
+        return reported != null ? "done".equals(reported) : task.handoff_done();
+    }
+
+    /** #517 follow-up: the "Tasks done" tile - X/Y across every plan row (stage rows like
+     *  PARALLEL_PLAN/INTEGRATION/REVIEW included, same set the Plan grid itself already lists). */
+    static String tasksDoneText(final List<Api.PlanTask> tasks) {
+        if (tasks.isEmpty()) return "–";
+        final long done = tasks.stream().filter(JobDetailView::isTaskDone).count();
+        return done + " / " + tasks.size();
+    }
+
+    /** #517 follow-up: the "Current task turns" tile, from the SAME per-task stats payload the
+     *  per-task dialog's Stats tab already fetches (taskStatsLines() reads "turns" the identical
+     *  way) - sub-detail is the current task's own bash-call count, matching the design mockup's
+     *  own "128 bash calls" sub-line under its "T17 turns" tile. */
+    static String taskTurnsText(final JsonNode stats) {
+        if (stats == null || !stats.hasNonNull("turns")) return "–";
+        final var bashCalls = stats.path("tool_calls").path("bash").path("count").asInt(0);
+        return stats.path("turns").asInt() + " · " + bashCalls + " bash calls";
+    }
+
+    /** #517 follow-up: the "Tool errors" tile - bash-tool errors specifically (not every tool's
+     *  errors summed), matching the mockup's own "14% of bash calls" sub-line, which is a rate
+     *  over bash calls specifically, not over every tool call the task made. */
+    static String toolErrorsText(final JsonNode stats) {
+        if (stats == null) return "–";
+        final var bash = stats.path("tool_calls").path("bash");
+        final var calls = bash.path("count").asInt(0);
+        final var errors = bash.path("errors").asInt(0);
+        if (calls == 0) return String.valueOf(errors);
+        return errors + " · " + Math.round(100.0 * errors / calls) + "% of bash calls";
     }
 
     private static JobLiveState.SessionRow lastMatchingSession(final List<JobLiveState.SessionRow> sessions, final String taskId) {
