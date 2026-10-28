@@ -39,3 +39,57 @@
   --lumo-border-radius-m: 7px;
   --lumo-border-radius-l: 10px;
 }
+
+/* #527: SideNav/SideNavItem are Vaadin web components - their group-header row and the
+ * active-item highlight render inside shadow DOM, not plain Java-constructed elements, so these
+ * two gaps from the mockup comparison need shadow ::part() selectors rather than component-level
+ * Java styling. Every part name/structure below was confirmed live (Playwright, shadowRoot
+ * inspection against the real deployed markup) before writing this, not guessed from docs. */
+
+/* vaadin-side-nav's own group-header BUTTON (part="label") is a flex row containing the slotted
+ * label text and a nested part="toggle-button" chevron span as siblings - text-transform/
+ * letter-spacing/color set here inherit down through the <slot> into the slotted "Benchmarking"/
+ * "System" text (slotted content inherits from its flattened-tree parent, i.e. this button, not
+ * its original light-DOM parent), matching the mockup's own uppercase/tracked/dimmer header
+ * style. justify-content: space-between is what actually moves the chevron to the sidebar's far
+ * right edge instead of sitting right after the label text, matching the mockup's own layout. */
+[theme~="dark"] vaadin-side-nav::part(label) {
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--lumo-contrast-50pct);
+  justify-content: space-between;
+}
+[theme~="dark"] vaadin-side-nav::part(toggle-button) {
+  opacity: 0.8;
+}
+
+/* vaadin-side-nav-item's own [current] attribute (set automatically by setMatchNested()'s route
+ * matching) marks the active item - part="link" is the clickable <a>, part="content" is its
+ * rounded background pill (already tinted via --lumo-primary-color-10pct, Lumo's own built-in
+ * active-item styling - left alone here, already close to the mockup's own soft accent-soft
+ * background). Two real gaps closed: the active label reads bright indigo today (Lumo's own
+ * default), the mockup keeps it plain bold white; and there was no accent bar at all. The
+ * mockup's own bar protrudes OUTSIDE the sidebar (left: -12px) - confirmed live that vaadin-
+ * scroller (the nav's own scroll container, between these items and AppLayout's drawer) sets
+ * overflow-x: auto, which clips anything positioned past its own box, so a protruding bar would
+ * be invisible here. This draws it INSET at the pill's own left edge instead - the closest
+ * faithful equivalent that actually renders, not a silent downgrade. */
+[theme~="dark"] vaadin-side-nav-item[current]::part(link) {
+  color: var(--lumo-body-text-color);
+  font-weight: 600;
+}
+[theme~="dark"] vaadin-side-nav-item[current]::part(content) {
+  position: relative;
+}
+[theme~="dark"] vaadin-side-nav-item[current]::part(content)::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 15%;
+  bottom: 15%;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--lumo-primary-color);
+}
