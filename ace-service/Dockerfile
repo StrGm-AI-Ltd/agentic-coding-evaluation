@@ -42,8 +42,14 @@ RUN sh -c 'jar=$(find ace-service/build/libs -maxdepth 1 -name "*.jar" ! -name "
 FROM eclipse-temurin:21-jre
 # git is a FATAL preflight check (Preflight.java): a deployed container without it can never pass
 # guard() and would refuse every job forever - this is not test-only scaffolding, a real deployment
-# needs this to do its actual job
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl gnupg \
+# needs this to do its actual job. zsh is the SAME kind of hard dependency, just a silent one until
+# now: AgentTools.bash() execs every agent shell command via "zsh", "-lc", with no fallback - found
+# live on a real AWS deployment that never had it installed, where every bash tool call in every
+# task crashed (java.io.IOException: Cannot run program "zsh") for hours with nothing surfacing it
+# until #327's own new failure-category telemetry made the crash directly visible. Added as its own
+# fatal Preflight check too (Preflight.java), so a future deployment missing it refuses to start
+# instead of silently burning a whole run's budget the same way again.
+RUN apt-get update && apt-get install -y --no-install-recommends git zsh ca-certificates curl gnupg \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \

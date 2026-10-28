@@ -37,12 +37,20 @@ class PreflightTest {
     }
 
     private static MockedStatic<DockerService> mockDocker(final int dockerRc, final int composeRc, final int gitRc) {
+        return mockDocker(dockerRc, composeRc, gitRc, 0);
+    }
+
+    /** #327: zshRc mirrors gitRc's own convention exactly - zsh is the SAME kind of fatal hard
+     *  dependency AgentTools.bash() has on it (found live: a real deployment missing it crashed
+     *  every bash tool call for hours with nothing refusing the run up front). */
+    private static MockedStatic<DockerService> mockDocker(final int dockerRc, final int composeRc, final int gitRc, final int zshRc) {
         final MockedStatic<DockerService> docker = mockStatic(DockerService.class);
         docker.when(() -> DockerService.sh(anyInt(), any(String[].class))).thenAnswer(inv -> {
             Object[] all = inv.getArguments();   // Mockito flattens the varargs: [timeoutSec, cmd[0], cmd[1], ...]
             final String[] cmd = new String[all.length - 1];
             for (int i = 1; i < all.length; i++) cmd[i - 1] = (String) all[i];
             if (cmd[0].equals("git")) return new DockerService.Sh(gitRc, "git version 2.42.0");
+            if (cmd[0].equals("zsh")) return new DockerService.Sh(zshRc, "zsh 5.9");
             if (cmd[0].equals("docker") && cmd.length > 1 && cmd[1].equals("info")) return new DockerService.Sh(dockerRc, "24.0.0");
             if (cmd[0].equals("docker") && cmd.length > 1 && cmd[1].equals("compose")) return new DockerService.Sh(composeRc, "2.20.0");
             return new DockerService.Sh(1, "");
@@ -81,6 +89,7 @@ class PreflightTest {
             assertTrue(byName(r, "docker daemon").ok());
             assertTrue(byName(r, "docker compose v2").ok());
             assertTrue(byName(r, "git").ok());
+            assertTrue(byName(r, "zsh").ok());
             assertTrue(byName(r, "reference agent").ok());
             assertTrue(byName(r, "pinned JDK 21").ok());
             assertTrue(byName(r, "model server").ok());
@@ -102,6 +111,26 @@ class PreflightTest {
             final Preflight.Check git = byName(r, "git");
             assertFalse(git.ok());
             assertTrue(git.fatal());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /** #327, found live: a real AWS deployment never had zsh installed - AgentTools.bash() execs
+     *  every agent shell command via "zsh", "-lc" with no fallback, so every bash tool call in
+     *  every task crashed for hours before anything surfaced it. Same fatal treatment as git. */
+    @Test
+    void missingZshBlocksEvenThoughGitAndDockerAreUp() throws Exception {
+        final HttpServer server = fakeModelServer("target-model");
+        try (MockedStatic<DockerService> docker = mockDocker(0, 0, 0, 1)) {
+            final var pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()),
+                    new com.strgmai.ace.service.agent.ProviderStore(null));
+            final Preflight.Report r = pf.check(null);
+
+            assertTrue(r.blocked());
+            final Preflight.Check zsh = byName(r, "zsh");
+            assertFalse(zsh.ok());
+            assertTrue(zsh.fatal());
         } finally {
             server.stop(0);
         }
