@@ -153,19 +153,23 @@ final class RunTaskDialog {
             for (int i = 0; i < sections.size(); i++) {
                 final var section = sections.get(i);
                 if (multiAttempt) {
-                    final var header = new H4(section.header());
-                    header.getStyle().set("margin", "12px 0 4px 0").set("font-size", "0.95em");
-                    statsBody.add(header);
-                    statsBody.add(Panels.mono(section.body()));
+                    // #517 (A): same card treatment as JobDetailView's own live task dialog
+                    statsBody.add(Panels.card(section.header(), Panels.mono(section.body())));
                 }
                 JobDetailView.addCompactionEffectivenessTables(section, statsBody);
+                // #517 (B): this dialog is a one-shot load (a finished, already-imported run - no
+                // polling), so build-then-immediately-update is just the simplest way to reuse the
+                // same build()/update() split JobDetailView's own live version needs for its
+                // in-place redraws; no second update ever follows here.
                 final var attemptLabel = multiAttempt ? " — Attempt " + (i + 1) : "";
-                JobDetailView.addRequestSpeedChart(section.requestSpeeds(), section.compactionsBeforeRequest(),
-                        section.judgeOnTrackRequests(), section.judgeOffTrackRequests(), statsBody,
-                        "Prefill speed by request" + attemptLabel);
-                JobDetailView.addRequestTimingChart(section.requestSpeeds(), section.compactionsBeforeRequest(),
-                        section.judgeOnTrackRequests(), section.judgeOffTrackRequests(), statsBody,
-                        "Request timing" + attemptLabel);
+                final var speedChart = JobDetailView.buildRequestSpeedChart();
+                JobDetailView.updateRequestSpeedChart(speedChart, section.requestSpeeds(), section.compactionsBeforeRequest(),
+                        section.judgeOnTrackRequests(), section.judgeOffTrackRequests());
+                final var timingChart = JobDetailView.buildRequestTimingChart();
+                JobDetailView.updateRequestTimingChart(timingChart, section.requestSpeeds(), section.compactionsBeforeRequest(),
+                        section.judgeOnTrackRequests(), section.judgeOffTrackRequests());
+                statsBody.add(Panels.card("Prefill speed by request" + attemptLabel, speedChart),
+                        Panels.card("Request timing" + attemptLabel, timingChart));
             }
         } catch (final Exception ex) {
             statsBody.add(Panels.error(client.errorText(ex)));
