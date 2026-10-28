@@ -7,6 +7,7 @@ import com.vaadin.flow.component.applayout.AppLayout;
 import com.vaadin.flow.component.applayout.DrawerToggle;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.dependency.CssImport;
+import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.Hr;
 import com.vaadin.flow.component.html.Image;
@@ -158,8 +159,11 @@ public class MainLayout extends AppLayout {
         footerStatusDot.getStyle().set("display", "inline-block").set("width", "8px").set("height", "8px")
                 .set("border-radius", "50%").set("margin-right", "6px");
         // no explicit font-size - inherits the app's own 14px base size, matching every
-        // SideNavItem label exactly rather than the smaller 0.8em this used to carry
-        final var footerStatusText = new Span("StrGm AI");
+        // SideNavItem label exactly rather than the smaller 0.8em this used to carry.
+        // The company's own site - no landing page there yet, but the link is live regardless.
+        final var footerStatusText = new Anchor("https://www.strgm-ai.com", "StrGm AI");
+        footerStatusText.setTarget("_blank");
+        footerStatusText.getStyle().set("color", "inherit").set("text-decoration", "none");
         // an invisible spacer matching the dot's own left-side footprint (8px + 6px margin-right =
         // 14px) - without it, centering the row centers (dot + text) as a block, which visibly
         // shifts the text itself off-center from the logo centered below it
