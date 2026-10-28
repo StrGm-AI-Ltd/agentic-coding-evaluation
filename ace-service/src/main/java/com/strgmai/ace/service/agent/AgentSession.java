@@ -260,9 +260,14 @@ public final class AgentSession {
      *  request yet to measure, so it never gets a `reclaimedTokens` either, permanently (#505: before
      *  this was null-forever too, it defaulted to 0, which the resolution below then turned into a
      *  large, meaningless NEGATIVE "reclaimed" once a later real request's usage.input arrived - 0
-     *  minus any real token count is always negative). For a REAL (reactive) compaction,
-     *  `reclaimedTokens` is null only until a later assistant turn exists in the file to measure
-     *  against - the attempt ended, or was interrupted, right after this compaction fired. */
+     *  minus any real token count is always negative). A literal `0` read back from an OLDER session
+     *  file (written before this fix, so still carrying the old sentinel) is treated the exact same
+     *  way: the only call site for a REAL (reactive) compaction is itself guarded on `lastPrompt > 0`,
+     *  so an actual reactive compaction can never legitimately record 0 - there is no ambiguity to
+     *  preserve, and this lets every already-recorded session file render correctly too, with no
+     *  separate migration/backfill needed. For a REAL (reactive) compaction, `reclaimedTokens` is null
+     *  only until a later assistant turn exists in the file to measure against - the attempt ended, or
+     *  was interrupted, right after this compaction fired. */
     public record CompactionEvent(int requestNumber, Integer requestsSincePrevious, Long promptTokensBefore, Long reclaimedTokens) {}
 
     public static List<CompactionEvent> compactionEffectiveness(final Path sessionFile) {
@@ -280,7 +285,8 @@ public final class AgentSession {
                     final int requestNumber = requestCount;
                     final Integer gap = previousRequestNumber == null ? null : requestNumber - previousRequestNumber;
                     previousRequestNumber = requestNumber;
-                    final Long promptTokensBefore = r.hasNonNull("prompt_tokens_before") ? r.path("prompt_tokens_before").asLong() : null;
+                    final long rawPromptTokensBefore = r.path("prompt_tokens_before").asLong(0);
+                    final Long promptTokensBefore = rawPromptTokensBefore == 0 ? null : rawPromptTokensBefore;
                     events.add(new CompactionEvent(requestNumber, gap, promptTokensBefore, null));
                     continue;
                 }
