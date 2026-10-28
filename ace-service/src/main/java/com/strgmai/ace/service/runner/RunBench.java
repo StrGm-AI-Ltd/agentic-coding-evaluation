@@ -60,11 +60,12 @@ public class RunBench {
     private final Intervene intervene;
     private final PauseAfterTask pauseAfterTask;
     private final com.strgmai.ace.service.agent.ProviderStore providerStore;
+    private final com.strgmai.ace.service.backend.LocalModelBackend backend;
     private final ObjectMapper json = new ObjectMapper();
 
-    public RunBench(BenchProperties props, ReferenceAgent agent, PiAgent piAgent, RecordingProxyFactory proxies, RunOracle oracle, Reviews reviews, ContextProbe probe, Judge judge, Intervene intervene, PauseAfterTask pauseAfterTask, com.strgmai.ace.service.agent.ProviderStore providerStore) {
+    public RunBench(BenchProperties props, ReferenceAgent agent, PiAgent piAgent, RecordingProxyFactory proxies, RunOracle oracle, Reviews reviews, ContextProbe probe, Judge judge, Intervene intervene, PauseAfterTask pauseAfterTask, com.strgmai.ace.service.agent.ProviderStore providerStore, com.strgmai.ace.service.backend.LocalModelBackend backend) {
         this.props = props; this.agent = agent; this.piAgent = piAgent; this.proxies = proxies; this.oracle = oracle; this.reviews = reviews; this.probe = probe; this.judge = judge; this.intervene = intervene; this.pauseAfterTask = pauseAfterTask;
-        this.providerStore = providerStore;
+        this.providerStore = providerStore; this.backend = backend;
     }
 
     //todo phases should not be hardcoded
@@ -769,8 +770,7 @@ public class RunBench {
             manifest.put("decode_tps_median_short", summary.get("decode_tps_median_short"));
             manifest.put("contention", Map.of("docker_up", DockerService.dockerRunning(), "docker_windows", manifest.get("docker_windows")));
             writeManifest(rd, manifest);
-            //todo ACE should be model provider agnostic
-            captureOmlxLog(rd, manifest);
+            captureBackendLog(rd, manifest);
             // ws is never deleted: it's the run's own git repo, and the ONLY place a task's commit
             // (manifest.snapshots.<id>) can be `git show`n directly - workspace.bundle/source/ in rd
             // are a second, resilient copy for when ws's $TMPDIR location gets swept, not a replacement
@@ -790,38 +790,24 @@ public class RunBench {
         }
     }
 
-    /** Snapshots the run's own slice of the oMLX server log into rd/omlx_server.log, when
-     *  ace.omlx-server-log is configured. oMLX's own log spans every run on the machine and grows
-     *  without bound, so anything worth citing later (a throttling episode, an abort) is gone once
-     *  it rotates unless it's copied out here. Best-effort like bundleWorkspace above: a missing
-     *  config, missing file, or any read failure must never fail the run - this is diagnostic, not
-     *  part of the scored result. Lines are matched by oMLX's own "yyyy-MM-dd HH:mm:ss,SSS" prefix;
-     *  an unprefixed line (request-log continuation, a bare uvicorn line) inherits the in/out-of-range
-     *  verdict of the last dated line before it, so it stays grouped with the entry it belongs to. */
-    void captureOmlxLog(final Path rd, final Map<String, Object> manifest) {
+    /** #65: Snapshots the run's own slice of the local backend's server log into
+     *  rd/backend_server.log, when ace.omlx-server-log is configured. The backend's own log spans
+     *  every run on the machine and grows without bound, so anything worth citing later (a
+     *  throttling episode, an abort) is gone once it rotates unless it's copied out here. The
+     *  backend owns its own log-line timestamp format/slicing (oMLX's is "yyyy-MM-dd HH:mm:ss,SSS",
+     *  moved verbatim into OmlxBackend.logLinesBetween()); this stays backend-agnostic. Best-effort
+     *  like bundleWorkspace above: a missing config, missing file, or any read failure must never
+     *  fail the run - this is diagnostic, not part of the scored result. */
+    void captureBackendLog(final Path rd, final Map<String, Object> manifest) {
         final String logPath = props.omlxServerLog();
         if (logPath == null || logPath.isBlank()) return;
         final Path src = Path.of(logPath);
-        if (!Files.isRegularFile(src)) { log.debug("omlx server log not found at {}, skipping capture", src); return; }
+        if (!Files.isRegularFile(src)) { log.debug("backend server log not found at {}, skipping capture", src); return; }
         try {
-            final var zone = java.time.ZoneId.systemDefault();
-            final LocalDateTime startLocal = LocalDateTime.ofInstant(Instant.parse((String) manifest.get("started")), zone);
-            final LocalDateTime endLocal = LocalDateTime.ofInstant(Instant.parse((String) manifest.get("ended")), zone);
-            final DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss,SSS");
-            final List<String> slice = new ArrayList<>();
-            boolean inRange = false;
-            for (String line : Files.readAllLines(src)) {
-                if (line.length() >= 23) {
-                    try {
-                        final LocalDateTime ts = LocalDateTime.parse(line.substring(0, 23), fmt);
-                        inRange = !ts.isBefore(startLocal) && !ts.isAfter(endLocal);
-                    } catch (Exception notADatedLine) { /* keep the previous verdict */ }
-                }
-                if (inRange) slice.add(line);
-            }
-            Files.write(rd.resolve("omlx_server.log"), slice);
+            final List<String> slice = backend.logLinesBetween(src, Instant.parse((String) manifest.get("started")), Instant.parse((String) manifest.get("ended")));
+            Files.write(rd.resolve("backend_server.log"), slice);
         } catch (Exception e) {
-            log.warn("could not capture omlx server log from {}: {}", src, e.toString());
+            log.warn("could not capture backend server log from {}: {}", src, e.toString());
         }
     }
 

@@ -1,5 +1,6 @@
 package com.strgmai.ace.service.runner;
 
+import com.strgmai.ace.service.backend.LocalModelBackend;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,7 +17,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 import com.strgmai.ace.service.docker.DockerService;
 
 /** Port of runner/context_probe.py, step 0 of a benchmark run: measure the context window this
@@ -41,10 +41,6 @@ public final class ContextProbe {
     private static final Logger log = LoggerFactory.getLogger(ContextProbe.class);
     private static final ObjectMapper JSON = new ObjectMapper();
     public static final Path CACHE_DIR = Path.of(System.getProperty("user.home"), ".cache/ace-service/context-probe");
-    public static final Path LOG = Path.of(System.getProperty("user.home"), ".omlx/logs/server.log");
-    public static final Path OMLX_BIN = Path.of(System.getProperty("user.home"), ".omlx/bin/omlx");
-    public static final Path MODEL_SETTINGS = Path.of(System.getProperty("user.home"), ".omlx/model_settings.json");
-    public static final Path OMLX_SETTINGS = Path.of(System.getProperty("user.home"), ".omlx/settings.json");
     static final String LINE = "line %06d: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar.\n";
     static final String SYSTEM = "You are a text buffer. Reply with the single word OK.";
     static final String SYSTEM_GEN = "You are a patient technical writer. Answer at length, in flowing prose, and keep writing until you are cut off.";
@@ -65,6 +61,9 @@ public final class ContextProbe {
             Map.entry("parallel_gain_per_agent", 0.25), Map.entry("parallel_prompt_tokens", 10000),
             Map.entry("parallel_out_tokens", 512), Map.entry("pack_reference_window", 65536),
             Map.entry("pack_scale_min", 0.25), Map.entry("cache_max_age_days", 30));
+
+    private final LocalModelBackend backend;
+    public ContextProbe(final LocalModelBackend backend) { this.backend = backend; }
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build();
     /** the response currently being read by post() below, if any - tracked so a cancelled job can
@@ -161,30 +160,6 @@ public final class ContextProbe {
         } catch (Exception e) { log.debug("health check against {} failed: {}", endpoint, e.toString()); return JSON.createObjectNode(); }
     }
 
-    /** Memory-guard lines the server logged since `since`: max usage and the ceiling it was sized
-     *  against. Reads the live log and any rotated file of the same day (R5 C-22). */
-    Map<String, Object> guardFacts(String since) {
-        final java.util.regex.Pattern re = java.util.regex.Pattern.compile("usage ([\\d.]+)GB vs sizing target ([\\d.]+)GB, dynamic ceiling ([\\d.]+)");
-        final List<Double> usage = new ArrayList<>(), target = new ArrayList<>(), ceiling = new ArrayList<>();
-        final List<Path> files = new ArrayList<>(List.of(LOG));
-        try (DirectoryStream<Path> ds = Files.newDirectoryStream(LOG.getParent(), LOG.getFileName() + ".*")) {
-            final var all = new ArrayList<Path>(); ds.forEach(all::add);
-            files.addAll(all.subList(Math.max(0, all.size() - 2), all.size()));
-        } catch (Exception e) { log.debug("could not list rotated oMLX log files: {}", e.toString()); }
-        for (Path f : files) {
-            try {
-                for (String line : Files.readAllLines(f)) {
-                    if (line.length() >= 19 && line.substring(0, Math.min(19, line.length())).compareTo(since) < 0) continue;
-                    final java.util.regex.Matcher m = re.matcher(line);
-                    if (m.find()) { usage.add(Double.parseDouble(m.group(1))); target.add(Double.parseDouble(m.group(2))); ceiling.add(Double.parseDouble(m.group(3))); }
-                }
-            } catch (IOException e) { log.debug("could not read oMLX log {}: {}", f, e.toString()); }
-        }
-        if (usage.isEmpty()) return null;
-        return Map.of("max_usage_gb", Collections.max(usage), "sizing_target_gb", target.get(target.size() - 1),
-                "dynamic_ceiling_gb", ceiling.get(ceiling.size() - 1), "samples", usage.size());
-    }
-
     /** the model's own maximum (text_config.max_position_embeddings) — the cap the probe raises the server to */
     public static int positionalLimit(final String model, List<String> modelDirs, final int dflt) {
         for (String d : modelDirs) {
@@ -200,29 +175,6 @@ public final class ContextProbe {
         return dflt;
     }
 
-    /** write the per-model `max_context_window` profile (it overrides the server's default); returns the previous value */
-    public static Object setModelCap(final String model, final int value) throws IOException {
-        final ObjectNode d = Files.exists(MODEL_SETTINGS) ? (ObjectNode) JSON.readTree(Files.readString(MODEL_SETTINGS)) : JSON.createObjectNode();
-        if (!d.has("models") || !d.get("models").isObject()) d.putObject("models");
-        final ObjectNode entry = d.with("models").with(model);
-        final Object prev = entry.has("max_context_window") ? entry.get("max_context_window").asInt() : null;
-        entry.put("max_context_window", value);
-        Files.writeString(MODEL_SETTINGS, JSON.writerWithDefaultPrettyPrinter().writeValueAsString(d));
-        return prev;
-    }
-
-    /** #340: setModelCap() always WRITES a value - this is its matching "put it back to unset"
-     *  operation, for when no override existed before this job's own raise (setModelCap()'s own
-     *  "previous value" was null). */
-    static void clearModelCap(final String model) throws IOException {
-        if (!Files.exists(MODEL_SETTINGS)) return;
-        final ObjectNode d = (ObjectNode) JSON.readTree(Files.readString(MODEL_SETTINGS));
-        if (d.has("models") && d.get("models").isObject() && d.get("models").has(model)) {
-            ((ObjectNode) d.get("models").get(model)).remove("max_context_window");
-            Files.writeString(MODEL_SETTINGS, JSON.writerWithDefaultPrettyPrinter().writeValueAsString(d));
-        }
-    }
-
     /** #340: restore whatever max_context_window override existed before THIS job's own
      *  prepareCap() raised it - called once at job end (success, failure, or exception) by
      *  RunBench.runOnce()'s finally block, using the exact capInfo prepareCap() returned. A no-op
@@ -230,44 +182,9 @@ public final class ContextProbe {
     public void restoreCap(final String model, final String endpoint, final String key, final Map<String, Object> capInfo) throws IOException {
         if (!Boolean.TRUE.equals(capInfo.get("raised"))) return;
         final Object prev = capInfo.get("prev_override");
-        if (prev == null) clearModelCap(model);
-        else setModelCap(model, ((Number) prev).intValue());
-        restartServer(endpoint, key);
-    }
-
-    /** `omlx restart` with the orphan trap handled: the old server must be gone and exactly one new one must answer /health */
-    public void restartServer(final String endpoint, final String key) {
-        if (!Files.exists(OMLX_BIN)) throw new IllegalStateException("~/.omlx/bin/omlx not present: cannot restart the server");
-        final List<Long> old = pids();
-        try { new ProcessBuilder(OMLX_BIN.toString(), "restart").start().waitFor(180, TimeUnit.SECONDS); } catch (Exception e) { throw new IllegalStateException(e); }
-        final long t0 = System.currentTimeMillis();
-        boolean healthy = false;
-        while (System.currentTimeMillis() - t0 < 150_000) {
-            try { Thread.sleep(5000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
-            if ("healthy".equals(health(endpoint, key).path("status").asText())) { healthy = true; break; }
-        }
-        final List<Long> now = pids();
-        final List<Long> survivors = old.stream().filter(now::contains).toList();
-        try {
-            if (!survivors.isEmpty() && now.size() > survivors.size()) {   // the app started a new server but the old one still holds resources
-                for (long p : survivors) ProcessHandle.of(p).ifPresent(ProcessHandle::destroy);
-            } else if (!survivors.isEmpty() && !healthy) {                   // nothing replaced the old server: kill it and start fresh
-                for (long p : survivors) ProcessHandle.of(p).ifPresent(ProcessHandle::destroy);
-                Thread.sleep(3000);
-                new ProcessBuilder(OMLX_BIN.toString(), "start").start().waitFor(180, TimeUnit.SECONDS);
-                final long t = System.currentTimeMillis();
-                while (System.currentTimeMillis() - t < 150_000) {
-                    Thread.sleep(5000);
-                    if ("healthy".equals(health(endpoint, key).path("status").asText())) { healthy = true; break; }
-                }
-            }
-        } catch (Exception e) { throw new IllegalStateException(e); }
-        if (!healthy) throw new IllegalStateException("oMLX did not come back healthy after the restart; check `pgrep -x omlx-server` for an orphan");
-    }
-
-    static List<Long> pids() {
-        final DockerService.Sh out = DockerService.sh(8, "pgrep", "-x", "omlx-server");
-        return Arrays.stream(out.out().split("\n")).filter(s -> !s.isBlank()).map(Long::parseLong).toList();
+        if (prev == null) backend.clearModelCap(model);
+        else backend.setModelCap(model, ((Number) prev).intValue());
+        backend.restart(() -> "healthy".equals(health(endpoint, key).path("status").asText()));
     }
 
     Integer serverCap(String endpoint, String key, String model) {
@@ -280,11 +197,11 @@ public final class ContextProbe {
         final Integer before = serverCap(endpoint, key, model);
         final int wanted = positionalLimit(model, modelDirs, (Integer) o.get("positional_limit_default"));
         final Map<String, Object> info = new LinkedHashMap<>(Map.of("cap_before", before, "positional_limit", wanted, "cap_probe", before, "restarts", 0));
-        if (!Boolean.TRUE.equals(o.get("raise_cap")) || !Files.exists(OMLX_BIN)) return info;
+        if (!Boolean.TRUE.equals(o.get("raise_cap")) || !backend.isAvailable()) return info;
         if (before != null && before >= wanted) return info;
         info.put("raised", true);
-        info.put("prev_override", setModelCap(model, wanted));
-        restartServer(endpoint, key);
+        info.put("prev_override", backend.setModelCap(model, wanted));
+        backend.restart(() -> "healthy".equals(health(endpoint, key).path("status").asText()));
         info.merge("restarts", 1, (a, b) -> (int) a + (int) b);
         final Integer now = serverCap(endpoint, key, model);
         info.put("cap_probe", now);
@@ -295,11 +212,11 @@ public final class ContextProbe {
 
     /** after measuring: the server enforces the measured window itself */
     public Object finalizeCap(final String model, final String endpoint, final String key, int usable, Map<String, Object> o) throws IOException {
-        if (!Boolean.TRUE.equals(o.get("set_cap_to_measured")) || !Files.exists(OMLX_BIN)) return null;
+        if (!Boolean.TRUE.equals(o.get("set_cap_to_measured")) || !backend.isAvailable()) return null;
         final Integer cur = serverCap(endpoint, key, model);
         if (cur != null && cur == usable) return usable;
-        setModelCap(model, usable);
-        restartServer(endpoint, key);
+        backend.setModelCap(model, usable);
+        backend.restart(() -> "healthy".equals(health(endpoint, key).path("status").asText()));
         return serverCap(endpoint, key, model);
     }
 
@@ -320,14 +237,7 @@ public final class ContextProbe {
                 break;
             }
         }
-        if (Files.exists(MODEL_SETTINGS)) {
-            final JsonNode ms = JSON.readTree(Files.readString(MODEL_SETTINGS)).path("models").path(model);
-            final Map<String, Object> keep = new LinkedHashMap<>();
-            if (ms.isObject()) ms.fields().forEachRemaining(e -> { if (!e.getKey().equals("max_context_window")) keep.put(e.getKey(), e.getValue()); });
-            facts.put("model_settings", keep);
-        } else facts.put("model_settings", null);
-        facts.put("memory_settings", Files.exists(OMLX_SETTINGS) ? JSON.readTree(Files.readString(OMLX_SETTINGS)).path("memory") : null);
-        facts.put("omlx_version", Files.exists(OMLX_BIN) ? com.strgmai.ace.service.docker.DockerService.sh(20, OMLX_BIN.toString(), "version").out().strip() : null);
+        facts.putAll(backend.settingsFingerprint(model));
         facts.put("host_mem", com.strgmai.ace.service.docker.DockerService.sh(10, "sysctl", "-n", "hw.memsize").out().strip());
         facts.put("docker_up", com.strgmai.ace.service.docker.DockerService.dockerRunning());
         return new Setup(facts, sha256(JSON.writeValueAsString(facts)));
@@ -435,7 +345,7 @@ public final class ContextProbe {
         rec.put("first_fail_tokens", firstFail > 0 ? firstFail : null);
         rec.put("binding", binding);
         rec.put("decode_tps_short", shortMedian == null ? null : Math.round(shortMedian * 10) / 10.0);
-        rec.put("memory_guard", guardFacts(tStart));
+        rec.put("memory_guard", backend.memoryGuardFacts(tStart).orElse(null));
         rec.put("tokens_per_line", Math.round(tpl * 1000) / 1000.0);
         rec.put("curve", curve.stream().map(s -> Map.of("status", s.status(), "prompt_tokens", s.promptTokens(), "decode_tps", s.decodeTps())).toList());
         return rec;
@@ -597,11 +507,7 @@ public final class ContextProbe {
     public Map<String, Object> ensure(final BenchProperties props, final boolean fresh, final Integer taskWallSec, final Map<String, Object> overrides) throws Exception {
         final Map<String, Object> o = new LinkedHashMap<>(DEFAULTS);
         if (overrides != null) o.putAll(overrides);
-        List<String> modelDirs = List.of();
-        if (Files.exists(OMLX_SETTINGS)) {
-            final JsonNode md = JSON.readTree(Files.readString(OMLX_SETTINGS)).path("model").path("model_dirs");
-            if (md.isArray()) { List<String> dirs = new ArrayList<>(); md.forEach(n -> dirs.add(n.asText())); modelDirs = dirs; }
-        }
+        final List<String> modelDirs = backend.modelDirs();
         final Setup setup = setupKey(props.model(), props.endpoint(), props.apiKey() == null ? "" : props.apiKey(), modelDirs);
         Files.createDirectories(CACHE_DIR);
         final Path path = CACHE_DIR.resolve(props.model() + "-" + setup.key() + ".json");

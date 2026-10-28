@@ -1,11 +1,13 @@
 package com.strgmai.ace.service.runner;
 
+import com.strgmai.ace.service.backend.OmlxBackend;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
 
@@ -14,6 +16,13 @@ import static org.junit.jupiter.api.Assertions.*;
 /** The context probe's pure derivations: the effective window is min(memory, performance, operator
  *  cap); the decode curve interpolates; budgets in windows are capped by what can be generated. */
 class ContextProbeTest {
+
+    /** A fresh temp dir per probe - these tests never want to touch the operator's real oMLX
+     *  install (same guardrail restoreCap()'s own tests below already documented, now backed by a
+     *  real seam instead of just a comment). */
+    private static ContextProbe probe() throws Exception {
+        return new ContextProbe(new OmlxBackend(Files.createTempDirectory("omlx-test")));
+    }
 
     private BenchProperties props(final Number windowCap) {
         return new BenchProperties("m", "http://127.0.0.1:9191/v1", "k", 1.0, 0.95, null, 8192,
@@ -89,7 +98,7 @@ class ContextProbeTest {
         });
         upstream.start();
         try {
-            final var r = new ContextProbe().post("http://127.0.0.1:" + upstream.getAddress().getPort(), "k", Map.of("model", "m", "messages", List.of()), 15);
+            final var r = probe().post("http://127.0.0.1:" + upstream.getAddress().getPort(), "k", Map.of("model", "m", "messages", List.of()), 15);
             assertEquals(400, r.status());
             assertEquals("This model's maximum context length is 65536 tokens", r.error());
         } finally {
@@ -108,7 +117,7 @@ class ContextProbeTest {
         });
         upstream.start();
         try {
-            final var r = new ContextProbe().post("http://127.0.0.1:" + upstream.getAddress().getPort(), "k", Map.of("model", "m", "messages", List.of()), 15);
+            final var r = probe().post("http://127.0.0.1:" + upstream.getAddress().getPort(), "k", Map.of("model", "m", "messages", List.of()), 15);
             assertEquals(200, r.status());
             assertNull(r.error());
         } finally {
@@ -116,17 +125,18 @@ class ContextProbeTest {
         }
     }
 
-    // #340: restoreCap() must never touch the real oMLX install (setModelCap/restartServer, both
-    // real-filesystem/real-process operations with no test seam) unless THIS job's own prepareCap()
-    // actually raised something - these two guard-clause cases are exactly the ones a future change
-    // to restoreCap()'s condition could silently break into a real restart during `./gradlew test`.
+    // #340: restoreCap() must never touch the backend (setModelCap/restart, real-filesystem/
+    // real-process operations even against this test's own temp-dir-backed OmlxBackend) unless
+    // THIS job's own prepareCap() actually raised something - these two guard-clause cases are
+    // exactly the ones a future change to restoreCap()'s condition could silently break into a real
+    // restart during `./gradlew test`.
     @Test
     void restoreCapIsANoOpWhenPrepareCapNeverRaisedAnything() throws Exception {
-        new ContextProbe().restoreCap("some-model", "http://127.0.0.1:9191/v1", "k", Map.of());
+        probe().restoreCap("some-model", "http://127.0.0.1:9191/v1", "k", Map.of());
     }
 
     @Test
     void restoreCapIsANoOpWhenCapInfoExplicitlyMarksNoRaise() throws Exception {
-        new ContextProbe().restoreCap("some-model", "http://127.0.0.1:9191/v1", "k", Map.of("raised", false));
+        probe().restoreCap("some-model", "http://127.0.0.1:9191/v1", "k", Map.of("raised", false));
     }
 }
