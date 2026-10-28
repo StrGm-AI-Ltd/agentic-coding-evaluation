@@ -202,6 +202,21 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$..api_key").doesNotExist());
     }
 
+    /** #65: is_local is the application-level "which registered row is the local backend"
+     *  convention (backend.providerKey(), today "omlx") - not a column in the providers table
+     *  itself, so it must be computed, not just echoed back. None of V7's five seeded rows is
+     *  local; a newly-created row keyed "omlx" is. */
+    @Test
+    void providersFlagsExactlyTheRowWhoseKeyMatchesTheLocalBackend() throws Exception {
+        mvc.perform(get("/api/providers")).andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.provider_key == 'nebius')].is_local").value(false));
+
+        mvc.perform(post("/api/providers").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Local oMLX\",\"provider_key\":\"omlx\",\"base_url\":\"http://127.0.0.1:9191/v1\",\"default_model\":\"m\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.is_local").value(true));
+    }
+
     @Test
     void createProviderInsertsANewRowAndNeverEchoesTheApiKeyBack() throws Exception {
         mvc.perform(post("/api/providers").contentType(MediaType.APPLICATION_JSON)

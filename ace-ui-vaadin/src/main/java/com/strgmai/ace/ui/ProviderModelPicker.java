@@ -16,18 +16,19 @@ import java.util.List;
  *  hardcoded list. Mirrors CompactionStrategyList's own precedent: a plain getValue()/setValue(),
  *  no HasValue, slots into Forms.row(...) like any other field.
  *
- *  Every registered provider - including the local model server's own "omlx" row - is treated
- *  uniformly: no synthetic "Local" entry (there used to be one, duplicating the real "omlx" row
+ *  Every registered provider - including the local model backend's own row - is treated
+ *  uniformly: no synthetic "Local" entry (there used to be one, duplicating the real local row
  *  once an operator registered it - see #463). Wire format is always "providerKey/model";
  *  blank/null means nothing is selected - a legal, distinct state for the optional reviewer/judge
  *  fields (and, for judge fields specifically, the existing "blank = inherit the run's own model"
  *  meaning - this control never forces a selection). A historical run's own model string may still
- *  be bare (pre-#465 backfill, or a stray manual entry) - setValue() treats a bare string as
- *  "omlx/" + itself, the same "no prefix means the local server" assumption the rest of
- *  ace-service already made before every provider got a real registry row.
+ *  be bare (pre-#465 backfill, or a stray manual entry) - setValue() treats a bare string as the
+ *  local backend's own model (#65: Api.Provider.is_local(), not a hardcoded "omlx" literal), the
+ *  same "no prefix means the local server" assumption the rest of ace-service already made before
+ *  every provider got a real registry row.
  *
- *  If no provider with key "omlx" is registered, there is currently no way to pick a local model
- *  through this control at all - the LLM Providers tab is expected to always carry that row.
+ *  If no provider is registered with is_local=true, there is currently no way to pick a local
+ *  model through this control at all - the LLM Providers tab is expected to always carry that row.
  *
  *  The provider list is loaded eagerly in the constructor (a fast, local DB read, unlike the
  *  model list) rather than attach-deferred like every other view's own loadSuggestions() - so a
@@ -111,17 +112,20 @@ public class ProviderModelPicker extends HorizontalLayout {
 
     /** Parses an existing wire string back into provider+model selection, for pre-fill. Blank/null
      *  leaves both unselected. A bare string (no "/") is pre-#465-backfill data or a stray manual
-     *  entry - treated as the omlx provider's own model, the same "no prefix means local" rule the
+     *  entry - treated as the local backend's own model (#65: whichever registered provider has
+     *  is_local=true, not a hardcoded "omlx" literal), the same "no prefix means local" rule the
      *  rest of ace-service already used before every provider had a real row. An unrecognized
-     *  prefix (e.g. a deleted provider) logs a warning and leaves the picker unselected - there is
-     *  no sensible provider to fall back to once "Local" is no longer always present. */
+     *  prefix (e.g. a deleted provider), or no local provider registered at all, logs a warning and
+     *  leaves the picker unselected - there is no sensible provider to fall back to once "Local" is
+     *  no longer always present. */
     public void setValue(final String wireValue) {
         if (wireValue == null || wireValue.isBlank()) return;
         final int slash = wireValue.indexOf('/');
-        final String key = slash < 0 ? "omlx" : wireValue.substring(0, slash);
         final String modelValue = slash < 0 ? wireValue : wireValue.substring(slash + 1);
-        final var match = provider.getGenericDataView().getItems()
-                .filter(p -> key.equals(p.provider_key())).findFirst();
+        final var match = slash < 0
+                ? provider.getGenericDataView().getItems().filter(Api.Provider::is_local).findFirst()
+                : provider.getGenericDataView().getItems().filter(p -> wireValue.substring(0, slash).equals(p.provider_key())).findFirst();
+        final String key = slash < 0 ? "(local)" : wireValue.substring(0, slash);
         if (match.isEmpty()) {
             log.warn("could not pre-fill \"{}\": no registered provider with key \"{}\"", wireValue, key);
             return;

@@ -2,6 +2,7 @@ package com.strgmai.ace.service.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.strgmai.ace.service.backend.OmlxBackend;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -17,6 +18,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *  everything else (ProcessBuilder, the real ~/.pi/agent/models.json) needs either a live pi
  *  binary or the real interactive user's own config, neither of which a unit test should touch. */
 class PiAgentTest {
+
+    private static PiAgent piAgent() throws IOException { return new PiAgent(new OmlxBackend(Files.createTempDirectory("omlx-test"))); }
 
     @Test
     void buildCommandForAFreshSessionUsesSessionIdAndName() {
@@ -56,7 +59,7 @@ class PiAgentTest {
         Files.writeString(modelsJson, """
                 {"providers":{"omlx":{"baseUrl":"http://old:1","apiKey":"edding345","models":[{"id":"m1"}]}}}""");
 
-        PiAgent.patchBaseUrl(tmp, "http://127.0.0.1:54321");
+        piAgent().patchBaseUrl(tmp, "http://127.0.0.1:54321");
 
         final var root = (ObjectNode) new ObjectMapper().readTree(modelsJson.toFile());
         final var omlx = root.path("providers").path("omlx");
@@ -67,6 +70,6 @@ class PiAgentTest {
 
     @Test
     void patchBaseUrlIsANoOpWhenTheRunsOwnModelsJsonDoesNotExist(@TempDir final Path tmp) {
-        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> PiAgent.patchBaseUrl(tmp, "http://127.0.0.1:1"));
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> piAgent().patchBaseUrl(tmp, "http://127.0.0.1:1"));
     }
 }

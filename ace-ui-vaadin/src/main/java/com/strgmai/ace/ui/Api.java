@@ -268,7 +268,9 @@ public final class Api {
     /** GET/POST/PUT /api/providers — the LLM Providers registry. `has_api_key` is deliberately the
      *  only signal the raw secret ever gives the client; BenchController never serializes the real
      *  value, and this record has no field for it either, so a round-tripped secret is structurally
-     *  impossible, not just a convention someone could forget. */
-    public record Provider(String id, String name, String provider_key, String base_url, String default_model, boolean has_api_key) {
+     *  impossible, not just a convention someone could forget. `is_local` (#65) is which registered
+     *  row is the local model backend - ProviderModelPicker uses it instead of a hardcoded "omlx"
+     *  literal. */
+    public record Provider(String id, String name, String provider_key, String base_url, String default_model, boolean has_api_key, boolean is_local) {
     }
 }
