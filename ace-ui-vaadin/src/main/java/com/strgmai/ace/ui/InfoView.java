@@ -32,11 +32,15 @@ public class InfoView extends Div {
         add(goal);
 
         final var purpose = new Paragraph();
-        purpose.add(new Span("ACE's goal is narrower and more practical than a leaderboard: finding which "
-                + "model, harness mode, and hyperparameters actually get a coding task done well — on your "
-                + "own hardware if you're running a local model, or against whichever "),
+        final var purposeHighlight = new Span();
+        purposeHighlight.getStyle().set("font-weight", "600");
+        purposeHighlight.add(new Span("ACE's goal is narrower and more practical than a leaderboard: finding "
+                + "which model, harness mode, and hyperparameters actually get a coding task done well — on "
+                + "your own hardware if you're running a local model, or against whichever "),
                 new RouterLink("external provider", LlmProvidersView.class),
-                new Span(" you've configured. Configure any of those per job in "),
+                new Span(" you've configured."));
+        purpose.add(purposeHighlight,
+                new Span(" Configure any of those per job in "),
                 new RouterLink("Queue", JobsView.class),
                 new Span(", or run a templated, repeated A/B batch in "),
                 new RouterLink("Experiments", ExperimentsView.class),
