@@ -1118,6 +1118,27 @@ public class BenchController {
             // no "seconds" at all - fall back to the session file's own first-to-last ts span
             // rather than showing nothing just because this one task happened to be skip-resumed
             if (out.get("seconds") == null && live.found()) out.put("seconds", live.wallSec());
+            // found live: the SAME bare-entry gap Collect.perTask() (#501) already fixed for the
+            // finished-run Plan tasks grid also hits this, LIVE, endpoint's own "reported"/
+            // "verification"/"done_verified" - a resumed-past task showed NOTHING for any of the
+            // three here, even though its real attempt's own record survives, untouched, in
+            // task_attempts.jsonl (append-only; a resumed-past task never logs a new entry there -
+            // see RunBench.logTaskAttempt()'s own two call sites). Same fallback, same source.
+            if (out.get("reported") == null || out.get("verification") == null) {
+                try {
+                    final List<Map<String, Object>> attempts = readTaskAttempts(base, taskId);
+                    if (!attempts.isEmpty()) {
+                        final Map<String, Object> latest = attempts.get(attempts.size() - 1);
+                        out.putIfAbsent("reported", latest.get("reported_status"));
+                        if (out.get("verification") == null && latest.get("verification") instanceof Map<?, ?> v) out.put("verification", v);
+                        if (out.get("done_verified") == null && latest.containsKey("done_verified")) out.put("done_verified", latest.get("done_verified"));
+                    }
+                } catch (final Exception e) {
+                    // best-effort enrichment only - the live data already in `out` must still be
+                    // returned even if task_attempts.jsonl itself can't be read right now
+                    log.debug("could not fall back to task_attempts.jsonl for run {} task {}: {}", runId, taskId, e.toString());
+                }
+            }
             out.put("attempts", attemptSections(base, taskId, live.attempts()));
             if (entry != null) {
                 final Path metricsFile = base.resolve("metrics.json");

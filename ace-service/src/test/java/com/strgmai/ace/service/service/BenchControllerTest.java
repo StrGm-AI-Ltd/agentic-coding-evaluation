@@ -902,6 +902,56 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.seconds").value(300.0));
     }
 
+    /** found live: a bare {id, rc, resumed} manifest entry's "reported"/"verification"/
+     *  "done_verified" showed as nothing at all here, even though the task's real attempt record -
+     *  task_attempts.jsonl, append-only, never rewritten once a real attempt logs to it - still
+     *  carries all three. Same fallback Collect.perTask() (#501) already applies for the
+     *  finished-run Plan tasks grid, now applied here too for the LIVE job's own Stats tab. */
+    @Test
+    void taskStatsFallsBackToTaskAttemptsJsonlForReportedAndVerificationOnABareResumedEntry() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), """
+                {"tasks": [{"id": "T3", "rc": 0, "resumed": true}]}""");
+        Files.writeString(runDir.resolve("task_attempts.jsonl"),
+                "{\"task_id\":\"T3\",\"attempt_number\":1,\"rc\":0,\"seconds\":120.0,"
+                        + "\"reported_status\":\"done\",\"done_verified\":true,"
+                        + "\"verification\":{\"ran\":true,\"green\":true,\"executed\":8,\"failed\":0}}\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T3/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reported").value("done"))
+                .andExpect(jsonPath("$.done_verified").value(true))
+                .andExpect(jsonPath("$.verification.green").value(true))
+                .andExpect(jsonPath("$.verification.executed").value(8));
+    }
+
+    /** a task_attempts.jsonl entry with no verification at all (a pre-fix attempt, or a run where
+     *  the harness genuinely never ran it - see VerifyTask.verify()'s own "could not run" case)
+     *  must not fabricate one - the field stays absent, same graceful degradation as every other
+     *  genuinely-missing fallback field. */
+    @Test
+    void taskStatsLeavesVerificationAbsentWhenTaskAttemptsJsonlHasNone() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), """
+                {"tasks": [{"id": "T3", "rc": 0, "resumed": true}]}""");
+        Files.writeString(runDir.resolve("task_attempts.jsonl"),
+                "{\"task_id\":\"T3\",\"attempt_number\":1,\"rc\":0,\"seconds\":120.0,\"reported_status\":\"done\"}\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T3/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reported").value("done"))
+                .andExpect(jsonPath("$.verification").doesNotExist())
+                .andExpect(jsonPath("$.done_verified").doesNotExist());
+    }
+
     /** #355-followup-2: the operator asked for every attempt to show up as its own section in the
      *  Stats tab, not just a collapsed total - this is the "attempts" array taskStats() now adds,
      *  one entry per session file sharing the task's label, oldest first, each carrying its own

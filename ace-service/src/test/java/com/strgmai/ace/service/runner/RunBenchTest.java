@@ -357,6 +357,49 @@ class RunBenchTest {
         assertEquals(0, second.get("rescue_rc"));
     }
 
+    /** found live: neither verification nor done_verified was ever persisted into
+     *  task_attempts.jsonl before - manifest.tasks' own entry was the ONLY place they lived, lost
+     *  for good the moment a later resume overwrote a resumed-past task's own entry with a bare
+     *  {id, rc, resumed} shape. Now carried through from `rec` (the same map sessionWithPolicy()
+     *  already set them on) the same way rescue_succeeded/rescue_rc already are. */
+    @Test
+    void logTaskAttemptCarriesVerificationAndDoneVerifiedWhenPresent() throws Exception {
+        final Path rd = track(Files.createTempDirectory("rd"));
+        final Path ws = track(Files.createTempDirectory("ws"));
+        final var bench = runBench();
+
+        final var rec = new java.util.LinkedHashMap<String, Object>(Map.of("rc", 0, "seconds", 10.0));
+        rec.put("verification", Map.of("ran", true, "green", true, "executed", 12, "failed", 0));
+        rec.put("done_verified", true);
+        bench.logTaskAttempt(rd, ws, "T1", Map.of(), 3600, 10000, 50, rec);
+
+        final var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        final Map<?, ?> entry = mapper.readValue(Files.readAllLines(rd.resolve("task_attempts.jsonl")).get(0), Map.class);
+        assertEquals(true, entry.get("done_verified"));
+        final Map<?, ?> v = (Map<?, ?>) entry.get("verification");
+        assertEquals(true, v.get("green"));
+        assertEquals(12, v.get("executed"));
+    }
+
+    /** `done_verified` can legitimately be `false` (claimed done, harness red) or absent entirely
+     *  (a non-task session, plainPlan=true) - both must still round-trip correctly, not be
+     *  silently dropped the way a plain `if (rec.get("done_verified") instanceof Boolean b)` check
+     *  would drop a real `false`. */
+    @Test
+    void logTaskAttemptCarriesAFalseDoneVerifiedNotJustATrueOne() throws Exception {
+        final Path rd = track(Files.createTempDirectory("rd"));
+        final Path ws = track(Files.createTempDirectory("ws"));
+        final var bench = runBench();
+
+        final var rec = new java.util.LinkedHashMap<String, Object>(Map.of("rc", 0, "seconds", 10.0));
+        rec.put("done_verified", false);
+        bench.logTaskAttempt(rd, ws, "T1", Map.of(), 3600, 10000, 50, rec);
+
+        final var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        final Map<?, ?> entry = mapper.readValue(Files.readAllLines(rd.resolve("task_attempts.jsonl")).get(0), Map.class);
+        assertEquals(false, entry.get("done_verified"), "a real false must survive, not be treated the same as absent");
+    }
+
     /** #337-followup: params used to carry only task_wall_sec/task_tokens/max_turns - every OTHER
      *  override actually in effect for this attempt (compaction_trigger, judge_enabled, etc.) was
      *  silently dropped, even though it was right there in `override`. Found live: the Stats tab's
