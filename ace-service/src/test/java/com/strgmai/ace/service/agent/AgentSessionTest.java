@@ -456,6 +456,26 @@ class AgentSessionTest {
         assertEquals(6_916L, events.get(1).reclaimedTokens(), "the real compaction still resolves normally");
     }
 
+    /** #505 follow-up: an OLDER session file, written before this fix, still has an EXPLICIT
+     *  "prompt_tokens_before": 0 for its preload compactions (the old sentinel), not an absent field.
+     *  The only call site for a real reactive compaction is itself guarded on lastPrompt > 0, so a
+     *  literal 0 can never be a real reading - treating it the same as "absent" lets every
+     *  already-recorded session file (including the one from the original bug report) render
+     *  correctly too, with no backfill/migration needed. */
+    @Test
+    void compactionEffectivenessTreatsALegacyZeroSentinelTheSameAsAnAbsentField() throws IOException {
+        final var dir = Files.createTempDirectory("session");
+        final var file = dir.resolve("legacy.jsonl");
+        Files.writeString(file, String.join("\n",
+                "{\"type\":\"compaction\",\"stubbed\":6,\"summarized\":false,\"prompt_tokens_before\":0,\"ts\":\"2026-10-27T21:40:07Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"usage\":{\"input\":34658,\"output\":50},\"ts\":\"2026-10-27T21:40:08Z\"}") + "\n");
+
+        final var events = AgentSession.compactionEffectiveness(file);
+        assertEquals(1, events.size());
+        assertNull(events.get(0).promptTokensBefore(), "a legacy explicit 0 is the same sentinel as an absent field");
+        assertNull(events.get(0).reclaimedTokens(), "must not become -34658");
+    }
+
     @Test
     void usageReturnsZeroedDefaultsForAMissingOrNullFile() {
         final Map<String, Long> missing = AgentSession.usage(Path.of("/no/such/session.jsonl"));
