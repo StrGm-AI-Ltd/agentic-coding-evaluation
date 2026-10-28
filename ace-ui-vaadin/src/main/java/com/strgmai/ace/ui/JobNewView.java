@@ -6,6 +6,7 @@ import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.combobox.MultiSelectComboBox;
 import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.notification.Notification;
+import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.select.Select;
@@ -124,7 +125,7 @@ public class JobNewView extends VerticalLayout {
         task.addValueChangeListener(e -> task.setInvalid(false));
         task.addValueChangeListener(e -> renderTaskInfo(e.getValue()));
         taskInfo.setVisible(false);
-        runIdField.setPlaceholder("blank = auto-generated");
+        runIdField.setHelperText("blank = auto-generated");
         runIdField.setTooltipText(Tooltips.RUN_ID);
 
         configureSelect(harness, "", "ref", "pi");
@@ -153,111 +154,111 @@ public class JobNewView extends VerticalLayout {
         // the ids RunSpec.PHASES/RunBench.PHASES accept - L7_full_platform's and L3p_point_in_time's
         // own multi-phase sequence; blank/none selected = every phase the rung defines (the default)
         phases.setItems("p0_definition", "p1_plan", "p2_implementation");
-        phases.setPlaceholder("blank = every phase the rung defines");
+        phases.setHelperText("blank = every phase the rung defines");
         phases.setTooltipText(Tooltips.PHASES);
         parallel.setPlaceholder("auto, or 1–99");
         parallel.setTooltipText(Tooltips.PARALLEL);
         priority.setValue(0);
         priority.setTooltipText(Tooltips.PRIORITY);
         taskWall.setMin(1);
-        taskWall.setPlaceholder("blank = derived from the rung's budget");
+        taskWall.setHelperText("blank = derived from the rung's budget");
         taskWall.setTooltipText(Tooltips.TASK_WALL);
         taskTokens.setMin(1);
-        taskTokens.setPlaceholder("blank = derived from the rung's budget");
+        taskTokens.setHelperText("blank = derived from the rung's budget");
         taskTokens.setTooltipText(Tooltips.TASK_TOKENS);
         implWall.setMin(1);
-        implWall.setPlaceholder("blank = rung's derived budget");
+        implWall.setHelperText("blank = rung's derived budget");
         implWall.setTooltipText(Tooltips.IMPL_WALL);
         implTokens.setMin(1);
-        implTokens.setPlaceholder("blank = operator default");
+        implTokens.setHelperText("blank = operator default");
         implTokens.setTooltipText(Tooltips.IMPL_TOKENS);
         planWall.setMin(0);
-        planWall.setPlaceholder("blank = default (900s), 0 = unlimited");
+        planWall.setHelperText("blank = default (900s), 0 = unlimited");
         planWall.setTooltipText(Tooltips.PLAN_WALL);
         planTokens.setMin(1);
-        planTokens.setPlaceholder("blank = operator default");
+        planTokens.setHelperText("blank = operator default");
         planTokens.setTooltipText(Tooltips.PLAN_TOKENS);
         contextWindow.setMin(1);
         contextWindow.setTooltipText(Tooltips.CONTEXT_WINDOW);
         firstTokenTimeout.setMin(1);
-        firstTokenTimeout.setPlaceholder("blank = default (180s)");
+        firstTokenTimeout.setHelperText("blank = default (180s)");
         firstTokenTimeout.setTooltipText(Tooltips.FIRST_TOKEN_TIMEOUT);
         compactionTrigger.setMin(0);
-        compactionTrigger.setPlaceholder("blank = default (28000), 0 = disabled");
+        compactionTrigger.setHelperText("blank = default (28000), 0 = disabled");
         compactionTrigger.setTooltipText(Tooltips.COMPACTION_TRIGGER);
         compactionStrategies.setValue(List.of(CompactionStrategyList.TOOL_RESULT_MASK, CompactionStrategyList.ERROR_LINE_EXTRACTION,
                 CompactionStrategyList.TOOL_OUTPUT_RECALL));   // mirrors CompactionStrategies.DEFAULT on the service side
         lessonRecordingEnabled.setValue(true);   // on by default now - mirrors RunSpec.from()'s own default
         lessonRecordingEnabled.setTooltipText(Tooltips.LESSON_RECORDING_ENABLED);
         reviewWallSec.setMin(1);
-        reviewWallSec.setPlaceholder("blank = default (900s)");
+        reviewWallSec.setHelperText("blank = default (900s)");
         reviewWallSec.setTooltipText(Tooltips.REVIEW_WALL_SEC);
         reviewTokens.setMin(0);
-        reviewTokens.setPlaceholder("blank = unlimited");
+        reviewTokens.setHelperText("blank = unlimited");
         reviewTokens.setTooltipText(Tooltips.REVIEW_TOKENS);
         maxTurns.setMin(1);
-        maxTurns.setPlaceholder("blank = default (400)");
+        maxTurns.setHelperText("blank = default (400)");
         maxTurns.setTooltipText(Tooltips.MAX_TURNS);
         fixWall.setMin(0);
-        fixWall.setPlaceholder("blank = unlimited");
+        fixWall.setHelperText("blank = unlimited");
         fixWall.setTooltipText(Tooltips.FIX_WALL);
         fixTokens.setMin(0);
-        fixTokens.setPlaceholder("blank = unlimited");
+        fixTokens.setHelperText("blank = unlimited");
         fixTokens.setTooltipText(Tooltips.FIX_TOKENS);
         parallelPlanTokens.setMin(0);
-        parallelPlanTokens.setPlaceholder("blank = unlimited");
+        parallelPlanTokens.setHelperText("blank = unlimited");
         parallelPlanTokens.setTooltipText(Tooltips.PARALLEL_PLAN_TOKENS);
         handoffTokens.setMin(0);
-        handoffTokens.setPlaceholder("blank = unlimited");
+        handoffTokens.setHelperText("blank = unlimited");
         handoffTokens.setTooltipText(Tooltips.HANDOFF_TOKENS);
         wrapupTokens.setMin(0);
-        wrapupTokens.setPlaceholder("blank = unlimited");
+        wrapupTokens.setHelperText("blank = unlimited");
         wrapupTokens.setTooltipText(Tooltips.WRAPUP_TOKENS);
         wallBudget.setMin(1);
-        wallBudget.setPlaceholder("blank = not used (normal budget applies)");
+        wallBudget.setHelperText("blank = not used (normal budget applies)");
         wallBudget.setTooltipText(Tooltips.WALL_BUDGET);
         parallelWeight.setMin(0);
         parallelWeight.setMax(1);
-        parallelWeight.setPlaceholder("blank = default (0.1)");
+        parallelWeight.setHelperText("blank = default (0.1)");
         parallelWeight.setTooltipText(Tooltips.PARALLEL_WEIGHT);
         efficiencyWeight.setMin(0);
         efficiencyWeight.setMax(1);
-        efficiencyWeight.setPlaceholder("blank = 0 (opt-in; not blended by default)");
+        efficiencyWeight.setHelperText("blank = 0 (opt-in; not blended by default)");
         efficiencyWeight.setTooltipText(Tooltips.EFFICIENCY_WEIGHT);
         reviewWeight.setMin(0);
         reviewWeight.setMax(1);
-        reviewWeight.setPlaceholder("blank = default (0.1)");
+        reviewWeight.setHelperText("blank = default (0.1)");
         reviewWeight.setTooltipText(Tooltips.REVIEW_WEIGHT);
         trajectoryWeight.setMin(0);
         trajectoryWeight.setMax(1);
-        trajectoryWeight.setPlaceholder("blank = default (0.1)");
+        trajectoryWeight.setHelperText("blank = default (0.1)");
         trajectoryWeight.setTooltipText(Tooltips.TRAJECTORY_WEIGHT);
         temperature.setMin(0);
-        temperature.setPlaceholder("blank = operator default");
+        temperature.setHelperText("blank = operator default");
         temperature.setTooltipText(Tooltips.TEMPERATURE);
         topP.setMin(0);
         topP.setMax(1);
-        topP.setPlaceholder("blank = operator default");
+        topP.setHelperText("blank = operator default");
         topP.setTooltipText(Tooltips.TOP_P);
         topK.setMin(1);
-        topK.setPlaceholder("blank = model default");
+        topK.setHelperText("blank = model default");
         topK.setTooltipText(Tooltips.TOP_K);
         repetitionPenalty.setMin(0);
-        repetitionPenalty.setPlaceholder("blank = model default");
+        repetitionPenalty.setHelperText("blank = model default");
         repetitionPenalty.setTooltipText(Tooltips.REPETITION_PENALTY);
         maxTokens.setMin(1);
-        maxTokens.setPlaceholder("blank = context-probe-derived cap");
+        maxTokens.setHelperText("blank = context-probe-derived cap");
         maxTokens.setTooltipText(Tooltips.MAX_TOKENS);
         parallelPlanWall.setMin(1);
-        parallelPlanWall.setPlaceholder("blank = default (600s)");
+        parallelPlanWall.setHelperText("blank = default (600s)");
         parallelPlanWall.setTooltipText(Tooltips.PARALLEL_PLAN_WALL);
         handoffWall.setMin(1);
-        handoffWall.setPlaceholder("blank = default (300s)");
+        handoffWall.setHelperText("blank = default (300s)");
         handoffWall.setTooltipText(Tooltips.HANDOFF_WALL);
         wrapupWall.setMin(1);
-        wrapupWall.setPlaceholder("blank = default (300s, scaled)");
+        wrapupWall.setHelperText("blank = default (300s, scaled)");
         wrapupWall.setTooltipText(Tooltips.WRAPUP_WALL);
-        javaHome.setPlaceholder("blank = operator/machine default");
+        javaHome.setHelperText("blank = operator/machine default");
         javaHome.setTooltipText(Tooltips.JAVA_HOME);
         handoffNotes.setTooltipText(Tooltips.HANDOFF_NOTES);
         systemRules.setTooltipText(Tooltips.SYSTEM_RULES);
@@ -269,23 +270,23 @@ public class JobNewView extends VerticalLayout {
         judgeEnabled.setValue(true);   // on by default now - mirrors RunSpec.from()'s own default
         judgeEnabled.setTooltipText(Tooltips.JUDGE_ENABLED);
         judgeEveryNTurns.setMin(1);
-        judgeEveryNTurns.setPlaceholder("blank = default (10)");
+        judgeEveryNTurns.setHelperText("blank = default (10)");
         judgeEveryNTurns.setTooltipText(Tooltips.JUDGE_EVERY_N_TURNS);
         judgeWallSec.setMin(1);
-        judgeWallSec.setPlaceholder("blank = unlimited");
+        judgeWallSec.setHelperText("blank = unlimited");
         judgeWallSec.setTooltipText(Tooltips.JUDGE_WALL_SEC);
         judgeTokens.setMin(1);
-        judgeTokens.setPlaceholder("blank = unlimited");
+        judgeTokens.setHelperText("blank = unlimited");
         judgeTokens.setTooltipText(Tooltips.JUDGE_TOKENS);
         budgetRescueEnabled.setTooltipText(Tooltips.BUDGET_RESCUE_ENABLED);
         rescueWallSec.setMin(1);
-        rescueWallSec.setPlaceholder("blank = unlimited");
+        rescueWallSec.setHelperText("blank = unlimited");
         rescueWallSec.setTooltipText(Tooltips.RESCUE_WALL_SEC);
         rescueTokens.setMin(1);
-        rescueTokens.setPlaceholder("blank = unlimited");
+        rescueTokens.setHelperText("blank = unlimited");
         rescueTokens.setTooltipText(Tooltips.RESCUE_TOKENS);
         rescueKeepRecentTurns.setMin(0);
-        rescueKeepRecentTurns.setPlaceholder("blank = operator default");
+        rescueKeepRecentTurns.setHelperText("blank = operator default");
         rescueKeepRecentTurns.setTooltipText(Tooltips.RESCUE_KEEP_RECENT_TURNS);
 
         add(new H2("New job"));
@@ -294,37 +295,48 @@ public class JobNewView extends VerticalLayout {
         errors.setPadding(false);
         add(errors);
 
+        // the two fields nearly every job actually sets - kept unboxed, right under the page
+        // title, ahead of every other (collapsed-by-default) section
+        final var taskModelRow = new HorizontalLayout(task, model);
+        taskModelRow.setDefaultVerticalComponentAlignment(FlexComponent.Alignment.END);
+        taskModelRow.getStyle().set("flex-wrap", "wrap");
+        taskModelRow.setSpacing(true);
+        add(taskModelRow);
+        add(taskInfo);
+
         add(Forms.section("Run",
-                Forms.row(task, runIdField, harness, mode, planSource, taskGranularity),
-                Forms.row(taskInfo),
+                Forms.row(runIdField, harness, mode, planSource, taskGranularity),
                 Forms.row(phases, parallel, parallelPlan, parallelWeight)));
-        add(Forms.section("Budgets",
-                Forms.row(taskWall, taskTokens, implWall, implTokens, planWall, planTokens, wallBudget, contextWindow),
+        add(Forms.collapsibleSection("Budgets",
+                Forms.row(taskWall, taskTokens, implWall, implTokens),
+                Forms.row(planWall, planTokens, wallBudget, contextWindow),
                 Forms.row(firstTokenTimeout, maxTurns),
                 Forms.row(parallelPlanWall, handoffWall, wrapupWall),
                 Forms.row(parallelPlanTokens, handoffTokens, wrapupTokens),
                 Forms.row(fixWall, fixTokens),
                 Forms.row(efficiencyWeight)));
-        add(Forms.section("Context compaction",
+        add(Forms.collapsibleSection("Context compaction",
                 Forms.row(compactionTrigger),
                 Forms.row(compactionStrategies)));
-        add(Forms.section("Cross-task lessons",
+        add(Forms.collapsibleSection("Cross-task lessons",
                 Forms.row(lessonRecordingEnabled)));
-        add(Forms.section("Sampler",
+        add(Forms.collapsibleSection("Sampler",
                 Forms.row(temperature, topP, topK, repetitionPenalty),
                 Forms.row(maxTokens, reasoningEffort)));
-        add(Forms.section("Reviewers",
-                Forms.row(reviewerModel, reviewWeight, reviewBlind),
-                Forms.row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse, trajectoryReview),
+        add(Forms.collapsibleSection("Reviewers",
+                Forms.row(reviewerModel, reviewWeight),
+                Forms.row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse),
+                Forms.row(reviewBlind, trajectoryReview),
                 Forms.row(reviewWallSec, reviewTokens)));
-        add(Forms.section("Judge",
+        add(Forms.collapsibleSection("Judge",
                 Forms.row(judgeEnabled, judgeEveryNTurns, judgeModel),
                 Forms.row(judgeWallSec, judgeTokens)));
-        add(Forms.section("Budget rescue",
+        add(Forms.collapsibleSection("Budget rescue",
                 Forms.row(budgetRescueEnabled, rescueWallSec, rescueTokens, rescueKeepRecentTurns)));
-        add(Forms.section("Model & flags",
-                Forms.row(model, handoffNotes, systemRules, selfReview),
-                Forms.row(javaHome, noContextProbe, contextProbeFresh),
+        add(Forms.section("Flags",
+                Forms.row(handoffNotes, systemRules, selfReview),
+                Forms.row(javaHome),
+                Forms.row(noContextProbe, contextProbeFresh),
                 Forms.row(priority)));
 
         final var submit = new Button("Enqueue job", e -> submit());
