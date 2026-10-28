@@ -1,0 +1,29 @@
+/* #476 (PR 1/2): "Night operator" theme tokens - loaded after Lumo.STYLESHEET (see the
+ * @StyleSheet order on AceUiVaadinApplication), so these [theme~="dark"] rules win the cascade
+ * against Lumo's own built-in dark values at equal specificity. @ColorScheme(DARK) on the app
+ * shell is what puts theme="dark" on the document in the first place - these overrides ride on
+ * top of Lumo's own dark grayscale/contrast scale rather than redefining it from scratch, so
+ * every component (Grid, Dialog, Badge, Button, ...) stays correctly contrasted automatically. */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
+
+[theme~="dark"] {
+  /* a near-black base rather than Lumo's own default dark gray - the "operator console" feel
+     this issue (#476) asks for */
+  --lumo-base-color: #0A0D14;
+
+  /* indigo brand primary, replacing Lumo's default blue - badge/focus-ring/button variants
+     (-10pct/-50pct) kept consistent with the same hue so hover/focus states read as one family */
+  --lumo-primary-color: #6D6AF6;
+  --lumo-primary-color-50pct: rgba(109, 106, 246, 0.5);
+  --lumo-primary-color-10pct: rgba(109, 106, 246, 0.14);
+  --lumo-primary-text-color: #8684FF;
+
+  /* monospace throughout - headings, body and UI text alike (JetBrains Mono, loaded above) */
+  --lumo-font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* slightly more rounding than Lumo's own default, matching the approved design preview's
+     card/button treatment */
+  --lumo-border-radius-m: 7px;
+  --lumo-border-radius-l: 10px;
+}

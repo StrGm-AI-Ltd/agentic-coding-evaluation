@@ -3,9 +3,11 @@ package com.strgmai.ace.ui;
 import com.github.appreciated.apexcharts.ApexChartsBuilder;
 import com.github.appreciated.apexcharts.config.builder.ChartBuilder;
 import com.github.appreciated.apexcharts.config.builder.SeriesBuilder;
+import com.github.appreciated.apexcharts.config.builder.ThemeBuilder;
 import com.github.appreciated.apexcharts.config.builder.XAxisBuilder;
 import com.github.appreciated.apexcharts.config.builder.YAxisBuilder;
 import com.github.appreciated.apexcharts.config.chart.Type;
+import com.github.appreciated.apexcharts.config.theme.Mode;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
@@ -1551,7 +1553,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
                 .withData(compactionColumnData(judgeOffTrackRequests, points.size(), prefillPeak)).build();
         final var chart = ApexChartsBuilder.get()
-                .withChart(ChartBuilder.get().withType(Type.LINE).build())
+                .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent").build())
+                .withTheme(ThemeBuilder.get().withMode(Mode.DARK).build())
                 .withColors("#008FFB", "#e74c3c", "#00E396", "#546E7A", "#27ae60", "#e67e22")
                 .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get()
                         // the bar's own stroke paints OUTSIDE its fill too, so even a 2px stroke
@@ -1660,7 +1663,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
                 .withData(compactionColumnData(judgeOffTrackRequests, points.size(), ttftPeak)).build();
         final var chart = ApexChartsBuilder.get()
-                .withChart(ChartBuilder.get().withType(Type.LINE).build())
+                .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent").build())
+                .withTheme(ThemeBuilder.get().withMode(Mode.DARK).build())
                 .withColors("#775DD0", "#FEB019", "#e74c3c", "#546E7A", "#27ae60", "#e67e22")
                 .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get()
                         .withWidthArray(1.5, 1.5, 0.0, 1.5, 0.0, 0.0).build())
