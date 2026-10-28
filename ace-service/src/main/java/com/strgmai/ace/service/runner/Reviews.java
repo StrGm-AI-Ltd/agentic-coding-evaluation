@@ -63,10 +63,11 @@ public class Reviews {
     public Map<String, Object> selfReview(Map<String, Object> cfg, Path ws, Path rd, Map<String, Object> manifest,
                                           List<PlanTask> tasks, String promptText, RecordingProxyFactory proxies,
                                           String reviewerModel, boolean blind) throws Exception {
-        String reviewer = providerStore.resolveModel(reviewerModel, "omlx/" + cfg.getOrDefault("model", props.model()));
-        final boolean external = !reviewer.startsWith("omlx/");
+        final String localPrefix = backend.providerKey() + "/";
+        String reviewer = providerStore.resolveModel(reviewerModel, localPrefix + cfg.getOrDefault("model", props.model()));
+        final boolean external = !reviewer.startsWith(localPrefix);
         // only one local model fits: a second local reviewer falls back to the run's own model
-        if (!external && !reviewer.equals("omlx/" + cfg.getOrDefault("model", props.model()))) reviewer = "omlx/" + cfg.getOrDefault("model", props.model());
+        if (!external && !reviewer.equals(localPrefix + cfg.getOrDefault("model", props.model()))) reviewer = localPrefix + cfg.getOrDefault("model", props.model());
         final var pre = Path.of(RunBenchSupport.snapshot(ws, "phase/pre-review"));
         manifestMap(manifest, "snapshots").put("pre-review", pre.toString());
         final Path verifyLog = rd.resolve("verify/pre-review.log");
@@ -127,9 +128,10 @@ public class Reviews {
      *  then review the agent's process against the objective index. */
     public Map<String, Object> trajectoryReview(Map<String, Object> cfg, Path ws, Path rd, Map<String, Object> manifest,
                                                  String reviewerModel, RecordingProxyFactory proxies) throws Exception {
-        String reviewer = providerStore.resolveModel(reviewerModel, "omlx/" + cfg.getOrDefault("model", props.model()));
-        final boolean external = !reviewer.startsWith("omlx/");
-        if (!external && !reviewer.equals("omlx/" + cfg.getOrDefault("model", props.model()))) reviewer = "omlx/" + cfg.getOrDefault("model", props.model());
+        final String localPrefix = backend.providerKey() + "/";
+        String reviewer = providerStore.resolveModel(reviewerModel, localPrefix + cfg.getOrDefault("model", props.model()));
+        final boolean external = !reviewer.startsWith(localPrefix);
+        if (!external && !reviewer.equals(localPrefix + cfg.getOrDefault("model", props.model()))) reviewer = localPrefix + cfg.getOrDefault("model", props.model());
         final Path tdir = ws.resolve("trajectory");
         Files.createDirectories(tdir);
         // render the trajectory as of now (before the reviewer adds its own requests to the journal)
@@ -261,7 +263,8 @@ public class Reviews {
         // convention) - was a flat, non-configurable 12000/900 with no --review-tokens flag at all
         final Map<String, Object> reviewCfg = cfg.get("review") instanceof Map<?, ?> r ? (Map<String, Object>) r : Map.of();
         final long tokens = ((Number) reviewCfg.getOrDefault("tokens", 0)).longValue();
-        final String model = reviewer.startsWith("omlx/") ? reviewer.substring("omlx/".length()) : reviewer.substring(reviewer.indexOf('/') + 1);
+        final String localPrefix = backend.providerKey() + "/";
+        final String model = reviewer.startsWith(localPrefix) ? reviewer.substring(localPrefix.length()) : reviewer.substring(reviewer.indexOf('/') + 1);
         final RecordingProxyFactory.ProxySession proxy = external ? null
                 : proxies.start(rd.resolve("interactions.jsonl"), tokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
         final Map<String, String> extraEnv = external ? externalCredentials() : null;

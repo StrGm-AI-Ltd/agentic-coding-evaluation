@@ -664,7 +664,7 @@ public class RunBench {
             // this is the one-time per-run setup (mirrors Python's run_once() setup + fresh_home());
             // the per-call baseUrl patch happens separately, right before each individual pi invocation
             if ("pi".equals(cfg.get("harness")))
-                PiAgent.seedHome(home, (String) cfg.getOrDefault("model", props.model()),
+                piAgent.seedHome(home, (String) cfg.getOrDefault("model", props.model()),
                         (Integer) cfg.get("usable_context"), (Integer) cfg.get("max_output_tokens"));
 
             final Map<String, Object> manifest = new LinkedHashMap<>();

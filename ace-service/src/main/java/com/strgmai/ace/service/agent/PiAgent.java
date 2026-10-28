@@ -3,6 +3,7 @@ package com.strgmai.ace.service.agent;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.strgmai.ace.service.backend.LocalModelBackend;
 import com.strgmai.ace.service.runner.JournalFacts;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,32 +56,37 @@ public class PiAgent {
     /** turns/toolErrors/compactions have no pi equivalent - an external closed-box CLI exposes none
      *  of ReferenceAgent's own in-process introspection. A sentinel, not a silently-wrong 0. */
     private static final int NOT_OBSERVABLE = -1;
+    private final LocalModelBackend backend;
+
+    public PiAgent(final LocalModelBackend backend) { this.backend = backend; }
 
     /** One-time per-run HOME setup (mirrors Python's run_once() setup + fresh_home()): copies the
-     *  user's own ~/.pi/agent/models.json "omlx" provider entry into this run's scrubbed HOME,
-     *  pinned to the run's own measured context/output-token budget, and writes a minimal
-     *  settings.json - defaultProjectTrust="always" is load-bearing, not cosmetic: without it pi
-     *  prompts interactively for project trust and hangs in this non-interactive harness. A no-op
-     *  (pi will fail on its own, clearly, the first time it's actually invoked) when the real
-     *  models.json has no "omlx" provider to seed from at all. */
-    public static void seedHome(final Path home, final String model, final int usableContext, final int maxOutputTokens) throws IOException {
+     *  user's own ~/.pi/agent/models.json local-provider entry (keyed under backend.providerKey(),
+     *  #65 - was a hardcoded "omlx" literal, matching the operator's own pi config convention)
+     *  into this run's scrubbed HOME, pinned to the run's own measured context/output-token
+     *  budget, and writes a minimal settings.json - defaultProjectTrust="always" is load-bearing,
+     *  not cosmetic: without it pi prompts interactively for project trust and hangs in this
+     *  non-interactive harness. A no-op (pi will fail on its own, clearly, the first time it's
+     *  actually invoked) when the real models.json has no matching provider to seed from at all. */
+    public void seedHome(final Path home, final String model, final int usableContext, final int maxOutputTokens) throws IOException {
+        final String key = backend.providerKey();
         final Path piAgentDir = home.resolve(".pi/agent");
         Files.createDirectories(piAgentDir);
         final Path realModelsJson = Path.of(System.getProperty("user.home"), ".pi", "agent", "models.json");
         if (Files.isRegularFile(realModelsJson)) {
             final ObjectNode root = (ObjectNode) MAPPER.readTree(realModelsJson.toFile());
-            final JsonNode omlx = root.path("providers").path("omlx");
+            final JsonNode local = root.path("providers").path(key);
             final ObjectNode providers = MAPPER.createObjectNode();
-            if (omlx.isObject()) providers.set("omlx", omlx);
+            if (local.isObject()) providers.set(key, local);
             root.set("providers", providers);
-            if (omlx.isObject()) pinModelEntry((ObjectNode) omlx, model, usableContext, maxOutputTokens);
+            if (local.isObject()) pinModelEntry((ObjectNode) local, model, usableContext, maxOutputTokens);
             MAPPER.writerWithDefaultPrettyPrinter().writeValue(piAgentDir.resolve("models.json").toFile(), root);
         } else {
-            log.warn("~/.pi/agent/models.json has no 'omlx' provider to seed the pi harness's HOME from - "
-                    + "pi will fail with its own clear error the first time a pi session actually runs");
+            log.warn("~/.pi/agent/models.json has no '{}' provider to seed the pi harness's HOME from - "
+                    + "pi will fail with its own clear error the first time a pi session actually runs", key);
         }
         final ObjectNode settings = MAPPER.createObjectNode();
-        settings.put("defaultProvider", "omlx");
+        settings.put("defaultProvider", key);
         settings.put("defaultModel", model);
         settings.put("defaultProjectTrust", "always");
         MAPPER.writerWithDefaultPrettyPrinter().writeValue(piAgentDir.resolve("settings.json").toFile(), settings);
@@ -109,16 +115,17 @@ public class PiAgent {
         if (entry != null) { entry.put("contextWindow", usableContext); entry.put("maxTokens", maxOutputTokens); }
     }
 
-    /** Per-call: points providers.omlx.baseUrl at THIS session's RecordingProxy - mirrors Python's
-     *  own per-call m["providers"]["omlx"]["baseUrl"] = base. A no-op if this run's own (already
-     *  seeded) models.json or its "omlx" entry is missing - pi fails on its own with a clear error
-     *  rather than this method inventing a misleading one. Package-private: directly unit-tested. */
-    static void patchBaseUrl(final Path home, final String proxyBase) throws IOException {
+    /** Per-call: points providers.&lt;backend.providerKey()&gt;.baseUrl at THIS session's
+     *  RecordingProxy - mirrors Python's own per-call m["providers"]["omlx"]["baseUrl"] = base. A
+     *  no-op if this run's own (already seeded) models.json or its matching provider entry is
+     *  missing - pi fails on its own with a clear error rather than this method inventing a
+     *  misleading one. Package-private: directly unit-tested. */
+    void patchBaseUrl(final Path home, final String proxyBase) throws IOException {
         final Path mj = home.resolve(".pi/agent/models.json");
         if (!Files.isRegularFile(mj)) return;
         final ObjectNode root = (ObjectNode) MAPPER.readTree(mj.toFile());
-        if (root.path("providers").path("omlx") instanceof ObjectNode omlx) {
-            omlx.put("baseUrl", proxyBase);
+        if (root.path("providers").path(backend.providerKey()) instanceof ObjectNode local) {
+            local.put("baseUrl", proxyBase);
             MAPPER.writerWithDefaultPrettyPrinter().writeValue(mj.toFile(), root);
         }
     }

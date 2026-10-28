@@ -3,6 +3,7 @@ package com.strgmai.ace.service.runner;
 import com.strgmai.ace.service.agent.ProviderStore;
 import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.agent.AgentSession;
+import com.strgmai.ace.service.backend.LocalModelBackend;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.proxy.RecordingProxy;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
@@ -42,9 +43,10 @@ public class Judge {
     private final BenchProperties props;
     private final ReferenceAgent agent;
     private final ProviderStore providerStore;
+    private final LocalModelBackend backend;
 
-    public Judge(final BenchProperties props, final ReferenceAgent agent, final ProviderStore providerStore) {
-        this.props = props; this.agent = agent; this.providerStore = providerStore;
+    public Judge(final BenchProperties props, final ReferenceAgent agent, final ProviderStore providerStore, final LocalModelBackend backend) {
+        this.props = props; this.agent = agent; this.providerStore = providerStore; this.backend = backend;
     }
 
     // character caps (not token caps, same convention Packs.cap/capTail already use elsewhere) -
@@ -106,11 +108,12 @@ public class Judge {
         final String prompt = buildPrompt(ws, taskId, goal, taskWallSec, taskTokens, elapsedSec, trajectory);
 
         final String rawModel = judgeCfg.get("model") instanceof String m && !m.isBlank() ? m : null;
-        final String reviewer = providerStore.resolveModel(rawModel, "omlx/" + cfg.getOrDefault("model", props.model()));
-        final boolean external = !reviewer.startsWith("omlx/");
+        final String localPrefix = backend.providerKey() + "/";
+        final String reviewer = providerStore.resolveModel(rawModel, localPrefix + cfg.getOrDefault("model", props.model()));
+        final boolean external = !reviewer.startsWith(localPrefix);
         final long wallSec = judgeCfg.get("wall_sec") instanceof Number w ? w.longValue() : 0L;
         final long tokens = judgeCfg.get("tokens") instanceof Number t ? t.longValue() : 0L;
-        final String model = reviewer.startsWith("omlx/") ? reviewer.substring("omlx/".length()) : reviewer.substring(reviewer.indexOf('/') + 1);
+        final String model = reviewer.startsWith(localPrefix) ? reviewer.substring(localPrefix.length()) : reviewer.substring(reviewer.indexOf('/') + 1);
         final RecordingProxyFactory.ProxySession proxy = external ? null
                 : proxies.start(rd.resolve("interactions.jsonl"), tokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
         final Map<String, String> extraEnv = external ? externalCredentials() : null;

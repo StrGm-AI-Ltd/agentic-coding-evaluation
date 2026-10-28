@@ -1705,8 +1705,12 @@ public class BenchController {
 
     /** The "LLM Providers" registry - replaces the old hardcoded ProviderConfig enum. Never returns
      *  the raw api_key value, only whether one is set - the UI's own edit form starts that field
-     *  blank regardless, so a round-tripped secret would serve no purpose but to leak it. */
-    private static Map<String, Object> providerRow(final com.strgmai.ace.service.agent.ProviderStore.Provider p) {
+     *  blank regardless, so a round-tripped secret would serve no purpose but to leak it.
+     *  #65: is_local tells the UI's ProviderModelPicker which registered row is the local backend
+     *  (backend.providerKey()) - there is no such column in the providers table itself, this is
+     *  purely the application-level "which key means local" convention, surfaced so the UI stops
+     *  hardcoding the literal "omlx" string to find it. */
+    private Map<String, Object> providerRow(final com.strgmai.ace.service.agent.ProviderStore.Provider p) {
         final Map<String, Object> row = new LinkedHashMap<>();
         row.put("id", p.id());
         row.put("name", p.name());
@@ -1714,12 +1718,13 @@ public class BenchController {
         row.put("base_url", p.baseUrl());
         row.put("default_model", p.defaultModel());
         row.put("has_api_key", p.apiKey() != null && !p.apiKey().isBlank());
+        row.put("is_local", backend.providerKey().equals(p.providerKey()));
         return row;
     }
 
     @GetMapping("/api/providers")
     public List<Map<String, Object>> providers() {
-        return providerStore.list().stream().map(BenchController::providerRow).toList();
+        return providerStore.list().stream().map(this::providerRow).toList();
     }
 
     @PostMapping("/api/providers")

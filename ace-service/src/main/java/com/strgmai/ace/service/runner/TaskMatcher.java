@@ -3,6 +3,7 @@ package com.strgmai.ace.service.runner;
 import com.strgmai.ace.service.agent.AgentSession;
 import com.strgmai.ace.service.agent.ProviderStore;
 import com.strgmai.ace.service.agent.ReferenceAgent;
+import com.strgmai.ace.service.backend.LocalModelBackend;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.plan.PlanTask;
 import org.slf4j.Logger;
@@ -39,11 +40,13 @@ public class TaskMatcher {
     private final BenchProperties props;
     private final ReferenceAgent agent;
     private final ProviderStore providerStore;
+    private final LocalModelBackend backend;
 
-    public TaskMatcher(final BenchProperties props, final ReferenceAgent agent, final ProviderStore providerStore) {
+    public TaskMatcher(final BenchProperties props, final ReferenceAgent agent, final ProviderStore providerStore, final LocalModelBackend backend) {
         this.props = props;
         this.agent = agent;
         this.providerStore = providerStore;
+        this.backend = backend;
     }
 
     private static final int MAX_GOAL_CHARS = 400;   // same "character caps, not token caps" convention Judge uses
@@ -73,9 +76,10 @@ public class TaskMatcher {
                                   final String reviewerModel, final Path rd) throws Exception {
         if (aTasks.isEmpty() || bTasks.isEmpty()) return List.of();
         final String prompt = buildPrompt(aTasks, bTasks);
-        final String reviewer = providerStore.resolveModel(reviewerModel, "omlx/" + props.model());
-        final boolean external = !reviewer.startsWith("omlx/");
-        final String model = reviewer.startsWith("omlx/") ? reviewer.substring("omlx/".length()) : reviewer.substring(reviewer.indexOf('/') + 1);
+        final String localPrefix = backend.providerKey() + "/";
+        final String reviewer = providerStore.resolveModel(reviewerModel, localPrefix + props.model());
+        final boolean external = !reviewer.startsWith(localPrefix);
+        final String model = reviewer.startsWith(localPrefix) ? reviewer.substring(localPrefix.length()) : reviewer.substring(reviewer.indexOf('/') + 1);
         final Map<String, String> extraEnv = external ? externalCredentials() : null;
         final Consumer<String> abort = reason -> {};
         final String name = "task-match-" + System.currentTimeMillis();
