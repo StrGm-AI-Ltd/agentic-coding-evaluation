@@ -22,6 +22,18 @@
   /* monospace throughout - headings, body and UI text alike (JetBrains Mono, loaded above) */
   --lumo-font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
+  /* #476 follow-up: the approved design preview's own :root sets font-size: 14px as its base;
+     Lumo's own default (--lumo-font-size-m: 1rem, i.e. 16px) read visibly larger side-by-side -
+     found live comparing the shipped app against the mockup again. lumo.css's own body rule
+     (:where(body){font-size:var(--lumo-font-size-m)}) and nearly every Lumo component (Button,
+     Grid, SideNav, Badge, TextField, Tabs, ...) all read this SAME token for their own default
+     text size (confirmed via direct jar decompilation of lumo.css), so one override here matches
+     the mockup's base size app-wide instead of hand-tuning each component. The other
+     --lumo-font-size-* steps (xs/s/l/xl/...) are plain rem multiples of the document ROOT's own
+     font-size, not of this token - left untouched, matching the mockup's own approach of sizing
+     headings/labels explicitly rather than off one shared scale. */
+  --lumo-font-size-m: 14px;
+
   /* slightly more rounding than Lumo's own default, matching the approved design preview's
      card/button treatment */
   --lumo-border-radius-m: 7px;
