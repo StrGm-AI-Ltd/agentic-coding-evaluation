@@ -9,6 +9,7 @@ import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.dependency.CssImport;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.Hr;
+import com.vaadin.flow.component.html.Image;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.icon.Icon;
 import com.vaadin.flow.component.icon.VaadinIcon;
@@ -165,7 +166,19 @@ public class MainLayout extends AppLayout {
         footer.setAlignItems(FlexComponent.Alignment.CENTER);
         footer.setJustifyContentMode(FlexComponent.JustifyContentMode.CENTER);
 
-        addToDrawer(brand, scroller, footer);
+        // the StrGm AI org's own GitHub avatar (github.com/StrGm-AI-Ltd), saved locally under
+        // icons/ alongside the app's own favicon - served as a static resource, not fetched live
+        final var footerLogo = new Image("icons/strgm-logo.png", "StrGm AI");
+        footerLogo.setWidth("28px");
+        footerLogo.setHeight("28px");
+        footerLogo.getStyle().set("border-radius", "50%");
+        final var footerColumn = new VerticalLayout(footer, footerLogo);
+        footerColumn.setPadding(false);
+        footerColumn.setSpacing(false);
+        footerColumn.setAlignItems(FlexComponent.Alignment.CENTER);
+        footerColumn.getStyle().set("padding-bottom", "12px");
+
+        addToDrawer(brand, scroller, footerColumn);
 
         // #486, found live: a plain Div with setSizeFull() has no scroll mechanism of its own -
         // its default overflow is "clip", not "auto" - so a routed view taller than the fixed
