@@ -7,7 +7,10 @@ import com.vaadin.flow.component.applayout.AppLayout;
 import com.vaadin.flow.component.applayout.DrawerToggle;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.dependency.CssImport;
+import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.Div;
+import com.vaadin.flow.component.html.Hr;
+import com.vaadin.flow.component.html.Image;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.icon.Icon;
 import com.vaadin.flow.component.icon.VaadinIcon;
@@ -132,7 +135,14 @@ public class MainLayout extends AppLayout {
                 navItem("Preflight", PreflightView.class, VaadinIcon.CHECK_CIRCLE),
                 providersNavItem);
 
-        final var menu = new VerticalLayout(overview, benchmarking, system);
+        // the browser's own default <hr> CSS sets margin-inline:auto, which per the flexbox spec
+        // disables align-items:stretch for that item's cross axis - setWidthFull() overrides it so
+        // the divider actually spans the drawer's width instead of collapsing to a tiny default
+        final var overviewDivider = new Hr();
+        overviewDivider.setWidthFull();
+        final var benchmarkingDivider = new Hr();
+        benchmarkingDivider.setWidthFull();
+        final var menu = new VerticalLayout(overview, overviewDivider, benchmarking, benchmarkingDivider, system);
         menu.setPadding(false);
         menu.setSpacing(false);
 
@@ -148,14 +158,46 @@ public class MainLayout extends AppLayout {
         // custom-color strip - the dot keeps its shape, just no longer color-codes live status.
         footerStatusDot.getStyle().set("display", "inline-block").set("width", "8px").set("height", "8px")
                 .set("border-radius", "50%").set("margin-right", "6px");
-        final var footerStatusText = new Span("ace.strgm-ai.com");
-        footerStatusText.getStyle().set("font-size", "0.8em");
-        final var footer = new HorizontalLayout(footerStatusDot, footerStatusText);
-        footer.setPadding(true);
+        // no explicit font-size - inherits the app's own 14px base size, matching every
+        // SideNavItem label exactly rather than the smaller 0.8em this used to carry.
+        // The company's own site - no landing page there yet, but the link is live regardless.
+        final var footerStatusText = new Anchor("https://www.strgm-ai.com", "StrGm AI");
+        footerStatusText.setTarget("_blank");
+        footerStatusText.getStyle().set("color", "inherit").set("text-decoration", "none");
+        // an invisible spacer matching the dot's own left-side footprint (8px + 6px margin-right =
+        // 14px) - without it, centering the row centers (dot + text) as a block, which visibly
+        // shifts the text itself off-center from the logo centered below it
+        final var footerStatusSpacer = new Div();
+        footerStatusSpacer.getStyle().set("width", "14px").set("flex-shrink", "0");
+        final var footer = new HorizontalLayout(footerStatusDot, footerStatusText, footerStatusSpacer);
         footer.setSpacing(false);
+        footer.setWidthFull();
         footer.setAlignItems(FlexComponent.Alignment.CENTER);
+        footer.setJustifyContentMode(FlexComponent.JustifyContentMode.CENTER);
+        footer.getStyle().set("padding", "20px 20px 0 20px");
 
-        addToDrawer(brand, scroller, footer);
+        // the StrGm AI org's own GitHub avatar (github.com/StrGm-AI-Ltd), saved locally under
+        // icons/ alongside the app's own favicon - served as a static resource, not fetched live
+        final var footerLogo = new Image("icons/strgm-logo.png", "StrGm AI");
+        footerLogo.setWidth("28px");
+        footerLogo.setHeight("28px");
+        // display:block - an inline img (the default) inside the anchor below reserves descender
+        // space under its baseline, same as regular text; without this the wrapped image sat 5px
+        // further from the drawer's bottom edge than intended
+        footerLogo.getStyle().set("border-radius", "50%").set("display", "block");
+        final var footerLogoLink = new Anchor("https://www.strgm-ai.com", footerLogo);
+        footerLogoLink.setTarget("_blank");
+        final var footerColumn = new VerticalLayout(footer, footerLogoLink);
+        footerColumn.setPadding(false);
+        footerColumn.setSpacing(false);
+        footerColumn.setAlignItems(FlexComponent.Alignment.CENTER);
+        // the label-to-logo gap matches SideNavItem's own within-group row spacing (5px, confirmed
+        // via live measurement); the bottom padding instead matches the drawer's own top padding
+        // above "ACE" (23px, from .aura-view-header's own padding-top) so the logo sits exactly as
+        // far from the drawer's bottom edge as the brand sits from its top
+        footerColumn.getStyle().set("gap", "5px").set("padding-bottom", "23px");
+
+        addToDrawer(brand, scroller, footerColumn);
 
         // #486, found live: a plain Div with setSizeFull() has no scroll mechanism of its own -
         // its default overflow is "clip", not "auto" - so a routed view taller than the fixed
