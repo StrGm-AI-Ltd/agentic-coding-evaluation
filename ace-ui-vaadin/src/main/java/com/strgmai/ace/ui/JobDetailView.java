@@ -1036,9 +1036,11 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         // several sessions and handles a still-running one's wall time (open-ended until "now" or
         // the next task's own start), rather than reporting null until the session ends.
         // one persistent UI slot per attempt (textBody: header+body, refreshed every poll like the
-        // summary lines; chartsBody: gated separately below, never touched for an already-finished
-        // attempt once rendered).
-        record AttemptChartUi(Div textBody, Div chartsBody) {
+        // summary lines; chartsBody: built once below - speedChart/timingChart are the SAME chart
+        // instances for this attempt's whole lifetime, updated in place via updateSeries()/setXaxis()
+        // (#517 B) rather than torn down and rebuilt, never touched at all for an already-finished
+        // attempt once its last real update has landed).
+        record AttemptChartUi(Div textBody, Div chartsBody, ApexCharts speedChart, ApexCharts timingChart) {
         }
         final List<AttemptChartUi> attemptUis = new ArrayList<>();
         // identifies which attempt owns the currently-charted data and how many requests it had
@@ -1070,7 +1072,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 final var sections = attemptSections(stats);
                 final var multiAttempt = sections.size() > 1;
                 while (attemptUis.size() < sections.size()) {
-                    final var ui = new AttemptChartUi(new Div(), new Div());
+                    final var attemptLabel = multiAttempt ? " — Attempt " + (attemptUis.size() + 1) : "";
+                    final var speedChart = buildRequestSpeedChart();
+                    final var timingChart = buildRequestTimingChart();
+                    final var chartsBody = new Div();
+                    chartsBody.add(Panels.card("Prefill speed by request" + attemptLabel, speedChart),
+                            Panels.card("Request timing" + attemptLabel, timingChart));
+                    final var ui = new AttemptChartUi(new Div(), chartsBody, speedChart, timingChart);
                     attemptUis.add(ui);
                     statsAttemptsBody.add(ui.textBody(), ui.chartsBody());
                 }
@@ -1083,29 +1091,21 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                     // cleared and rebuilt, not just when multiAttempt
                     ui.textBody().removeAll();
                     if (multiAttempt) {
-                        final var header = new com.vaadin.flow.component.html.H4(section.header());
-                        header.getStyle().set("margin", "12px 0 4px 0").set("font-size", "0.95em");
-                        ui.textBody().add(header);
-                        ui.textBody().add(Panels.mono(section.body()));
+                        // #517 (A): the card's own sectionTitle() replaces the bare H4 this used to
+                        // be - same information, now wearing the rest of the app's own panel chrome
+                        ui.textBody().add(Panels.card(section.header(), Panels.mono(section.body())));
                     }
                     addCompactionEffectivenessTables(section, ui.textBody());
                     final var isLast = i == sections.size() - 1;
                     final var pointCount = section.requestSpeeds().size();
-                    final var alreadyCharted = ui.chartsBody().getChildren().findAny().isPresent();
-                    final var lastNeedsRedraw = isLast && (i != lastChartedAttemptIndex[0] || pointCount != lastChartedPointCount[0]);
-                    if (alreadyCharted && !lastNeedsRedraw) continue;
-                    ui.chartsBody().removeAll();
-                    final var attemptLabel = multiAttempt ? " — Attempt " + (i + 1) : "";
-                    addRequestSpeedChart(section.requestSpeeds(), section.compactionsBeforeRequest(),
-                            section.judgeOnTrackRequests(), section.judgeOffTrackRequests(), ui.chartsBody(),
-                            "Prefill speed by request" + attemptLabel);
-                    addRequestTimingChart(section.requestSpeeds(), section.compactionsBeforeRequest(),
-                            section.judgeOnTrackRequests(), section.judgeOffTrackRequests(), ui.chartsBody(),
-                            "Request timing" + attemptLabel);
-                    if (isLast) {
-                        lastChartedAttemptIndex[0] = i;
-                        lastChartedPointCount[0] = pointCount;
-                    }
+                    final var needsRedraw = isLast && (i != lastChartedAttemptIndex[0] || pointCount != lastChartedPointCount[0]);
+                    if (!needsRedraw) continue;
+                    updateRequestSpeedChart(ui.speedChart(), section.requestSpeeds(), section.compactionsBeforeRequest(),
+                            section.judgeOnTrackRequests(), section.judgeOffTrackRequests());
+                    updateRequestTimingChart(ui.timingChart(), section.requestSpeeds(), section.compactionsBeforeRequest(),
+                            section.judgeOnTrackRequests(), section.judgeOffTrackRequests());
+                    lastChartedAttemptIndex[0] = i;
+                    lastChartedPointCount[0] = pointCount;
                 }
             } catch (final Exception ex) {
                 statsSummaryBody.removeAll();
@@ -1580,31 +1580,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  (confirmed via its source, modules/CoreUtils.js's setSeriesYAxisMappings()) merges any
      *  yaxis entries that share one seriesName into a single scale. Added to `container`
      *  directly, same as every other Stats-tab element. */
-    static void addRequestSpeedChart(final List<RequestSpeedPoint> points, final List<Integer> compactionsBeforeRequest,
-                                       final List<Integer> judgeOnTrackRequests, final List<Integer> judgeOffTrackRequests,
-                                       final Div container, final String title) {
-        if (points.isEmpty()) return;
-        container.add(Panels.sectionTitle(title));
-        final var categories = requestSpeedCategories(points.size());
-        final var xaxisLabels = new com.github.appreciated.apexcharts.config.xaxis.Labels();
-        xaxisLabels.setFormatter(requestSpeedLabelFormatterJs());
-        final var speedSeries = SeriesBuilder.get().withName("prefill tok/s")
-                .withData(points.stream().map(RequestSpeedPoint::prefillTokPerSec).toArray(Double[]::new)).build();
-        final var prefillPeak = points.stream().map(RequestSpeedPoint::prefillTokPerSec).filter(Objects::nonNull)
-                .mapToDouble(Double::doubleValue).max().orElse(0);
-        final var compactionSeries = SeriesBuilder.get().withName("compaction")
-                .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
-                .withData(compactionColumnData(compactionsBeforeRequest, points.size(), prefillPeak)).build();
-        final var generationSeries = SeriesBuilder.get().withName("generation tok/s")
-                .withData(points.stream().map(RequestSpeedPoint::generationTokPerSec).toArray(Double[]::new)).build();
-        final var contextSeries = SeriesBuilder.get().withName("context tokens")
-                .withData(points.stream().map(RequestSpeedPoint::contextTokens).toArray(Integer[]::new)).build();
-        final var judgeOnTrackSeries = SeriesBuilder.get().withName("judge on track")
-                .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
-                .withData(compactionColumnData(judgeOnTrackRequests, points.size(), prefillPeak)).build();
-        final var judgeOffTrackSeries = SeriesBuilder.get().withName("judge off track")
-                .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
-                .withData(compactionColumnData(judgeOffTrackRequests, points.size(), prefillPeak)).build();
+    /** #517 (B): split from the former addRequestSpeedChart() into a build-once (static config:
+     *  theme/colors/stroke/plotOptions/legend/tooltip/yaxis - none of it data-dependent) half and
+     *  updateRequestSpeedChart() below (the data-dependent half: categories + the 6 series) - the
+     *  actively-updating attempt's chart is now updated in place via updateSeries()/setXaxis() each
+     *  poll instead of torn down and rebuilt, the same technique #476/PR3's own job-level latency
+     *  chart already uses, for the same reason (a full rebuild every poll flashes/flickers). */
+    static ApexCharts buildRequestSpeedChart() {
         final var chart = ApexChartsBuilder.get()
                 .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent").build())
                 .withTheme(ThemeBuilder.get().withMode(Mode.DARK).build())
@@ -1623,10 +1605,6 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 .withLegend(com.github.appreciated.apexcharts.config.builder.LegendBuilder.get().withShow(false).build())
                 .withTooltip(com.github.appreciated.apexcharts.config.builder.TooltipBuilder.get()
                         .withCustom(requestSpeedTooltipJs()).build())
-                .withXaxis(XAxisBuilder.get().withCategories(categories).withLabels(xaxisLabels)
-                        .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
-                                .withText("request # (red: a compaction landed right before it; green/amber: a judge checkpoint landed on track/off track)").build())
-                        .build())
                 .withYaxis(
                         YAxisBuilder.get().withSeriesName("prefill tok/s").withLabels(integerLabels()).build(),
                         YAxisBuilder.get().withSeriesName("prefill tok/s").withShow(false).build(),
@@ -1635,10 +1613,40 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                                 .withLabels(tokenCountLabels()).build(),
                         YAxisBuilder.get().withSeriesName("prefill tok/s").withShow(false).build(),
                         YAxisBuilder.get().withSeriesName("prefill tok/s").withShow(false).build())
-                .withSeries(speedSeries, compactionSeries, generationSeries, contextSeries, judgeOnTrackSeries, judgeOffTrackSeries)
                 .build();
         chart.setHeight("220px");
-        container.add(chart);
+        return chart;
+    }
+
+    static void updateRequestSpeedChart(final ApexCharts chart, final List<RequestSpeedPoint> points,
+                                          final List<Integer> compactionsBeforeRequest,
+                                          final List<Integer> judgeOnTrackRequests, final List<Integer> judgeOffTrackRequests) {
+        if (points.isEmpty()) return;
+        final var categories = requestSpeedCategories(points.size());
+        final var xaxisLabels = new com.github.appreciated.apexcharts.config.xaxis.Labels();
+        xaxisLabels.setFormatter(requestSpeedLabelFormatterJs());
+        chart.setXaxis(XAxisBuilder.get().withCategories(categories).withLabels(xaxisLabels)
+                .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
+                        .withText("request # (red: a compaction landed right before it; green/amber: a judge checkpoint landed on track/off track)").build())
+                .build());
+        final var speedSeries = SeriesBuilder.get().withName("prefill tok/s")
+                .withData(points.stream().map(RequestSpeedPoint::prefillTokPerSec).toArray(Double[]::new)).build();
+        final var prefillPeak = points.stream().map(RequestSpeedPoint::prefillTokPerSec).filter(Objects::nonNull)
+                .mapToDouble(Double::doubleValue).max().orElse(0);
+        final var compactionSeries = SeriesBuilder.get().withName("compaction")
+                .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
+                .withData(compactionColumnData(compactionsBeforeRequest, points.size(), prefillPeak)).build();
+        final var generationSeries = SeriesBuilder.get().withName("generation tok/s")
+                .withData(points.stream().map(RequestSpeedPoint::generationTokPerSec).toArray(Double[]::new)).build();
+        final var contextSeries = SeriesBuilder.get().withName("context tokens")
+                .withData(points.stream().map(RequestSpeedPoint::contextTokens).toArray(Integer[]::new)).build();
+        final var judgeOnTrackSeries = SeriesBuilder.get().withName("judge on track")
+                .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
+                .withData(compactionColumnData(judgeOnTrackRequests, points.size(), prefillPeak)).build();
+        final var judgeOffTrackSeries = SeriesBuilder.get().withName("judge off track")
+                .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
+                .withData(compactionColumnData(judgeOffTrackRequests, points.size(), prefillPeak)).build();
+        chart.updateSeries(speedSeries, compactionSeries, generationSeries, contextSeries, judgeOnTrackSeries, judgeOffTrackSeries);
     }
 
     /** This chart's own tooltip, read from series[0] (time to first token), series[1] (total
@@ -1690,14 +1698,46 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  judge both marked the same way as addRequestSpeedChart() - real column series, not
      *  annotations (see compactionColumnData()'s own javadoc for why), legend hidden and tooltip
      *  custom for the same reason that chart's is. */
-    static void addRequestTimingChart(final List<RequestSpeedPoint> points, final List<Integer> compactionsBeforeRequest,
-                                        final List<Integer> judgeOnTrackRequests, final List<Integer> judgeOffTrackRequests,
-                                        final Div container, final String title) {
+    /** #517 (B): same split as buildRequestSpeedChart()/updateRequestSpeedChart() above, for the
+     *  same reason - see that pair's own javadoc. */
+    static ApexCharts buildRequestTimingChart() {
+        final var chart = ApexChartsBuilder.get()
+                .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent").build())
+                .withTheme(ThemeBuilder.get().withMode(Mode.DARK).build())
+                .withColors("#775DD0", "#FEB019", "#e74c3c", "#546E7A", "#27ae60", "#e67e22")
+                .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get()
+                        .withWidthArray(1.5, 1.5, 0.0, 1.5, 0.0, 0.0).build())
+                .withPlotOptions(com.github.appreciated.apexcharts.config.builder.PlotOptionsBuilder.get()
+                        .withBar(com.github.appreciated.apexcharts.config.plotoptions.builder.BarBuilder.get()
+                                .withColumnWidth("16%").build())
+                        .build())
+                .withLegend(com.github.appreciated.apexcharts.config.builder.LegendBuilder.get().withShow(false).build())
+                .withTooltip(com.github.appreciated.apexcharts.config.builder.TooltipBuilder.get()
+                        .withCustom(requestTimingTooltipJs()).build())
+                .withYaxis(
+                        YAxisBuilder.get().withSeriesName("time to first token (s)").withLabels(integerLabels()).build(),
+                        YAxisBuilder.get().withSeriesName("total time (s)").withLabels(integerLabels()).build(),
+                        YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build(),
+                        YAxisBuilder.get().withSeriesName("context tokens").withOpposite(true)
+                                .withLabels(tokenCountLabels()).build(),
+                        YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build(),
+                        YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build())
+                .build();
+        chart.setHeight("220px");
+        return chart;
+    }
+
+    static void updateRequestTimingChart(final ApexCharts chart, final List<RequestSpeedPoint> points,
+                                           final List<Integer> compactionsBeforeRequest,
+                                           final List<Integer> judgeOnTrackRequests, final List<Integer> judgeOffTrackRequests) {
         if (points.isEmpty()) return;
-        container.add(Panels.sectionTitle(title));
         final var categories = requestSpeedCategories(points.size());
         final var xaxisLabels = new com.github.appreciated.apexcharts.config.xaxis.Labels();
         xaxisLabels.setFormatter(requestSpeedLabelFormatterJs());
+        chart.setXaxis(XAxisBuilder.get().withCategories(categories).withLabels(xaxisLabels)
+                .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
+                        .withText("request # (red: a compaction landed right before it; green/amber: a judge checkpoint landed on track/off track)").build())
+                .build());
         final var ttftSeries = SeriesBuilder.get().withName("time to first token (s)")
                 .withData(points.stream().map(RequestSpeedPoint::timeToFirstTokenSec).toArray(Double[]::new)).build();
         final var totalTimeSeries = SeriesBuilder.get().withName("total time (s)")
@@ -1715,35 +1755,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var judgeOffTrackSeries = SeriesBuilder.get().withName("judge off track")
                 .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
                 .withData(compactionColumnData(judgeOffTrackRequests, points.size(), ttftPeak)).build();
-        final var chart = ApexChartsBuilder.get()
-                .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent").build())
-                .withTheme(ThemeBuilder.get().withMode(Mode.DARK).build())
-                .withColors("#775DD0", "#FEB019", "#e74c3c", "#546E7A", "#27ae60", "#e67e22")
-                .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get()
-                        .withWidthArray(1.5, 1.5, 0.0, 1.5, 0.0, 0.0).build())
-                .withPlotOptions(com.github.appreciated.apexcharts.config.builder.PlotOptionsBuilder.get()
-                        .withBar(com.github.appreciated.apexcharts.config.plotoptions.builder.BarBuilder.get()
-                                .withColumnWidth("16%").build())
-                        .build())
-                .withLegend(com.github.appreciated.apexcharts.config.builder.LegendBuilder.get().withShow(false).build())
-                .withTooltip(com.github.appreciated.apexcharts.config.builder.TooltipBuilder.get()
-                        .withCustom(requestTimingTooltipJs()).build())
-                .withXaxis(XAxisBuilder.get().withCategories(categories).withLabels(xaxisLabels)
-                        .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
-                                .withText("request # (red: a compaction landed right before it; green/amber: a judge checkpoint landed on track/off track)").build())
-                        .build())
-                .withYaxis(
-                        YAxisBuilder.get().withSeriesName("time to first token (s)").withLabels(integerLabels()).build(),
-                        YAxisBuilder.get().withSeriesName("total time (s)").withLabels(integerLabels()).build(),
-                        YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build(),
-                        YAxisBuilder.get().withSeriesName("context tokens").withOpposite(true)
-                                .withLabels(tokenCountLabels()).build(),
-                        YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build(),
-                        YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build())
-                .withSeries(ttftSeries, totalTimeSeries, compactionSeries, contextSeries, judgeOnTrackSeries, judgeOffTrackSeries)
-                .build();
-        chart.setHeight("220px");
-        container.add(chart);
+        chart.updateSeries(ttftSeries, totalTimeSeries, compactionSeries, contextSeries, judgeOnTrackSeries, judgeOffTrackSeries);
     }
 
     /** One row of the "compaction distribution" table: which request this compaction landed right
@@ -1771,23 +1783,21 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  unbounded-height table would dominate the page instead of scrolling internally. */
     static void addCompactionEffectivenessTables(final AttemptSection section, final Div container) {
         if (section.compactionDistribution().isEmpty()) return;
-        container.add(Panels.sectionTitle("Compaction distribution (" + section.compactionDistribution().size() + " compactions)"));
         final var distribution = new Grid<>(CompactionDistributionRow.class, false);
         distribution.addColumn(CompactionDistributionRow::requestNumber).setHeader("request #").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
         distribution.addColumn(r -> Fmt.count(r.requestsSincePrevious() == null ? null : r.requestsSincePrevious().longValue()))
                 .setHeader("requests since previous").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
         distribution.setItems(section.compactionDistribution());
         distribution.setHeight("240px");
-        container.add(distribution);
+        container.add(Panels.card("Compaction distribution (" + section.compactionDistribution().size() + " compactions)", distribution));
 
-        container.add(Panels.sectionTitle("Reclaimed context per compaction"));
         final var reclaimed = new Grid<>(CompactionReclaimedRow.class, false);
         reclaimed.addColumn(CompactionReclaimedRow::requestNumber).setHeader("request #").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
         reclaimed.addColumn(r -> Fmt.count(r.promptTokensBefore())).setHeader("prompt tokens before").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
         reclaimed.addColumn(r -> Fmt.count(r.reclaimedTokens())).setHeader("reclaimed tokens").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
         reclaimed.setItems(section.compactionReclaimed());
         reclaimed.setHeight("240px");
-        container.add(reclaimed);
+        container.add(Panels.card("Reclaimed context per compaction", reclaimed));
     }
 
     record AttemptSection(String header, String body, List<RequestSpeedPoint> requestSpeeds, List<Integer> compactionsBeforeRequest,
