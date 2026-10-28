@@ -10,6 +10,7 @@ import com.strgmai.ace.service.oracle.CheckId;
 import com.strgmai.ace.service.pack.Packs;
 import com.strgmai.ace.service.plan.PlanParser;
 import com.strgmai.ace.service.plan.PlanTask;
+import com.strgmai.ace.service.runner.ContextProbe;
 import com.strgmai.ace.service.runner.Intervene;
 import com.strgmai.ace.service.runner.PauseAfterTask;
 import com.strgmai.ace.service.runner.TaskMatcher;
@@ -56,15 +57,17 @@ public class BenchController {
     private final PauseAfterTask pauseAfterTask;
     private final com.strgmai.ace.service.agent.ProviderStore providerStore;
     private final LocalModelBackend backend;
+    private final ContextProbe contextProbe;
 
     public BenchController(DSLContext dsl, JobQueue queue, ImporterService importer, ExperimentsService experiments,
                            StatsService stats, WorkerService worker, BenchProperties props, Preflight preflight,
                            TreatmentPin pin, Intervene intervene, TaskMatcher taskMatcher, PauseAfterTask pauseAfterTask,
-                           com.strgmai.ace.service.agent.ProviderStore providerStore, LocalModelBackend backend) {
+                           com.strgmai.ace.service.agent.ProviderStore providerStore, LocalModelBackend backend,
+                           ContextProbe contextProbe) {
         this.dsl = dsl; this.queue = queue; this.importer = importer; this.experiments = experiments;
         this.stats = stats; this.worker = worker; this.props = props; this.preflight = preflight; this.pin = pin;
         this.intervene = intervene; this.taskMatcher = taskMatcher; this.pauseAfterTask = pauseAfterTask;
-        this.providerStore = providerStore; this.backend = backend;
+        this.providerStore = providerStore; this.backend = backend; this.contextProbe = contextProbe;
     }
 
     @GetMapping("/api/preflight")
@@ -1732,6 +1735,17 @@ public class BenchController {
         final var p = providerStore.create(str(body.get("name")), str(body.get("provider_key")), str(body.get("base_url")),
                 str(body.get("api_key")), str(body.get("default_model")));
         return providerRow(p);
+    }
+
+    /** #476 PR 3/3: the sidebar footer's "tunnel connected" dot - a cheap standalone ping against
+     *  this one provider's own /health, reusing ContextProbe.health() (previously only ever called
+     *  as a step of a full job run) instead of duplicating its endpoint-normalization/timeout logic. */
+    @GetMapping("/api/providers/{id}/health")
+    public Map<String, Object> providerHealth(final @PathVariable UUID id) {
+        final var p = providerStore.list().stream().filter(x -> x.id().equals(id)).findFirst();
+        if (p.isEmpty()) return Map.of("ok", false);
+        final var h = contextProbe.health(p.get().baseUrl(), p.get().apiKey());
+        return Map.of("ok", "healthy".equals(h.path("status").asText()));
     }
 
     @PutMapping("/api/providers/{id}")

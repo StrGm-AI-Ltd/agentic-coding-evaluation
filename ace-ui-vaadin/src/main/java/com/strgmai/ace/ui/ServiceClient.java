@@ -181,6 +181,11 @@ public class ServiceClient implements Serializable {
         http.delete().uri("/api/providers/{id}", id).retrieve().toBodilessEntity();
     }
 
+    /** GET /api/providers/{id}/health — the sidebar footer's status dot (#476 PR 3/3). */
+    public Api.ProviderHealth providerHealth(final String id) {
+        return http.get().uri("/api/providers/{id}/health", id).retrieve().body(Api.ProviderHealth.class);
+    }
+
     /** Live model list for one registered provider, per GET /api/providers/{id}/models. Throws
      *  (not an empty-list fallback) on failure - the model server's own models() call above treats
      *  "unreachable" as empty because that's its one, expected failure mode; an external provider

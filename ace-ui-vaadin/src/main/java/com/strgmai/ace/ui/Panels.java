@@ -36,6 +36,68 @@ public final class Panels {
         return header;
     }
 
+    /** #476 (PR 3/3): the shared chrome both statTile() overloads below sit on - background,
+     *  radius, padding, and the uppercase label line; just missing the value (string or
+     *  live-mutable component) that makes a label alone into an actual stat. */
+    private static Div tileShell(final String label) {
+        final var labelSpan = new com.vaadin.flow.component.html.Span(label);
+        labelSpan.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.8em")
+                .set("text-transform", "uppercase").set("letter-spacing", "0.03em");
+        final var tile = new Div(labelSpan);
+        tile.getStyle().set("display", "flex").set("flex-direction", "column").set("gap", "2px")
+                .set("background", "var(--lumo-contrast-5pct)")
+                .set("border-radius", "var(--lumo-border-radius-m)")
+                .set("padding", "10px 14px")
+                .set("min-width", "140px");
+        return tile;
+    }
+
+    /** #476 (PR 3/3): a boxed "big number + label + detail" stat, replacing a bare inline Span
+     *  wherever one of those three lines was the point of the row (RunDetailView's own former
+     *  score() helper) - a static snapshot value, never mutated in place after being built. */
+    public static Div statTile(final String label, final String value, final String detail) {
+        final var tile = tileShell(label);
+        final var valueSpan = new com.vaadin.flow.component.html.Span(value);
+        valueSpan.getStyle().set("font-size", "1.4em").set("font-weight", "600");
+        tile.add(valueSpan);
+        if (detail != null && !detail.isBlank()) {
+            final var detailSpan = new com.vaadin.flow.component.html.Span(detail);
+            detailSpan.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.8em");
+            tile.add(detailSpan);
+        }
+        return tile;
+    }
+
+    /** #476 (PR 3/3): same tile chrome, but the value slot is a component built ONCE by the
+     *  caller and mutated in place afterward (JobDetailView's own stepLine/activeTimeLine fields,
+     *  updated via setText() on every 2s poll) - rebuilding a String-valued tile from scratch each
+     *  poll would otherwise steal focus/selection the same way a full-DOM rebuild would. */
+    public static Div statTile(final String label, final com.vaadin.flow.component.Component value) {
+        final var tile = tileShell(label);
+        tile.add(value);
+        return tile;
+    }
+
+    /** #476 (PR 3/3): a boxed card wrapper for an existing section - same sectionTitle() header,
+     *  now with the "night operator" mockup's panel chrome (border, radius, background) around its
+     *  content instead of a bare H3 sitting directly on the page background. */
+    public static Div card(final String title, final com.vaadin.flow.component.Component... children) {
+        final var card = new Div(sectionTitle(title));
+        card.add(children);
+        // VerticalLayout (both JobDetailView/RunDetailView themselves, and liveSection) does NOT
+        // stretch a plain child Div to its own width by default - width:100%+box-sizing is what
+        // keeps a wrapped Grid from collapsing to its own min-content width instead of filling the
+        // card (found live: planGrid rendered as a ~90px sliver until this was added).
+        card.getStyle().set("border", "1px solid var(--lumo-contrast-10pct)")
+                .set("background", "var(--lumo-contrast-5pct)")
+                .set("border-radius", "var(--lumo-border-radius-l)")
+                .set("padding", "12px 16px")
+                .set("margin", "10px 0")
+                .set("width", "100%")
+                .set("box-sizing", "border-box");
+        return card;
+    }
+
     private static Div panel(final String text, final String edge, final String background) {
         final var div = new Div();
         div.setText(text);

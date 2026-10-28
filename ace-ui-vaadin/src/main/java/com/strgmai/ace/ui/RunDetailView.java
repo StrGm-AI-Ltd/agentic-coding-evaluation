@@ -122,15 +122,15 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
                 + (run.functional_ids() != null && !run.functional_ids().isEmpty()
                         ? ": " + String.join(", ", run.functional_ids())
                         : "");
-        scores.add(score("functional", Fmt.pct(run.functional_score_pct()), functionalDetail));
+        scores.add(Panels.statTile("functional", Fmt.pct(run.functional_score_pct()), functionalDetail));
         if (run.weighted_score_pct() != null) {
-            scores.add(score("composite", Fmt.pct(run.weighted_score_pct()),
+            scores.add(Panels.statTile("composite", Fmt.pct(run.weighted_score_pct()),
                     Fmt.points(run.points_got(), run.denominator())));
         } else {
-            scores.add(score("partial", Fmt.pct(run.partial_score_pct()),
+            scores.add(Panels.statTile("partial", Fmt.pct(run.partial_score_pct()),
                     "skipped/infra checks: never a full score"));
         }
-        scores.getStyle().set("margin", "8px 0");
+        scores.getStyle().set("margin", "8px 0").set("flex-wrap", "wrap");
         add(scores);
 
         if (Boolean.FALSE.equals(run.valid()) && run.validity_reasons() != null && !run.validity_reasons().isEmpty()) {
@@ -261,7 +261,6 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
     }
 
     private void addChecks(final List<Api.Check> checks) {
-        add(Panels.sectionTitle("Checks"));
         final var grid = new Grid<>(Api.Check.class, false);
         grid.addColumn(Api.Check::check_id).setHeader("id").setAutoWidth(true);
         grid.addColumn(Api.Check::category).setHeader("category").setAutoWidth(true);
@@ -277,7 +276,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         // the detail/check columns truncate long text in a fixed-width cell - a row click opens
         // everything unclipped, since a check's detail can run well past what a cell can show
         grid.addItemClickListener(e -> openCheckDialog(e.getItem()));
-        add(grid);
+        add(Panels.card("Checks", grid));
     }
 
     /** Full, unclipped detail for one check row (id, category, weight, status, description, detail). */
@@ -337,7 +336,6 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         if (rows.isEmpty()) {
             return;
         }
-        add(Panels.sectionTitle("Plan tasks"));
         final var grid = new Grid<>(PerTaskRow.class, false);
         grid.addColumn(PerTaskRow::tid).setHeader("task").setAutoWidth(true);
         grid.addColumn(PerTaskRow::reported).setHeader("reported").setAutoWidth(true);
@@ -359,7 +357,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         // job page already offers, now available here too - see RunTaskDialog.
         grid.addItemClickListener(e -> RunTaskDialog.open(client, runId, e.getItem().tid()));
         grid.getStyle().set("cursor", "pointer");
-        add(grid);
+        add(Panels.card("Plan tasks", grid));
     }
 
     record StepRow(String sid, Double scorePct, boolean measured) {
@@ -386,7 +384,6 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         if (rows.isEmpty()) {
             return;
         }
-        add(Panels.sectionTitle("Per-step scores"));
         final var grid = new Grid<>(StepRow.class, false);
         grid.addColumn(StepRow::sid).setHeader("step").setAutoWidth(true);
         grid.addColumn(r -> Fmt.pct(r.scorePct())).setHeader("score %").setTextAlign(ColumnTextAlign.END)
@@ -394,7 +391,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         grid.addColumn(r -> r.measured() ? "" : "not measured").setHeader("").setAutoWidth(true);
         grid.setItems(rows);
         grid.setAllRowsVisible(true);
-        add(grid);
+        add(Panels.card("Per-step scores", grid));
     }
 
     record SpeedBucketRow(String label, Double avgPrefillTokPerSec, Double avgDecodeTokPerSec, long requests) {
@@ -434,7 +431,6 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         if (rows.isEmpty()) {
             return;
         }
-        add(Panels.sectionTitle("Speed vs context size"));
         // prefill runs 10-100x faster than decode - on one shared axis the decode line reads as flat
         // zero, so each series gets its own y-axis (decode's opposite the plot, matching its series)
         final var chart = ApexChartsBuilder.get()
@@ -457,7 +453,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
                                 .withData(rows.stream().map(SpeedBucketRow::avgDecodeTokPerSec).toArray(Double[]::new)).build())
                 .build();
         chart.setHeight("300px");
-        add(chart);
+        add(Panels.card("Speed vs context size", chart));
     }
 
     /** Bucket width now adapts to the run's own context range (up to 12 buckets), so some points can
@@ -517,7 +513,6 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         if (points.isEmpty()) {
             return;
         }
-        add(Panels.sectionTitle("Compaction overhead over time"));
         final var chart = ApexChartsBuilder.get()
                 .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent").build())
                 .withTheme(ThemeBuilder.get().withMode(Mode.DARK).build())
@@ -531,13 +526,12 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
                         .withData(points.stream().map(CompactionOverheadPoint::cumulativeSec).toArray(Double[]::new)).build())
                 .build();
         chart.setHeight("300px");
-        add(chart);
+        add(Panels.card("Compaction overhead over time", chart));
     }
 
     /** The provenance block from the Jinja2 run page (V-4) — values may be objects
      * (e.g. quantization is an 11-property map in real manifests), so never asText() them. */
     private void addProvenance(final Api.Run run) {
-        add(Panels.sectionTitle("Provenance"));
         final var provenance = new VerticalLayout();
         provenance.setPadding(false);
         provenance.setSpacing(false);
@@ -549,7 +543,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         if (provenance.getComponentCount() == 0) {
             provenance.add(new Span("no provenance recorded"));
         }
-        add(provenance);
+        add(Panels.card("Provenance", provenance));
     }
 
     /**
@@ -618,15 +612,4 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         return String.join(" · ", parts);
     }
 
-    private Span score(final String label, final String pct, final String detail) {
-        final var span = new Span();
-        final var value = new Span(pct);
-        value.getStyle().set("font-size", "1.3em").set("font-weight", "600");
-        final var labelSpan = new Span(label + " ");
-        labelSpan.getStyle().set("color", "var(--lumo-secondary-text-color)");
-        final var detailSpan = new Span(detail);
-        detailSpan.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em");
-        span.add(labelSpan, value, new Span(" "), detailSpan);
-        return span;
-    }
 }

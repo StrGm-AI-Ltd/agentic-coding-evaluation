@@ -2,6 +2,7 @@ package com.strgmai.ace.ui;
 
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.HasElement;
+import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.applayout.AppLayout;
 import com.vaadin.flow.component.applayout.DrawerToggle;
 import com.vaadin.flow.component.dependency.CssImport;
@@ -17,6 +18,8 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.sidenav.SideNav;
 import com.vaadin.flow.component.sidenav.SideNavItem;
 import com.vaadin.flow.component.splitlayout.SplitLayout;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** App chrome: brand + left sidebar nav - mirrors the Aura "Night operator" reference's own
  *  layout (#476 PR 2/2; PR 1 shipped the dark palette/typography this sidebar now wears). The
@@ -30,6 +33,13 @@ import com.vaadin.flow.component.splitlayout.SplitLayout;
  *
  *  Plus (#474/#485) the operator-resizable split between a tab's own content and its "Full
  *  manual" wiki pane.
+ *
+ *  #476 PR 3/3: the Queue/LLM Providers nav badges and the sidebar footer's connection-status dot
+ *  are this layout's first-ever ServiceClient dependency - refreshed on a background thread (NOT
+ *  UI.setPollInterval(), which JobDetailView already owns for its own 2s live poll and which is
+ *  one global value per UI, not layered) that calls ui.access() the same way JobEventLoop already
+ *  does for job-page SSE, piggybacking on the app's existing @Push(AUTOMATIC) rather than adding a
+ *  second, competing poll loop.
  *
  *  AppLayout's own showRouterLayoutContent(HasElement) - decompiled and confirmed directly, no
  *  public doc covers this - just calls setContent((Component) content), replacing whatever
@@ -54,13 +64,22 @@ import com.vaadin.flow.component.splitlayout.SplitLayout;
  *  file across classes are a normal, deduped-by-Vite Vaadin pattern, not a real duplicate. */
 @CssImport("./styles/md-viewer.css")
 public class MainLayout extends AppLayout {
+    private static final Logger log = LoggerFactory.getLogger(MainLayout.class);
 
+    private final ServiceClient client;
     private final SplitLayout split = new SplitLayout();
     private final Div contentSlot = new Div();
     private final VerticalLayout manualSlot = new VerticalLayout();
     private boolean manualOpen;
 
-    public MainLayout() {
+    private final SideNavItem queueNavItem;
+    private final SideNavItem providersNavItem;
+    private final Span footerStatusDot = new Span();
+    private transient Thread chromeRefreshThread;
+    private volatile boolean chromeRefreshStopped;
+
+    public MainLayout(final ServiceClient client) {
+        this.client = client;
         setPrimarySection(Section.DRAWER);
         // the drawer auto-collapses to a hamburger-toggled overlay on narrow viewports (AppLayout's
         // own built-in responsive behavior) - this is what reopens it there; always visible but
@@ -70,14 +89,27 @@ public class MainLayout extends AppLayout {
         final var brand = new HorizontalLayout();
         brand.setAlignItems(FlexComponent.Alignment.CENTER);
         brand.setPadding(true);
+        // #476 PR 3/3: a small logo mark beside the wordmark, matching the approved mockup -
+        // a plain styled Span rather than an image asset, so there's nothing new to host/cache.
+        final var logoMark = new Span("A");
+        logoMark.getStyle().set("display", "inline-flex").set("align-items", "center").set("justify-content", "center")
+                .set("width", "22px").set("height", "22px").set("margin-right", "8px")
+                .set("background", "linear-gradient(135deg, var(--lumo-primary-color), #4A47D1)")
+                .set("color", "white").set("font-weight", "700").set("font-size", "0.85em")
+                .set("border-radius", "var(--lumo-border-radius-m)");
         final var brandName = new Span("ACE");
         brandName.getStyle().set("font-weight", "700").set("font-size", "1.1em").set("letter-spacing", "0.02em");
-        brand.add(brandName);
+        brand.add(logoMark, brandName);
 
         // standalone, ungrouped - mirrors the reference's own "Overview" sitting outside any
         // collapsible section. A bare `new SideNav()` (no label) renders with no group header.
         final var info = new SideNav();
         info.addItem(navItem("Info", InfoView.class, VaadinIcon.INFO_CIRCLE_O));
+
+        // #476 PR 3/3: these two carry a live badge (see refreshLiveChrome()), so they're kept as
+        // their own locals/fields instead of being built inline in the addItem(...) call below.
+        queueNavItem = navItem("Queue", JobsView.class, VaadinIcon.TASKS);
+        providersNavItem = navItem("LLM Providers", LlmProvidersView.class, VaadinIcon.CONNECT);
 
         final var benchmarking = new SideNav("Benchmarking");
         benchmarking.setCollapsible(true);
@@ -85,14 +117,14 @@ public class MainLayout extends AppLayout {
                 navItem("Runs", RunsView.class, VaadinIcon.PLAY),
                 navItem("Groups", GroupsView.class, VaadinIcon.GRID_SMALL),
                 navItem("Compare", CompareView.class, VaadinIcon.SPLIT),
-                navItem("Queue", JobsView.class, VaadinIcon.TASKS),
+                queueNavItem,
                 navItem("Experiments", ExperimentsView.class, VaadinIcon.FLASK));
 
         final var system = new SideNav("System");
         system.setCollapsible(true);
         system.addItem(
                 navItem("Preflight", PreflightView.class, VaadinIcon.CHECK_CIRCLE),
-                navItem("LLM Providers", LlmProvidersView.class, VaadinIcon.CONNECT));
+                providersNavItem);
 
         final var menu = new VerticalLayout(info, benchmarking, system);
         menu.setPadding(false);
@@ -102,7 +134,19 @@ public class MainLayout extends AppLayout {
         scroller.addThemeVariants(ScrollerVariant.OVERFLOW_INDICATORS);
         scroller.setSizeFull();
 
-        addToDrawer(brand, scroller);
+        // #476 PR 3/3: the local/oMLX backend's own connection status - a plain status dot kept
+        // at the bottom of the drawer (scroller above flex-grows via setSizeFull(), leaving this
+        // at its natural size pinned below it), updated by refreshLiveChrome().
+        footerStatusDot.getStyle().set("display", "inline-block").set("width", "8px").set("height", "8px")
+                .set("border-radius", "50%").set("background", "var(--lumo-contrast-30pct)").set("margin-right", "6px");
+        final var footerStatusText = new Span("ace.strgm-ai.com");
+        footerStatusText.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.8em");
+        final var footer = new HorizontalLayout(footerStatusDot, footerStatusText);
+        footer.setPadding(true);
+        footer.setSpacing(false);
+        footer.setAlignItems(FlexComponent.Alignment.CENTER);
+
+        addToDrawer(brand, scroller, footer);
 
         // #486, found live: a plain Div with setSizeFull() has no scroll mechanism of its own -
         // its default overflow is "clip", not "auto" - so a routed view taller than the fixed
@@ -118,6 +162,73 @@ public class MainLayout extends AppLayout {
         split.setSizeFull();
         split.addToPrimary(contentSlot);
         setContent(split);
+
+        // #476 PR 3/3: MainLayout is one instance per UI, reused across every navigation (that's
+        // the whole point of split/contentSlot above) - so its own attach/detach fire once each,
+        // same lifecycle JobDetailView's SSE thread already uses for ensureSse()/stopSse().
+        addAttachListener(event -> {
+            refreshLiveChrome();   // first paint now, instead of waiting for the first tick below
+            ensureChromeRefresh(event.getUI());
+        });
+        addDetachListener(event -> stopChromeRefresh());
+    }
+
+    /** Every 20s, for as long as this layout's UI stays attached (the whole browser tab's
+     *  lifetime) - cheap relative to that interval, and no page's own more frequent polling
+     *  (JobDetailView's 2s) shares this thread or UI.setPollInterval() with it. */
+    private void ensureChromeRefresh(final UI ui) {
+        if (chromeRefreshThread != null && chromeRefreshThread.isAlive()) {
+            return;
+        }
+        chromeRefreshStopped = false;
+        chromeRefreshThread = new Thread(() -> {
+            while (!chromeRefreshStopped) {
+                try {
+                    Thread.sleep(20_000);
+                } catch (final InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                if (chromeRefreshStopped) {
+                    return;
+                }
+                ui.access(this::refreshLiveChrome);
+            }
+        }, "main-layout-chrome-refresh");
+        chromeRefreshThread.setDaemon(true);
+        chromeRefreshThread.start();
+    }
+
+    private void stopChromeRefresh() {
+        chromeRefreshStopped = true;
+    }
+
+    /** The Queue/LLM Providers nav badges and the footer's connection-status dot - each wrapped
+     *  in its own try/catch so one failing call (e.g. the service briefly unreachable) never blanks
+     *  out a badge that was showing a real count a moment ago, and never stops the other refresh. */
+    private void refreshLiveChrome() {
+        try {
+            final var jobs = client.jobs();
+            final long active = jobs.stream().filter(j -> !JobStatuses.isTerminal(j.status())).count();
+            queueNavItem.setSuffixComponent(active == 0 ? null : Badges.text(String.valueOf(active), Badges.PRIMARY));
+        } catch (final Exception e) {
+            log.debug("could not refresh the Queue nav badge: {}", e.toString());
+        }
+
+        try {
+            final var providers = client.providers();
+            // the local/oMLX row's own missing key is not a misconfiguration (#65: it may need none at
+            // all) - only a REMOTE provider missing one is actually something an operator must fix.
+            final long misconfigured = providers.stream().filter(p -> !p.has_api_key() && !p.is_local()).count();
+            providersNavItem.setSuffixComponent(misconfigured == 0 ? null : Badges.text(String.valueOf(misconfigured), Badges.WARNING));
+
+            final var local = providers.stream().filter(Api.Provider::is_local).findFirst();
+            final var ok = local.isPresent() && client.providerHealth(local.get().id()).ok();
+            footerStatusDot.getStyle().set("background", local.isEmpty() ? "var(--lumo-contrast-30pct)"
+                    : ok ? "var(--lumo-success-color)" : "var(--lumo-error-color)");
+        } catch (final Exception e) {
+            log.debug("could not refresh the LLM Providers nav badge / footer connection status: {}", e.toString());
+        }
     }
 
     private static SideNavItem navItem(final String label, final Class<? extends Component> view, final VaadinIcon icon) {

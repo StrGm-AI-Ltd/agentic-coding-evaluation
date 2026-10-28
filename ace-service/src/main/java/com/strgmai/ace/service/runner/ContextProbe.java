@@ -152,7 +152,9 @@ public final class ContextProbe {
         } catch (Exception e) { log.warn("could not list models from {}: {}", endpoint, e.toString()); return Map.of(); }
     }
 
-    JsonNode health(String endpoint, String key) {
+    /** Public (#476 PR 3/3): BenchController's own GET /api/providers/{id}/health reuses this same
+     *  ping instead of duplicating it - was package-private with no external caller until then. */
+    public JsonNode health(String endpoint, String key) {
         try {
             HttpResponse<String> r = http.send(HttpRequest.newBuilder(URI.create(endpoint.replaceAll("/v1/?$", "") + "/health"))
                     .header("Authorization", "Bearer " + key).timeout(Duration.ofSeconds(15)).GET().build(), HttpResponse.BodyHandlers.ofString());
