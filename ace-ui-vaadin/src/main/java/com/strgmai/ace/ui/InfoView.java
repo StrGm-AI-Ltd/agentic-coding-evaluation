@@ -32,7 +32,7 @@ public class InfoView extends Div {
         add(goal);
 
         final var purpose = new Paragraph();
-        purpose.add(new Span("Its real job is narrower and more practical than a leaderboard: finding which "
+        purpose.add(new Span("ACE's goal is narrower and more practical than a leaderboard: finding which "
                 + "model, harness mode, and hyperparameters actually get a coding task done well — on your "
                 + "own hardware if you're running a local model, or against whichever "),
                 new RouterLink("external provider", LlmProvidersView.class),
