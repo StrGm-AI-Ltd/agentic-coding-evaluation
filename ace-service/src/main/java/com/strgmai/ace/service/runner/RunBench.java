@@ -472,6 +472,16 @@ public class RunBench {
             entry.put("seconds", rec.get("seconds"));
             entry.put("reported_status", reported == null ? null : reported.status());
             entry.put("reported_detail", reported == null ? null : reported.detail());
+            // found live: neither of these was ever persisted here before - manifest.tasks' own
+            // entry is the ONLY place they lived, and a LATER resume's manifest write replaces a
+            // resumed-past task's own entry with a bare {id, rc, resumed} shape (R18), silently
+            // losing both for good. task_attempts.jsonl is append-only and never rewritten once a
+            // real attempt logs to it (a resumed-past task never calls this method again at all -
+            // see this run's own two call sites), so this is the durable record going forward -
+            // BenchController.taskStatsForRun()/Collect.perTask() both fall back to the latest
+            // entry here for exactly this reason.
+            if (rec.get("verification") instanceof Map<?, ?> v) entry.put("verification", v);
+            if (rec.containsKey("done_verified")) entry.put("done_verified", rec.get("done_verified"));
             if (rec.get("rescue_succeeded") instanceof Boolean b) entry.put("rescue_succeeded", b);
             if (rec.get("rescue_rc") instanceof Number n) entry.put("rescue_rc", n);
             if (rec.get("rescue_seconds") instanceof Number n) entry.put("rescue_seconds", n);

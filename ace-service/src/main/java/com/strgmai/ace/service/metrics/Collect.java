@@ -162,11 +162,11 @@ public final class Collect {
      *  start_iso/end_iso entirely - #501, found live: on a once-resumed run (l2-gran-fine-4) that
      *  left MOST of its own Plan tasks grid blank, not just a task or two. Falls back to that
      *  task_id's own LATEST entry in task_attempts.jsonl (reported_status/seconds/attempt_started/
-     *  attempt_ended - written for every attempt regardless of which invocation ran it, unlike the
-     *  manifest's own per-invocation snapshot) for everything except done_verified, which is
-     *  genuinely never persisted there - a harness-verification result from an earlier, now-
-     *  overwritten manifest, with no artifact in this run's own directory to recover it from; stays
-     *  "–" for a resumed task, same graceful fallback as every other genuinely-missing field.
+     *  attempt_ended/done_verified - written for every attempt regardless of which invocation ran
+     *  it, unlike the manifest's own per-invocation snapshot) for everything that entry carries;
+     *  done_verified was found live to NOT be one of them (RunBench.logTaskAttempt() never wrote
+     *  it) - fixed there alongside this, so only a run resumed before that fix still shows "–" for
+     *  it, same graceful fallback as every other genuinely-missing field.
      *  completion_tokens/max_prompt (never on either source directly) are read from the journal's
      *  own per-task time window - the same windowed mechanism this class already uses for phases
      *  above - using whichever window (manifest's or the attempt's own) was actually found.
@@ -191,7 +191,7 @@ public final class Collect {
 
                 final Map<String, Object> row = new LinkedHashMap<>();
                 row.put("reported", t.get("reported") != null ? t.get("reported") : attempt == null ? null : attempt.get("reported_status"));
-                row.put("done_verified", t.get("done_verified"));
+                row.put("done_verified", t.get("done_verified") != null ? t.get("done_verified") : attempt == null ? null : attempt.get("done_verified"));
                 row.put("task_wall_sec", t.get("seconds") != null ? t.get("seconds") : attempt == null ? null : attempt.get("seconds"));
                 row.put("over_budget", Integer.valueOf(124).equals(t.get("rc")));
                 if (t.get("requests") != null) row.put("requests", t.get("requests"));

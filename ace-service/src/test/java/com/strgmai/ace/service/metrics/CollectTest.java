@@ -304,7 +304,24 @@ class CollectTest {
         assertEquals(1, ((Number) t1.get("requests")).intValue());
         assertEquals(40L, ((Number) t1.get("completion_tokens")).longValue());
         assertEquals(500L, ((Number) t1.get("max_prompt")).longValue());
-        assertNull(t1.get("done_verified"), "never recorded in task_attempts.jsonl - genuinely unrecoverable");
+        assertNull(t1.get("done_verified"), "this fixture's own task_attempts.jsonl line predates RunBench.logTaskAttempt() carrying it - absent in, absent out");
+    }
+
+    /** found live: logTaskAttempt() now carries done_verified too (it didn't when the test above
+     *  was written) - a run resumed AFTER that fix now recovers it the same way every other
+     *  task_attempts.jsonl-backed field already does. */
+    @Test
+    void perTaskRecoversDoneVerifiedWhenTheTaskAttemptsJsonlLineCarriesIt(@TempDir final Path runDir) throws Exception {
+        writeOracle(runDir);
+        Files.writeString(runDir.resolve("task_attempts.jsonl"),
+                "{\"task_id\":\"T1\",\"attempt_number\":1,\"attempt_started\":\"2026-01-01T00:00:00Z\","
+                        + "\"attempt_ended\":\"2026-01-01T00:01:00Z\",\"rc\":0,\"seconds\":55.0,"
+                        + "\"reported_status\":\"done\",\"done_verified\":true}\n");
+        final Map<String, Object> manifest = Map.of("phases", List.of(), "waves", List.of(),
+                "tasks", List.of(Map.of("id", "T1", "rc", 0, "resumed", true)));
+        final Map<String, Object> out = Collect.collect(runDir, manifest);
+        final Map<String, Object> t1 = (Map<String, Object>) ((Map<String, Object>) out.get("per_task")).get("T1");
+        assertEquals(true, t1.get("done_verified"));
     }
 
     /** #501: files_changed comes from a real `git diff` against the task's own phase/&lt;id&gt; tag,
