@@ -3,10 +3,12 @@ package com.strgmai.ace.ui;
 import com.github.appreciated.apexcharts.ApexChartsBuilder;
 import com.github.appreciated.apexcharts.config.builder.ChartBuilder;
 import com.github.appreciated.apexcharts.config.builder.SeriesBuilder;
+import com.github.appreciated.apexcharts.config.builder.ThemeBuilder;
 import com.github.appreciated.apexcharts.config.builder.TooltipBuilder;
 import com.github.appreciated.apexcharts.config.builder.XAxisBuilder;
 import com.github.appreciated.apexcharts.config.builder.YAxisBuilder;
 import com.github.appreciated.apexcharts.config.chart.Type;
+import com.github.appreciated.apexcharts.config.theme.Mode;
 import com.github.appreciated.apexcharts.config.yaxis.builder.TitleBuilder;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.dialog.Dialog;
@@ -436,7 +438,8 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         // prefill runs 10-100x faster than decode - on one shared axis the decode line reads as flat
         // zero, so each series gets its own y-axis (decode's opposite the plot, matching its series)
         final var chart = ApexChartsBuilder.get()
-                .withChart(ChartBuilder.get().withType(Type.LINE).build())
+                .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent").build())
+                .withTheme(ThemeBuilder.get().withMode(Mode.DARK).build())
                 .withXaxis(XAxisBuilder.get()
                         .withCategories(rows.stream().map(SpeedBucketRow::label).toArray(String[]::new))
                         // labels are bare numbers (no "K", no range) - the title is the only place the unit lives
@@ -516,7 +519,8 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         }
         add(Panels.sectionTitle("Compaction overhead over time"));
         final var chart = ApexChartsBuilder.get()
-                .withChart(ChartBuilder.get().withType(Type.LINE).build())
+                .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent").build())
+                .withTheme(ThemeBuilder.get().withMode(Mode.DARK).build())
                 .withXaxis(XAxisBuilder.get()
                         .withCategories(points.stream().map(p -> String.valueOf(p.elapsedSec() / 60)).toArray(String[]::new))
                         .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
