@@ -35,6 +35,13 @@ public class Preflight {
         final DockerService.Sh c = DockerService.sh(20, "docker", "compose", "version", "--short");
         add(out, "docker compose v2", c.rc() == 0, first(c.out()), false);
         add(out, "git", DockerService.sh(15, "git", "--version").rc() == 0, "git", true);
+        // found live: AgentTools.bash() execs every agent shell command via "zsh", "-lc" with no
+        // fallback, but nothing checked for it before a run ever started - a real AWS deployment
+        // ran for hours with it missing, crashing every single bash tool call in every task,
+        // silently, until #327's own new failure-category telemetry made it visible. Same fatal
+        // treatment as git immediately above, for the identical reason: a deployment missing it
+        // can never actually run a task, so it must refuse to start, not fail hours in.
+        add(out, "zsh", DockerService.sh(15, "zsh", "--version").rc() == 0, "zsh", true);
         try {
             Class.forName("com.strgmai.ace.service.agent.ReferenceAgent");
             add(out, "reference agent", true, BenchProperties.HARNESS_VERSION, true);
