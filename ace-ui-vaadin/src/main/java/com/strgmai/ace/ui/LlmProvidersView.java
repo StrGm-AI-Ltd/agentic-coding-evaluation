@@ -1,5 +1,6 @@
 package com.strgmai.ace.ui;
 
+import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.grid.Grid;
@@ -16,6 +17,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** LLM Providers — the UI twin of GET/POST/PUT/DELETE /api/providers. Lets an operator manage the
  *  registry that replaced the old hardcoded ProviderConfig enum: name, the stable "provider/model"
@@ -31,6 +34,9 @@ public class LlmProvidersView extends VerticalLayout {
     private final ServiceClient client;
     private final Grid<Api.Provider> grid = new Grid<>(Api.Provider.class, false);
     private final Span error = new Span();
+    // #517: "checking"/"reachable"/"unreachable" per provider id, filled in live as each
+    // background check completes - absent (not yet checked) renders the same as "checking".
+    private final Map<String, String> reachability = new ConcurrentHashMap<>();
 
     public LlmProvidersView(final ServiceClient client) {
         this.client = client;
@@ -45,6 +51,7 @@ public class LlmProvidersView extends VerticalLayout {
         grid.addColumn(p -> p.default_model() == null || p.default_model().isBlank() ? "" : p.default_model())
                 .setHeader("default model").setAutoWidth(true);
         grid.addColumn(p -> p.has_api_key() ? "configured" : "not set").setHeader("API key").setAutoWidth(true);
+        grid.addColumn(new ComponentRenderer<>(this::statusBadge)).setHeader("status").setAutoWidth(true);
         grid.addColumn(new ComponentRenderer<>(this::actions)).setHeader("").setAutoWidth(true).setFlexGrow(0);
         grid.getColumns().forEach(c -> c.setResizable(true));
 
@@ -64,14 +71,57 @@ public class LlmProvidersView extends VerticalLayout {
         return new HorizontalLayout(edit, delete);
     }
 
+    /** #517: GET /api/providers/{id}/models already builds a real OpenAI-compatible client against
+     *  the provider's own base_url/key and throws with a specific message on failure - reused here
+     *  as-is rather than adding a second check. Deliberately NOT /health (PR3's endpoint, #476): an
+     *  oMLX-style /health path is a local convention, not something hosted providers (Nebius,
+     *  OpenAI, Anthropic, ...) expose, while every registered provider is already built as an
+     *  OpenAI client (see providerModels() in BenchController), making /models the one endpoint
+     *  guaranteed meaningful across all of them. */
+    private com.vaadin.flow.component.badge.Badge statusBadge(final Api.Provider p) {
+        final var state = reachability.getOrDefault(p.id(), "checking");
+        return switch (state) {
+            case "reachable" -> Badges.text("reachable", Badges.SUCCESS);
+            case "unreachable" -> Badges.text("unreachable", Badges.ERROR);
+            default -> Badges.text("checking…", Badges.CONTRAST);
+        };
+    }
+
     private void load() {
         error.setText("");
         try {
             final List<Api.Provider> providers = client.providers();
             grid.setItems(providers);
+            checkReachability(providers);
         } catch (final Exception e) {
             log.warn("could not load providers: {}", e.toString());
             error.setText(client.errorText(e));
+        }
+    }
+
+    /** One short-lived background thread per provider, run in parallel so N providers cost one
+     *  round trip's worth of wall time, not N - this is a per-visit check (fired once when the page
+     *  loads), not wired into any recurring poll, so it never hammers a rate-limited hosted
+     *  provider's API in the background while nobody is looking at this page. */
+    private void checkReachability(final List<Api.Provider> providers) {
+        final var ui = UI.getCurrent();
+        for (final var p : providers) {
+            reachability.put(p.id(), "checking");
+            new Thread(() -> {
+                String result;
+                try {
+                    client.providerModels(p.id());
+                    result = "reachable";
+                } catch (final Exception e) {
+                    log.debug("provider {} reachability check failed: {}", p.id(), e.toString());
+                    result = "unreachable";
+                }
+                final var finalResult = result;
+                ui.access(() -> {
+                    reachability.put(p.id(), finalResult);
+                    grid.getDataProvider().refreshItem(p);
+                });
+            }, "provider-reachability-" + p.id()).start();
         }
     }
 
