@@ -65,4 +65,14 @@ public interface LocalModelBackend {
      *  the backend's own log line format/timestamp pattern. Used to archive a run's slice of the
      *  backend's server log alongside its results. */
     List<String> logLinesBetween(Path logFile, Instant start, Instant end) throws IOException;
+
+    /** This backend's own response field names for prefill/decode speed, within a chat-completion
+     *  response's own `usage` object - oMLX's are "prompt_tokens_per_second"/
+     *  "generation_tokens_per_second", non-standard OpenAI chat-completions extensions with no
+     *  standard equivalent. Every independent raw-journal speed-telemetry reader (JournalFacts,
+     *  BenchController, Tailer, Trajectory - four places that used to each hardcode the same two
+     *  literal field names) matches against these instead, so a future backend reporting speed
+     *  under different names (or not at all) changes one spot. */
+    record SpeedFieldNames(String prefillTpsField, String decodeTpsField) {}
+    SpeedFieldNames speedFieldNames();
 }

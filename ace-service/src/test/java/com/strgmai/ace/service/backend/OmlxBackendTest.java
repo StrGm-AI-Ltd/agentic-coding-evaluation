@@ -28,6 +28,13 @@ class OmlxBackendTest {
     }
 
     @Test
+    void speedFieldNamesAreOmlxsOwnNonStandardUsageFields() throws Exception {
+        final var names = backend().speedFieldNames();
+        assertEquals("prompt_tokens_per_second", names.prefillTpsField());
+        assertEquals("generation_tokens_per_second", names.decodeTpsField());
+    }
+
+    @Test
     void isAvailableIsFalseWhenNoBinaryIsPresent() throws Exception {
         assertFalse(backend().isAvailable());
     }

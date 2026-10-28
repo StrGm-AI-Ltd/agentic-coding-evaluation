@@ -2,6 +2,7 @@ package com.strgmai.ace.service.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.strgmai.ace.service.backend.LocalModelBackend;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,13 +30,13 @@ public final class Tailer {
     // session shares its base task's own pack file, not one of its own
     private static final List<String> LABEL_SUFFIXES = List.of("-continue", "-wrapup", "-handoff", "-fix");
 
-    public List<Map<String, Object>> poll(final Path runDir) {
+    public List<Map<String, Object>> poll(final Path runDir, final LocalModelBackend backend) {
         final List<Map<String, Object>> events = new ArrayList<>();
         newFiles(runDir.resolve("packs"), events);
         newFiles(runDir.resolve("instructions"), events);
         newSessions(runDir.resolve("sessions"), events);
         newExecutionOrder(runDir.resolve("execution_order.json"), events);
-        tailRequests(runDir.resolve("interactions.jsonl"), events);
+        tailRequests(runDir.resolve("interactions.jsonl"), events, backend);
         newRescueMarkers(runDir.resolve("rescue"), events);
         return events;
     }
@@ -222,7 +223,7 @@ public final class Tailer {
         }
     }
 
-    private void tailRequests(final Path path, final List<Map<String, Object>> events) {
+    private void tailRequests(final Path path, final List<Map<String, Object>> events, final LocalModelBackend backend) {
         for (String line : tailLines(path)) {
             if (line.isBlank()) continue;
             try {
@@ -246,13 +247,14 @@ public final class Tailer {
                 e.put("ttft_sec", r.path("first_byte_ms").isNumber() ? r.path("first_byte_ms").asDouble() / 1000.0 : null);
                 // session_id: set by RecordingProxy from the agent's X-Ace-Session-Id header, so a
                 // request is attributed to its session unambiguously even under concurrent (parallel-
-                // wave) sessions. prefill/decode speed: oMLX reports these itself per response
-                // (usage.prompt_tokens_per_second / generation_tokens_per_second) - ground truth from
-                // the inference engine, not re-derived from proxy-observed timings.
+                // wave) sessions. prefill/decode speed: the backend reports these itself per response
+                // (#65: field names are backend.speedFieldNames(), not a literal oMLX field name) -
+                // ground truth from the inference engine, not re-derived from proxy-observed timings.
                 e.put("session_id", r.path("session_id").isTextual() ? r.path("session_id").asText() : null);
                 final JsonNode usage = r.path("response").path("usage");
-                e.put("prefill_tok_per_sec", usage.path("prompt_tokens_per_second").isNumber() ? usage.path("prompt_tokens_per_second").asDouble() : null);
-                e.put("decode_tok_per_sec", usage.path("generation_tokens_per_second").isNumber() ? usage.path("generation_tokens_per_second").asDouble() : null);
+                final LocalModelBackend.SpeedFieldNames speedFields = backend.speedFieldNames();
+                e.put("prefill_tok_per_sec", usage.path(speedFields.prefillTpsField()).isNumber() ? usage.path(speedFields.prefillTpsField()).asDouble() : null);
+                e.put("decode_tok_per_sec", usage.path(speedFields.decodeTpsField()).isNumber() ? usage.path(speedFields.decodeTpsField()).asDouble() : null);
                 // per-request completion tokens, summed per session for the sessions grid's "total
                 // tokens" column - budget_spent_completion_tokens is a per-PROXY running counter that
                 // RESETS on a continuation's fresh proxy (given the REMAINING budget, not zero), so it

@@ -2,6 +2,7 @@ package com.strgmai.ace.service.service;
 
 import com.openai.models.models.Model;
 import com.strgmai.ace.service.agent.AgentSession;
+import com.strgmai.ace.service.backend.LocalModelBackend;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.config.JsonColumns;
 import com.strgmai.ace.service.metrics.StatsService;
@@ -54,15 +55,16 @@ public class BenchController {
     private final TaskMatcher taskMatcher;
     private final PauseAfterTask pauseAfterTask;
     private final com.strgmai.ace.service.agent.ProviderStore providerStore;
+    private final LocalModelBackend backend;
 
     public BenchController(DSLContext dsl, JobQueue queue, ImporterService importer, ExperimentsService experiments,
                            StatsService stats, WorkerService worker, BenchProperties props, Preflight preflight,
                            TreatmentPin pin, Intervene intervene, TaskMatcher taskMatcher, PauseAfterTask pauseAfterTask,
-                           com.strgmai.ace.service.agent.ProviderStore providerStore) {
+                           com.strgmai.ace.service.agent.ProviderStore providerStore, LocalModelBackend backend) {
         this.dsl = dsl; this.queue = queue; this.importer = importer; this.experiments = experiments;
         this.stats = stats; this.worker = worker; this.props = props; this.preflight = preflight; this.pin = pin;
         this.intervene = intervene; this.taskMatcher = taskMatcher; this.pauseAfterTask = pauseAfterTask;
-        this.providerStore = providerStore;
+        this.providerStore = providerStore; this.backend = backend;
     }
 
     @GetMapping("/api/preflight")
@@ -912,7 +914,7 @@ public class BenchController {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.isBlank() || sessionIds.stream().noneMatch(line::contains)) continue;
-                final Map<String, Object> entry = parseRequestSpeedEntry(factory, line, sessionIds);
+                final Map<String, Object> entry = parseRequestSpeedEntry(factory, line, sessionIds, backend);
                 if (entry != null) bySession.computeIfAbsent((String) entry.remove("session_id"), k -> new ArrayList<>()).add(entry);
             }
         } catch (final Exception e) { return bySession; }
@@ -1011,10 +1013,13 @@ public class BenchController {
      *  own session_id doesn't match (the caller's substring pre-check is only a hint - this
      *  confirms it against the real field) or it carries no usable usage block (a non-streamed or
      *  failed call). response.usage's own prompt_tokens_per_second/generation_tokens_per_second/
-     *  time_to_first_token/total_time are oMLX's own reported figures - never re-derived here.
-     *  generation_tok_per_sec, time_to_first_token_sec and total_time_sec are all optional (null
-     *  when absent) - unlike prefill speed, none of them is required for a line to count. */
-    private static Map<String, Object> parseRequestSpeedEntry(final com.fasterxml.jackson.core.JsonFactory factory, final String line, final Set<String> sessionIds) {
+     *  time_to_first_token/total_time are the backend's own reported figures - never re-derived
+     *  here. generation_tok_per_sec, time_to_first_token_sec and total_time_sec are all optional
+     *  (null when absent) - unlike prefill speed, none of them is required for a line to count.
+     *  #65: matches against backend.speedFieldNames() instead of oMLX's literal field names, so a
+     *  future backend reporting speed under different names changes one spot, not this one too. */
+    private static Map<String, Object> parseRequestSpeedEntry(final com.fasterxml.jackson.core.JsonFactory factory, final String line, final Set<String> sessionIds, final LocalModelBackend backend) {
+        final LocalModelBackend.SpeedFieldNames speedFields = backend.speedFieldNames();
         try (var p = factory.createParser(line)) {
             if (p.nextToken() != com.fasterxml.jackson.core.JsonToken.START_OBJECT) return null;
             Long seq = null;
@@ -1042,8 +1047,8 @@ public class BenchController {
                                         final String uf = p.currentName();
                                         p.nextToken();
                                         if ("prompt_tokens".equals(uf)) promptTokens = p.getIntValue();
-                                        else if ("prompt_tokens_per_second".equals(uf)) prefillTps = p.getDoubleValue();
-                                        else if ("generation_tokens_per_second".equals(uf)) generationTps = p.getDoubleValue();
+                                        else if (uf.equals(speedFields.prefillTpsField())) prefillTps = p.getDoubleValue();
+                                        else if (uf.equals(speedFields.decodeTpsField())) generationTps = p.getDoubleValue();
                                         else if ("time_to_first_token".equals(uf)) timeToFirstToken = p.getDoubleValue();
                                         else if ("total_time".equals(uf)) totalTime = p.getDoubleValue();
                                         else p.skipChildren();
@@ -1795,7 +1800,7 @@ public class BenchController {
             try {
                 while (true) {
                     final Map<String, Object> job = queue.get(id);
-                    for (Map<String, Object> e : tailer.poll(Path.of(props.resultsDir(), (String) job.get("run_id"))))
+                    for (Map<String, Object> e : tailer.poll(Path.of(props.resultsDir(), (String) job.get("run_id")), backend))
                         emitter.send(SseEmitter.event().name(String.valueOf(e.get("type"))).data(e));
                     emitter.send(SseEmitter.event().name("status").data(Map.of("status", job.get("status"))));
                     if (RunSpec.TERMINAL.contains(job.get("status"))) { emitter.complete(); return; }

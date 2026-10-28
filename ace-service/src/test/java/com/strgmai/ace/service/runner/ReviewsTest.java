@@ -2,6 +2,7 @@ package com.strgmai.ace.service.runner;
 
 import com.strgmai.ace.service.agent.ProviderStore;
 import com.strgmai.ace.service.agent.ReferenceAgent;
+import com.strgmai.ace.service.backend.OmlxBackend;
 import com.strgmai.ace.service.config.BenchProperties;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -40,7 +41,7 @@ class ReviewsTest {
                         null, null, null, null, null, null, null),
                 new ReferenceAgent(new BenchProperties(null, null, null, null, null, null, null, null, null, null,
                         null, null, null, null, null, null, null), providerStore),
-                new Intervene(), providerStore);
+                new Intervene(), providerStore, new OmlxBackend(Files.createTempDirectory("omlx-test")));
     }
 
     @Test

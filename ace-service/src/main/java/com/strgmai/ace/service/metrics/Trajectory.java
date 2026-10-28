@@ -3,6 +3,7 @@ package com.strgmai.ace.service.metrics;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.strgmai.ace.service.backend.LocalModelBackend;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -62,7 +63,7 @@ public final class Trajectory {
                        int reasoningChars, int contentChars, List<ToolCall> toolCalls, boolean inDockerWindow) {}
 
     /** normalize the journal's chat records into turns (streamed and non-streamed shapes) */
-    public static List<Turn> turnsFromProxy(final List<Map<String, Object>> recs) {
+    public static List<Turn> turnsFromProxy(final List<Map<String, Object>> recs, final LocalModelBackend backend) {
         final List<Turn> turns = new ArrayList<>();
         for (Map<String, Object> r : recs) {
             if (!String.valueOf(r.getOrDefault("path", "")).startsWith("/v1/chat/completions")) continue;
@@ -87,7 +88,9 @@ public final class Trajectory {
                 for (Map<String, Object> t : (List<Map<String, Object>>) resp.getOrDefault("tool_calls", List.of()))
                     tcs.add(new ToolCall(String.valueOf(t.get("name")), previewArgs(String.valueOf(t.getOrDefault("arguments", "")))));
             final Map<String, Object> u = resp.get("usage") instanceof Map<?, ?> uu ? (Map<String, Object>) uu : Map.of();
-            Object genTps = u.get("generation_tokens_per_second");
+            // #65: the backend's own reported figure, under ITS OWN field name - falls back to the
+            // derived estimate below when the backend doesn't report it (or no backend is given)
+            Object genTps = backend == null ? null : u.get(backend.speedFieldNames().decodeTpsField());
             if (genTps == null && u.get("completion_tokens") instanceof Number ct && r.get("latency_sec") instanceof Number lat && r.get("ttft_sec") instanceof Number ttft)
                 genTps = Math.round(ct.doubleValue() / Math.max(0.1, lat.doubleValue() - ttft.doubleValue()) * 100) / 100.0;
             final Map<String, Object> pd = u.get("prompt_tokens_details") instanceof Map<?, ?> p ? (Map<String, Object>) p : Map.of();
