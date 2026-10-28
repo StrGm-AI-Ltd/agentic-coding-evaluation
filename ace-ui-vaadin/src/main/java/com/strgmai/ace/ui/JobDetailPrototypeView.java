@@ -166,10 +166,14 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
     /** The compact "Result" tile value - full text for everything EXCEPT a failed job, whose own
      *  result_line is already shown verbatim, full-width, right above the fold (see render()'s own
      *  failed-job banner) - repeating it here too wrapped the whole error into the tile and broke
-     *  the uniform tile height every other tile in this row keeps. */
+     *  the uniform tile height every other tile in this row keeps. The leading "RESULT " word
+     *  (every real succeeded job's own result_line starts with it, confirmed against 8 real rows)
+     *  is stripped - the tile's own label already reads "Result", so it was just repeating itself. */
     private static String resultTileValue(final Api.Job job) {
         if (!hasResult(job)) return "–";
-        return "failed".equals(job.status()) ? "see above" : job.result_line();
+        if ("failed".equals(job.status())) return "see above";
+        final var line = job.result_line();
+        return line.startsWith("RESULT ") ? line.substring("RESULT ".length()) : line;
     }
 
     /** The "above the fold" status dashboard - every tile the SAME size, in a responsive CSS grid
