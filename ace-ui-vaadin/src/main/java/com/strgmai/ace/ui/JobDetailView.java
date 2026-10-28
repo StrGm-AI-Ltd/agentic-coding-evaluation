@@ -1698,8 +1698,11 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     /** One row of the "reclaimed context" table. reclaimedTokens is the REAL figure (this
      *  compaction's own promptTokensBefore minus the NEXT request's actual input tokens), not a
      *  stubbed-message count - found live (2026-10-19/T21) that the two can tell very different
-     *  stories. Null when no later request exists yet in this attempt to measure against. */
-    record CompactionReclaimedRow(int requestNumber, long promptTokensBefore, Long reclaimedTokens) {
+     *  stories. Null when no later request exists yet in this attempt to measure against.
+     *  promptTokensBefore is null for an on-load preload compaction, which has no "before" reading
+     *  to report (#505 - both columns render as "–" for such a row, rather than a misleading 0 and
+     *  the large negative number it used to produce once a later request's size became known). */
+    record CompactionReclaimedRow(int requestNumber, Long promptTokensBefore, Long reclaimedTokens) {
     }
 
     /** The two per-attempt compaction-effectiveness tables the operator asked for: where compactions
@@ -1779,7 +1782,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                         d.hasNonNull("requests_since_previous") ? d.path("requests_since_previous").asInt() : null));
             final List<CompactionReclaimedRow> reclaimed = new ArrayList<>();
             for (final var r : a.path("compaction_reclaimed"))
-                reclaimed.add(new CompactionReclaimedRow(r.path("request_number").asInt(), r.path("prompt_tokens_before").asLong(),
+                reclaimed.add(new CompactionReclaimedRow(r.path("request_number").asInt(),
+                        r.hasNonNull("prompt_tokens_before") ? r.path("prompt_tokens_before").asLong() : null,
                         r.hasNonNull("reclaimed_tokens") ? r.path("reclaimed_tokens").asLong() : null));
             sections.add(new AttemptSection(header.toString(), body.toString(), requestSpeedPoints(a.path("request_speeds")),
                     compactionsBeforeRequest(a.path("compactions_before_request")),
