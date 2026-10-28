@@ -86,11 +86,12 @@ public class MainLayout extends AppLayout {
         // own built-in responsive behavior) - this is what reopens it there; always visible but
         // inert (nothing to toggle) once the drawer is pinned open on a wide screen
         final var drawerToggle = new DrawerToggle();
-        // "tertiary permanent" - the exact theme the official Aura reference (vaadin.github.io/
-        // web-components/aura.html) uses on its own sidebar-header toggle; "permanent" has no
-        // ButtonVariant constant (DrawerToggle-specific), hence the raw theme-name token
+        // "tertiary" - one of only two Button variants Vaadin's own App Layout styling docs
+        // document as supported by the Drawer Toggle under Aura (the other is "primary"); the
+        // standard placement is addToNavbar(...) too - confirmed against the docs directly, not
+        // copied from vaadin.github.io/web-components/aura.html's own bespoke demo markup, which
+        // turned out to use an undocumented "permanent" token not in that supported list.
         drawerToggle.addThemeVariants(ButtonVariant.TERTIARY);
-        drawerToggle.getElement().getThemeList().add("permanent");
         addToNavbar(drawerToggle);
 
         // #529: Aura migration - #476/#527's hand-built brand-row CSS (the divider, the gradient
