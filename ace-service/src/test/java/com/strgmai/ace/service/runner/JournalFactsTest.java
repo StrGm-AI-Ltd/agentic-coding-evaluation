@@ -1,5 +1,6 @@
 package com.strgmai.ace.service.runner;
 
+import com.strgmai.ace.service.backend.OmlxBackend;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -21,6 +22,8 @@ class JournalFactsTest {
         private final Set<Path> temps = new HashSet<>();
 
     private Path track(Path p) { temps.add(p); return p; }
+
+    private static OmlxBackend backend() throws IOException { return new OmlxBackend(Files.createTempDirectory("omlx-test")); }
 
     @AfterEach
     void cleanUp() throws IOException {
@@ -232,7 +235,7 @@ class JournalFactsTest {
                         + "\"prompt_tokens_per_second\": 100.0, \"generation_tokens_per_second\": 20.0}", REQ)
                         + chat("2026-09-14T10:02:00Z", "", "\"usage\": {\"completion_tokens\": 1, \"prompt_tokens\": 10000, "
                         + "\"prompt_tokens_per_second\": 90.0, \"generation_tokens_per_second\": 18.0}", REQ));
-        final Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null);
+        final Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null, backend());
         final List<Map<String, Object>> buckets = (List<Map<String, Object>>) f.get("speed_by_context");
         assertEquals(2, buckets.size());
         assertEquals(0L, buckets.get(0).get("context_lo"));
@@ -244,6 +247,27 @@ class JournalFactsTest {
         assertEquals(10240L, buckets.get(1).get("context_hi"));
         assertEquals(1L, buckets.get(1).get("requests"));
         assertEquals(90.0, ((Number) buckets.get(1).get("avg_prefill_tok_per_sec")).doubleValue(), 0.001);
+    }
+
+    /** #65: entries() caches parsed Entry objects per (backend, path) - never just path - because
+     *  Entry.prefillTps/decodeTps are baked in at parse time from whatever backend's field names
+     *  were in effect for THAT parse. Calling facts() for the SAME file first with no backend (a
+     *  caller that only wants requests/completion_tokens), then with a real backend (a caller that
+     *  wants speed_by_context), must not leave the second call silently reading the first call's
+     *  stale, speed-unaware cache entry. */
+    @Test
+    void aNullBackendCallDoesNotPoisonTheCacheForALaterRealBackendCallOnTheSameFile() throws Exception {
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
+        Files.writeString(j, chat("2026-09-14T10:00:00Z", "", "\"usage\": {\"completion_tokens\": 1, \"prompt_tokens\": 500, "
+                + "\"prompt_tokens_per_second\": 200.0, \"generation_tokens_per_second\": 40.0}", REQ));
+
+        JournalFacts.facts(j.toString(), null, null, null, null, null);   // no backend - some other caller's own, unrelated call
+        final Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null, backend());
+
+        final List<Map<String, Object>> buckets = (List<Map<String, Object>>) f.get("speed_by_context");
+        assertEquals(1, buckets.size());
+        assertEquals(200.0, ((Number) buckets.get(0).get("avg_prefill_tok_per_sec")).doubleValue(), 0.001,
+                "must be the REAL figure, not left null by the earlier null-backend call's own cached parse");
     }
 
     /** #472/#475 follow-up: Collect.perTask()'s own "max_prompt" column needs the single highest
@@ -283,7 +307,7 @@ class JournalFactsTest {
                     + ", \"prompt_tokens_per_second\": 100.0, \"generation_tokens_per_second\": 20.0}", REQ));
         }
         Files.writeString(j, sb.toString());
-        final Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null);
+        final Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null, backend());
         final List<Map<String, Object>> buckets = (List<Map<String, Object>>) f.get("speed_by_context");
         assertEquals(8, buckets.size());
         assertEquals(0L, buckets.get(0).get("context_lo"));

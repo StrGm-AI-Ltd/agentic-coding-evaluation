@@ -48,6 +48,10 @@ public final class OmlxBackend implements LocalModelBackend {
     @Override
     public String providerKey() { return "omlx"; }
 
+    private static final SpeedFieldNames SPEED_FIELD_NAMES = new SpeedFieldNames("prompt_tokens_per_second", "generation_tokens_per_second");
+    @Override
+    public SpeedFieldNames speedFieldNames() { return SPEED_FIELD_NAMES; }
+
     @Override
     public boolean isAvailable() { return Files.exists(bin); }
 

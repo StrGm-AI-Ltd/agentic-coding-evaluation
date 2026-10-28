@@ -30,9 +30,10 @@ public class Reviews {
     private final ReferenceAgent agent;
     private final Intervene intervene;
     private final com.strgmai.ace.service.agent.ProviderStore providerStore;
+    private final com.strgmai.ace.service.backend.LocalModelBackend backend;
 
-    public Reviews(BenchProperties props, ReferenceAgent agent, Intervene intervene, com.strgmai.ace.service.agent.ProviderStore providerStore) {
-        this.props = props; this.agent = agent; this.intervene = intervene; this.providerStore = providerStore;
+    public Reviews(BenchProperties props, ReferenceAgent agent, Intervene intervene, com.strgmai.ace.service.agent.ProviderStore providerStore, com.strgmai.ace.service.backend.LocalModelBackend backend) {
+        this.props = props; this.agent = agent; this.intervene = intervene; this.providerStore = providerStore; this.backend = backend;
     }
 
     /** files `git status` reports as changed, minus build artefacts and the given prefixes (a
@@ -206,7 +207,7 @@ public class Reviews {
                 try { recs.add(JSON.readValue(line, Map.class)); }
                 catch (Exception e) { log.debug("could not parse journal line for the trajectory render, dropping it: {}", e.toString()); }
             }
-        final List<Trajectory.Turn> turns = Trajectory.turnsFromProxy(recs);
+        final List<Trajectory.Turn> turns = Trajectory.turnsFromProxy(recs, backend);
         final Map<String, Object> derived = manifest.get("derived") instanceof Map<?, ?> d ? (Map<String, Object>) d : Map.of();
         final List<Map<String, Object>> dockerWindows = manifest.get("docker_windows") instanceof List<?> l ? (List<Map<String, Object>>) l : null;
         // exclude review sessions from the agent's trajectory (they are the reviewer's, not the agent's) BEFORE any analysis

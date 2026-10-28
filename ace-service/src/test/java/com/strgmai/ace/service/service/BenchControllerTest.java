@@ -1,5 +1,6 @@
 package com.strgmai.ace.service.service;
 
+import com.strgmai.ace.service.backend.OmlxBackend;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.metrics.StatsService;
 import com.strgmai.ace.service.pack.Packs;
@@ -83,7 +84,8 @@ class BenchControllerTest {
         taskMatcher = mock(com.strgmai.ace.service.runner.TaskMatcher.class);
         pauseAfterTask = new com.strgmai.ace.service.runner.PauseAfterTask(queue);
         providerStore = new com.strgmai.ace.service.agent.ProviderStore(dsl);
-        final var controller = new BenchController(dsl, queue, importer, experiments, stats, worker, props, preflight, pin, intervene, taskMatcher, pauseAfterTask, providerStore);
+        final var controller = new BenchController(dsl, queue, importer, experiments, stats, worker, props, preflight, pin, intervene, taskMatcher, pauseAfterTask, providerStore,
+                new OmlxBackend(Files.createTempDirectory("omlx-test")));
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ApiExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter())

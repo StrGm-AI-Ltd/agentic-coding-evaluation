@@ -749,7 +749,7 @@ public class RunBench {
             // ---- oracle: the pinned-container build checks, the compose runtime checks, the black-box suite ----
             manifest.put("ended", nowIso());
             manifest.put("journal", journal.toString());
-            final Map<String, Object> facts = JournalFacts.facts(journal.toString(), null, null, List.of(), List.of(), null);
+            final Map<String, Object> facts = JournalFacts.facts(journal.toString(), null, null, List.of(), List.of(), null, backend);
             manifest.put("journal_facts", facts);
             manifest.put("validity", Validity.validity(manifest, facts, props.maxErrorRate()));
             writeManifest(rd, manifest);

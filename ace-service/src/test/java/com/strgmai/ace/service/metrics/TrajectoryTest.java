@@ -141,7 +141,7 @@ class TrajectoryTest {
                 "status", 200, "response", Map.of("choices", List.of(Map.of("message", Map.of(
                         "tool_calls", List.of(Map.of("function", Map.of("name", "write",
                                 "arguments", "{\"path\":\"src/A.java\",\"content\":\"" + longContent + "\"}"))))))));
-        final List<Trajectory.Turn> turns = Trajectory.turnsFromProxy(List.of(rec));
+        final List<Trajectory.Turn> turns = Trajectory.turnsFromProxy(List.of(rec), null);
         assertEquals(1, turns.size());
         final String storedArgs = turns.get(0).toolCalls().get(0).args();
         assertTrue(storedArgs.length() < longContent.length(), "the journaled full file content must not survive into the Turn");

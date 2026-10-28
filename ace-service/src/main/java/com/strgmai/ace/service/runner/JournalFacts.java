@@ -2,6 +2,7 @@ package com.strgmai.ace.service.runner;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.strgmai.ace.service.backend.LocalModelBackend;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,8 +60,19 @@ public final class JournalFacts {
         return new long[]{bucket * SPEED_BY_CONTEXT_BUCKET_WIDTH, (bucket + 1) * SPEED_BY_CONTEXT_BUCKET_WIDTH};
     }
 
+    /** #65: callers that only read non-speed facts (requests/completion_tokens/budget_refusals/...)
+     *  can use this convenience form - the speed-bucketing below is then simply left empty (backend
+     *  null = "no field-name mapping configured for this parse"), harmless since none of them read
+     *  avg_prefill_tok_per_sec/speed_by_context. The one caller that DOES (RunBench's own
+     *  journal_facts -> metrics.json speed_by_context chart) must use the 7-arg overload with a
+     *  real backend instead. */
     public static Map<String, Object> facts(String path, String sinceIso, String untilIso,
                                             List<String[]> exclude, List<String> normalise, String tag) {
+        return facts(path, sinceIso, untilIso, exclude, normalise, tag, null);
+    }
+
+    public static Map<String, Object> facts(String path, String sinceIso, String untilIso,
+                                            List<String[]> exclude, List<String> normalise, String tag, LocalModelBackend backend) {
         final Map<String, Object> f = new LinkedHashMap<>();
         f.put("requests", 0); f.put("errors", 0); f.put("budget_refusals", 0); f.put("upstream_errors", 0);
         f.put("client_aborts", 0); f.put("drain_aborted", 0); f.put("truncated", 0);
@@ -78,7 +90,7 @@ public final class JournalFacts {
         final Map<Integer, long[]> bucketRequests = new TreeMap<>();
         final Map<Integer, double[]> bucketPrefill = new TreeMap<>();   // bucket -> [sum, n]
         final Map<Integer, double[]> bucketDecode = new TreeMap<>();    // bucket -> [sum, n]
-        for (Entry e : entries(Path.of(path))) {
+        for (Entry e : entries(Path.of(path), backend)) {
             if (tag != null && !Objects.equals(e.task(), tag)) continue;          // a parallel task's own records
             if (window) {
                 if (e.ts() == null || (lo != null && e.ts().isBefore(lo)) || (hi != null && e.ts().isAfter(hi))
@@ -169,10 +181,18 @@ public final class JournalFacts {
 
     private static String jsonOf(JsonNode n) { return n == null || n.isMissingNode() ? "[]" : n.toString(); }
 
-    static List<Entry> entries(final Path p) {
+    static List<Entry> entries(final Path p) { return entries(p, null); }
+
+    /** #65: the parsed Entry cache is keyed per (backend, path) - never just path - since
+     *  Entry.prefillTps/decodeTps are baked in at parse time from whatever backend's own field
+     *  names were in effect for THAT parse. A bare path key would let an earlier null-backend call
+     *  (a caller that never reads speed data) silently poison a later real-backend call for the
+     *  SAME file with permanently-unpopulated speed fields, or vice versa. */
+    static List<Entry> entries(final Path p, final LocalModelBackend backend) {
+        final String cacheKey = (backend == null ? "" : backend.providerKey()) + ' ' + p;
         try {
             final long size = Files.size(p);
-            Cache c = CACHE.get(p.toString());
+            Cache c = CACHE.get(cacheKey);
             // #169: mtime also changes on every ordinary append, which used to force a full
             // reparse from byte 0 on every call against a live-growing journal - size shrinking
             // is already the correct, sufficient signal for a truncate+rewrite (an append-only
@@ -195,7 +215,7 @@ public final class JournalFacts {
                             for (int i = 0; i <= lastNl; i++) {
                                 if (data[i] == '\n') {
                                     if (i > lineStart) {
-                                        final Entry e = parseEntry(new String(data, lineStart, i - lineStart, StandardCharsets.UTF_8), off);
+                                        final Entry e = parseEntry(new String(data, lineStart, i - lineStart, StandardCharsets.UTF_8), off, backend);
                                         if (e != null) entries.add(e);
                                     }
                                     off += (i - lineStart) + 1;   // byte-exact: offsets stay in BYTES whatever the encoding
@@ -206,7 +226,7 @@ public final class JournalFacts {
                         }
                     }
                 }
-                CACHE.put(p.toString(), new Cache(start, List.copyOf(entries)));
+                CACHE.put(cacheKey, new Cache(start, List.copyOf(entries)));
             }
             return entries;
         } catch (IOException e) {
@@ -217,7 +237,9 @@ public final class JournalFacts {
         }
     }
 
-    static Entry parseEntry(String line, final long off) {
+    static Entry parseEntry(String line, final long off) { return parseEntry(line, off, null); }
+
+    static Entry parseEntry(String line, final long off, final LocalModelBackend backend) {
         JsonNode r;
         try { r = JSON.readTree(line); }
         catch (Exception e) { log.debug("could not parse journal line as JSON, dropping it: {}", e.toString()); return null; }
@@ -230,6 +252,9 @@ public final class JournalFacts {
         catch (Exception e) { log.debug("could not parse journal entry timestamp: {}", e.toString()); }
         List<String> ws = line.contains("agentbench-ws/")
                 ? WS_REF.matcher(line).results().map(m -> m.group(1)).distinct().toList() : null;
+        // #65: null backend (every caller that never reads speed data) = no field-name mapping, so
+        // prefillTps/decodeTps stay null below, same as "this backend doesn't report it"
+        final LocalModelBackend.SpeedFieldNames speedFields = backend == null ? null : backend.speedFieldNames();
         // top-level, matching how ReferenceAgent actually sends it (OpenAiChatRequestParameters.reasoningEffort)
         // since e7bcbda - the oMLX-specific chat_template_kwargs.reasoning_effort shape is never populated
         String effort = null;
@@ -246,8 +271,8 @@ public final class JournalFacts {
                 effort, req != null && req.isObject(), ws,
                 r.path("latency_sec").asDouble(0.0),
                 r.path("first_byte_ms").isMissingNode() ? null : r.path("first_byte_ms").asLong(),
-                u == null || !u.path("prompt_tokens_per_second").isNumber() ? null : u.path("prompt_tokens_per_second").asDouble(),
-                u == null || !u.path("generation_tokens_per_second").isNumber() ? null : u.path("generation_tokens_per_second").asDouble(),
+                u == null || speedFields == null || !u.path(speedFields.prefillTpsField()).isNumber() ? null : u.path(speedFields.prefillTpsField()).asDouble(),
+                u == null || speedFields == null || !u.path(speedFields.decodeTpsField()).isNumber() ? null : u.path(speedFields.decodeTpsField()).asDouble(),
                 // #415: resp carries the upstream's own "error" either way - the raw upstream body
                 // for a non-streamed response, or SseAssembler's already-extracted string for a
                 // streamed one (RecordingProxy.streamSse()) - com.strgmai.ace.service.proxy.SseAssembler.errorText()
