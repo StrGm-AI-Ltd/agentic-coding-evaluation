@@ -36,8 +36,6 @@ public class ExperimentsView extends VerticalLayout {
 
         final var newExperiment = new Button("New experiment", com.vaadin.flow.component.icon.VaadinIcon.PLUS.create(),
                 e -> getUI().ifPresent(ui -> ui.navigate("experiments/new")));
-        error.getStyle().set("color", "var(--lumo-error-color)");
-        emptyState.getStyle().set("color", "var(--lumo-secondary-text-color)");
         emptyState.setVisible(false);
 
         grid.addColumn(Api.Experiment::id).setHeader("#").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);

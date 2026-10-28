@@ -224,13 +224,11 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
         statusHolder.getStyle().set("margin", "4px 0");
         add(statusHolder);
-        kindLine.getStyle().set("color", "var(--lumo-secondary-text-color)");
         add(kindLine);
-        metaLine.getStyle().set("color", "var(--lumo-secondary-text-color)");
         add(metaLine);
         add(blockedHolder);
         add(errorLine);
-        errorLine.getStyle().set("color", "var(--lumo-error-color)").set("font-size", "0.85em");
+        errorLine.getStyle().set("font-size", "0.85em");
 
         if (job.argv() != null && !job.argv().isEmpty()) {
             add(new Span("Run flags"));
@@ -259,18 +257,16 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
 
         liveSection.add(liveTitle, plannedOrderLine, Panels.card("Plan", planGrid), liveStatsRow, sessionsGrid,
                 requestsLine, lostNotice, terminalNote, Panels.card("Recent requests", requestLatencyChart, requestsGrid), logTail);
-        plannedOrderLine.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.9em");
+        plannedOrderLine.getStyle().set("font-size", "0.9em");
         stepLine.getStyle().set("font-weight", "600");
-        activeTimeLine.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.9em");
+        activeTimeLine.getStyle().set("font-size", "0.9em");
         com.vaadin.flow.component.shared.Tooltip.forComponent(activeTimeLine).setText("excludes paused/stopped periods");
         tasksDoneLine.getStyle().set("font-weight", "600");
         taskTurnsLine.getStyle().set("font-weight", "600");
         toolErrorsLine.getStyle().set("font-weight", "600");
-        lostNotice.getStyle().set("color", "var(--lumo-warning-text-color, orange)").set("font-size", "0.85em");
-        terminalNote.getStyle().set("color", "var(--lumo-secondary-text-color)");
+        lostNotice.getStyle().set("font-size", "0.85em");
         logTail.getStyle().set("font-family", "ui-monospace, 'SF Mono', Menlo, monospace")
                 .set("font-size", "12px")
-                .set("background", "var(--lumo-contrast-10pct)")
                 .set("padding", "12px")
                 .set("border-radius", "6px")
                 .set("overflow-x", "auto")
@@ -431,7 +427,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                     getUI().ifPresent(ui -> ui.navigate("runs/" + job.run_id()))));
         } else if (job.run_id() != null) {
             final var hint = new Span(runNotImportedHint(job.status()));
-            hint.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em");
+            hint.getStyle().set("font-size", "0.85em");
             actions.add(hint);
         }
         // #275: a "raw log" link used to render here whenever job.stdout_path() was set, pointing
@@ -1018,7 +1014,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                             : "This task hasn't started yet - the prompt below is its fixed "
                               + "instruction only; the rest depends on the workspace state at the moment it actually "
                               + "begins. This updates automatically once it does.");
-                    note.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em")
+                    note.getStyle().set("font-size", "0.85em")
                             .set("display", "block").set("margin-bottom", "8px");
                     promptBody.add(note);
                     promptSettled[0] = finishedElsewhere;
@@ -2053,7 +2049,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 : "Restarts " + task.id() + " and every task after it in plan order - their "
                 + "current work is discarded (a backup git tag is made first in the workspace, but it is not "
                 + "exposed here - recoverable only via a plain `git tag -l 'backup/*'` on the host).");
-        warning.getStyle().set("color", pending ? "var(--lumo-secondary-text-color)" : "var(--lumo-error-text-color)")
+        warning.getStyle()
                 .set("font-size", "0.85em").set("display", "block").set("margin-bottom", "8px");
 
         final var taskWall = new com.vaadin.flow.component.textfield.IntegerField("Task wall (sec)");
@@ -2224,7 +2220,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                               + "plan table above instead)."
                             : "This phase hasn't started yet - the fixed instruction below is all there is "
                               + "until it does. This updates automatically once it does.");
-                    note.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em")
+                    note.getStyle().set("font-size", "0.85em")
                             .set("display", "block").set("margin-bottom", "8px");
                     promptBody.add(note);
                     promptSettled[0] = name == null || !restartablePhases.contains(name);
@@ -2283,7 +2279,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var warning = new Span("Restarts " + name + " and every later phase/task - their current work is "
                 + "discarded (a backup git tag is made first in the workspace, but it is not exposed here - "
                 + "recoverable only via a plain `git tag -l 'backup/*'` on the host).");
-        warning.getStyle().set("color", "var(--lumo-error-text-color)").set("font-size", "0.85em").set("display", "block").set("margin-bottom", "8px");
+        warning.getStyle().set("font-size", "0.85em").set("display", "block").set("margin-bottom", "8px");
 
         final var taskWall = new com.vaadin.flow.component.textfield.IntegerField("Task wall (sec)");
         final var taskTokens = new com.vaadin.flow.component.textfield.IntegerField("Task tokens");

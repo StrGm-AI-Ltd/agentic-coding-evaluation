@@ -41,9 +41,6 @@ public class JobsView extends VerticalLayout {
         refresh.getElement().setAttribute("aria-label", "refresh the queue");
         final var newJob = new Button("New job", VaadinIcon.PLUS.create(),
                 e -> getUI().ifPresent(ui -> ui.navigate("jobs/new")));
-        running.getStyle().set("color", "var(--lumo-secondary-text-color)");
-        error.getStyle().set("color", "var(--lumo-error-color)");
-        emptyState.getStyle().set("color", "var(--lumo-secondary-text-color)");
         emptyState.setVisible(false);
 
         grid.addColumn(Api.Job::id).setHeader("#").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
@@ -95,8 +92,11 @@ public class JobsView extends VerticalLayout {
             text.getStyle().set("display", "block").set("max-width", "320px")
                     .set("overflow", "hidden").set("text-overflow", "ellipsis").set("white-space", "nowrap");
             final var reason = new Button(text, e -> openBlockedReasonDialog(job.blocked_reason()));
-            reason.addThemeVariants(ButtonVariant.LUMO_TERTIARY_INLINE, ButtonVariant.LUMO_SMALL);
-            reason.getStyle().set("color", "var(--lumo-secondary-text-color)").set("max-width", "320px");
+            // #529: TERTIARY_INLINE has no Aura equivalent at all (Lumo-only, confirmed via the
+            // ButtonVariant enum's own constant list) - TERTIARY/SMALL are the shared, theme-
+            // portable names (not LUMO_-prefixed) both themes actually recognize.
+            reason.addThemeVariants(ButtonVariant.TERTIARY, ButtonVariant.SMALL);
+            reason.getStyle().set("max-width", "320px");
             cell.add(badge, reason);
             return cell;
         }

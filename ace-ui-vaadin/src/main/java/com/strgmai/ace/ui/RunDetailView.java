@@ -92,7 +92,6 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         add(title);
 
         final var meta = new Span(metaLine(run));
-        meta.getStyle().set("color", "var(--lumo-secondary-text-color)");
         add(meta);
 
         final var badges = new HorizontalLayout();
@@ -135,8 +134,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
 
         if (Boolean.FALSE.equals(run.valid()) && run.validity_reasons() != null && !run.validity_reasons().isEmpty()) {
             final var reasons = run.validity_reasons().stream().map(ListItem::new).toList();
-            add(Panels.callout("var(--lumo-error-color)", "var(--lumo-error-color-10pct)",
-                    new Span("recorded, never ranked"), new UnorderedList(reasons.toArray(new ListItem[0]))));
+            add(Panels.callout(new Span("recorded, never ranked"), new UnorderedList(reasons.toArray(new ListItem[0]))));
         }
         if (Boolean.TRUE.equals(run.contended()) && run.manifest() != null) {
             final var contention = run.manifest().has("contention")
@@ -479,7 +477,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
                   for (var s = 0; s < struct.series.length; s++) {
                     html += '<div>' + seriesNames[s] + ': ' + struct.series[s][i] + '</div>';
                   }
-                  html += '<div style="color:var(--lumo-secondary-text-color);margin-top:4px">n=' + reqCounts[i] + ' requests</div></div>';
+                  html += '<div style="margin-top:4px">n=' + reqCounts[i] + ' requests</div></div>';
                   return html;
                 }
                 """.formatted(labels, reqCounts);

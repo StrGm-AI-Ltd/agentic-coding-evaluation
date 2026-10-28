@@ -61,23 +61,20 @@ final class DiffView {
         block.getStyle()
                 .set("font-family", "ui-monospace, 'SF Mono', Menlo, monospace")
                 .set("font-size", "12px")
-                .set("background", "var(--lumo-contrast-10pct)")
                 .set("padding", "12px")
                 .set("border-radius", "6px")
                 .set("overflow-x", "auto")
                 .set("white-space", "pre")
                 .set("margin", "6px 0");
+        // #529: Aura migration - the +++/---/+/-/@@ line coloring (secondary/success/error/
+        // primary text colors) dropped outright rather than retargeted, per the operator's own
+        // explicit call on custom-built patterns like this one; every line now renders in the
+        // diff block's own plain text color, no added/removed/header distinction by color alone.
         for (final String line : diffText.split("\n", -1)) {
             final var span = new Span(line.isEmpty() ? " " : line);
             span.getStyle().set("display", "block");
-            if (line.startsWith("+++") || line.startsWith("---")) {
-                span.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-weight", "600");
-            } else if (line.startsWith("+")) {
-                span.getStyle().set("color", "var(--lumo-success-text-color)");
-            } else if (line.startsWith("-")) {
-                span.getStyle().set("color", "var(--lumo-error-text-color)");
-            } else if (line.startsWith("@@")) {
-                span.getStyle().set("color", "var(--lumo-primary-text-color)").set("font-weight", "600");
+            if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
+                span.getStyle().set("font-weight", "600");
             }
             block.add(span);
         }
@@ -86,7 +83,7 @@ final class DiffView {
 
     private static Span note(final String text) {
         final var span = new Span(text);
-        span.getStyle().set("color", "var(--lumo-secondary-text-color)").set("font-size", "0.85em")
+        span.getStyle().set("font-size", "0.85em")
                 .set("display", "block").set("margin", "2px 0 8px 0");
         return span;
     }

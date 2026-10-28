@@ -1,4 +1,8 @@
-/* Styling for the markdown file viewer: commonmark semantic HTML under Lumo. */
+/* Styling for the markdown file viewer: commonmark semantic HTML.
+ * #529: Aura migration - every var(--lumo-*) color/border reference below removed outright
+ * (table-cell borders, code/pre block tinting, blockquote left-bar and secondary text color),
+ * per the operator's own explicit call to drop custom coloring under Aura rather than retarget
+ * it - purely structural properties (padding, border-radius, max-width) are untouched. */
 
 .md-body table {
   border-collapse: collapse;
@@ -7,20 +11,17 @@
 
 .md-body th,
 .md-body td {
-  border: 1px solid var(--lumo-contrast-20pct);
   padding: 4px 10px;
   text-align: left;
 }
 
 .md-body code {
-  background: var(--lumo-contrast-10pct);
   border-radius: 3px;
   padding: 1px 4px;
   font-size: 0.9em;
 }
 
 .md-body pre {
-  background: var(--lumo-contrast-10pct);
   border-radius: 6px;
   padding: 12px;
   overflow-x: auto;
@@ -32,10 +33,8 @@
 }
 
 .md-body blockquote {
-  border-left: 3px solid var(--lumo-contrast-30pct);
   margin: 8px 0;
   padding: 4px 14px;
-  color: var(--lumo-secondary-text-color);
 }
 
 .md-body img {

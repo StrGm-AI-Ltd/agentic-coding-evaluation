@@ -273,9 +273,4 @@ public final class Api {
      *  literal. */
     public record Provider(String id, String name, String provider_key, String base_url, String default_model, boolean has_api_key, boolean is_local) {
     }
-
-    /** GET /api/providers/{id}/health — a cheap standalone ping (#476 PR 3/3), backing MainLayout's
-     *  sidebar footer status dot for the local/oMLX provider. */
-    public record ProviderHealth(boolean ok) {
-    }
 }
