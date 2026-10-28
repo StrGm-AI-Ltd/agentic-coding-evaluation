@@ -7,7 +7,6 @@ import com.github.appreciated.css.grid.sizes.Repeat;
 import com.github.appreciated.layout.FlexibleGridLayout;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
-import com.vaadin.flow.component.details.Details;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.Span;
@@ -56,9 +55,10 @@ import java.util.Map;
  * Design grounded in current (2026) dashboard/detail-page UX research, not just aesthetic
  * preference:
  * - Status and key figures first, above the fold; drill-down detail below (aufaitux.com, 925studios.co).
- * - Progressive disclosure is the dominant 2026 SaaS-dashboard pattern - show the minimum needed,
- *   reveal the rest on demand (same direction already applied to JobNewView's own collapsible
- *   sections this session) - used here for the run-flags/raw-result detail.
+ * - Run flags were initially tucked behind a collapsed "Run details" panel (progressive
+ *   disclosure, the dominant 2026 SaaS-dashboard pattern for secondary detail), but promoted to
+ *   always-visible, right above Plan - flags are what EXPLAINS a run's own behavior, not
+ *   secondary detail an operator reaches for only occasionally.
  * - 5-9 core elements per view, muted neutrals with color reserved for status specifically -
  *   deliberately NOT a "bento grid" of asymmetric tile sizes: that pattern is explicitly called
  *   out in 2026 UI-trend research as wrong for data-dense PRODUCT dashboards (orbix.studio) - it
@@ -145,17 +145,15 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
 
         add(statTileGrid(job, tasks, lastAttempt));
 
-        if (!tasks.isEmpty()) {
-            add(Panels.card("Plan", buildPlanGrid(tasks, lastAttempt)));
-        }
-
-        // "Result" is now its own tile above (next to "Tasks"), not duplicated here
+        // always visible, above Plan - an operator reading WHY a run did what it did needs the
+        // exact flags it ran with as readily as the plan itself, not one more click away
         final var argv = job.argv() == null ? List.<String>of() : job.argv();
         if (!argv.isEmpty()) {
-            final var details = new Details("Run details");
-            details.setOpened(false);
-            details.add(new Span("Run flags"), Panels.mono(String.join(" ", argv)));
-            add(details);
+            add(Panels.card("Run flags", Panels.mono(String.join(" ", argv))));
+        }
+
+        if (!tasks.isEmpty()) {
+            add(Panels.card("Plan", buildPlanGrid(tasks, lastAttempt)));
         }
     }
 
