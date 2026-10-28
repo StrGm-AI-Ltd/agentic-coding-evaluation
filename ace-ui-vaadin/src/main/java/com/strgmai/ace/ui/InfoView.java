@@ -31,6 +31,24 @@ public class InfoView extends Div {
                 new Span(" the result with an oracle that never trusts the agent's own word for anything."));
         add(goal);
 
+        final var purpose = new Paragraph();
+        final var purposeHighlight = new Span();
+        purposeHighlight.getStyle().set("font-weight", "600");
+        purposeHighlight.add(new Span("ACE's goal is narrower and more practical than a leaderboard: finding "
+                + "which model, harness mode, and hyperparameters actually get a coding task done well — on "
+                + "your own hardware if you're running a local model, or against whichever "),
+                new RouterLink("external provider", LlmProvidersView.class),
+                new Span(" you've configured."));
+        purpose.add(purposeHighlight,
+                new Span(" Configure any of those per job in "),
+                new RouterLink("Queue", JobsView.class),
+                new Span(", or run a templated, repeated A/B batch in "),
+                new RouterLink("Experiments", ExperimentsView.class),
+                new Span(", then check "), new RouterLink("Compare", CompareView.class), new Span(" and "),
+                new RouterLink("Groups", GroupsView.class),
+                new Span(" to see which configuration wins for your setup."));
+        add(purpose);
+
         add(new H3("User manual"));
         add(new Paragraph(new Span("See the "), wikiLink("Task Ladder", TASK_LADDER_URL),
                 new Span(" for what each task actually asks the agent to build.")));

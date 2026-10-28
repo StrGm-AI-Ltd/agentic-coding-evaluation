@@ -24,6 +24,12 @@ orchestrated, task-by-task harness beat a single growing session for a weak loca
 finding is *why* this harness is shaped the way it is; ace-service ports the same two-mode design
 (§13) rather than re-deriving it.
 
+In practice both questions serve the same end for an operator: which model, harness mode, and
+sampler/budget hyperparameters actually get a given task done well on the hardware (or provider)
+they actually have — not which model wins an abstract leaderboard. `ace-ui-vaadin`'s Queue sets any
+of those per job; Experiments (§14) runs a templated, repeated batch across one of the two questions
+above and reports a verdict once every job finishes.
+
 ## 2. Repository layout
 
 ```

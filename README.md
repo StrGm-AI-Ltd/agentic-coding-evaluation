@@ -2,6 +2,16 @@
 
 A reproducible framework for evaluating AI coding agents, models, and agent harnesses under controlled conditions.
 
+**ACE's goal is narrower and more practical than a leaderboard: finding which model, harness mode, and
+hyperparameters actually get a coding task done well — on your own hardware if you're running a local
+model, or against whichever external provider you've configured.** Configure any of those per job via
+[Queue](https://github.com/StrGm-AI-Ltd/agentic-coding-evaluation/wiki/User-Manual-Jobs#creating-a-job),
+or run a templated, repeated A/B batch via
+[Experiments](https://github.com/StrGm-AI-Ltd/agentic-coding-evaluation/wiki/Features#experiments), then
+check [Compare](https://github.com/StrGm-AI-Ltd/agentic-coding-evaluation/wiki/User-Manual-Results#compare)
+and [Groups](https://github.com/StrGm-AI-Ltd/agentic-coding-evaluation/wiki/User-Manual-Results#groups--the-pooled-leaderboard)
+to see which configuration wins for your setup.
+
 ## Subprojects
 
 - **`ace-service`** — the Java 21 / Spring Boot harness: scoring oracle, orchestrated/monolithic
