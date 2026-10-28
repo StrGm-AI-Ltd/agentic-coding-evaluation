@@ -33,12 +33,14 @@ public class InfoView extends Div {
 
         final var purpose = new Paragraph();
         purpose.add(new Span("Its real job is narrower and more practical than a leaderboard: finding which "
-                + "model, harness mode, and hyperparameters (temperature, top-p, top-k, context window, "
-                + "budgets) actually get a coding task done well — on your own hardware if you're running a "
-                + "local model, or against whichever "), new RouterLink("external provider", LlmProvidersView.class),
-                new Span(" you've configured. Queue a batch of runs that each vary one of those knobs via "),
+                + "model, harness mode, and hyperparameters actually get a coding task done well — on your "
+                + "own hardware if you're running a local model, or against whichever "),
+                new RouterLink("external provider", LlmProvidersView.class),
+                new Span(" you've configured. Set any of those per job via "),
+                new RouterLink("Queue", JobsView.class),
+                new Span(", or run a templated, repeated A/B batch via "),
                 new RouterLink("Experiments", ExperimentsView.class),
-                new Span(", then use "), new RouterLink("Compare", CompareView.class), new Span(" and "),
+                new Span(" — then use "), new RouterLink("Compare", CompareView.class), new Span(" and "),
                 new RouterLink("Groups", GroupsView.class),
                 new Span(" to see which configuration actually wins for your setup."));
         add(purpose);
