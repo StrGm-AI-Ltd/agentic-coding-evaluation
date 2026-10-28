@@ -13,6 +13,7 @@
     "@webcomponents/shadycss": "1.11.2",
     "apexcharts": "3.54.1",
     "date-fns": "4.1.0",
+    "element-match-media": "0.0.3",
     "lit": "3.3.3",
     "onecolor": "4.1.0",
     "react": "19.2.8",
@@ -53,6 +54,7 @@
       "@webcomponents/shadycss": "1.11.2",
       "apexcharts": "3.54.1",
       "date-fns": "4.1.0",
+      "element-match-media": "0.0.3",
       "lit": "3.3.3",
       "onecolor": "4.1.0",
       "react": "19.2.8",
@@ -81,7 +83,7 @@
       "vite": "8.0.16",
       "vite-plugin-checker": "0.14.5"
     },
-    "hash": "88a5375b774097df1ec5293e23b545c24b51bc856e0e0a64fe4fe98163d12907"
+    "hash": "1b584ff31bd4442a01e728f11d6779ff66a1c1000cc198f0a0101bc99f5afa08"
   },
   "overrides": {
     "@vaadin/a11y-base": "25.2.11",
@@ -156,6 +158,7 @@
     "@webcomponents/shadycss": "$@webcomponents/shadycss",
     "apexcharts": "$apexcharts",
     "date-fns": "$date-fns",
+    "element-match-media": "$element-match-media",
     "lit": "$lit",
     "onecolor": "$onecolor",
     "react": "$react",
