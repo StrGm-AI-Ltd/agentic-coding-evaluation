@@ -5,6 +5,7 @@ import com.vaadin.flow.component.HasElement;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.applayout.AppLayout;
 import com.vaadin.flow.component.applayout.DrawerToggle;
+import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.dependency.CssImport;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.Span;
@@ -84,7 +85,13 @@ public class MainLayout extends AppLayout {
         // the drawer auto-collapses to a hamburger-toggled overlay on narrow viewports (AppLayout's
         // own built-in responsive behavior) - this is what reopens it there; always visible but
         // inert (nothing to toggle) once the drawer is pinned open on a wide screen
-        addToNavbar(new DrawerToggle());
+        final var drawerToggle = new DrawerToggle();
+        // "tertiary permanent" - the exact theme the official Aura reference (vaadin.github.io/
+        // web-components/aura.html) uses on its own sidebar-header toggle; "permanent" has no
+        // ButtonVariant constant (DrawerToggle-specific), hence the raw theme-name token
+        drawerToggle.addThemeVariants(ButtonVariant.TERTIARY);
+        drawerToggle.getElement().getThemeList().add("permanent");
+        addToNavbar(drawerToggle);
 
         // #529: Aura migration - #476/#527's hand-built brand-row CSS (the divider, the gradient
         // logo-mark box sized/colored to match the mockup's own .brand-mark) removed outright
