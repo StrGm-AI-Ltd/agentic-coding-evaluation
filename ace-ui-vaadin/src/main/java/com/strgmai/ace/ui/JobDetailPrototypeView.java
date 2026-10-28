@@ -149,22 +149,27 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
             add(Panels.card("Plan", buildPlanGrid(tasks, lastAttempt)));
         }
 
+        // "Result" is now its own tile above (next to "Tasks"), not duplicated here
         final var argv = job.argv() == null ? List.<String>of() : job.argv();
-        if (!argv.isEmpty() || hasResult(job)) {
+        if (!argv.isEmpty()) {
             final var details = new Details("Run details");
             details.setOpened(false);
-            if (!argv.isEmpty()) {
-                details.add(new Span("Run flags"), Panels.mono(String.join(" ", argv)));
-            }
-            if (hasResult(job)) {
-                details.add(new Span("Result"), Panels.mono(job.result_line()));
-            }
+            details.add(new Span("Run flags"), Panels.mono(String.join(" ", argv)));
             add(details);
         }
     }
 
     private static boolean hasResult(final Api.Job job) {
         return job.result_line() != null && !job.result_line().isBlank();
+    }
+
+    /** The compact "Result" tile value - full text for everything EXCEPT a failed job, whose own
+     *  result_line is already shown verbatim, full-width, right above the fold (see render()'s own
+     *  failed-job banner) - repeating it here too wrapped the whole error into the tile and broke
+     *  the uniform tile height every other tile in this row keeps. */
+    private static String resultTileValue(final Api.Job job) {
+        if (!hasResult(job)) return "–";
+        return "failed".equals(job.status()) ? "see above" : job.result_line();
     }
 
     /** The "above the fold" status dashboard - every tile the SAME size, in a responsive CSS grid
@@ -191,7 +196,8 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
                         dashboardTile("Priority", job.priority() == null ? "–" : String.valueOf(job.priority())),
                         dashboardTile("Enqueued", Fmt.when(job.enqueued_at())),
                         dashboardTile("Duration", durationOf(job)),
-                        dashboardTile("Tasks", done + " / " + realTasks.size()));
+                        dashboardTile("Tasks", done + " / " + realTasks.size()),
+                        dashboardTile("Result", resultTileValue(job)));
         grid.getStyle().set("width", "100%").set("margin", "12px 0");
         return grid;
     }
