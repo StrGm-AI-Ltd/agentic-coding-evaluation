@@ -160,7 +160,12 @@ public class MainLayout extends AppLayout {
         // no explicit font-size - inherits the app's own 14px base size, matching every
         // SideNavItem label exactly rather than the smaller 0.8em this used to carry
         final var footerStatusText = new Span("StrGm AI");
-        final var footer = new HorizontalLayout(footerStatusDot, footerStatusText);
+        // an invisible spacer matching the dot's own left-side footprint (8px + 6px margin-right =
+        // 14px) - without it, centering the row centers (dot + text) as a block, which visibly
+        // shifts the text itself off-center from the logo centered below it
+        final var footerStatusSpacer = new Div();
+        footerStatusSpacer.getStyle().set("width", "14px").set("flex-shrink", "0");
+        final var footer = new HorizontalLayout(footerStatusDot, footerStatusText, footerStatusSpacer);
         footer.setSpacing(false);
         footer.setWidthFull();
         footer.setAlignItems(FlexComponent.Alignment.CENTER);
