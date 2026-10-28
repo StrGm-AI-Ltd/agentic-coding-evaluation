@@ -8,6 +8,7 @@ import com.vaadin.flow.component.applayout.DrawerToggle;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.dependency.CssImport;
 import com.vaadin.flow.component.html.Div;
+import com.vaadin.flow.component.html.Hr;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.icon.Icon;
 import com.vaadin.flow.component.icon.VaadinIcon;
@@ -132,7 +133,14 @@ public class MainLayout extends AppLayout {
                 navItem("Preflight", PreflightView.class, VaadinIcon.CHECK_CIRCLE),
                 providersNavItem);
 
-        final var menu = new VerticalLayout(overview, benchmarking, system);
+        // the browser's own default <hr> CSS sets margin-inline:auto, which per the flexbox spec
+        // disables align-items:stretch for that item's cross axis - setWidthFull() overrides it so
+        // the divider actually spans the drawer's width instead of collapsing to a tiny default
+        final var overviewDivider = new Hr();
+        overviewDivider.setWidthFull();
+        final var benchmarkingDivider = new Hr();
+        benchmarkingDivider.setWidthFull();
+        final var menu = new VerticalLayout(overview, overviewDivider, benchmarking, benchmarkingDivider, system);
         menu.setPadding(false);
         menu.setSpacing(false);
 
@@ -148,7 +156,7 @@ public class MainLayout extends AppLayout {
         // custom-color strip - the dot keeps its shape, just no longer color-codes live status.
         footerStatusDot.getStyle().set("display", "inline-block").set("width", "8px").set("height", "8px")
                 .set("border-radius", "50%").set("margin-right", "6px");
-        final var footerStatusText = new Span("ace.strgm-ai.com");
+        final var footerStatusText = new Span("StrGm AI");
         footerStatusText.getStyle().set("font-size", "0.8em");
         final var footer = new HorizontalLayout(footerStatusDot, footerStatusText);
         footer.setPadding(true);
