@@ -25,9 +25,15 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
  * own hand-styled sidebar CSS (#476/#527/#528) are gone, not retargeted - every var(--lumo-*)
  * customization across the app was removed outright per that decision, relying on Aura's own
  * standard component styling instead of recreating the old Lumo-based custom look on top of it.
+ *
+ * A new styles.css (META-INF/resources/) was added back afterward, but on Aura's own terms: it
+ * only redeclares Aura's documented --aura-* custom properties (accent color, radius, font, etc. -
+ * see the Aura theming docs) plus a few ::part()-based component tweaks, not Lumo-era hand-rolled
+ * component CSS.
  */
 @Push(PushMode.AUTOMATIC)
 @StyleSheet(Aura.STYLESHEET)
+@StyleSheet("styles.css")
 @ColorScheme(ColorScheme.Value.DARK)
 @SpringBootApplication
 @ConfigurationPropertiesScan
