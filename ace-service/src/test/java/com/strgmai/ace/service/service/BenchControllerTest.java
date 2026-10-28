@@ -1276,6 +1276,31 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.attempts[0].compaction_reclaimed[1].reclaimed_tokens").value(3000));
     }
 
+    /** #505: found live on T12 of a production run - a resumed session's on-load preload compaction
+     *  (no "prompt_tokens_before" field at all, written by AgentSession's 2-arg compaction()
+     *  overload) used to be read back as a 0 sentinel, and the first later request's own real
+     *  usage.input turned that into a large NEGATIVE "reclaimed tokens" figure in this exact API
+     *  response. Both fields must come back null for that event instead. */
+    @Test
+    void taskStatsLeavesPreloadCompactionUnmeasuredRatherThanNegative() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": []}");
+        Files.writeString(runDir.resolve("sessions/a.jsonl"), String.join("\n",
+                "{\"type\":\"session\",\"id\":\"session-t12\",\"label\":\"T12\",\"ts\":\"2026-10-27T21-40-07Z\"}",
+                "{\"type\":\"compaction\",\"ts\":\"2026-10-27T21:40:07Z\"}",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\"},\"usage\":{\"input\":34658,\"output\":50},\"ts\":\"2026-10-27T21:40:08Z\"}") + "\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T12/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attempts[0].compaction_reclaimed", hasSize(1)))
+                .andExpect(jsonPath("$.attempts[0].compaction_reclaimed[0].prompt_tokens_before").value(nullValue()))
+                .andExpect(jsonPath("$.attempts[0].compaction_reclaimed[0].reclaimed_tokens").value(nullValue()));
+    }
+
     /** The operator asked for the same kind of marker for judge checkpoints, colored by verdict.
      *  judge/&lt;taskId&gt;-&lt;attemptStamp&gt;-turn&lt;N&gt;.md's own attempt stamp (Judge.attemptStamp() -
      *  the exact same filesystem-safe format as a session file's own leading timestamp) is matched

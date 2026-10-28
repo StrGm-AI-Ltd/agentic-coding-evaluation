@@ -641,6 +641,27 @@ class JobDetailViewTest {
         assertNull(reclaimed.get(1).reclaimedTokens(), "no later request in this attempt to measure against yet");
     }
 
+    /** #505: a resumed session's on-load preload compaction has no real prompt-token baseline - the
+     *  backend sends "prompt_tokens_before": null for that row (previously it sent 0, which rendered
+     *  as a misleading "0" and let reclaimed_tokens come back as a large negative number). Both must
+     *  parse as null, not coerce to 0. */
+    @Test
+    void attemptSections_leavesPromptTokensBeforeNullForAPreloadCompactionRow() {
+        final var stats = Json.MAPPER.readTree("""
+                {"state": "done", "attempts": [
+                    {"started_iso": "2026-10-27T21:40:00Z", "turns": 1, "compactions": 1, "tool_errors": 0, "tool_calls": {}, "seconds": 5.0,
+                     "compaction_count": 1,
+                     "compaction_distribution": [{"request_number": 0, "requests_since_previous": null}],
+                     "compaction_reclaimed": [{"request_number": 0, "prompt_tokens_before": null, "reclaimed_tokens": null}]}
+                ]}""");
+
+        final var reclaimed = JobDetailView.attemptSections(stats).get(0).compactionReclaimed();
+
+        assertEquals(1, reclaimed.size());
+        assertNull(reclaimed.get(0).promptTokensBefore(), "a preload compaction has nothing to report here");
+        assertNull(reclaimed.get(0).reclaimedTokens());
+    }
+
     @Test
     void attemptSections_leavesCompactionTablesEmptyWhenTheBackendReportsNoCompactions() {
         final var stats = Json.MAPPER.readTree("""

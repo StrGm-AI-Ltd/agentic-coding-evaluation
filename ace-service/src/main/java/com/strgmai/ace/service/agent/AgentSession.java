@@ -128,6 +128,16 @@ public final class AgentSession {
                 "prompt_tokens_before", promptTokensBefore, "ts", Instant.now().toString()));
     }
 
+    /** #505: the on-load compaction a resumed session runs BEFORE its first request has no real
+     *  prompt-token count to report - there is nothing sent yet to measure. This overload omits
+     *  `prompt_tokens_before` entirely (rather than writing a sentinel 0) so compactionEffectiveness()
+     *  can tell "not measured" apart from a real reading and never computes a reclaimed-tokens figure
+     *  against it - writing 0 here used to make the first later request's entire prompt size look
+     *  like a huge NEGATIVE "reclaimed", since 0 minus any real token count is always negative. */
+    public void compaction(final int stubbed, final boolean summarized) throws IOException {
+        write(Map.of("type", "compaction", "stubbed", stubbed, "summarized", summarized, "ts", Instant.now().toString()));
+    }
+
     /** #417 follow-up review (C8): a side LLM call outside the main turn loop (structured_eviction's
      *  own one-shot summarization request) still spends real tokens the task's budget is charged
      *  for via RecordingProxy - but nothing recorded it in the SESSION file's own accounting, so
@@ -245,10 +255,15 @@ public final class AgentSession {
      *  nothing about everything else - tool-call arguments, new turns - that grew in between).
      *  `requestNumber` is this compaction's own 1-indexed ordinal position among the session's
      *  assistant turns (the request it immediately followed); `requestsSincePrevious` is null for the
-     *  first compaction in the file (nothing to compare against yet). `reclaimedTokens` is null when
-     *  no later assistant turn exists in the file to measure against - the attempt ended, or was
-     *  interrupted, right after this compaction fired. */
-    public record CompactionEvent(int requestNumber, Integer requestsSincePrevious, long promptTokensBefore, Long reclaimedTokens) {}
+     *  first compaction in the file (nothing to compare against yet). `promptTokensBefore` is null for
+     *  an on-load preload compaction (AgentSession.compaction()'s 2-arg overload) - there was no
+     *  request yet to measure, so it never gets a `reclaimedTokens` either, permanently (#505: before
+     *  this was null-forever too, it defaulted to 0, which the resolution below then turned into a
+     *  large, meaningless NEGATIVE "reclaimed" once a later real request's usage.input arrived - 0
+     *  minus any real token count is always negative). For a REAL (reactive) compaction,
+     *  `reclaimedTokens` is null only until a later assistant turn exists in the file to measure
+     *  against - the attempt ended, or was interrupted, right after this compaction fired. */
+    public record CompactionEvent(int requestNumber, Integer requestsSincePrevious, Long promptTokensBefore, Long reclaimedTokens) {}
 
     public static List<CompactionEvent> compactionEffectiveness(final Path sessionFile) {
         if (sessionFile == null || !Files.isRegularFile(sessionFile)) return List.of();
@@ -265,7 +280,8 @@ public final class AgentSession {
                     final int requestNumber = requestCount;
                     final Integer gap = previousRequestNumber == null ? null : requestNumber - previousRequestNumber;
                     previousRequestNumber = requestNumber;
-                    events.add(new CompactionEvent(requestNumber, gap, r.path("prompt_tokens_before").asLong(), null));
+                    final Long promptTokensBefore = r.hasNonNull("prompt_tokens_before") ? r.path("prompt_tokens_before").asLong() : null;
+                    events.add(new CompactionEvent(requestNumber, gap, promptTokensBefore, null));
                     continue;
                 }
                 if (!"message".equals(type) || !"assistant".equals(r.path("message").path("role").asText(""))) continue;
@@ -274,9 +290,14 @@ public final class AgentSession {
                 if (!u.has("input")) continue;
                 // this turn's own usage.input resolves every currently-pending compaction behind it -
                 // normally exactly one, but nothing stops two compactions firing back-to-back with no
-                // assistant turn in between, so walk backward until an already-resolved one is hit
-                for (int i = events.size() - 1; i >= 0 && events.get(i).reclaimedTokens() == null; i--) {
+                // assistant turn in between, so walk backward until an already-resolved one is hit.
+                // A preload compaction (promptTokensBefore null) has nothing to resolve against - skip
+                // it forever and keep walking, rather than stopping at it or crediting it someone
+                // else's token count.
+                for (int i = events.size() - 1; i >= 0; i--) {
                     final CompactionEvent e = events.get(i);
+                    if (e.promptTokensBefore() == null) continue;
+                    if (e.reclaimedTokens() != null) break;
                     events.set(i, new CompactionEvent(e.requestNumber(), e.requestsSincePrevious(), e.promptTokensBefore(), e.promptTokensBefore() - u.get("input").asLong()));
                 }
             }

@@ -358,9 +358,10 @@ public class ReferenceAgent {
             msgs = session.loadMessages();
             if (compactOnLoadKeepRecentTurns != null) {
                 preloadCompactions = AgentSession.compact(msgs, compactOnLoadKeepRecentTurns, 0, compactionStrategies.contains(CompactionStrategies.TOOL_OUTPUT_RECALL));
-                // 0: compacted proactively on load, not reactively at an observed over-threshold
-                // prompt - there is no "prompt tokens before" yet, no request has been sent
-                if (preloadCompactions > 0) session.compaction(preloadCompactions, false, 0);
+                // compacted proactively on load, not reactively at an observed over-threshold prompt -
+                // there is no "prompt tokens before" yet, no request has been sent (#505: the 2-arg
+                // overload omits that field rather than writing a 0 sentinel - see its own javadoc)
+                if (preloadCompactions > 0) session.compaction(preloadCompactions, false);
             }
             msgs.add(UserMessage.from(instruction));
             session.user(instruction);

@@ -433,6 +433,29 @@ class AgentSessionTest {
         assertEquals(List.of(), AgentSession.compactionEffectiveness(null));
     }
 
+    /** #505: a resumed session's on-load preload compaction (the 2-arg compaction() overload) has no
+     *  real "prompt tokens before" to report. Before this fix, that call site wrote a 0 sentinel, and
+     *  the first later request's own real usage.input turned it into a large NEGATIVE "reclaimed"
+     *  figure (0 minus any real token count) - seen live on T12 of a production run. Both fields must
+     *  stay null, permanently, for a preload event, and a REAL compaction elsewhere in the same file
+     *  must still resolve normally. */
+    @Test
+    void compactionEffectivenessLeavesPreloadCompactionUnmeasuredRatherThanNegative() throws IOException {
+        final var dir = Files.createTempDirectory("session");
+        final var session = new AgentSession(dir, "s4", false);
+        session.compaction(6, false);   // on-load preload, before any request in this attempt
+        session.assistant(null, "turn1", List.of(), "stop", Map.of("input", 41_574, "output", 50));
+        session.compaction(2, false, 41_574);   // a real, reactive compaction
+        session.assistant(null, "turn2", List.of(), "stop", Map.of("input", 34_658, "output", 50));
+
+        final var events = AgentSession.compactionEffectiveness(session.path());
+        assertEquals(2, events.size());
+        assertNull(events.get(0).promptTokensBefore(), "preload compaction has no real prompt-token baseline");
+        assertNull(events.get(0).reclaimedTokens(), "never resolved - not a negative number");
+        assertEquals(41_574L, events.get(1).promptTokensBefore());
+        assertEquals(6_916L, events.get(1).reclaimedTokens(), "the real compaction still resolves normally");
+    }
+
     @Test
     void usageReturnsZeroedDefaultsForAMissingOrNullFile() {
         final Map<String, Long> missing = AgentSession.usage(Path.of("/no/such/session.jsonl"));
