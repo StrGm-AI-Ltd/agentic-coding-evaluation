@@ -3,7 +3,6 @@ package com.strgmai.ace.ui;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.html.Div;
-import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.icon.VaadinIcon;
@@ -68,7 +67,7 @@ public class PreflightView extends VerticalLayout {
         final var start = new Button(running ? "Running…" : "Run preflight", VaadinIcon.PLAY.create(), e -> runPreflight());
         start.setEnabled(!running);
 
-        add(new H2("Preflight"));
+        add(new ViewHeader("Preflight"));
         add(new Span("Runs a real gradle test on the positive control in the agent's environment before any run."));
         add(start);
 

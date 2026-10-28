@@ -5,7 +5,6 @@ import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
-import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.icon.VaadinIcon;
 import com.vaadin.flow.component.notification.Notification;
@@ -68,7 +67,7 @@ public class JobsView extends VerticalLayout {
                 .setAutoWidth(true).setFrozenToEnd(true);
 
         add(TabManual.banner(this, "Start a new benchmark run and watch it live.", "User-Manual-Jobs"));
-        add(new H2("Queue"), new HorizontalLayout(refresh, newJob, running, error), emptyState, grid);
+        add(new ViewHeader("Queue"), new HorizontalLayout(refresh, newJob, running, error), emptyState, grid);
         setSizeFull();
         expand(grid);
 

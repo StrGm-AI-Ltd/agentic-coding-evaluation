@@ -5,6 +5,7 @@ import com.vaadin.flow.component.HasElement;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.applayout.AppLayout;
 import com.vaadin.flow.component.applayout.DrawerToggle;
+import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.dependency.CssImport;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.Span;
@@ -81,22 +82,29 @@ public class MainLayout extends AppLayout {
     public MainLayout(final ServiceClient client) {
         this.client = client;
         setPrimarySection(Section.DRAWER);
-        // the drawer auto-collapses to a hamburger-toggled overlay on narrow viewports (AppLayout's
-        // own built-in responsive behavior) - this is what reopens it there; always visible but
-        // inert (nothing to toggle) once the drawer is pinned open on a wide screen
-        addToNavbar(new DrawerToggle());
 
         // #529: Aura migration - #476/#527's hand-built brand-row CSS (the divider, the gradient
         // logo-mark box sized/colored to match the mockup's own .brand-mark) removed outright
         // rather than retargeted to Aura tokens, per the operator's own explicit call: don't
         // recreate the Lumo-era custom look under Aura, rely on Aura's own standard appearance.
         // Just the wordmark text now, no separate logo box.
+        //
+        // The drawer toggle now lives here too, next to the brand, instead of addToNavbar(...) -
+        // matching the official Aura reference's own ".aura-view-header" convention (ported into
+        // styles.css; see ViewHeader.java for every routed view's own matching per-view toggle).
+        // theme~="permanent" keeps this one visible whenever the drawer itself is open and not in
+        // overlay (narrow-viewport) mode; styles.css's own CSS then hides every OTHER (per-view)
+        // toggle in that state, only surfacing one once there'd otherwise be no way to reopen a
+        // closed drawer. .aura-view-header's own CSS supplies this row's padding/alignment/gap -
+        // no Java-side setPadding()/setAlignItems() needed.
         final var brand = new HorizontalLayout();
-        brand.setAlignItems(FlexComponent.Alignment.CENTER);
-        brand.setPadding(true);
+        brand.addClassName("aura-view-header");
         final var brandName = new Span("ACE");
         brandName.getStyle().set("font-weight", "700").set("font-size", "1.1em").set("letter-spacing", "0.02em");
-        brand.add(brandName);
+        final var drawerToggle = new DrawerToggle();
+        drawerToggle.addThemeVariants(ButtonVariant.TERTIARY);
+        drawerToggle.getElement().getThemeList().add("permanent");
+        brand.add(brandName, drawerToggle);
 
         // standalone, ungrouped - mirrors the reference's own "Overview" sitting outside any
         // collapsible section (same label now too, not just the same position). A bare

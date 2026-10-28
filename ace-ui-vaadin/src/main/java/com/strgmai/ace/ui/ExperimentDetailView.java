@@ -51,7 +51,7 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
     private void render() {
         removeAll();
         if (experimentId == null) {
-            add(new com.vaadin.flow.component.html.H2("Experiment"), Panels.error("No valid experiment id in the URL."));
+            add(new ViewHeader("Experiment"), Panels.error("No valid experiment id in the URL."));
             return;
         }
         final Api.Experiment experiment;
@@ -59,15 +59,15 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
             experiment = client.experiment(experimentId);
         } catch (final Exception e) {
             log.warn("could not load experiment {}: {}", experimentId, e.toString());
-            add(new com.vaadin.flow.component.html.H2("Experiment #" + experimentId), Panels.error(client.errorText(e)));
+            add(new ViewHeader("Experiment #" + experimentId), Panels.error(client.errorText(e)));
             return;
         }
 
         add(new RouterLink("← Experiments", ExperimentsView.class));
 
-        final var title = new com.vaadin.flow.component.html.H2(experiment.name());
-        title.getStyle().set("margin", "4px 0").set("font-size", "1.6em");
-        add(title);
+        final var header = new ViewHeader(experiment.name());
+        header.getHeading().getStyle().set("margin", "4px 0").set("font-size", "1.6em");
+        add(header);
 
         // ternary combines List.of() (unconstrained) with List<Api.ExperimentJob>: without a var's
         // target type this infers to something other than List<Api.ExperimentJob> - keep explicit

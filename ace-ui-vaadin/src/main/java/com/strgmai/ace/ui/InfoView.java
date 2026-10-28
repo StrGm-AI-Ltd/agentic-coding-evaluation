@@ -2,7 +2,6 @@ package com.strgmai.ace.ui;
 
 import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.Div;
-import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.Paragraph;
 import com.vaadin.flow.component.html.Span;
@@ -23,7 +22,7 @@ public class InfoView extends Div {
         // values elsewhere in this app; only the var(--lumo-*) COLOR customizations are dropped.
         getStyle().set("padding", "16px").set("max-width", "720px");
 
-        add(new H2("ACE"));
+        add(new ViewHeader("ACE"));
         final var goal = new Paragraph();
         goal.add(new Span("ACE (Agentic Coding Evaluation) is a reproducible framework for evaluating AI "
                 + "coding agents, models, and agent harnesses under controlled conditions. It drives a "

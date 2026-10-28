@@ -4,7 +4,6 @@ import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.grid.Grid;
-import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.icon.VaadinIcon;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
@@ -55,7 +54,7 @@ public class LlmProvidersView extends VerticalLayout {
         grid.getColumns().forEach(c -> c.setResizable(true));
 
         add(TabManual.banner(this, "Configure which models ACE can target.", "User-Manual-Providers"));
-        add(new H2("LLM Providers"), new HorizontalLayout(addProvider, error), grid);
+        add(new ViewHeader("LLM Providers"), new HorizontalLayout(addProvider, error), grid);
         setSizeFull();
         expand(grid);
 

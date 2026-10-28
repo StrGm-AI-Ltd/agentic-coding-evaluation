@@ -14,7 +14,6 @@ import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
-import com.vaadin.flow.component.html.H3;
 import com.vaadin.flow.component.html.ListItem;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.html.UnorderedList;
@@ -66,7 +65,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
     private void render() {
         removeAll();
         if (runId == null) {
-            add(new H3("Run"), Panels.error("No run id in the URL."));
+            add(new ViewHeader("Run"), Panels.error("No run id in the URL."));
             return;
         }
         final Api.Run run;   // assigned exactly once below; a legal blank final
@@ -77,7 +76,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
                 addNotImportedPanel();
             } else {
                 log.warn("could not load run {}: {}", runId, e.toString());
-                add(new H3("Run " + runId), Panels.error(client.errorText(e)));
+                add(new ViewHeader("Run " + runId), Panels.error(client.errorText(e)));
             }
             return;
         }
@@ -87,9 +86,9 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
     private void render(final Api.Run run) {
         add(new RouterLink("← Runs", RunsView.class));
 
-        final var title = new com.vaadin.flow.component.html.H2(run.run_id());
-        title.getStyle().set("margin", "4px 0").set("font-size", "1.6em");
-        add(title);
+        final var header = new ViewHeader(run.run_id());
+        header.getHeading().getStyle().set("margin", "4px 0").set("font-size", "1.6em");
+        add(header);
 
         final var meta = new Span(metaLine(run));
         add(meta);
@@ -204,7 +203,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
      * panel routes to the job's live page instead of leaving a dead end.
      */
     private void addNotImportedPanel() {
-        add(new H3("Run " + runId));
+        add(new ViewHeader("Run " + runId));
 
         Api.Job job = null;   // reassigned below - cannot be final; null initializer rules out var
         try {
