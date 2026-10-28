@@ -56,9 +56,13 @@ class RunBenchTest {
     }
 
     private static RunBench runBench(BenchProperties props) {
+        return runBench(props, mock(com.strgmai.ace.service.backend.LocalModelBackend.class));
+    }
+
+    private static RunBench runBench(BenchProperties props, com.strgmai.ace.service.backend.LocalModelBackend backend) {
         return new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class),
                 mock(RunOracle.class), mock(Reviews.class), mock(ContextProbe.class), mock(Judge.class), new Intervene(), mock(PauseAfterTask.class),
-                mock(com.strgmai.ace.service.agent.ProviderStore.class));
+                mock(com.strgmai.ace.service.agent.ProviderStore.class), backend);
     }
 
     @Test
@@ -423,55 +427,53 @@ class RunBenchTest {
     }
 
     @Test
-    void captureOmlxLogDoesNothingWhenNotConfigured() throws Exception {
+    void captureBackendLogDoesNothingWhenNotConfigured() throws Exception {
         final BenchProperties props = mock(BenchProperties.class);
         when(props.omlxServerLog()).thenReturn(null);
         final Path rd = track(Files.createTempDirectory("rd"));
 
-        runBench(props).captureOmlxLog(rd, Map.of("started", "2026-09-25T07:00:00Z", "ended", "2026-09-25T08:00:00Z"));
+        runBench(props).captureBackendLog(rd, Map.of("started", "2026-09-25T07:00:00Z", "ended", "2026-09-25T08:00:00Z"));
 
-        assertFalse(Files.exists(rd.resolve("omlx_server.log")), "no config = no capture, not a failed capture");
+        assertFalse(Files.exists(rd.resolve("backend_server.log")), "no config = no capture, not a failed capture");
     }
 
     @Test
-    void captureOmlxLogDoesNothingWhenTheConfiguredFileIsMissing() throws Exception {
+    void captureBackendLogDoesNothingWhenTheConfiguredFileIsMissing() throws Exception {
         final BenchProperties props = mock(BenchProperties.class);
         when(props.omlxServerLog()).thenReturn("/no/such/omlx-log-for-this-test.log");
         final Path rd = track(Files.createTempDirectory("rd"));
 
-        assertDoesNotThrow(() -> runBench(props).captureOmlxLog(rd,
+        assertDoesNotThrow(() -> runBench(props).captureBackendLog(rd,
                 Map.of("started", "2026-09-25T07:00:00Z", "ended", "2026-09-25T08:00:00Z")));
-        assertFalse(Files.exists(rd.resolve("omlx_server.log")));
+        assertFalse(Files.exists(rd.resolve("backend_server.log")));
     }
 
+    /** #65: the detailed line-filtering edge cases (continuation lines, the exact "yyyy-MM-dd
+     *  HH:mm:ss,SSS" format) now live in OmlxBackendTest against logLinesBetween() directly - this
+     *  is just the end-to-end wiring: RunBench passes the right [start, end] and writes the backend's
+     *  own answer to the right output file, against a REAL OmlxBackend (not the mock the other two
+     *  tests above use). */
     @Test
-    void captureOmlxLogKeepsOnlyLinesWithinTheRunsOwnWindowPlusTheirContinuations() throws Exception {
-        final ZoneId zone = ZoneId.systemDefault();   // oMLX's own log has no zone offset - it's local time
-        final DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss,SSS");
+    void captureBackendLogWritesTheBackendsOwnSliceToBackendServerLog() throws Exception {
         final Instant start = Instant.parse("2026-09-25T07:00:00Z"), end = Instant.parse("2026-09-25T08:00:00Z");
+        final ZoneId zone = ZoneId.systemDefault();
+        final DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss,SSS");
         final String before = fmt.format(LocalDateTime.ofInstant(start.minusSeconds(120), zone));
-        final String firstInRange = fmt.format(LocalDateTime.ofInstant(start.plusSeconds(60), zone));
-        final String lastInRange = fmt.format(LocalDateTime.ofInstant(end.minusSeconds(60), zone));
-        final String after = fmt.format(LocalDateTime.ofInstant(end.plusSeconds(120), zone));
+        final String inRange = fmt.format(LocalDateTime.ofInstant(start.plusSeconds(60), zone));
 
         final Path src = track(Files.createTempFile("omlx-server", ".log"));
-        Files.write(src, List.of(
-                before + " - omlx.server - INFO - before the run, must be dropped",
-                firstInRange + " - omlx.server - INFO - first line inside the run",
-                "    a continuation line with no timestamp, belongs to the entry above",
-                lastInRange + " - omlx.server - INFO - last line inside the run",
-                after + " - omlx.server - INFO - after the run, must be dropped"));
+        Files.write(src, List.of(before + " - omlx.server - INFO - before the run, must be dropped",
+                inRange + " - omlx.server - INFO - inside the run"));
         final BenchProperties props = mock(BenchProperties.class);
         when(props.omlxServerLog()).thenReturn(src.toString());
         final Path rd = track(Files.createTempDirectory("rd"));
+        final var backend = new com.strgmai.ace.service.backend.OmlxBackend(track(Files.createTempDirectory("omlx-home")));
 
-        runBench(props).captureOmlxLog(rd, Map.of("started", start.toString(), "ended", end.toString()));
+        runBench(props, backend).captureBackendLog(rd, Map.of("started", start.toString(), "ended", end.toString()));
 
-        final List<String> kept = Files.readAllLines(rd.resolve("omlx_server.log"));
-        assertEquals(3, kept.size(), "the two in-range dated lines plus the continuation, nothing outside the window: " + kept);
-        assertTrue(kept.get(0).contains("first line inside the run"));
-        assertTrue(kept.get(1).contains("continuation line"));
-        assertTrue(kept.get(2).contains("last line inside the run"));
+        final List<String> kept = Files.readAllLines(rd.resolve("backend_server.log"));
+        assertEquals(1, kept.size(), "only the in-range line: " + kept);
+        assertTrue(kept.get(0).contains("inside the run"));
     }
 
     /** #99: a cancelled job interrupts the thread blocked in joinAll() - that interrupt must reach
