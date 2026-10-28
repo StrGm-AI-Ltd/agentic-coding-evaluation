@@ -23,7 +23,7 @@ import org.slf4j.LoggerFactory;
 
 /** App chrome: brand + left sidebar nav - mirrors the Aura "Night operator" reference's own
  *  layout (#476 PR 2/2; PR 1 shipped the dark palette/typography this sidebar now wears). The
- *  drawer replaces the old top AppLayout/Tabs navbar: a standalone "Info" item, then two
+ *  drawer replaces the old top AppLayout/Tabs navbar: a standalone "Overview" item, then two
  *  collapsible SideNav groups (Benchmarking, System) matching the reference's own grouped-section
  *  pattern, applied to ACE's real 8 views rather than the reference's literal SaaS labels.
  *  SideNavItem's own setMatchNested(true) replaces the old hand-rolled tabsByView/beforeEnter()
@@ -99,9 +99,10 @@ public class MainLayout extends AppLayout {
         brand.add(brandName);
 
         // standalone, ungrouped - mirrors the reference's own "Overview" sitting outside any
-        // collapsible section. A bare `new SideNav()` (no label) renders with no group header.
-        final var info = new SideNav();
-        info.addItem(navItem("Info", InfoView.class, VaadinIcon.INFO_CIRCLE_O));
+        // collapsible section (same label now too, not just the same position). A bare
+        // `new SideNav()` (no label) renders with no group header.
+        final var overview = new SideNav();
+        overview.addItem(navItem("Overview", InfoView.class, VaadinIcon.INFO_CIRCLE_O));
 
         // #476 PR 3/3: these two carry a live badge (see refreshLiveChrome()), so they're kept as
         // their own locals/fields instead of being built inline in the addItem(...) call below.
@@ -123,7 +124,7 @@ public class MainLayout extends AppLayout {
                 navItem("Preflight", PreflightView.class, VaadinIcon.CHECK_CIRCLE),
                 providersNavItem);
 
-        final var menu = new VerticalLayout(info, benchmarking, system);
+        final var menu = new VerticalLayout(overview, benchmarking, system);
         menu.setPadding(false);
         menu.setSpacing(false);
 
