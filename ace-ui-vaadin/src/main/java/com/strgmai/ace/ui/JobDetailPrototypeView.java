@@ -204,14 +204,23 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         return grid;
     }
 
-    /** The "Params" tile - the job's own CLI invocation flags (job.argv()), shown as a full-width,
-     *  monospaced block instead of competing for the compact dashboardTile() columns: free-form
-     *  flag text doesn't fit a short value span, so it spans every column via `grid-column: 1 / -1`
-     *  and lands in its own row below the compact tiles through normal grid auto-placement - no
-     *  explicit row index needed. */
+    /** The "Params" tile - the job's own CLI invocation flags (job.argv()), one pill-shaped Badge
+     *  per flag (its leading "--" stripped) instead of a flat mono-space blob - the same Badge
+     *  component the status pill up top already renders with (Badges.status()), just on the
+     *  neutral CONTRAST theme rather than a status color: per this class's own design rationale
+     *  above, color here is reserved for status specifically, and a param isn't a status. Spans
+     *  every column via `grid-column: 1 / -1` and lands in its own row below the compact tiles
+     *  through normal grid auto-placement - no explicit row index needed. */
     private static Div paramsTile(final Api.Job job) {
         final var argv = job.argv() == null ? List.<String>of() : job.argv();
-        final var tile = Panels.statTile("Params", Panels.mono(argv.isEmpty() ? null : String.join(" ", argv)));
+        final var chips = new Div();
+        chips.getStyle().set("display", "flex").set("flex-wrap", "wrap").set("gap", "6px").set("margin-top", "2px");
+        if (argv.isEmpty()) {
+            chips.add(new Span("–"));
+        } else {
+            argv.forEach(a -> chips.add(Badges.text(stripFlagPrefix(a), Badges.CONTRAST)));
+        }
+        final var tile = Panels.statTile("Params", chips);
         tile.getStyle()
                 .set("border", "1px solid var(--vaadin-border-color-secondary)")
                 .set("border-radius", "var(--vaadin-radius-l)")
@@ -219,6 +228,10 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
                 .set("padding", "8px 10px")
                 .set("grid-column", "1 / -1");
         return tile;
+    }
+
+    private static String stripFlagPrefix(final String arg) {
+        return arg.startsWith("--") ? arg.substring(2) : arg;
     }
 
     /** Panels.statTile() plus a visible border/surface/radius, via real Aura/base tokens
