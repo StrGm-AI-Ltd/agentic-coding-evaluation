@@ -145,9 +145,9 @@ final class RunTaskDialog {
                 statsBody.add(Panels.mono("(not started)"));
                 return;
             }
-            // liveWallTime is only read by taskStatsLines() in the not-done branch; a finished run's
+            // liveWallTime is only read by taskStatsFields() in the not-done branch; a finished run's
             // own tasks are always "done" (see BenchController.taskStatsForRun()), so null is safe.
-            for (final var line : JobDetailView.taskStatsLines(stats, null)) statsBody.add(Panels.mono(line));
+            statsBody.add(JobDetailView.taskStatsTileGrid(stats, null));
             final var sections = JobDetailView.attemptSections(stats);
             final var multiAttempt = sections.size() > 1;
             for (int i = 0; i < sections.size(); i++) {

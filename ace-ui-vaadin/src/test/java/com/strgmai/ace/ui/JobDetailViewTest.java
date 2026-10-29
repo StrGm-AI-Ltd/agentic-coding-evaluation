@@ -366,120 +366,132 @@ class JobDetailViewTest {
         assertTrue(JobDetailView.rcText(99, null).contains("rc=99"), "an unrecognized code still names itself, never silently blank");
     }
 
-    /** #355-followup: found live on T7's own real Stats tab - "bash: 99 (5 errors)" names the
-     *  tool but not what it does, the same gap rcText() closed for a bare rc number. Covers the
-     *  model's entire real tool surface (ReferenceAgent.toolSpecs()'s own four tools). */
-    @Test
-    void toolLabel_describesEachOfTheModelsFourRealTools() {
-        assertEquals("read (read a file)", JobDetailView.toolLabel("read"));
-        assertEquals("write (create or overwrite a file)", JobDetailView.toolLabel("write"));
-        assertEquals("edit (replace text within a file)", JobDetailView.toolLabel("edit"));
-        assertEquals("bash (run a shell command)", JobDetailView.toolLabel("bash"));
-        assertEquals("some_future_tool", JobDetailView.toolLabel("some_future_tool"), "an unrecognized name still shows itself, never blank");
-    }
-
     private static final JobDetailView.TaskStats NO_LIVE_WALL_TIME = new JobDetailView.TaskStats(0.0, 0, 0);
 
-    /** #355/#355-followup: the Stats tab's own rendering for a FINISHED task - pure, tested
-     *  against the exact shape BenchController.taskStats() returns (manifest.tasks' own entry,
-     *  plus whatever optional fields actually fired). */
+    /** #559: taskStatsLines()'s former mono-text rendering replaced with a list of StatField
+     *  tiles - looked up by label, since a tile list (unlike the old fixed-index text lines) can
+     *  freely grow/shrink as optional fields appear, without earlier tests' own indices shifting. */
+    private static JobDetailView.StatField field(final List<JobDetailView.StatField> fields, final String label) {
+        return fields.stream().filter(f -> f.label().equals(label)).findFirst()
+                .orElseThrow(() -> new AssertionError("no field labeled \"" + label + "\" among " + fields));
+    }
+
+    /** #355/#355-followup, #559-followup: the Stats tab's own top dashboard fields for a FINISHED
+     *  task - pure, tested against the exact shape BenchController.taskStats() returns
+     *  (manifest.tasks' own entry, plus whatever optional fields actually fired). */
     @Test
-    void taskStatsLines_rendersTheCoreFieldsAlwaysPresent() {
+    void taskStatsFields_rendersTheCoreFieldsAlwaysPresent() {
         final var stats = Json.MAPPER.readTree("""
                 {"state": "done", "rc": 0, "finish": "stop", "seconds": 120.5, "turns": 7,
                  "compactions": 1, "tool_errors": 0}""");
 
-        final var lines = JobDetailView.taskStatsLines(stats, NO_LIVE_WALL_TIME);
+        final var fields = JobDetailView.taskStatsFields(stats, NO_LIVE_WALL_TIME);
 
-        assertEquals("outcome: finished normally", lines.get(0));
-        assertEquals("wall time: 120.5s   model turns: 7", lines.get(1));
-        assertTrue(lines.get(2).contains("context compactions") && lines.get(2).contains(": 1")
-                && lines.get(2).contains("failed tool calls") && lines.get(2).contains(": 0"), lines.get(2));
+        assertEquals("finished normally", field(fields, "Outcome").value());
+        assertEquals("120.5s", field(fields, "Wall time").value());
+        assertEquals("7", field(fields, "Model turns").value());
+        assertEquals("1", field(fields, "Context compactions").value());
+        assertEquals("0", field(fields, "Failed tool calls").value());
     }
 
-    /** #355-followup: turns/compactions/tool_calls are now always populated LIVE by the backend
-     *  (BenchController.taskStats()), even with no manifest.tasks entry yet - "running" shows
-     *  them straight from the response, using the dialog's own frontend-side live wall-time
-     *  aggregation only for the one figure the backend cannot report for an unfinished task. */
+    /** #355-followup, #559-followup: turns/compactions/tool_calls are now always populated LIVE by
+     *  the backend (BenchController.taskStats()), even with no manifest.tasks entry yet -
+     *  "running" shows them straight from the response, using the dialog's own frontend-side live
+     *  wall-time aggregation only for the one figure the backend cannot report for an unfinished
+     *  task. */
     @Test
-    void taskStatsLines_rendersLiveCountsAndTheFrontendsOwnWallTimeWhenStillRunning() {
+    void taskStatsFields_rendersLiveCountsAndTheFrontendsOwnWallTimeWhenStillRunning() {
         final var stats = Json.MAPPER.readTree("""
                 {"state": "running", "turns": 42, "compactions": 3, "tool_errors": 1}""");
 
-        final var lines = JobDetailView.taskStatsLines(stats, new JobDetailView.TaskStats(99.0, 1000, 500));
+        final var fields = JobDetailView.taskStatsFields(stats, new JobDetailView.TaskStats(99.0, 1000, 500));
 
-        assertEquals("outcome: still running", lines.get(0));
-        assertEquals("wall time so far: 99s   model turns so far: 42", lines.get(1));
-        assertTrue(lines.get(2).contains(": 3") && lines.get(2).contains(": 1"), lines.get(2));
+        assertEquals("still running", field(fields, "Outcome").value());
+        assertEquals("99s so far", field(fields, "Wall time").value());
+        assertEquals("42 so far", field(fields, "Model turns").value());
+        assertEquals("3", field(fields, "Context compactions").value());
+        assertEquals("1", field(fields, "Failed tool calls").value());
     }
 
     @Test
-    void taskStatsLines_showsTheHarnessVerificationVerdictWhenPresent() {
+    void taskStatsFields_showsTheHarnessVerificationVerdictWhenPresent() {
         final var greenStats = Json.MAPPER.readTree(
                 "{\"state\":\"done\",\"rc\":0,\"finish\":\"stop\",\"seconds\":1,\"turns\":1,\"compactions\":0,\"tool_errors\":0,"
                         + "\"verification\":{\"green\":true,\"executed\":9,\"failed\":0}}");
-        assertTrue(JobDetailView.taskStatsLines(greenStats, NO_LIVE_WALL_TIME).stream().anyMatch(l -> l.contains("GREEN") && l.contains("9 tests")));
+        final var greenField = field(JobDetailView.taskStatsFields(greenStats, NO_LIVE_WALL_TIME), "Harness verification");
+        assertEquals("GREEN", greenField.value());
+        assertTrue(greenField.detail().contains("9 tests"), greenField.detail());
 
         final var couldNotRun = Json.MAPPER.readTree(
                 "{\"state\":\"done\",\"rc\":124,\"finish\":null,\"seconds\":1,\"turns\":1,\"compactions\":0,\"tool_errors\":0,"
                         + "\"verification\":{\"green\":null,\"executed\":0,\"failed\":0}}");
-        assertTrue(JobDetailView.taskStatsLines(couldNotRun, NO_LIVE_WALL_TIME).stream().anyMatch(l -> l.contains("could not run")));
+        assertEquals("could not run", field(JobDetailView.taskStatsFields(couldNotRun, NO_LIVE_WALL_TIME), "Harness verification").value());
     }
 
-    /** #351: a task rescued via the task-wall-timeout path, then the harness's own fallback
-     *  handoff (no model turn available) - both must show, distinguishably from the model's own
-     *  account, since an operator deciding whether to trust a dependent task's own handoff note
-     *  needs to know which kind it's reading. */
+    /** #351, #559-followup: a task rescued via the task-wall-timeout path, then the harness's own
+     *  fallback handoff (no model turn available) - both must show, distinguishably from the
+     *  model's own account, since an operator deciding whether to trust a dependent task's own
+     *  handoff note needs to know which kind it's reading. The duration each used to carry as a
+     *  "(Xs)" label parenthetical is REAL data, not an explanation - #559 keeps it, now as the
+     *  tile's own detail line instead of text glued onto the label. */
     @Test
-    void taskStatsLines_showsRescueAndHarnessAuthoredHandoffWhenTheyFired() {
+    void taskStatsFields_showsRescueAndHarnessAuthoredHandoffWhenTheyFired() {
         final var stats = Json.MAPPER.readTree("""
                 {"state": "done", "rc": 0, "finish": "stop", "seconds": 1, "turns": 1, "compactions": 0, "tool_errors": 0,
                  "rescue_rc": 0, "rescue_seconds": 300.0, "rescue_succeeded": true,
                  "handoff_seconds": 0.0, "handoff_chars": 240, "handoff_by_harness": true}""");
 
-        final var lines = JobDetailView.taskStatsLines(stats, NO_LIVE_WALL_TIME);
+        final var fields = JobDetailView.taskStatsFields(stats, NO_LIVE_WALL_TIME);
 
-        assertTrue(lines.stream().anyMatch(l -> l.contains("rescue") && l.contains("succeeded")));
-        assertTrue(lines.stream().anyMatch(l -> l.contains("handoff") && l.contains("harness-authored fallback")));
+        final var rescue = field(fields, "Rescue attempt");
+        assertEquals("succeeded", rescue.value());
+        assertEquals("300.0s", rescue.detail());
+        final var handoff = field(fields, "Handoff");
+        assertEquals("harness-authored fallback", handoff.value());
+        assertEquals("240 chars", handoff.detail());
+    }
+
+    /** #559: the top dashboard's own "Tool calls" tile - a chip per tool, sorted by name, with its
+     *  own count and (only when >0) error count - replaces taskStatsLines()'s former text lines,
+     *  which used to expand each tool's bare name into a longer "name (what it does)" explanation
+     *  (toolLabel(), removed) the operator asked to drop for being redundant text bloat. */
+    @Test
+    void toolCallsTile_rendersOneBadgePerToolSortedByNameWithCorrectPluralization() {
+        final var toolCalls = Json.MAPPER.readTree(
+                "{\"write\": {\"count\": 3, \"errors\": 0}, \"bash\": {\"count\": 5, \"errors\": 1}, \"edit\": {\"count\": 2, \"errors\": 2}}");
+
+        final var tile = JobDetailView.toolCallsTile(toolCalls);
+
+        assertTrue(tile != null, "a non-empty tool_calls object must render a tile");
+        final var chips = tile.getChildren().toList().get(1).getChildren()
+                .map(c -> ((com.vaadin.flow.component.badge.Badge) c).getText()).toList();
+        assertEquals(List.of("bash: 5 (1 error)", "edit: 2 (2 errors)", "write: 3"), chips,
+                "alphabetical order; singular/plural error count; no error count at all when zero");
     }
 
     @Test
-    void taskStatsLines_showsToolCallBreakdownSortedByNameWithDescriptiveLabelsAndCorrectPluralization() {
-        final var stats = Json.MAPPER.readTree("""
-                {"state": "done", "rc": 0, "finish": "stop", "seconds": 1, "turns": 1, "compactions": 0, "tool_errors": 2,
-                 "tool_calls": {"write": {"count": 3, "errors": 0}, "bash": {"count": 5, "errors": 1}, "edit": {"count": 2, "errors": 2}}}""");
-
-        final var lines = JobDetailView.taskStatsLines(stats, NO_LIVE_WALL_TIME);
-
-        final int bashIdx = indexOfContaining(lines, "bash (");
-        final int editIdx = indexOfContaining(lines, "edit (");
-        final int writeIdx = indexOfContaining(lines, "write (");
-        assertTrue(bashIdx >= 0 && editIdx >= 0 && writeIdx >= 0 && bashIdx < editIdx && editIdx < writeIdx,
-                "alphabetical: bash before edit before write");
-        assertTrue(lines.get(bashIdx).contains("run a shell command") && lines.get(bashIdx).contains(": 5") && lines.get(bashIdx).contains("1 error)"),
-                "a bare tool name is not enough - found live via T7's own Stats tab: " + lines.get(bashIdx));
-        assertTrue(lines.get(editIdx).contains("2 errors)"), "plural when >1, singular when ==1: " + lines.get(editIdx));
+    void toolCallsTile_returnsNullWhenNoToolCallsWereMade() {
+        assertNull(JobDetailView.toolCallsTile(Json.MAPPER.readTree("{}")));
     }
 
-    /** #353/#354 + the oracle's own per-task check attribution - only ever present once the WHOLE
-     *  run (not just this task) has finished scoring; shown when it's there, simply absent
-     *  otherwise (checked by the other tests above never needing it). */
+    /** #353/#354, #559-followup + the oracle's own per-task check attribution - only ever present
+     *  once the WHOLE run (not just this task) has finished scoring; shown when it's there, simply
+     *  absent otherwise (checked by the other tests above never needing it). */
     @Test
-    void taskStatsLines_showsCheckScoreAndCompactionOverheadWhenTheRunIsFullyScored() {
+    void taskStatsFields_showsCheckScoreAndCompactionOverheadWhenTheRunIsFullyScored() {
         final var stats = Json.MAPPER.readTree("""
                 {"state": "done", "rc": 0, "finish": "stop", "seconds": 1, "turns": 1, "compactions": 0, "tool_errors": 0,
                  "check_score": {"score_pct": 66.7, "points": [2, 3]},
                  "compaction_overhead": {"overhead_sec": 40.0, "events": 1}}""");
 
-        final var lines = JobDetailView.taskStatsLines(stats, NO_LIVE_WALL_TIME);
+        final var fields = JobDetailView.taskStatsFields(stats, NO_LIVE_WALL_TIME);
 
-        assertTrue(lines.stream().anyMatch(l -> l.contains("check score") && l.contains("66.7") && l.contains("2/3")));
-        assertTrue(lines.stream().anyMatch(l -> l.contains("compaction overhead") && l.contains("40.0")));
-    }
-
-    private static int indexOfContaining(final List<String> lines, final String needle) {
-        for (int i = 0; i < lines.size(); i++) if (lines.get(i).contains(needle)) return i;
-        return -1;
+        final var checkScore = field(fields, "Check score");
+        assertEquals("66.7%", checkScore.value());
+        assertEquals("2/3", checkScore.detail());
+        final var overhead = field(fields, "Compaction overhead");
+        assertEquals("40.0s", overhead.value());
+        assertEquals("1 event(s)", overhead.detail());
     }
 
     /** #355-followup-2: the operator asked for every attempt (a false start plus the real redo,
@@ -514,7 +526,9 @@ class JobDetailViewTest {
         assertTrue(sections.get(1).header().startsWith("Attempt 2"));
         assertTrue(sections.get(1).body().contains("180000"), sections.get(1).body());
         assertTrue(sections.get(1).body().contains("wall time: 300.0s   model turns: 1"), sections.get(1).body());
-        assertTrue(sections.get(1).body().contains("bash (run a shell command): 2"), sections.get(1).body());
+        // #559: bare tool name now, not toolLabel()'s former expanded "bash (run a shell command)"
+        // explanation - dropped as redundant text bloat, same as the top dashboard's own tiles.
+        assertTrue(sections.get(1).body().contains("bash: 2"), sections.get(1).body());
     }
 
     /** #355-followup-4: the operator asked for a chart per attempt that actually made a request,
