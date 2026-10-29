@@ -598,8 +598,17 @@ final class JobTaskDialog {
 
         // #310: captured here, on the UI thread (this method only ever runs on it) - the loop's own
         // callbacks run on its background thread, where a plain getUI() call would read Vaadin's
-        // internal attach state without the session lock
-        final var ui = dialog.getUI().orElse(null);
+        // internal attach state without the session lock. #578, found live: this used to be
+        // dialog.getUI() - but this method runs BEFORE dialog.open() in open()'s own call sequence
+        // below, and a Vaadin Dialog is not attached to the UI tree until open() actually runs
+        // (confirmed against the library's own docs: "you don't need to add the dialog component
+        // anywhere before opening it"), so dialog.getUI() here ALWAYS returned empty - the whole
+        // transcript-streaming thread silently never started, for every task, every time, the Live
+        // tab's placeholder text never advancing past "(waiting for the task's own session to
+        // start...)" regardless of whether the task was running or already finished. ownerView (the
+        // page itself) is already attached well before this ever runs, so its own getUI() resolves
+        // correctly regardless of the dialog's own open/close state.
+        final var ui = ownerView.getUI().orElse(null);
         if (ui == null) return; // not attached - nothing to stream into
         final var loop = new TaskTranscriptLoop(client, jobId, task.id(), stopped::get,
                 event -> ui.access(() -> onEvent.accept(event)),
