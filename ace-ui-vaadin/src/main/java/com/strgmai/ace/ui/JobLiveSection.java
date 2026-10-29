@@ -49,15 +49,6 @@ public final class JobLiveSection extends VerticalLayout {
     private final boolean alwaysShowLiveData;
     private final JobLiveState live = new JobLiveState();
 
-    // #541-followup: animations alone (see buildRequestLatencyChart()'s own javadoc) only fixed
-    // the race for a GENUINELY live job's own naturally-paced requests - found live against a real
-    // paused job with 48 historical sessions that a bulk SSE replay (every historical event
-    // delivered back to back, not spaced out like real inference time) still broke the chart even
-    // with animations off. This throttle is the actual fix for that case: see renderLive()'s own
-    // comment at its call site.
-    private static final long CHART_REDRAW_THROTTLE_MS = 1000;
-    private long lastChartRedrawMs;
-
     private transient Thread sseThread;
     private volatile boolean sseStopped;
 
@@ -242,10 +233,12 @@ public final class JobLiveSection extends VerticalLayout {
                 ensureSse(ui); // m5: restart a dead loop (transient failures) instead of staying dark
             }
         });
-        renderLive();
+        renderLive(true);
     }
 
-    private void renderLive() {
+    /** redrawChart: true only from update()'s own poll-driven call - see the chart-redraw call
+     *  site below for why. */
+    private void renderLive(final boolean redrawChart) {
         // first line, unconditionally (before the terminal branch's own early return below) -
         // see the constructor's own javadoc for onLiveChanged for why this must run on every
         // single live update, not just the ones that reach the end of this method.
@@ -310,24 +303,29 @@ public final class JobLiveSection extends VerticalLayout {
         requestLatencyChart.setVisible(chartable && !recent.isEmpty());
         // #541-followup: a NON-terminal job (a genuinely running one, or - found live - a PAUSED
         // one, which JobStatuses deliberately never counts as terminal: see its own class javadoc)
-        // still opens a real SSE connection whose initial replay can carry dozens of sessions'
-        // worth of already-finished history, delivered back to back with no real-inference-time
-        // gap between them - the same burst-rate problem the comment above already describes for
-        // the terminal+alwaysShowLiveData case, just not covered by that guard since chartable is
-        // unconditionally true here. Throttled instead of skipped outright (unlike that case, a
-        // live/paused job's chart SHOULD eventually show every request): recent/live themselves
-        // are still updated above on every single event, so no DATA is ever stale - only the
-        // chart's own canvas redraw is capped to at most once per CHART_REDRAW_THROTTLE_MS. Safe to
-        // drop an intermediate redraw here because the owning view's own poll cycle calls update()
-        // (and so renderLive()) at least every 2s for as long as the job stays non-terminal,
-        // guaranteeing a catch-up redraw with whatever the CURRENT state is shortly after any
-        // SSE-driven burst settles - never silently stuck showing a stale mid-burst frame forever.
-        if (chartable) {
-            final var now = System.currentTimeMillis();
-            if (now - lastChartRedrawMs >= CHART_REDRAW_THROTTLE_MS) {
-                updateRequestLatencyChart(recent);
-                lastChartRedrawMs = now;
-            }
+        // still opens a real SSE connection whose initial replay can carry dozens or HUNDREDS of
+        // already-finished requests (found live: 295 on one real paused job), delivered back to
+        // back with no real-inference-time gap between them - the same burst-rate problem the
+        // comment above already describes for the terminal+alwaysShowLiveData case, just not
+        // covered by that guard since chartable is unconditionally true here.
+        //
+        // A plain time-based throttle was tried first and rejected: even reduced to a handful of
+        // calls, ApexCharts' own client-side updateSeries() doesn't appear to recover once a SINGLE
+        // call races and throws - the chart stays permanently blank for the rest of the page's
+        // life, unlike the Sessions/Requests GRIDS (plain Vaadin components, unaffected), which
+        // recover instantly once their own next setItems() call lands. No fixed delay could be
+        // trusted to guarantee zero races against an unknown, potentially-overloaded browser main
+        // thread during a burst this large.
+        //
+        // redrawChart (only true from update()'s own poll-driven call, never from the raw SSE
+        // event callback below) is the actual fix instead: completely decouples "how many live
+        // events arrived" from "how often the chart redraws" - the chart only ever sees ONE fresh
+        // snapshot per full poll tick (~2s, server-timer-driven, independent of SSE event volume),
+        // never a rapid-fire sequence of back-to-back calls no matter how large the backlog. recent/
+        // live themselves are still updated on every single event above, so no DATA is ever stale -
+        // only the chart's own canvas redraw is deferred to the next poll tick.
+        if (chartable && redrawChart) {
+            updateRequestLatencyChart(recent);
         }
 
         final var tail = live.logTail() != null ? live.logTail()
@@ -343,11 +341,13 @@ public final class JobLiveSection extends VerticalLayout {
         }
         sseStopped = false;
         final var loop = new JobEventLoop(client, jobId, () -> sseStopped,
+                // redrawChart=false: see renderLive()'s own comment at its chart-redraw call site -
+                // the chart only ever redraws from update()'s own poll-driven call, never here
                 event -> ui.access(() -> {   // M1: apply + render share the session lock
                     live.apply(event);
-                    renderLive();
+                    renderLive(false);
                 }),
-                () -> ui.access(this::renderLive)); // give-up → show the lost notice
+                () -> ui.access(() -> renderLive(false))); // give-up → show the lost notice
         sseThread = new Thread(loop, "job-" + jobId + "-live");
         sseThread.setDaemon(true);
         sseThread.start();
