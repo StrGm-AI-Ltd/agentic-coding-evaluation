@@ -40,10 +40,15 @@ class PreflightTest {
         return mockDocker(dockerRc, composeRc, gitRc, 0);
     }
 
+    private static MockedStatic<DockerService> mockDocker(final int dockerRc, final int composeRc, final int gitRc, final int zshRc) {
+        return mockDocker(dockerRc, composeRc, gitRc, zshRc, 0);
+    }
+
     /** #327: zshRc mirrors gitRc's own convention exactly - zsh is the SAME kind of fatal hard
      *  dependency AgentTools.bash() has on it (found live: a real deployment missing it crashed
-     *  every bash tool call for hours with nothing refusing the run up front). */
-    private static MockedStatic<DockerService> mockDocker(final int dockerRc, final int composeRc, final int gitRc, final int zshRc) {
+     *  every bash tool call for hours with nothing refusing the run up front). #555: unzipRc is
+     *  the same pattern again, for the same reason, found live the same way. */
+    private static MockedStatic<DockerService> mockDocker(final int dockerRc, final int composeRc, final int gitRc, final int zshRc, final int unzipRc) {
         final MockedStatic<DockerService> docker = mockStatic(DockerService.class);
         docker.when(() -> DockerService.sh(anyInt(), any(String[].class))).thenAnswer(inv -> {
             Object[] all = inv.getArguments();   // Mockito flattens the varargs: [timeoutSec, cmd[0], cmd[1], ...]
@@ -51,6 +56,7 @@ class PreflightTest {
             for (int i = 1; i < all.length; i++) cmd[i - 1] = (String) all[i];
             if (cmd[0].equals("git")) return new DockerService.Sh(gitRc, "git version 2.42.0");
             if (cmd[0].equals("zsh")) return new DockerService.Sh(zshRc, "zsh 5.9");
+            if (cmd[0].equals("unzip")) return new DockerService.Sh(unzipRc, "UnZip 6.00");
             if (cmd[0].equals("docker") && cmd.length > 1 && cmd[1].equals("info")) return new DockerService.Sh(dockerRc, "24.0.0");
             if (cmd[0].equals("docker") && cmd.length > 1 && cmd[1].equals("compose")) return new DockerService.Sh(composeRc, "2.20.0");
             return new DockerService.Sh(1, "");
@@ -90,6 +96,7 @@ class PreflightTest {
             assertTrue(byName(r, "docker compose v2").ok());
             assertTrue(byName(r, "git").ok());
             assertTrue(byName(r, "zsh").ok());
+            assertTrue(byName(r, "unzip").ok());
             assertTrue(byName(r, "reference agent").ok());
             assertTrue(byName(r, "pinned JDK 21").ok());
             assertTrue(byName(r, "model server").ok());
@@ -131,6 +138,28 @@ class PreflightTest {
             final Preflight.Check zsh = byName(r, "zsh");
             assertFalse(zsh.ok());
             assertTrue(zsh.fatal());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /** #555, found live: a real deployment's runtime image had no archive-extraction tool at all
+     *  (eclipse-temurin:21-jre + git/zsh/docker-cli only, no unzip) - every task in a run needing
+     *  to bootstrap a fresh project (near-universal: a Gradle wrapper ships as a .zip) failed at
+     *  its very first step, silently, with nothing refusing the run up front. Same fatal treatment
+     *  as git/zsh above. */
+    @Test
+    void missingUnzipBlocksEvenThoughGitAndZshAreUp() throws Exception {
+        final HttpServer server = fakeModelServer("target-model");
+        try (MockedStatic<DockerService> docker = mockDocker(0, 0, 0, 0, 1)) {
+            final var pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()),
+                    new com.strgmai.ace.service.agent.ProviderStore(null));
+            final Preflight.Report r = pf.check(null);
+
+            assertTrue(r.blocked());
+            final Preflight.Check unzip = byName(r, "unzip");
+            assertFalse(unzip.ok());
+            assertTrue(unzip.fatal());
         } finally {
             server.stop(0);
         }
