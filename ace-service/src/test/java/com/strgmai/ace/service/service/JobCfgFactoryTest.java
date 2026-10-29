@@ -73,6 +73,36 @@ class JobCfgFactoryTest {
         assertFalse(JobCfgFactory.build(List.of(), props()).containsKey("java_home"));
     }
 
+    private static BenchProperties propsWithJavaHome(final String javaHome) {
+        return new BenchProperties("default-model", "http://127.0.0.1:9191/v1", "", null, null, null, null, null,
+                null, null, "/results", "/workspace", null, javaHome, null, null, null);
+    }
+
+    /** #581, found live: no job's own argv ever actually carries --java-home (the New Job form
+     *  never emits it), so cfg's own "java_home" key used to be absent for every real job,
+     *  regardless of the operator-wide ace.java-home ($ACE_JAVA_HOME) Preflight.check()'s own
+     *  "pinned JDK 21" gate already resolved and validated before letting the run start -
+     *  RunBenchSupport.scrubbedEnv() (fed by this cfg) never put JAVA_HOME into the agent's own
+     *  bash-tool environment at all as a result. This now defaults from the SAME props.javaHome()
+     *  Preflight already proved works, when no per-job flag overrides it. */
+    @Test
+    void javaHomeDefaultsFromPropsWhenNoFlagIsPassed() {
+        final var cfg = JobCfgFactory.build(List.of(), propsWithJavaHome("/opt/java/openjdk"));
+        assertEquals("/opt/java/openjdk", cfg.get("java_home"));
+    }
+
+    @Test
+    void javaHomeFlagStillOverridesThePropsDefault() {
+        final var cfg = JobCfgFactory.build(List.of("--java-home=/custom/jdk"), propsWithJavaHome("/opt/java/openjdk"));
+        assertEquals("/custom/jdk", cfg.get("java_home"));
+    }
+
+    @Test
+    void javaHomeStaysAbsentWhenNeitherTheFlagNorPropsSetOne() {
+        assertFalse(JobCfgFactory.build(List.of(), propsWithJavaHome(null)).containsKey("java_home"));
+        assertFalse(JobCfgFactory.build(List.of(), propsWithJavaHome("")).containsKey("java_home"));
+    }
+
     /** #263: the 2-arg build() (every pre-existing caller) always gets an empty task_overrides,
      *  never null - RunBench's own lookup assumes a present, if possibly empty, map. The 3-arg
      *  overload (WorkerService's own call site) threads a job's actual task_overrides column

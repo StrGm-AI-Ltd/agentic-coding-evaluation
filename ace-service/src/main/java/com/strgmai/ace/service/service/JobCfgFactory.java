@@ -43,7 +43,19 @@ final class JobCfgFactory {
         if (WorkerService.flag(argv, "--plan-wall") != null) cfg.put("plan_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--plan-wall")));
         if (WorkerService.flag(argv, "--plan-tokens") != null) cfg.put("plan_tokens", Long.parseLong(WorkerService.flag(argv, "--plan-tokens")));
         if (WorkerService.flag(argv, "--wall-budget") != null) cfg.put("wall_budget_override", Integer.parseInt(WorkerService.flag(argv, "--wall-budget")));
-        if (WorkerService.flag(argv, "--java-home") != null) cfg.put("java_home", WorkerService.flag(argv, "--java-home"));
+        // #581, found live: this used to be set ONLY from an explicit --java-home flag, which
+        // nothing in the New Job form ever emits - so cfg's own "java_home" key was absent for the
+        // overwhelming majority of jobs, and RunBenchSupport.scrubbedEnv() (fed by this cfg) never
+        // put JAVA_HOME into the agent's own bash-tool environment at all, even though
+        // Preflight.check()'s "pinned JDK 21" gate had already successfully resolved and validated
+        // one (props.javaHome(), == ace.java-home == $ACE_JAVA_HOME - docker-compose.yml sets this
+        // operator-wide specifically because Preflight's own macOS fallback doesn't exist on this
+        // Linux image). A job's own --java-home, when actually passed, still wins; otherwise this
+        // now defaults to the SAME value Preflight already proved works, rather than leaving every
+        // agent tool call to run with no JAVA_HOME at all.
+        final String javaHomeFlag = WorkerService.flag(argv, "--java-home");
+        final String javaHome = javaHomeFlag != null ? javaHomeFlag : props.javaHome();
+        if (javaHome != null && !javaHome.isBlank()) cfg.put("java_home", javaHome);
         if (WorkerService.flag(argv, "--parallel-plan") != null)
             cfg.put("parallel_plan_enabled", "on".equals(WorkerService.flag(argv, "--parallel-plan")));
         if (WorkerService.flag(argv, "--parallel-weight") != null) {
