@@ -417,8 +417,12 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
     /** Strips the leading "--", then turns "param-name=value" into "param name: value" - dashes
      *  replaced with spaces in the key only (never the value, which may legitimately contain its
      *  own "-", e.g. a run id); a bare flag with no "=" (e.g. "--self-review") just gets its own
-     *  dashes replaced, with no ": " since there's no value to separate it from. */
-    private static Badge paramBadge(final String arg) {
+     *  dashes replaced, with no ": " since there's no value to separate it from. #551: any
+     *  model-identifying flag (--model, --judge-model, --reviewer-model,
+     *  --trajectory-reviewer-model - every one of them named "...-model") gets Badges.SUCCESS
+     *  (green) instead, ahead of the numeric-vs-text default, so the model(s) a run actually used
+     *  stand out from the rest of the params row. */
+    static Badge paramBadge(final String arg) {
         final var stripped = arg.startsWith("--") ? arg.substring(2) : arg;
         final var eq = stripped.indexOf('=');
         if (eq < 0) {
@@ -426,7 +430,8 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         }
         final var key = stripped.substring(0, eq).replace('-', ' ');
         final var value = stripped.substring(eq + 1);
-        final var theme = value.matches("-?\\d+(\\.\\d+)?") ? Badges.WARNING : Badges.CONTRAST;
+        final var theme = key.endsWith("model") ? Badges.SUCCESS
+                : value.matches("-?\\d+(\\.\\d+)?") ? Badges.WARNING : Badges.CONTRAST;
         return Badges.text(key + ": " + value, theme);
     }
 

@@ -60,7 +60,12 @@ public final class Panels {
     public static Div statTile(final String label, final String value, final String detail) {
         final var tile = tileShell(label);
         final var valueSpan = new com.vaadin.flow.component.html.Span(value);
-        valueSpan.getStyle().set("font-size", "1.4em").set("font-weight", "600");
+        valueSpan.getStyle().set("font-size", "1.4em").set("font-weight", "600")
+                // #551: a long value (e.g. a remote provider's full model name) wrapped across
+                // multiple lines instead, ballooning the tile's height past its row-mates - force
+                // single-line + ellipsis instead, with the full value still reachable via a tooltip.
+                .set("overflow", "hidden").set("text-overflow", "ellipsis").set("white-space", "nowrap");
+        valueSpan.getElement().setAttribute("title", value);
         tile.add(valueSpan);
         if (detail != null && !detail.isBlank()) {
             final var detailSpan = new com.vaadin.flow.component.html.Span(detail);
