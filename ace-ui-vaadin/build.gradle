@@ -22,6 +22,9 @@ dependencies {
     implementation 'org.commonmark:commonmark:0.30.0'
     implementation 'org.commonmark:commonmark-ext-gfm-tables:0.30.0'
     implementation 'com.github.appreciated:apexcharts:25.0.1'
+    // #prototype: newest release targets Vaadin 24.8.3 (no 25.x release exists yet) - verified it
+    // still resolves/compiles/runs against this project's Vaadin 25.2.8 before relying on it further
+    implementation 'com.github.appreciated:vaadin-css-grid:24.0.0'
     developmentOnly 'com.vaadin:vaadin-dev'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'

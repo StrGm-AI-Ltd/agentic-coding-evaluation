@@ -31,6 +31,7 @@ class RoutesReflectionTest {
             java.util.Map.entry("compare", CompareView.class),
             java.util.Map.entry("jobs", JobsView.class),
             java.util.Map.entry("jobs/:jobId", JobDetailView.class),
+            java.util.Map.entry("jobs/:jobId/prototype", JobDetailPrototypeView.class),
             java.util.Map.entry("jobs/new", JobNewView.class),
             java.util.Map.entry("experiments", ExperimentsView.class),
             java.util.Map.entry("experiments/:experimentId", ExperimentDetailView.class),
