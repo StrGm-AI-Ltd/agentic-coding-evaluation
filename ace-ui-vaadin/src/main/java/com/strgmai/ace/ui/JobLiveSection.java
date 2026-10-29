@@ -3,6 +3,7 @@ package com.strgmai.ace.ui;
 import com.github.appreciated.apexcharts.ApexCharts;
 import com.github.appreciated.apexcharts.ApexChartsBuilder;
 import com.github.appreciated.apexcharts.config.builder.ChartBuilder;
+import com.github.appreciated.apexcharts.config.chart.builder.AnimationsBuilder;
 import com.github.appreciated.apexcharts.config.builder.SeriesBuilder;
 import com.github.appreciated.apexcharts.config.builder.ThemeBuilder;
 import com.github.appreciated.apexcharts.config.builder.XAxisBuilder;
@@ -359,10 +360,24 @@ public final class JobLiveSection extends VerticalLayout {
     /** #476 PR 3/3: a job-level (not per-task) live chart sitting beside requestsGrid, built from
      *  the SAME live.recentRequests() data already driving that grid - avoids the "which task's
      *  chart" ambiguity the per-task dialog charts would have at this, whole-job scope. Built once;
-     *  see updateRequestLatencyChart() for how it's kept current without a full rebuild. */
+     *  see updateRequestLatencyChart() for how it's kept current without a full rebuild.
+     *
+     *  <p>Found live, verifying this class's own poll+SSE path against a genuinely running job for
+     *  the first time (a gap flagged after Phase 2): animations disabled - with them on, two real
+     *  "request" events landing closer together than the chart's own transition duration (the
+     *  common case for a fast local model making several quick successive calls) threw a client-
+     *  side TypeError inside ApexCharts' own animated-update code (a Promise wrapping an internal
+     *  series-diff array, per the browser stack trace: ApexChartsWrapper.updateData -> an internal
+     *  Promise/.map() chain reading an index off an array that the SECOND, overlapping updateSeries()
+     *  call left in an inconsistent state). Pre-existing - unchanged from the original JobDetailView,
+     *  reachable on the classic page too - just never caught before since nothing had tested this
+     *  class's own live path against a job fast enough to trigger back-to-back calls this close
+     *  together. No loss of real functionality: the chart still reflects every request, just via
+     *  instant redraws instead of an animated transition between them. */
     private static ApexCharts buildRequestLatencyChart() {
         final var chart = ApexChartsBuilder.get()
-                .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent").build())
+                .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent")
+                        .withAnimations(AnimationsBuilder.get().withEnabled(false).build()).build())
                 .withTheme(ThemeBuilder.get().withMode(Mode.DARK).build())
                 .withXaxis(XAxisBuilder.get().withCategories(new String[0]).build())
                 .withYaxis(YAxisBuilder.get().withTitle(TitleBuilder.get().withText("latency (s)").build()).build())
