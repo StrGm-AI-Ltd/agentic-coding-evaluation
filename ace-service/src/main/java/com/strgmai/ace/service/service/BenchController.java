@@ -1135,6 +1135,18 @@ public class BenchController {
                 final Map<String, Object> manifest = mapper.readValue(manifestFile.toFile(), Map.class);
                 for (final Object o : (List<?>) manifest.getOrDefault("tasks", List.of()))
                     if (o instanceof Map<?, ?> t && taskId.equals(t.get("id"))) entry = (Map<String, Object>) t;
+                // #590, found live: p0_definition/p1_plan's own finished record never lands in
+                // manifest.tasks at all - RunBench.orchestratedPhase() appends it to manifest.phases
+                // instead (same {"id": ..., ...} shape, just a different list) - and PARALLEL_PLAN's
+                // own finished record isn't a list entry at all, it's the top-level manifest.
+                // parallel_plan map. Without this, state could never become "done" for either, no
+                // matter how long a run went on or whether the whole job finished - live.found()
+                // (the phase's own session file existing) made it "running" forever instead.
+                if (entry == null)
+                    for (final Object o : (List<?>) manifest.getOrDefault("phases", List.of()))
+                        if (o instanceof Map<?, ?> t && taskId.equals(t.get("id"))) entry = (Map<String, Object>) t;
+                if (entry == null && "PARALLEL_PLAN".equals(taskId) && manifest.get("parallel_plan") instanceof Map<?, ?> pp)
+                    entry = (Map<String, Object>) pp;
             }
             final SessionCounts live = sessionCounts(base, taskId);
             if (entry == null && !live.found()) return Map.of("state", "not_started");

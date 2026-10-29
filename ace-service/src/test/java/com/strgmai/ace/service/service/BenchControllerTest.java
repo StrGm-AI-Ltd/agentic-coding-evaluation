@@ -861,6 +861,48 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.rc").doesNotExist());
     }
 
+    /** #590, found live: p1_plan's own finished record lands in manifest.phases, never
+     *  manifest.tasks - taskStatsForRun()'s lookup used to only ever check manifest.tasks, so state
+     *  could never become "done" for p1_plan no matter how long the run went on afterward. */
+    @Test
+    void taskStatsReportsP1PlanDoneOnceItsRecordLandsInManifestPhases() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), """
+                {"tasks": [], "phases": [{"id": "p1_plan", "rc": 0, "seconds": 12.3}]}""");
+        Files.writeString(runDir.resolve("sessions/a.jsonl"), "{\"label\":\"p1_plan\"}\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/p1_plan/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("done"))
+                .andExpect(jsonPath("$.rc").value(0))
+                .andExpect(jsonPath("$.seconds").value(12.3));
+    }
+
+    /** #590, found live: PARALLEL_PLAN's own finished record isn't a list entry at all - it's the
+     *  top-level manifest.parallel_plan map - so the same manifest.tasks-only lookup left it stuck
+     *  on "running" forever too. */
+    @Test
+    void taskStatsReportsParallelPlanDoneOnceItsRecordLandsInManifestTopLevelKey() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), """
+                {"tasks": [], "parallel_plan": {"rc": 0, "seconds": 5.6, "used": true}}""");
+        Files.writeString(runDir.resolve("sessions/a.jsonl"), "{\"label\":\"PARALLEL_PLAN\"}\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/PARALLEL_PLAN/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("done"))
+                .andExpect(jsonPath("$.rc").value(0))
+                .andExpect(jsonPath("$.seconds").value(5.6));
+    }
+
     /** #355-followup: a task that got a false start (e.g. interrupted by an operator pause right
      *  after it began) ends up with TWO session files sharing its label - an empty/near-empty
      *  stale one from the false start, and the real one from the attempt that actually ran.

@@ -243,8 +243,10 @@ public final class Tailer {
                 // latency/ttft columns always read "-" even mid-run. ttft_sec: first_byte_ms is
                 // milliseconds, the client's field name implies seconds - convert at the source
                 // rather than touch the (already correct) client.
-                e.put("latency_sec", r.path("latency_sec").isNumber() ? r.path("latency_sec").asDouble() : null);
-                e.put("ttft_sec", r.path("first_byte_ms").isNumber() ? r.path("first_byte_ms").asDouble() / 1000.0 : null);
+                final Double latencySec = r.path("latency_sec").isNumber() ? r.path("latency_sec").asDouble() : null;
+                final Double ttftSec = r.path("first_byte_ms").isNumber() ? r.path("first_byte_ms").asDouble() / 1000.0 : null;
+                e.put("latency_sec", latencySec);
+                e.put("ttft_sec", ttftSec);
                 // session_id: set by RecordingProxy from the agent's X-Ace-Session-Id header, so a
                 // request is attributed to its session unambiguously even under concurrent (parallel-
                 // wave) sessions. prefill/decode speed: the backend reports these itself per response
@@ -253,16 +255,32 @@ public final class Tailer {
                 e.put("session_id", r.path("session_id").isTextual() ? r.path("session_id").asText() : null);
                 final JsonNode usage = r.path("response").path("usage");
                 final LocalModelBackend.SpeedFieldNames speedFields = backend.speedFieldNames();
-                e.put("prefill_tok_per_sec", usage.path(speedFields.prefillTpsField()).isNumber() ? usage.path(speedFields.prefillTpsField()).asDouble() : null);
-                e.put("decode_tok_per_sec", usage.path(speedFields.decodeTpsField()).isNumber() ? usage.path(speedFields.decodeTpsField()).asDouble() : null);
+                final Long completionTokens = usage.path("completion_tokens").isNumber() ? usage.path("completion_tokens").asLong() : null;
+                final Long promptTokens = usage.path("prompt_tokens").isNumber() ? usage.path("prompt_tokens").asLong() : null;
+                Double prefillTps = usage.path(speedFields.prefillTpsField()).isNumber() ? usage.path(speedFields.prefillTpsField()).asDouble() : null;
+                Double decodeTps = usage.path(speedFields.decodeTpsField()).isNumber() ? usage.path(speedFields.decodeTpsField()).asDouble() : null;
+                // #590-followup, found live: a remote OpenAI-compatible provider (Nebius and
+                // friends) never reports the backend's own native speed fields - every one of its
+                // requests left prefill/decode tok/s null forever in the live Sessions grid, the
+                // exact same gap #558 already fixed for the Stats tab's own (separate, batch-read)
+                // request-speed charts. Same fallback formula as BenchController.
+                // parseRequestSpeedEntry(): prefill tok/s from prompt_tokens over ttft, decode tok/s
+                // from completion_tokens over the remaining (latency - ttft) span - never
+                // overwriting a backend's own reported figures when those are present.
+                if (prefillTps == null && promptTokens != null && ttftSec != null && ttftSec > 0)
+                    prefillTps = promptTokens / ttftSec;
+                if (decodeTps == null && completionTokens != null && latencySec != null && ttftSec != null && latencySec - ttftSec > 0)
+                    decodeTps = completionTokens / (latencySec - ttftSec);
+                e.put("prefill_tok_per_sec", prefillTps);
+                e.put("decode_tok_per_sec", decodeTps);
                 // per-request completion tokens, summed per session for the sessions grid's "total
                 // tokens" column - budget_spent_completion_tokens is a per-PROXY running counter that
                 // RESETS on a continuation's fresh proxy (given the REMAINING budget, not zero), so it
                 // undercounts a session that spans one; summing this instead is correct regardless.
-                e.put("completion_tokens", usage.path("completion_tokens").isNumber() ? usage.path("completion_tokens").asLong() : null);
+                e.put("completion_tokens", completionTokens);
                 // the request's own prompt (prefill) token count, for the run-wide "total prompt
                 // tokens" live figure - summed client-side the same way completion_tokens already is.
-                e.put("prompt_tokens", usage.path("prompt_tokens").isNumber() ? usage.path("prompt_tokens").asLong() : null);
+                e.put("prompt_tokens", promptTokens);
                 events.add(e);
             } catch (Exception ex) { log.debug("could not parse journal line for the live view, skipping it: {}", ex.toString()); }
         }

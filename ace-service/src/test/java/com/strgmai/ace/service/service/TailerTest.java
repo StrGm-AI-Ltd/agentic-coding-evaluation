@@ -123,6 +123,41 @@ class TailerTest {
         assertNull(events.get(0).get("prompt_tokens"));
     }
 
+    /** #590-followup, found live on a real Nebius-backed job (44484604/svc-20261029-220518): a
+     *  remote OpenAI-compatible provider never reports the backend's own native speed fields, so
+     *  the live Sessions grid's prefill/decode tok/s columns read "-" forever for such a job - the
+     *  same gap #558 already fixed for the Stats tab's own (separate, batch-read) request-speed
+     *  charts. Same fallback formula, ported here: prefill tok/s from prompt_tokens over ttft,
+     *  decode tok/s from completion_tokens over the remaining (latency - ttft) span. */
+    @Test
+    void speedIsDerivedFromProxyTimingWhenTheBackendReportsNoNativeSpeedFields() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.writeString(runDir.resolve("interactions.jsonl"),
+                "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
+                        + "\"latency_sec\": 10.0, \"first_byte_ms\": 2000, "
+                        + "\"response\": {\"usage\": {\"prompt_tokens\": 500, \"completion_tokens\": 160}}}\n");
+        final var events = new Tailer().poll(runDir, backend()).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        assertEquals(1, events.size());
+        assertEquals(250.0, (Double) events.get(0).get("prefill_tok_per_sec"), 0.001);
+        assertEquals(20.0, (Double) events.get(0).get("decode_tok_per_sec"), 0.001);
+    }
+
+    /** A backend's own native speed fields, when present, must never be overwritten by the derived
+     *  ones - oMLX's own server-side measurement excludes ace-service's own proxy/network overhead
+     *  and stays strictly more accurate than anything derivable from proxy-observed timing. */
+    @Test
+    void nativeSpeedFieldsAreNeverOverwrittenByTheDerivedFallback() throws Exception {
+        final var runDir = Files.createTempDirectory("tailer");
+        Files.writeString(runDir.resolve("interactions.jsonl"),
+                "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
+                        + "\"latency_sec\": 10.0, \"first_byte_ms\": 2000, "
+                        + "\"response\": {\"usage\": {\"prompt_tokens\": 500, \"completion_tokens\": 160, "
+                        + "\"prompt_tokens_per_second\": 99.15, \"generation_tokens_per_second\": 24.05}}}\n");
+        final var events = new Tailer().poll(runDir, backend()).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        assertEquals(99.15, (Double) events.get(0).get("prefill_tok_per_sec"), 0.001);
+        assertEquals(24.05, (Double) events.get(0).get("decode_tok_per_sec"), 0.001);
+    }
+
     /** The sessions grid's new "total tokens" column sums this per session - unlike
      *  budget_spent_completion_tokens (a per-proxy running counter that resets on a continuation's
      *  fresh proxy), this is the request's own actual completion token count. */
