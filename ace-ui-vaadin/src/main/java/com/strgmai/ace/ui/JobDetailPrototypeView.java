@@ -191,7 +191,7 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         final var grid = new FlexibleGridLayout()
                 .withColumns(Repeat.RepeatMode.AUTO_FIT, new MinMax(new Length("130px"), new Flex(1)))
                 .withAutoRows(new Length("auto"))
-                .withGap(new Length("10px"))
+                .withGap(new Length("32px"))
                 .withItems(
                         dashboardTile("Kind", job.kind() + (job.arm() != null ? " · " + job.arm() + " r" + job.repeat() : "")),
                         dashboardTile("Model", modelOf(job)),
