@@ -1014,13 +1014,25 @@ public class BenchController {
     /** one interactions.jsonl line -> {seq, session_id, prompt_tokens, prefill_tok_per_sec,
      *  generation_tok_per_sec, time_to_first_token_sec, total_time_sec}, or null when the line's
      *  own session_id doesn't match (the caller's substring pre-check is only a hint - this
-     *  confirms it against the real field) or it carries no usable usage block (a non-streamed or
-     *  failed call). response.usage's own prompt_tokens_per_second/generation_tokens_per_second/
-     *  time_to_first_token/total_time are the backend's own reported figures - never re-derived
-     *  here. generation_tok_per_sec, time_to_first_token_sec and total_time_sec are all optional
-     *  (null when absent) - unlike prefill speed, none of them is required for a line to count.
-     *  #65: matches against backend.speedFieldNames() instead of oMLX's literal field names, so a
-     *  future backend reporting speed under different names changes one spot, not this one too. */
+     *  confirms it against the real field) or neither a usable usage block NOR enough to derive
+     *  one is present (a non-streamed or failed call). response.usage's own
+     *  prompt_tokens_per_second/generation_tokens_per_second/time_to_first_token/total_time are
+     *  the backend's own reported figures, preferred verbatim whenever present (oMLX's own
+     *  server-side measurement, excluding ace-service's own proxy/network overhead - more precise
+     *  than anything derivable here).
+     *
+     *  <p>#549: a remote OpenAI-compatible provider (Nebius and friends) reports none of those -
+     *  its usage block has only the standard prompt_tokens/completion_tokens, so every line for
+     *  such a job used to get dropped here (prefillTps stayed null, the required-field check
+     *  below rejected it), leaving the Stats tab's charts permanently empty for any non-oMLX-
+     *  backed task. Fallback: RecordingProxy.java's own request envelope (NOT backend-specific -
+     *  written for every provider alike) already carries latency_sec (the proxy's own observed
+     *  total request time) and first_byte_ms (time to the first streamed byte) on every line, so
+     *  when the backend doesn't report its own prefill/decode speed, time-to-first-token derives
+     *  from first_byte_ms, total time from latency_sec, prefill tok/s from prompt_tokens over
+     *  time-to-first-token, and decode tok/s from completion_tokens over the remaining
+     *  (total - time-to-first-token) span - strictly a fallback, never overwriting a backend's own
+     *  reported figures when those are present. */
     private static Map<String, Object> parseRequestSpeedEntry(final com.fasterxml.jackson.core.JsonFactory factory, final String line, final Set<String> sessionIds, final LocalModelBackend backend) {
         final LocalModelBackend.SpeedFieldNames speedFields = backend.speedFieldNames();
         try (var p = factory.createParser(line)) {
@@ -1029,10 +1041,13 @@ public class BenchController {
             String sessionId = null;
             String ts = null;
             Integer promptTokens = null;
+            Integer completionTokens = null;
             Double prefillTps = null;
             Double generationTps = null;
             Double timeToFirstToken = null;
             Double totalTime = null;
+            Double latencySec = null;
+            Long firstByteMs = null;
             while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
                 final String field = p.currentName();
                 p.nextToken();
@@ -1040,6 +1055,8 @@ public class BenchController {
                     case "seq" -> seq = p.getLongValue();
                     case "session_id" -> sessionId = p.getText();
                     case "ts" -> ts = p.getText();
+                    case "latency_sec" -> latencySec = p.getDoubleValue();
+                    case "first_byte_ms" -> firstByteMs = p.getLongValue();
                     case "response" -> {
                         if (p.currentToken() == com.fasterxml.jackson.core.JsonToken.START_OBJECT) {
                             while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
@@ -1050,6 +1067,7 @@ public class BenchController {
                                         final String uf = p.currentName();
                                         p.nextToken();
                                         if ("prompt_tokens".equals(uf)) promptTokens = p.getIntValue();
+                                        else if ("completion_tokens".equals(uf)) completionTokens = p.getIntValue();
                                         else if (uf.equals(speedFields.prefillTpsField())) prefillTps = p.getDoubleValue();
                                         else if (uf.equals(speedFields.decodeTpsField())) generationTps = p.getDoubleValue();
                                         else if ("time_to_first_token".equals(uf)) timeToFirstToken = p.getDoubleValue();
@@ -1063,6 +1081,13 @@ public class BenchController {
                     default -> p.skipChildren();
                 }
             }
+            if (timeToFirstToken == null && firstByteMs != null) timeToFirstToken = firstByteMs / 1000.0;
+            if (totalTime == null && latencySec != null) totalTime = latencySec;
+            if (prefillTps == null && promptTokens != null && timeToFirstToken != null && timeToFirstToken > 0)
+                prefillTps = promptTokens / timeToFirstToken;
+            if (generationTps == null && completionTokens != null && totalTime != null && timeToFirstToken != null
+                    && totalTime - timeToFirstToken > 0)
+                generationTps = completionTokens / (totalTime - timeToFirstToken);
             if (sessionId == null || !sessionIds.contains(sessionId) || seq == null || promptTokens == null || prefillTps == null) return null;
             final Map<String, Object> out = new LinkedHashMap<>();
             out.put("seq", seq);

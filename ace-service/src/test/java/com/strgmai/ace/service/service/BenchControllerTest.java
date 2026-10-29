@@ -28,6 +28,7 @@ import java.util.UUID;
 
 import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
 import static com.strgmai.ace.service.jooq.Tables.RUNS;
+import static org.hamcrest.Matchers.closeTo;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
@@ -1146,6 +1147,65 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.attempts[0].request_speeds[1].generation_tok_per_sec").value(nullValue()))
                 .andExpect(jsonPath("$.attempts[0].request_speeds[1].time_to_first_token_sec").value(nullValue()))
                 .andExpect(jsonPath("$.attempts[0].request_speeds[1].total_time_sec").value(nullValue()));
+    }
+
+    /** #549: a remote OpenAI-compatible provider (Nebius and friends) never reports oMLX's own
+     *  prompt_tokens_per_second/generation_tokens_per_second/time_to_first_token/total_time - its
+     *  usage block has only the standard prompt_tokens/completion_tokens, so every one of its
+     *  lines used to get dropped by the required-field check, leaving the Stats tab's charts
+     *  permanently empty for any such task. This line's own shape is a REAL one, captured live
+     *  from a Nebius-backed job's interactions.jsonl (job 44484604, run svc-20261029-005843):
+     *  latency_sec/first_byte_ms (RecordingProxy's own request envelope - written for every
+     *  provider alike, not oMLX-specific) are now used to derive time-to-first-token/total-time/
+     *  prefill/decode speed when the backend's own fields are absent. */
+    @Test
+    void taskStatsDerivesSpeedFromProxyTimingWhenBackendReportsNoNativeSpeedFields() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": []}");
+        Files.writeString(runDir.resolve("sessions/a.jsonl"),
+                "{\"type\":\"session\",\"id\":\"session-nebius\",\"label\":\"T9\",\"ts\":\"2026-10-29T01:07:59Z\"}\n");
+        Files.writeString(runDir.resolve("interactions.jsonl"),
+                "{\"seq\":1,\"session_id\":\"session-nebius\",\"latency_sec\":9.21,\"first_byte_ms\":756,"
+                        + "\"response\":{\"usage\":{\"prompt_tokens\":4882,\"completion_tokens\":855,\"total_tokens\":5737}}}\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T9/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attempts[0].request_speeds", hasSize(1)))
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].time_to_first_token_sec").value(0.756))
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].total_time_sec").value(9.21))
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].prefill_tok_per_sec").value(closeTo(4882 / 0.756, 0.01)))
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].generation_tok_per_sec").value(closeTo(855 / (9.21 - 0.756), 0.01)));
+    }
+
+    /** #549-followup: a backend's own native speed fields, when present, must still win over the
+     *  proxy-timing derivation - oMLX's server-side figures exclude ace-service's own proxy/network
+     *  overhead and are strictly more accurate than anything derivable from latency_sec/
+     *  first_byte_ms. This line carries BOTH a native prompt_tokens_per_second AND latency_sec/
+     *  first_byte_ms (a real line would never need both, but nothing stops it) to prove the native
+     *  value is the one that survives, not the derived one. */
+    @Test
+    void taskStatsPrefersNativeSpeedFieldsOverProxyTimingDerivationWhenBothPresent() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("manifest.json"), "{\"tasks\": []}");
+        Files.writeString(runDir.resolve("sessions/a.jsonl"),
+                "{\"type\":\"session\",\"id\":\"session-both\",\"label\":\"T9\",\"ts\":\"2026-10-29T01:07:59Z\"}\n");
+        Files.writeString(runDir.resolve("interactions.jsonl"),
+                "{\"seq\":1,\"session_id\":\"session-both\",\"latency_sec\":99.0,\"first_byte_ms\":99000,"
+                        + "\"response\":{\"usage\":{\"prompt_tokens\":100,\"prompt_tokens_per_second\":50.0,\"time_to_first_token\":11.89,\"total_time\":15.63}}}\n");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/tasks/T9/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].prefill_tok_per_sec").value(50.0))
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].time_to_first_token_sec").value(11.89))
+                .andExpect(jsonPath("$.attempts[0].request_speeds[0].total_time_sec").value(15.63));
     }
 
     /** #355-followup-6: found live on T11 - RunBenchSupport's own session-id scheme is
