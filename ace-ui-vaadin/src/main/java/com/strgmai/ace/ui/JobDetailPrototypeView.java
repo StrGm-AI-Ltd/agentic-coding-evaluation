@@ -56,16 +56,19 @@ import java.util.Map;
  * preference:
  * - Status and key figures first, above the fold; drill-down detail below (aufaitux.com, 925studios.co).
  * - Run flags were initially tucked behind a collapsed "Run details" panel (progressive
- *   disclosure, the dominant 2026 SaaS-dashboard pattern for secondary detail), but promoted to
- *   always-visible, right above Plan - flags are what EXPLAINS a run's own behavior, not
- *   secondary detail an operator reaches for only occasionally.
+ *   disclosure, the dominant 2026 SaaS-dashboard pattern for secondary detail), then promoted to
+ *   an always-visible card above Plan, and now live as the "Params" tile inside the stat-tile grid
+ *   itself - flags are what EXPLAINS a run's own behavior, not secondary detail an operator
+ *   reaches for only occasionally.
  * - 5-9 core elements per view, muted neutrals with color reserved for status specifically -
  *   deliberately NOT a "bento grid" of asymmetric tile sizes: that pattern is explicitly called
  *   out in 2026 UI-trend research as wrong for data-dense PRODUCT dashboards (orbix.studio) - it
  *   conflicts with the uniform left-to-right/top-to-bottom scanning a monitoring page like this
  *   needs. The stat-tile row below uses appreciated/grid-layout's FlexibleGridLayout with a
- *   responsive `repeat(auto-fit, minmax(180px, 1fr))` column template instead: every tile the
- *   SAME size, reflowing by count rather than by deliberately uneven sizing.
+ *   responsive `repeat(auto-fit, minmax(180px, 1fr))` column template instead: every compact tile
+ *   the SAME size, reflowing by count rather than by deliberately uneven sizing - with ONE
+ *   intentional exception, the "Params" tile (the job's own CLI flags), which spans the full grid
+ *   row via `grid-column: 1 / -1` because free-form argv text doesn't fit a short value span.
  */
 @Route(value = "jobs/:jobId/prototype", layout = MainLayout.class)
 public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnterObserver {
@@ -122,9 +125,7 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         // found live, testing against l2-gran-none (a real failed job): result_line is the ONE
         // place the actual failure reason lives (here, a plan dependency cycle) - a "succeeded"
         // job's own result_line is just a bland "RESULT <id> scored" confirmation (sampled 5 real
-        // rows of each), so only a FAILED job's result_line earns a place above the fold; anything
-        // else stays inside the collapsed "Run details" section below, consistent with "surface
-        // the status that needs a decision, keep the rest one click away"
+        // rows of each), so only a FAILED job's result_line earns a place above the fold.
         if ("failed".equals(job.status()) && hasResult(job)) {
             add(Panels.error(job.result_line()));
         }
@@ -144,13 +145,6 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         }
 
         add(statTileGrid(job, tasks, lastAttempt));
-
-        // always visible, above Plan - an operator reading WHY a run did what it did needs the
-        // exact flags it ran with as readily as the plan itself, not one more click away
-        final var argv = job.argv() == null ? List.<String>of() : job.argv();
-        if (!argv.isEmpty()) {
-            add(Panels.card("Run flags", Panels.mono(String.join(" ", argv))));
-        }
 
         if (!tasks.isEmpty()) {
             add(Panels.card("Plan", buildPlanGrid(tasks, lastAttempt)));
@@ -199,9 +193,27 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
                         dashboardTile("Enqueued", Fmt.when(job.enqueued_at())),
                         dashboardTile("Duration", durationOf(job)),
                         dashboardTile("Tasks", done + " / " + realTasks.size()),
-                        dashboardTile("Result", resultTileValue(job)));
+                        dashboardTile("Result", resultTileValue(job)),
+                        paramsTile(job));
         grid.getStyle().set("width", "100%").set("margin", "12px 0");
         return grid;
+    }
+
+    /** The "Params" tile - the job's own CLI invocation flags (job.argv()), shown as a full-width,
+     *  monospaced block instead of competing for the compact dashboardTile() columns: free-form
+     *  flag text doesn't fit a short value span, so it spans every column via `grid-column: 1 / -1`
+     *  and lands in its own row below the compact tiles through normal grid auto-placement - no
+     *  explicit row index needed. */
+    private static Div paramsTile(final Api.Job job) {
+        final var argv = job.argv() == null ? List.<String>of() : job.argv();
+        final var tile = Panels.statTile("Params", Panels.mono(argv.isEmpty() ? null : String.join(" ", argv)));
+        tile.getStyle()
+                .set("border", "1px solid var(--vaadin-border-color-secondary)")
+                .set("border-radius", "var(--vaadin-radius-l)")
+                .set("background", "var(--vaadin-background-container)")
+                .set("padding", "8px 10px")
+                .set("grid-column", "1 / -1");
+        return tile;
     }
 
     /** Panels.statTile() plus a visible border/surface/radius, via real Aura/base tokens
