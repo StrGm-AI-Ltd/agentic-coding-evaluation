@@ -1064,15 +1064,31 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  poll instead of torn down and rebuilt, the same technique #476/PR3's own job-level latency
      *  chart already uses, for the same reason (a full rebuild every poll flashes/flickers).
      *
-     *  <p>#541-followup: animations disabled, same fix #542 applied to the job-level latency chart
-     *  and for the same reason - this chart is built AND immediately populated with its full real
-     *  dataset in the same loadStats() pass (JobTaskDialog.java), which can race the client's own
-     *  chart-mount lifecycle against its first updateSeries() call the same way two back-to-back
-     *  live updates can on the job-level chart; found live opening a real task's Stats tab on a
-     *  page whose OWN job-level chart was independently failing under a large SSE replay burst -
-     *  the resulting storm of client-side errors left this chart's SVG skeleton built but visually
-     *  blank (no axes, no lines) even though its underlying data had loaded correctly. */
-    static ApexCharts buildRequestSpeedChart() {
+     *  <p>#541-followup, root-caused: animations-disable (#542) was NOT the real fix. Confirmed
+     *  live via direct client-side introspection against a real broken instance (Playwright
+     *  evaluate() reading the Flow wrapper's own internal `w.config.series`): this chart's
+     *  underlying ApexCharts.js instance mounts/renders ASYNCHRONOUSLY, and `updateSeries()` is
+     *  that library's own INCREMENTAL-update API - it expects a series to already exist so it can
+     *  diff against it. The OLD pattern (build this chart empty, then separately call
+     *  updateRequestSpeedChart() moments later in the SAME loadStats() pass) raced that first
+     *  updateSeries() call against the chart's own still-in-flight render(): if it loses the race,
+     *  `w.config.series` stays permanently empty and EVERY later updateSeries() call fails the
+     *  same way forever - confirmed live, it never self-heals (unlike the Sessions/Requests grids,
+     *  plain Vaadin components that recover instantly on their own next setItems() call).
+     *
+     *  <p>The actual fix: this chart's own real data is now embedded directly in its construction-
+     *  time config (withXaxis/withSeries below) instead of a separate post-construction
+     *  updateSeries() call - JobTaskDialog's own on-demand loadStats() already has the real data in
+     *  hand before it ever builds this chart, so there is no reason to build it empty first. The
+     *  client's native Vaadin property sync (how xaxis/series reach the browser as part of normal
+     *  component construction/attach) is a different code path from the explicit updateData() RPC
+     *  call the race lives in - sidestepping the race entirely rather than timing around it.
+     *  updateRequestSpeedChart() below still exists, for genuine SUBSEQUENT redraws of an
+     *  already-successfully-mounted chart (safe: by then the client has long since finished its
+     *  own first render()). */
+    static ApexCharts buildRequestSpeedChart(final List<RequestSpeedPoint> points,
+            final List<Integer> compactionsBeforeRequest, final List<Integer> judgeOnTrackRequests,
+            final List<Integer> judgeOffTrackRequests) {
         final var chart = ApexChartsBuilder.get()
                 .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent")
                         .withAnimations(AnimationsBuilder.get().withEnabled(false).build()).build())
@@ -1100,22 +1116,32 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                                 .withLabels(tokenCountLabels()).build(),
                         YAxisBuilder.get().withSeriesName("prefill tok/s").withShow(false).build(),
                         YAxisBuilder.get().withSeriesName("prefill tok/s").withShow(false).build())
+                .withXaxis(requestSpeedXaxis(points.size()))
+                .withSeries(requestSpeedSeries(points, compactionsBeforeRequest, judgeOnTrackRequests, judgeOffTrackRequests))
                 .build();
         chart.setHeight("220px");
         return chart;
     }
 
-    static void updateRequestSpeedChart(final ApexCharts chart, final List<RequestSpeedPoint> points,
-                                          final List<Integer> compactionsBeforeRequest,
-                                          final List<Integer> judgeOnTrackRequests, final List<Integer> judgeOffTrackRequests) {
-        if (points.isEmpty()) return;
-        final var categories = requestSpeedCategories(points.size());
+    /** Shared by buildRequestSpeedChart()/buildRequestTimingChart() above (identical x-axis) - see
+     *  their own javadoc for why embedding real data at construction, rather than a separate
+     *  updateSeries() call, is the actual #541 fix. */
+    private static com.github.appreciated.apexcharts.config.XAxis requestSpeedXaxis(final int pointCount) {
+        final var categories = requestSpeedCategories(pointCount);
         final var xaxisLabels = new com.github.appreciated.apexcharts.config.xaxis.Labels();
         xaxisLabels.setFormatter(requestSpeedLabelFormatterJs());
-        chart.setXaxis(XAxisBuilder.get().withCategories(categories).withLabels(xaxisLabels)
+        return XAxisBuilder.get().withCategories(categories).withLabels(xaxisLabels)
                 .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
                         .withText("request # (red: a compaction landed right before it; green/amber: a judge checkpoint landed on track/off track)").build())
-                .build());
+                .build();
+    }
+
+    /** The 6-series array both buildRequestSpeedChart() (construction-time) and
+     *  updateRequestSpeedChart() (subsequent redraws) share - extracted so both paths stay
+     *  byte-for-byte consistent. Empty-safe: an empty `points` list naturally produces empty/0-peak
+     *  series via the same stream/array machinery, no special-casing needed. */
+    private static com.github.appreciated.apexcharts.helper.Series[] requestSpeedSeries(final List<RequestSpeedPoint> points,
+            final List<Integer> compactionsBeforeRequest, final List<Integer> judgeOnTrackRequests, final List<Integer> judgeOffTrackRequests) {
         final var speedSeries = SeriesBuilder.get().withName("prefill tok/s")
                 .withData(points.stream().map(RequestSpeedPoint::prefillTokPerSec).toArray(Double[]::new)).build();
         final var prefillPeak = points.stream().map(RequestSpeedPoint::prefillTokPerSec).filter(Objects::nonNull)
@@ -1133,7 +1159,16 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var judgeOffTrackSeries = SeriesBuilder.get().withName("judge off track")
                 .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
                 .withData(compactionColumnData(judgeOffTrackRequests, points.size(), prefillPeak)).build();
-        chart.updateSeries(speedSeries, compactionSeries, generationSeries, contextSeries, judgeOnTrackSeries, judgeOffTrackSeries);
+        return new com.github.appreciated.apexcharts.helper.Series[]{speedSeries, compactionSeries, generationSeries,
+                contextSeries, judgeOnTrackSeries, judgeOffTrackSeries};
+    }
+
+    static void updateRequestSpeedChart(final ApexCharts chart, final List<RequestSpeedPoint> points,
+                                          final List<Integer> compactionsBeforeRequest,
+                                          final List<Integer> judgeOnTrackRequests, final List<Integer> judgeOffTrackRequests) {
+        if (points.isEmpty()) return;
+        chart.setXaxis(requestSpeedXaxis(points.size()));
+        chart.updateSeries(requestSpeedSeries(points, compactionsBeforeRequest, judgeOnTrackRequests, judgeOffTrackRequests));
     }
 
     /** This chart's own tooltip, read from series[0] (time to first token), series[1] (total
@@ -1186,9 +1221,13 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  annotations (see compactionColumnData()'s own javadoc for why), legend hidden and tooltip
      *  custom for the same reason that chart's is. */
     /** #517 (B): same split as buildRequestSpeedChart()/updateRequestSpeedChart() above, for the
-     *  same reason - see that pair's own javadoc. #541-followup: animations disabled too, same
-     *  reason as buildRequestSpeedChart()'s own fix - see its javadoc. */
-    static ApexCharts buildRequestTimingChart() {
+     *  same reason - see that pair's own javadoc. #541-followup, root-caused: real data is now
+     *  embedded at construction time (withXaxis/withSeries) instead of a separate post-construction
+     *  updateSeries() call - see buildRequestSpeedChart()'s own javadoc for the full root-cause
+     *  writeup (mount-timing race on a chart's FIRST updateSeries() call). */
+    static ApexCharts buildRequestTimingChart(final List<RequestSpeedPoint> points,
+            final List<Integer> compactionsBeforeRequest, final List<Integer> judgeOnTrackRequests,
+            final List<Integer> judgeOffTrackRequests) {
         final var chart = ApexChartsBuilder.get()
                 .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent")
                         .withAnimations(AnimationsBuilder.get().withEnabled(false).build()).build())
@@ -1211,22 +1250,17 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                                 .withLabels(tokenCountLabels()).build(),
                         YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build(),
                         YAxisBuilder.get().withSeriesName("time to first token (s)").withShow(false).build())
+                .withXaxis(requestSpeedXaxis(points.size()))
+                .withSeries(requestTimingSeries(points, compactionsBeforeRequest, judgeOnTrackRequests, judgeOffTrackRequests))
                 .build();
         chart.setHeight("220px");
         return chart;
     }
 
-    static void updateRequestTimingChart(final ApexCharts chart, final List<RequestSpeedPoint> points,
-                                           final List<Integer> compactionsBeforeRequest,
-                                           final List<Integer> judgeOnTrackRequests, final List<Integer> judgeOffTrackRequests) {
-        if (points.isEmpty()) return;
-        final var categories = requestSpeedCategories(points.size());
-        final var xaxisLabels = new com.github.appreciated.apexcharts.config.xaxis.Labels();
-        xaxisLabels.setFormatter(requestSpeedLabelFormatterJs());
-        chart.setXaxis(XAxisBuilder.get().withCategories(categories).withLabels(xaxisLabels)
-                .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
-                        .withText("request # (red: a compaction landed right before it; green/amber: a judge checkpoint landed on track/off track)").build())
-                .build());
+    /** The 6-series array both buildRequestTimingChart() (construction-time) and
+     *  updateRequestTimingChart() (subsequent redraws) share - mirrors requestSpeedSeries() above. */
+    private static com.github.appreciated.apexcharts.helper.Series[] requestTimingSeries(final List<RequestSpeedPoint> points,
+            final List<Integer> compactionsBeforeRequest, final List<Integer> judgeOnTrackRequests, final List<Integer> judgeOffTrackRequests) {
         final var ttftSeries = SeriesBuilder.get().withName("time to first token (s)")
                 .withData(points.stream().map(RequestSpeedPoint::timeToFirstTokenSec).toArray(Double[]::new)).build();
         final var totalTimeSeries = SeriesBuilder.get().withName("total time (s)")
@@ -1244,7 +1278,16 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var judgeOffTrackSeries = SeriesBuilder.get().withName("judge off track")
                 .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
                 .withData(compactionColumnData(judgeOffTrackRequests, points.size(), ttftPeak)).build();
-        chart.updateSeries(ttftSeries, totalTimeSeries, compactionSeries, contextSeries, judgeOnTrackSeries, judgeOffTrackSeries);
+        return new com.github.appreciated.apexcharts.helper.Series[]{ttftSeries, totalTimeSeries, compactionSeries,
+                contextSeries, judgeOnTrackSeries, judgeOffTrackSeries};
+    }
+
+    static void updateRequestTimingChart(final ApexCharts chart, final List<RequestSpeedPoint> points,
+                                           final List<Integer> compactionsBeforeRequest,
+                                           final List<Integer> judgeOnTrackRequests, final List<Integer> judgeOffTrackRequests) {
+        if (points.isEmpty()) return;
+        chart.setXaxis(requestSpeedXaxis(points.size()));
+        chart.updateSeries(requestTimingSeries(points, compactionsBeforeRequest, judgeOnTrackRequests, judgeOffTrackRequests));
     }
 
     /** One row of the "compaction distribution" table: which request this compaction landed right
