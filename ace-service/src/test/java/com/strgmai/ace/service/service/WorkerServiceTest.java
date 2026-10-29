@@ -46,6 +46,42 @@ class WorkerServiceTest {
         try { return body.call(); } finally { System.setProperty("user.home", realHome); }
     }
 
+    /** #576, found live: reconcile() used to check ProcessHandle.of(pid).isAlive() - meaningless in
+     *  this in-process architecture, since "pid" is always the SERVICE's own pid (WorkerService.
+     *  started() writes ProcessHandle.current().pid()), conventionally always 1 inside a container -
+     *  trivially "alive" from the very process asking the question, on every restart. A row still
+     *  "running" when reconcile() runs (once, at startup, before anything has been claimed) is BY
+     *  DEFINITION orphaned; it must always go back to "queued" regardless of whatever pid happens to
+     *  be stored, or claim() (which only ever re-picks "queued"/"waiting_lock" rows) can never pick
+     *  it up again - confirmed live, this stranded a real mid-run job in "running" forever across a
+     *  routine redeploy. */
+    @Test
+    void reconcileAlwaysRequeuesARowStillMarkedRunningAtStartupRegardlessOfItsStoredPid() {
+        final JobQueue queue = mock(JobQueue.class);
+        // pid=1 - the exact value every in-process job gets (ProcessHandle.current().pid() inside a
+        // container, conventionally always 1) - the old, broken check would have found THIS pid
+        // "alive" (it's literally the calling process itself) and wrongly left the row as "running".
+        when(queue.list()).thenReturn(List.of(Map.of("id", JOB_1, "status", "running", "pid", 1)));
+        final BenchProperties props = mock(BenchProperties.class);
+
+        new WorkerService(queue, mock(RunBench.class), mock(ImporterService.class), mock(ExperimentsService.class),
+                mock(Preflight.class), mock(TreatmentPin.class), props, mock(ContextProbe.class), mock(RecordingProxyFactory.class));
+
+        verify(queue).setStatus(JOB_1, "queued", null);
+    }
+
+    @Test
+    void reconcileLeavesNonRunningRowsAlone() {
+        final JobQueue queue = mock(JobQueue.class);
+        when(queue.list()).thenReturn(List.of(Map.of("id", JOB_1, "status", "queued", "pid", 1)));
+        final BenchProperties props = mock(BenchProperties.class);
+
+        new WorkerService(queue, mock(RunBench.class), mock(ImporterService.class), mock(ExperimentsService.class),
+                mock(Preflight.class), mock(TreatmentPin.class), props, mock(ContextProbe.class), mock(RecordingProxyFactory.class));
+
+        verify(queue, never()).setStatus(eq(JOB_1), anyString(), any());
+    }
+
     /** issue #18: a job whose cancel_requested flag was already set before it was ever claimed (still
      *  "queued") is cancelled right here in poll() - the worker never runs it, so this is the only
      *  place that call can notice the experiment is now fully done. */
