@@ -210,6 +210,35 @@ public final class AgentSession {
         return msgs;
     }
 
+    /** #580, found live: the resumed session's own MOST RECENT request-prompt size - the same
+     *  measurement the turn loop's own reactive compaction (ReferenceAgent.run()'s local
+     *  `lastPrompt`) tracks in memory for a fresh session, read back from disk here for a session
+     *  being RESUMED (continueSession=true), whose own in-memory `lastPrompt` always starts at 0
+     *  for a brand-new run() invocation (see #307's own javadoc on compactOnLoadKeepRecentTurns).
+     *  Lets an on-load preload compaction record a real "prompt tokens before" instead of always
+     *  omitting it - #580 found that, since this harness's own turn-limited/length-capped
+     *  continuations are a frequent, normal occurrence rather than a rare edge case, the no-
+     *  measurement 2-arg compaction() overload had become the COMMON path recorded, not the rare
+     *  edge case it was designed for. Unlike usage() below (which SUMS every turn's usage.input
+     *  across the whole file), this keeps only the LAST one seen - the most recent real prompt
+     *  size, which is what a compaction about to fire genuinely needs as its own "before" baseline.
+     *  null when the file has no assistant turn with a usage.input yet (a genuinely fresh session -
+     *  correctly stays unmeasured, same as before this fix). */
+    public static Long lastPromptTokens(final Path sessionFile) {
+        if (sessionFile == null || !Files.isRegularFile(sessionFile)) return null;
+        Long last = null;
+        try {
+            for (String line : Files.readAllLines(sessionFile, StandardCharsets.UTF_8)) {
+                JsonNode r;
+                try { r = JSON.readTree(line); } catch (Exception e) { log.debug("could not parse session line while reading its last known prompt size, skipping it: {}", e.toString()); continue; }
+                if (!"message".equals(r.path("type").asText()) || !"assistant".equals(r.path("message").path("role").asText())) continue;
+                final JsonNode u = r.path("usage");
+                if (u.has("input")) last = u.get("input").asLong();
+            }
+        } catch (IOException e) { log.warn("could not read session {} for its last known prompt size: {}", sessionFile, e.toString()); }
+        return last;
+    }
+
     /** usage from the session file's assistant records — the only token source for a session that did not go through the proxy */
     public static Map<String, Long> usage(final Path sessionFile) {
         final Map<String, Long> t = new LinkedHashMap<>(Map.of("input", 0L, "output", 0L, "turns", 0L));
