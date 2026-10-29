@@ -104,7 +104,7 @@ final class JobTaskDialog {
         // no hand-rolled CSS position:sticky needed. Shared with every other tab's footer row, so
         // its own visibility is toggled alongside each body's below - only meaningful while Stats is
         // actually the selected tab.
-        final var refreshStatsButton = new Button("Refresh stats");
+        final var refreshStatsButton = new Button("Refresh");
         refreshStatsButton.setVisible(false);
         // statsSummaryBody (the top text lines) is cleared and rebuilt every poll, same as before -
         // statsAttemptsBody is a SIBLING, same reason transcriptBody/interveneRow are siblings below:
