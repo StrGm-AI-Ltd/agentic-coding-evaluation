@@ -165,7 +165,7 @@ final class RunTaskDialog {
                         section.compactionsBeforeRequest(), section.judgeOnTrackRequests(), section.judgeOffTrackRequests());
                 final var timingChart = JobDetailView.buildRequestTimingChart(section.requestSpeeds(),
                         section.compactionsBeforeRequest(), section.judgeOnTrackRequests(), section.judgeOffTrackRequests());
-                statsBody.add(Panels.card("Prefill speed by request" + attemptLabel, speedChart),
+                statsBody.add(Panels.card("Request throughput" + attemptLabel, speedChart),
                         Panels.card("Request timing" + attemptLabel, timingChart));
             }
         } catch (final Exception ex) {
