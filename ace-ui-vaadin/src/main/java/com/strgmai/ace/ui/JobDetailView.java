@@ -11,6 +11,11 @@ import com.github.appreciated.apexcharts.config.builder.YAxisBuilder;
 import com.github.appreciated.apexcharts.config.chart.Type;
 import com.github.appreciated.apexcharts.config.theme.Mode;
 import com.github.appreciated.apexcharts.config.yaxis.builder.TitleBuilder;
+import com.github.appreciated.css.grid.sizes.Flex;
+import com.github.appreciated.css.grid.sizes.Length;
+import com.github.appreciated.css.grid.sizes.MinMax;
+import com.github.appreciated.css.grid.sizes.Repeat;
+import com.github.appreciated.layout.FlexibleGridLayout;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
@@ -639,99 +644,133 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         };
     }
 
-    /** #355-followup: found live - "bash: 99 (5 errors)" names the tool but not what it DOES,
-     *  the same gap rcText() closed for a bare rc number. The model's own four tools (see
-     *  ReferenceAgent.toolSpecs() for the full, verbatim descriptions it is actually given) in
-     *  one short phrase each - plain enough to read inline next to a count, not the full
-     *  tool-call description. An unrecognized name (should not happen - these four are the
-     *  model's entire tool surface) still shows itself rather than going blank. */
-    static String toolLabel(final String name) {
-        return switch (name) {
-            case "read" -> "read (read a file)";
-            case "write" -> "write (create or overwrite a file)";
-            case "edit" -> "edit (replace text within a file)";
-            case "bash" -> "bash (run a shell command)";
-            default -> name;
-        };
+    /** #559: one tile the Stats tab's dashboard renders - a label/value pair, with an optional
+     *  smaller detail line underneath (Panels.dashboardTile()'s own shape). A non-canonical
+     *  2-arg constructor covers the common no-detail case without every call site passing null. */
+    record StatField(String label, String value, String detail) {
+        StatField(final String label, final String value) {
+            this(label, value, null);
+        }
     }
 
-    /** #355: the Stats tab's own text for a FINISHED task (BenchController.taskStats() found a
-     *  manifest.tasks entry - "done") or still running/mid-tail ("running") - pure, tested
-     *  against real-shape fixtures, same convention as speedByContextRows()/
-     *  compactionOverheadPoints() in RunDetailView. turns/compactions/tool_errors/tool_calls are
-     *  ALWAYS populated (BenchController.taskStats() reads them live from the session file
-     *  regardless of state - see its own javadoc); everything else beyond those - rc/finish/
-     *  seconds/verification/wrap-up/rescue/handoff/check_score/compaction_overhead - is OPTIONAL
-     *  and only ever present once "done" (wrap-up/rescue/handoff only for some tasks even then;
-     *  check_score/compaction_overhead only once the whole run has finished scoring).
-     *  `liveWallTime` is this dialog's own frontend-side live aggregation (JobDetailView.
-     *  taskStats(sessions, taskId, currentStep), reused from the Plan grid) - the one figure the
-     *  backend has no way to report for a task that hasn't finished yet, since it has no
-     *  "elapsed so far" concept of its own. */
-    static List<String> taskStatsLines(final JsonNode stats, final TaskStats liveWallTime) {
-        final List<String> lines = new ArrayList<>();
+    /** #559-followup of #355: the Stats tab's own top dashboard fields, redesigned from plain mono
+     *  text into the same tile vocabulary (Panels.dashboardTile()) the Job detail page's own status
+     *  row already established, replacing the former taskStatsLines(). Pure, tested against
+     *  real-shape fixtures, same convention as speedByContextRows()/compactionOverheadPoints() in
+     *  RunDetailView. turns/compactions/tool_errors/tool_calls are ALWAYS populated
+     *  (BenchController.taskStats() reads them live from the session file regardless of state - see
+     *  its own javadoc); everything else beyond those - rc/finish/seconds/verification/wrap-up/
+     *  rescue/handoff/check_score/compaction_overhead - is OPTIONAL and only ever present once
+     *  "done" (wrap-up/rescue/handoff only for some tasks even then; check_score/
+     *  compaction_overhead only once the whole run has finished scoring). `liveWallTime` is this
+     *  dialog's own frontend-side live aggregation (JobDetailView.taskStats(sessions, taskId,
+     *  currentStep), reused from the Plan grid) - the one figure the backend has no way to report
+     *  for a task that hasn't finished yet, since it has no "elapsed so far" concept of its own.
+     *
+     *  <p>#559: every pure-English explanation parenthetical taskStatsLines() used to carry (e.g.
+     *  "(history trims to control context size)", the per-issue-number "(#351)") is dropped here -
+     *  the operator asked for shorter text, and a tile's own label already reads as intended without
+     *  it. A parenthetical that is instead REAL DATA (a duration, a test count, a ratio) is never
+     *  dropped - it becomes the tile's own detail line rather than text appended to the value. */
+    static List<StatField> taskStatsFields(final JsonNode stats, final TaskStats liveWallTime) {
+        final List<StatField> fields = new ArrayList<>();
         final boolean done = "done".equals(stats.path("state").asText(null));
         if (done) {
-            lines.add("outcome: " + rcText(stats.path("rc").asInt(Integer.MIN_VALUE), stats.path("finish").asText(null)));
-            lines.add("wall time: " + stats.path("seconds").asText("?") + "s   model turns: " + stats.path("turns").asText("0"));
+            fields.add(new StatField("Outcome", rcText(stats.path("rc").asInt(Integer.MIN_VALUE), stats.path("finish").asText(null))));
+            fields.add(new StatField("Wall time", stats.path("seconds").asText("?") + "s"));
+            fields.add(new StatField("Model turns", stats.path("turns").asText("0")));
         } else {
-            lines.add("outcome: still running");
-            lines.add("wall time so far: " + Math.round(liveWallTime.wallSec()) + "s   model turns so far: " + stats.path("turns").asText("0"));
+            fields.add(new StatField("Outcome", "still running"));
+            fields.add(new StatField("Wall time", Math.round(liveWallTime.wallSec()) + "s so far"));
+            fields.add(new StatField("Model turns", stats.path("turns").asText("0") + " so far"));
         }
-        lines.add("context compactions (history trims to control context size): " + stats.path("compactions").asText("0")
-                + "   failed tool calls: " + stats.path("tool_errors").asText("0"));
+        fields.add(new StatField("Context compactions", stats.path("compactions").asText("0")));
+        fields.add(new StatField("Failed tool calls", stats.path("tool_errors").asText("0")));
         final var v = stats.path("verification");
         if (v.isObject()) {
             final String verdict = v.path("green").isNull() ? "could not run" : v.path("green").asBoolean(false) ? "GREEN" : "RED";
-            lines.add("harness verification: " + verdict + " (" + v.path("executed").asInt(0) + " tests, " + v.path("failed").asInt(0) + " failed)");
+            fields.add(new StatField("Harness verification", verdict,
+                    v.path("executed").asInt(0) + " tests, " + v.path("failed").asInt(0) + " failed"));
         }
         if (stats.hasNonNull("rescue_seconds")) {
             final boolean succeeded = stats.path("rescue_succeeded").asBoolean(false);
-            lines.add("rescue attempt (" + stats.path("rescue_seconds").asText("?") + "s): "
-                    + (succeeded ? "succeeded" : rcText(stats.path("rescue_rc").asInt(Integer.MIN_VALUE), null)));
+            fields.add(new StatField("Rescue attempt", succeeded ? "succeeded" : rcText(stats.path("rescue_rc").asInt(Integer.MIN_VALUE), null),
+                    stats.path("rescue_seconds").asText("?") + "s"));
         }
         if (stats.hasNonNull("wrapup_seconds")) {
-            lines.add("wrap-up attempt (" + stats.path("wrapup_seconds").asText("?") + "s): "
-                    + rcText(stats.path("wrapup_rc").asInt(Integer.MIN_VALUE), null));
+            fields.add(new StatField("Wrap-up attempt", rcText(stats.path("wrapup_rc").asInt(Integer.MIN_VALUE), null),
+                    stats.path("wrapup_seconds").asText("?") + "s"));
         }
         if (stats.hasNonNull("handoff_seconds")) {
-            lines.add("handoff: " + (stats.path("handoff_by_harness").asBoolean(false) ? "harness-authored fallback (#351)" : "written by the model")
-                    + ", " + stats.path("handoff_chars").asText("0") + " chars");
-        }
-        final var tc = stats.path("tool_calls");
-        if (tc.isObject() && tc.size() > 0) {
-            lines.add("tool calls (the four actions the model can take in its own coding session):");
-            lines.addAll(toolCallLines(tc));
+            fields.add(new StatField("Handoff", stats.path("handoff_by_harness").asBoolean(false) ? "harness-authored fallback" : "written by the model",
+                    stats.path("handoff_chars").asText("0") + " chars"));
         }
         final var cs = stats.path("check_score");
         if (cs.isObject()) {
-            lines.add("check score: " + cs.path("score_pct").asText("?") + "% (" + cs.path("points").path(0).asText("?") + "/" + cs.path("points").path(1).asText("?") + ")");
+            fields.add(new StatField("Check score", cs.path("score_pct").asText("?") + "%",
+                    cs.path("points").path(0).asText("?") + "/" + cs.path("points").path(1).asText("?")));
         }
         final var co = stats.path("compaction_overhead");
         if (co.isObject()) {
-            lines.add("compaction overhead: " + co.path("overhead_sec").asText("?") + "s across " + co.path("events").asText("0") + " event(s)");
+            fields.add(new StatField("Compaction overhead", co.path("overhead_sec").asText("?") + "s",
+                    co.path("events").asText("0") + " event(s)"));
         }
-        return lines;
+        return fields;
     }
 
-    private static List<String> toolCallLines(final JsonNode toolCalls) {
-        final List<String> lines = new ArrayList<>();
+    /** #559: the "Tool calls" tile - one chip per tool the model actually used, parallel to
+     *  JobDetailPrototypeView's own "Params" tile (one chip per CLI flag): a full-width tile
+     *  holding a flex-wrap row of Badges rather than a text list, the same idiom the redesigned Job
+     *  detail page already established. null when the task made no tool calls at all (never an
+     *  empty tile). A chip's own text is just the tool's bare name (not toolLabel()'s longer "name
+     *  (what it does)" form - that explanation duplicated across all four chips every time read as
+     *  exactly the text bloat #559 asked to cut) plus its count and - only when > 0 - error count;
+     *  a tool with any errors gets the ERROR badge theme instead of CONTRAST, the same "color flags
+     *  what needs attention" convention Badges.theme() already uses elsewhere. */
+    static Div toolCallsTile(final JsonNode toolCalls) {
+        if (!toolCalls.isObject() || toolCalls.isEmpty()) return null;
         final var names = new ArrayList<>(toolCalls.propertyNames());
         Collections.sort(names);
+        final var chips = new Div();
+        chips.getStyle().set("display", "flex").set("flex-wrap", "wrap").set("gap", "6px").set("margin-top", "2px");
         for (final var name : names) {
             final var c = toolCalls.path(name);
             final int errors = c.path("errors").asInt(0);
-            lines.add("  " + toolLabel(name) + ": " + c.path("count").asInt(0) + (errors > 0 ? " (" + errors + (errors == 1 ? " error" : " errors") + ")" : ""));
+            final var text = name + ": " + c.path("count").asInt(0) + (errors > 0 ? " (" + errors + (errors == 1 ? " error" : " errors") + ")" : "");
+            chips.add(Badges.text(text, errors > 0 ? Badges.ERROR : Badges.CONTRAST));
         }
-        return lines;
+        final var tile = Panels.statTile("Tool calls", chips);
+        tile.getStyle()
+                .set("border", "1px solid var(--vaadin-border-color-secondary)")
+                .set("border-radius", "var(--vaadin-radius-l)")
+                .set("background", "var(--vaadin-background-container)")
+                .set("padding", "8px 10px")
+                .set("grid-column", "1 / -1");
+        return tile;
+    }
+
+    /** #559: the Stats tab's own top dashboard - taskStatsFields()'s tiles plus the "Tool calls"
+     *  tile, in the SAME responsive auto-fit CSS grid (FlexibleGridLayout) the Job detail page's
+     *  own status row already uses, rather than the former loop of Panels.mono(line) blocks. */
+    static FlexibleGridLayout taskStatsTileGrid(final JsonNode stats, final TaskStats liveWallTime) {
+        final List<com.vaadin.flow.component.Component> items = new ArrayList<>();
+        for (final var field : taskStatsFields(stats, liveWallTime)) items.add(Panels.dashboardTile(field.label(), field.value(), field.detail()));
+        final var toolTile = toolCallsTile(stats.path("tool_calls"));
+        if (toolTile != null) items.add(toolTile);
+        final var grid = new FlexibleGridLayout()
+                .withColumns(Repeat.RepeatMode.AUTO_FIT, new MinMax(new Length("130px"), new Flex(1)))
+                .withAutoRows(new Length("auto"))
+                .withGap(new Length("16px"))
+                .withItems(items.toArray(new com.vaadin.flow.component.Component[0]));
+        grid.getStyle().set("width", "100%").set("margin", "8px 0 16px 0");
+        return grid;
     }
 
     /** #355-followup-2: found live - a raw "{"task_wall_sec":32400,...}" map dump read as noise
      *  next to the same section's own labeled "wall time"/"model turns" lines. Every knob
      *  RESTART_OVERRIDE_KEYS (BenchController) can actually carry, named the way an operator
-     *  deciding whether to adjust it would recognize - same convention as toolLabel() above. An
-     *  unrecognized key (should not happen - this list is kept in step with RESTART_OVERRIDE_KEYS)
-     *  still shows itself rather than going blank. */
+     *  deciding whether to adjust it would recognize. An unrecognized key (should not happen - this
+     *  list is kept in step with RESTART_OVERRIDE_KEYS) still shows itself rather than going blank. */
     static String paramLabel(final String key) {
         return switch (key) {
             case "task_wall_sec" -> "wall-clock budget (s)";
@@ -757,6 +796,23 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             case "lesson_recording_enabled" -> "cross-task lesson recording enabled";
             default -> key;
         };
+    }
+
+    /** The per-attempt body's own tool-call breakdown (Panels.mono(section.body()) - the narrative
+     *  text block inside each attempt's own card, distinct from the top dashboard's own "Tool
+     *  calls" badge tile (toolCallsTile() above) built from the task's AGGREGATE tool_calls). Bare
+     *  tool names, no per-tool explanation - #559 asked to cut this text down everywhere, not just
+     *  the top dashboard. */
+    private static List<String> toolCallLines(final JsonNode toolCalls) {
+        final List<String> lines = new ArrayList<>();
+        final var names = new ArrayList<>(toolCalls.propertyNames());
+        Collections.sort(names);
+        for (final var name : names) {
+            final var c = toolCalls.path(name);
+            final int errors = c.path("errors").asInt(0);
+            lines.add("  " + name + ": " + c.path("count").asInt(0) + (errors > 0 ? " (" + errors + (errors == 1 ? " error" : " errors") + ")" : ""));
+        }
+        return lines;
     }
 
     private static List<String> paramLines(final JsonNode params) {
@@ -1321,6 +1377,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
                 .setHeader("requests since previous").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
         distribution.setItems(section.compactionDistribution());
         distribution.setHeight("240px");
+        // #559: resizable columns, same convention every other grid on this page (Plan/Sessions/
+        // Requests) already follows.
+        distribution.getColumns().forEach(c -> c.setResizable(true));
         container.add(Panels.card("Compaction distribution (" + section.compactionDistribution().size() + " compactions)", distribution));
 
         final var reclaimed = new Grid<>(CompactionReclaimedRow.class, false);
@@ -1329,6 +1388,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         reclaimed.addColumn(r -> Fmt.count(r.reclaimedTokens())).setHeader("reclaimed tokens").setTextAlign(ColumnTextAlign.END).setAutoWidth(true);
         reclaimed.setItems(section.compactionReclaimed());
         reclaimed.setHeight("240px");
+        reclaimed.getColumns().forEach(c -> c.setResizable(true));
         container.add(Panels.card("Reclaimed context per compaction", reclaimed));
     }
 
@@ -1340,8 +1400,8 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     /** #355-followup-2: one section per session file sharing a task's label, oldest first,
      *  matching BenchController.taskStats()'s own "attempts" array - the per-attempt params/
      *  outcome/turns/compactions/tool_calls breakdown the operator asked to see individually
-     *  rather than collapsed into the single aggregate taskStatsLines() above reports. Pure and
-     *  testable against real-shape fixtures, same convention as taskStatsLines() itself. */
+     *  rather than collapsed into the single aggregate taskStatsFields() above reports. Pure and
+     *  testable against real-shape fixtures, same convention as taskStatsFields() itself. */
     static List<AttemptSection> attemptSections(final JsonNode stats) {
         final List<AttemptSection> sections = new ArrayList<>();
         final var attempts = stats.path("attempts");

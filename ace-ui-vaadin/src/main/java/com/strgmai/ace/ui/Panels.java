@@ -80,6 +80,35 @@ public final class Panels {
         return tile;
     }
 
+    /** #559: statTile() plus a visible border/surface/radius, via real Aura/base tokens
+     *  (--vaadin-border-color-secondary, --vaadin-radius-l, --vaadin-background-container) rather
+     *  than hand-picked colors - the "Vaadin Dashboard" tile look (vaadin.com/docs/latest/
+     *  components/dashboard) the redesigned Job detail page's own status row already established.
+     *  Promoted out of JobDetailPrototypeView's own former private dashboardTile() helper
+     *  (verbatim chrome) so the Stats tab's redesign (#559) can share the identical tile look
+     *  rather than reinventing it - deliberately a SEPARATE helper from the bare statTile() above,
+     *  not a parameter on it: statTile() is still used elsewhere (JobDetailView's own live
+     *  stepLine/activeTimeLine tiles) with no border/background chrome at all (#529), and giving it
+     *  one there would have silently changed those too. */
+    public static Div dashboardTile(final String label, final String value) {
+        return dashboardTile(label, value, null);
+    }
+
+    /** dashboardTile() with an optional third, smaller detail line underneath the value - e.g.
+     *  "9 tests, 0 failed" under a "harness verification" tile's "GREEN" value. */
+    public static Div dashboardTile(final String label, final String value, final String detail) {
+        final var tile = statTile(label, value, detail);
+        tile.getStyle()
+                .set("border", "1px solid var(--vaadin-border-color-secondary)")
+                .set("border-radius", "var(--vaadin-radius-l)")
+                .set("background", "var(--vaadin-background-container)")
+                .set("padding", "8px 10px")
+                .set("min-width", "0");
+        final var children = tile.getChildren().toList();
+        if (children.size() > 1) children.get(1).getElement().getStyle().set("font-size", "1.05em");
+        return tile;
+    }
+
     /** #476 (PR 3/3): a boxed card wrapper for an existing section - same sectionTitle() header
      *  as before, now with no border/background chrome around its content (#529: Aura migration).
      */

@@ -336,8 +336,7 @@ final class JobTaskDialog {
                     lastChartedPointCount[0] = -1;
                     return;
                 }
-                for (final var line : JobDetailView.taskStatsLines(stats, JobDetailView.taskStats(live.sessions(), task.id(), live.currentStep())))
-                    statsSummaryBody.add(Panels.mono(line));
+                statsSummaryBody.add(JobDetailView.taskStatsTileGrid(stats, JobDetailView.taskStats(live.sessions(), task.id(), live.currentStep())));
                 // only worth its own text breakdown once there's more than one attempt to tell
                 // apart - a single-attempt task would just duplicate the summary lines just added
                 // above. Every attempt that actually made a request still gets its own chart
