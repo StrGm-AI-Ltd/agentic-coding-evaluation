@@ -55,14 +55,25 @@ public class WorkerService {
         return "RESULT " + runDir.getFileName() + (scored ? " scored" : " unscored");
     }
 
-    /** startup reconciliation: a 'running' row with no live process goes back to queued */
+    /** #576, found live: startup reconciliation used to check ProcessHandle.of(pid).isAlive() - a
+     *  real orphan-detection test back when the Python original spawned run_bench.py as a genuinely
+     *  separate OS child process (see this class's own javadoc) and "pid" identified THAT process.
+     *  This Java port runs RunBench IN-PROCESS instead (started() below writes
+     *  ProcessHandle.current().pid() - the SERVICE's own pid, not a separate child), and a
+     *  container's main process is conventionally always pid 1 - so that check was really asking
+     *  "is my own process alive", trivially true on every restart, for every job. A job still
+     *  "running" when reconcile() runs (once, at startup, before this JVM's own single-threaded
+     *  runner has claimed anything) is BY DEFINITION orphaned - nothing is driving it - so every
+     *  such row goes back to queued unconditionally now; there is no "pid" left to meaningfully
+     *  check in this architecture. Confirmed live: the old check silently stranded a mid-run job in
+     *  "running" forever across a routine redeploy, with zero error anywhere - claim() (JobQueue)
+     *  only ever re-picks "queued"/"waiting_lock" rows, so nothing short of this fix (or a manual
+     *  DB edit) could ever resume it. */
     void reconcile() {
         for (Map<String, Object> job : queue.list()) {
             if (!"running".equals(job.get("status"))) continue;
-            final Integer pid = (Integer) job.get("pid");
-            final boolean alive = pid != null && ProcessHandle.of(pid.longValue()).map(ProcessHandle::isAlive).orElse(false);
-            if (!alive) queue.setStatus((UUID) job.get("id"), "queued", null);
-            else log.info("job {}: re-attaching to pid {}", job.get("id"), pid);
+            log.info("job {}: was still 'running' at startup - no in-process worker survives a restart, requeuing", job.get("id"));
+            queue.setStatus((UUID) job.get("id"), "queued", null);
         }
     }
 
