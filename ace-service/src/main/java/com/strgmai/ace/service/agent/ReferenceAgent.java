@@ -308,20 +308,29 @@ public class ReferenceAgent {
         return run(name, instruction, wallSec, tokenBudget, sessionDir, sessionId, continueSession, appendSystem, cwd, proxyBase, abortProxy, firstTokenTimeoutMs, compactionTrigger, maxTurns, model, extraEnv, judge, advisoryOnly, finalTurn, null);
     }
 
-    /** #307: `compactOnLoadKeepRecentTurns` is this issue's own original #300 fix, scoped to the ONE
-     *  caller that still genuinely needs a cold `continueSession=true` reconnect to a large history -
-     *  the budget-exhaustion rescue step. Unlike every other continuation (wrap-up, length-retry,
-     *  handoff's own cold fallback), which keep the raw convenience overloads above (null = do
-     *  nothing, today's existing behavior, unchanged), the rescue step deliberately wants the OLD
-     *  history compacted down to its most recent turns before ever being sent - cheap prefill (old
-     *  verbose tool outputs become one-line stubs) without losing what the session most recently
+    /** #307: `compactOnLoadKeepRecentTurns` is this issue's own original #300 fix, originally scoped
+     *  to the ONE caller that genuinely needed a cold `continueSession=true` reconnect to a large
+     *  history - the budget-exhaustion rescue step - but #580 found live that RunBench.java's own
+     *  shared call-through helper now passes `props.keepRecentTurns()` through this parameter
+     *  UNCONDITIONALLY, for every `continueSession=true` resume it drives, not rescue alone (that
+     *  helper's own comment says as much: "a no-op for the overwhelmingly common case... only ever
+     *  fires when there is real history to shrink before the first send" - describing a much wider
+     *  reach than this method's own doc here used to claim). A resumed session deliberately wants its
+     *  OLD history compacted down to its most recent turns before ever being sent - cheap prefill
+     *  (old verbose tool outputs become one-line stubs) without losing what the session most recently
      *  tried and why, which a trajectory-free fresh pack alone cannot carry. `null` disables this
-     *  (every existing call site) - deliberately NOT `0`, since `0` is itself a legitimate, maximally
-     *  aggressive compaction target (`AgentSession.compact()` already supports it, and `RunSpec`'s
-     *  own `rescueKeepRecentTurns` validation explicitly allows it) that must still fire, not be
-     *  mistaken for "feature off". Applied once, immediately after `loadMessages()`, before the turn
-     *  loop's own reactive `lastPrompt`-driven compaction ever gets a chance to run - which, for turn
-     *  1 of any continuation, it structurally never does (see #300's own diagnosis). */
+     *  (every call site that doesn't resolve a real turn count) - deliberately NOT `0`, since `0` is
+     *  itself a legitimate, maximally aggressive compaction target (`AgentSession.compact()` already
+     *  supports it, and `RunSpec`'s own `rescueKeepRecentTurns` validation explicitly allows it) that
+     *  must still fire, not be mistaken for "feature off". Applied once, immediately after
+     *  `loadMessages()`, before the turn loop's own reactive `lastPrompt`-driven compaction ever gets
+     *  a chance to run - which, for turn 1 of any continuation, it structurally never does (see
+     *  #300's own diagnosis). #580's own practical consequence: since turn-limited/length-capped
+     *  continuations are this harness's NORMAL, frequent case rather than a rare edge case, "turn 1 of
+     *  a continuation" has become the common place compaction actually fires - so the compaction(...)
+     *  2-arg overload (no prompt_tokens_before - see its own javadoc) records nearly every compaction
+     *  event this harness produces, not the reactive 3-arg one; the Stats tab's "Reclaimed context"
+     *  figures stay empty far more often than this method's own original design anticipated. */
     public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
                              Path sessionDir, String sessionId, boolean continueSession,
                              String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, int maxTurns, String model, Map<String, String> extraEnv, JudgeCheckpoint judge, boolean advisoryOnly, FinalTurn finalTurn, Integer compactOnLoadKeepRecentTurns) throws Exception {
