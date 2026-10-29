@@ -212,18 +212,31 @@ public final class Packs {
         return parts.isEmpty() ? "(no dependency files yet)" : parts.toString();
     }
 
+    /** #572, found live: this used to be a raw `new ProcessBuilder(cmd).start()` +
+     *  `p.waitFor()` BEFORE ever reading `p.getInputStream()` - the exact read-after-wait deadlock
+     *  DockerService.proc()'s own javadoc exists to prevent ("read-after-wait deadlocks on >64KB":
+     *  the child blocks on write() once the OS pipe buffer fills, the parent blocks on waitFor()
+     *  forever, since nothing is draining the pipe to let the child's write() complete). Hung LIVE
+     *  in production (2026-10-29, job 44484604/T1->T2): the agent had committed an entire
+     *  third-party vendor directory (an unpacked Gradle distribution, 20,895 files) into the
+     *  workspace repo, so this call's own "diff --stat"/"diff --name-only" output for the next
+     *  task's pack vastly exceeded the pipe buffer - the whole run stalled indefinitely with no
+     *  error, timeout, or crash, silently burning budget on every later task's prompt build (every
+     *  taskPack() call needs this for its own "previous task changed" section). Every OTHER git
+     *  call site in this codebase already goes through DockerService.sh() (RunBench.java/
+     *  RunBenchSupport.java, dozens of call sites) - this was the one remaining holdout with its
+     *  own hand-rolled, buggy duplicate. 20s matches the timeout already used for RunBench.java's
+     *  own equivalent diff --name-only/rev-parse calls (lines 2358/2383/2392) - plenty for a
+     *  legitimate diff, short enough to fail fast instead of hanging the whole run again. */
     static String git(final Path ws, final String... args) {
-        try {
-            final List<String> cmd = new ArrayList<>(List.of("git", "-C", ws.toString()));
-            cmd.addAll(List.of(args));
-            final Process p = new ProcessBuilder(cmd).start();
-            return p.waitFor() == 0 ? new String(p.getInputStream().readAllBytes()) : "";
-        } catch (Exception e) {
+        final List<String> cmd = new ArrayList<>(List.of("git", "-C", ws.toString()));
+        cmd.addAll(List.of(args));
+        final var r = com.strgmai.ace.service.docker.DockerService.sh(20, cmd.toArray(String[]::new));
+        if (r.rc() != 0)
             // an empty result here silently produces a dependency-interfaces pack missing the
             // files that actually changed - the agent then sees stale/absent context, not an error
-            log.warn("`git {}` in {} failed: {}", String.join(" ", args), ws, e.toString());
-            return "";
-        }
+            log.warn("`git {}` in {} failed (rc={}): {}", String.join(" ", args), ws, r.rc(), r.out());
+        return r.rc() == 0 ? r.out() : "";
     }
 
     static final Pattern TEST_CMD = Pattern.compile("gradle|gradlew|pytest|npm test|mvn");
