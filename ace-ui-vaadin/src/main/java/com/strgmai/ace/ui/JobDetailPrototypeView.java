@@ -221,14 +221,20 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
      *  confirmed against the Aura styling docs) rather than hand-picked colors - and a smaller
      *  footprint than that shared helper's own default: tighter padding here, plus the value
      *  span's own font-size shrunk from Panels.statTile()'s 1.4em default (tileShell()'s 2
-     *  children are always [0]=label, [1]=value when called with no detail, as here). */
+     *  children are always [0]=label, [1]=value when called with no detail, as here). Also drops
+     *  tileShell()'s own 140px min-width: found live via getBoundingClientRect() that it was
+     *  wider than the ~133px column track 7 auto-fit columns actually compute here, so every tile
+     *  overflowed into the column-gap space - the real on-screen horizontal gap was ~3px despite
+     *  a declared 32px gap, while the row gap (unaffected, since it's not width-constrained) was
+     *  the full 32px. Overriding it locally keeps Panels.tileShell() itself untouched. */
     private static Div dashboardTile(final String label, final String value) {
         final var tile = Panels.statTile(label, value, null);
         tile.getStyle()
                 .set("border", "1px solid var(--vaadin-border-color-secondary)")
                 .set("border-radius", "var(--vaadin-radius-l)")
                 .set("background", "var(--vaadin-background-container)")
-                .set("padding", "8px 10px");
+                .set("padding", "8px 10px")
+                .set("min-width", "0");
         final var children = tile.getChildren().toList();
         if (children.size() > 1) {
             children.get(1).getElement().getStyle().set("font-size", "1.05em");
