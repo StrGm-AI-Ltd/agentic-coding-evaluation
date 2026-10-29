@@ -367,10 +367,23 @@ public class ReferenceAgent {
             msgs = session.loadMessages();
             if (compactOnLoadKeepRecentTurns != null) {
                 preloadCompactions = AgentSession.compact(msgs, compactOnLoadKeepRecentTurns, 0, compactionStrategies.contains(CompactionStrategies.TOOL_OUTPUT_RECALL));
-                // compacted proactively on load, not reactively at an observed over-threshold prompt -
-                // there is no "prompt tokens before" yet, no request has been sent (#505: the 2-arg
-                // overload omits that field rather than writing a 0 sentinel - see its own javadoc)
-                if (preloadCompactions > 0) session.compaction(preloadCompactions, false);
+                // compacted proactively on load, not reactively at an observed over-threshold prompt
+                // in THIS invocation's own in-memory lastPrompt (which starts at 0 for every fresh
+                // run() call - #300's own diagnosis) - but the session being RESUMED almost always
+                // already has a real, recent prompt size recorded from its own prior turns, on disk.
+                // #580, found live: before this, every preload compaction wrote NO "prompt tokens
+                // before" at all (the 2-arg overload - #505's own documented, deliberate choice for
+                // a session with genuinely nothing to measure yet) - but since this harness's own
+                // turn-limited/length-capped continuations are a frequent, normal occurrence, "no
+                // measurement" had become the common outcome recorded, not the rare edge case #505
+                // anticipated. AgentSession.lastPromptTokens() reads the session's own last known
+                // real figure back off disk - still null (2-arg, unmeasured) for a GENUINELY fresh
+                // session with no prior assistant turn at all, same as before.
+                if (preloadCompactions > 0) {
+                    final Long lastKnownPrompt = AgentSession.lastPromptTokens(session.path());
+                    if (lastKnownPrompt != null && lastKnownPrompt > 0) session.compaction(preloadCompactions, false, lastKnownPrompt.intValue());
+                    else session.compaction(preloadCompactions, false);
+                }
             }
             msgs.add(UserMessage.from(instruction));
             session.user(instruction);

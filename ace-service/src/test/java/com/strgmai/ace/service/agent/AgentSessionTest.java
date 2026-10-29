@@ -298,6 +298,36 @@ class AgentSessionTest {
         assertEquals(2L, u.get("turns"));
     }
 
+    /** #580: unlike usage() above (which SUMS every assistant turn's usage.input), lastPromptTokens()
+     *  keeps only the LAST one seen - the most recent real prompt size, which a preload compaction
+     *  about to fire on a resumed session needs as its own "before" baseline (ReferenceAgent.run()'s
+     *  own in-memory lastPrompt always starts at 0 for a brand-new run() invocation, so it has no way
+     *  to know this itself without reading it back off the session file being resumed). */
+    @Test
+    void lastPromptTokensReturnsTheMostRecentAssistantTurnsInputNotTheSum() throws IOException {
+        final var dir = Files.createTempDirectory("session");
+        final var session = new AgentSession(dir, "s3b", false);
+        session.assistant(null, "a", List.of(), "stop", Map.of("input", 100, "output", 10));
+        session.assistant(null, "b", List.of(), "stop", Map.of("input", 45000, "output", 20));
+
+        assertEquals(45000L, AgentSession.lastPromptTokens(session.path()));
+    }
+
+    @Test
+    void lastPromptTokensIsNullForASessionWithNoAssistantTurnYet() throws IOException {
+        final var dir = Files.createTempDirectory("session");
+        final var session = new AgentSession(dir, "s3c", false);
+        session.user("the pack");
+
+        assertNull(AgentSession.lastPromptTokens(session.path()));
+    }
+
+    @Test
+    void lastPromptTokensReturnsNullForAMissingOrNullFile() {
+        assertNull(AgentSession.lastPromptTokens(Path.of("/no/such/session.jsonl")));
+        assertNull(AgentSession.lastPromptTokens(null));
+    }
+
     /** #417 follow-up review (C8): structured_eviction's own one-shot summarization call spends
      *  real tokens RecordingProxy already charges to the task, but nothing recorded it in the
      *  SESSION file's own accounting - usage() (the fallback token source for a session with no
