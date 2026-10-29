@@ -287,59 +287,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         }
         lastActionsSignature = signature;
 
-        final var actions = new HorizontalLayout();
-        actions.setPadding(false);
-        actions.setSpacing(true);
-        if (JobStatuses.canCancel(job.status(), job.cancel_requested())) {
-            actions.add(new Button("Cancel", e -> {
-                try {
-                    client.cancel(job.id());
-                    refresh();
-                } catch (final Exception ex) {
-                    log.warn("could not cancel job {}: {}", job.id(), ex.toString());
-                    Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
-                }
-            }));
-        }
-        if (JobStatuses.canPause(job.status(), job.cancel_requested(), job.pause_requested())) {
-            actions.add(new Button("Pause", e -> {
-                try {
-                    client.pause(job.id());
-                    refresh();
-                } catch (final Exception ex) {
-                    log.warn("could not pause job {}: {}", job.id(), ex.toString());
-                    Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
-                }
-            }));
-            // the gentler alternative: for a running job, takes effect once the task currently in
-            // progress actually finishes rather than immediately - "Pause" above can discard real,
-            // in-progress agent work if it lands mid-task.
-            final var pauseAfterTask = new Button("Pause after task", e -> {
-                try {
-                    client.pauseAfterTask(job.id());
-                    refresh();
-                    Notification.show("Will pause once the current task finishes.", 4000, Notification.Position.BOTTOM_END);
-                } catch (final Exception ex) {
-                    log.warn("could not request a pause-after-task for job {}: {}", job.id(), ex.toString());
-                    Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
-                }
-            });
-            pauseAfterTask.setTooltipText("Pause once the currently running task finishes, instead of interrupting it now.");
-            actions.add(pauseAfterTask);
-        }
-        if (JobStatuses.canRequeue(job.status())) {
-            // "paused" reads as Resume - same requeue endpoint either way, R18's own git-tag resume
-            // mechanism in the kept workspace is what actually picks the run back up
-            actions.add(new Button("paused".equals(job.status()) ? "Resume" : "Requeue", e -> {
-                try {
-                    client.requeue(job.id());
-                    refresh();
-                } catch (final Exception ex) {
-                    log.warn("could not requeue job {}: {}", job.id(), ex.toString());
-                    Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
-                }
-            }));
-        }
+        final var actions = buildCancelPauseRequeueRow(client, job, this::refresh);
         if (job.run_id() != null && Boolean.TRUE.equals(runImported)) {
             actions.add(new Button("Open run detail", e ->
                     getUI().ifPresent(ui -> ui.navigate("runs/" + job.run_id()))));
@@ -357,6 +305,69 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         // pointed at a real endpoint, since there is no actual log file for it to serve.
         actionsHolder.removeAll();
         actionsHolder.add(actions);
+    }
+
+    /** #528 (Phase 2): extracted out of updateActions() so JobDetailPrototypeView can offer the same
+     *  Cancel/Pause/Pause-after-task/Requeue-or-Resume controls - parameterized (client/job/onChanged)
+     *  rather than reading this view's own fields, same treatment Phase 1 already gave the other
+     *  live-machinery pieces. The run-imported "Open run detail" hint stays out of this method and
+     *  inline in updateActions() instead - a separate concern (whether this job's run has already been
+     *  imported for comparison) from job-level live control, and not something the new page asked for. */
+    static HorizontalLayout buildCancelPauseRequeueRow(final ServiceClient client, final Api.Job job, final Runnable onChanged) {
+        final var actions = new HorizontalLayout();
+        actions.setPadding(false);
+        actions.setSpacing(true);
+        if (JobStatuses.canCancel(job.status(), job.cancel_requested())) {
+            actions.add(new Button("Cancel", e -> {
+                try {
+                    client.cancel(job.id());
+                    onChanged.run();
+                } catch (final Exception ex) {
+                    log.warn("could not cancel job {}: {}", job.id(), ex.toString());
+                    Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
+                }
+            }));
+        }
+        if (JobStatuses.canPause(job.status(), job.cancel_requested(), job.pause_requested())) {
+            actions.add(new Button("Pause", e -> {
+                try {
+                    client.pause(job.id());
+                    onChanged.run();
+                } catch (final Exception ex) {
+                    log.warn("could not pause job {}: {}", job.id(), ex.toString());
+                    Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
+                }
+            }));
+            // the gentler alternative: for a running job, takes effect once the task currently in
+            // progress actually finishes rather than immediately - "Pause" above can discard real,
+            // in-progress agent work if it lands mid-task.
+            final var pauseAfterTask = new Button("Pause after task", e -> {
+                try {
+                    client.pauseAfterTask(job.id());
+                    onChanged.run();
+                    Notification.show("Will pause once the current task finishes.", 4000, Notification.Position.BOTTOM_END);
+                } catch (final Exception ex) {
+                    log.warn("could not request a pause-after-task for job {}: {}", job.id(), ex.toString());
+                    Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
+                }
+            });
+            pauseAfterTask.setTooltipText("Pause once the currently running task finishes, instead of interrupting it now.");
+            actions.add(pauseAfterTask);
+        }
+        if (JobStatuses.canRequeue(job.status())) {
+            // "paused" reads as Resume - same requeue endpoint either way, R18's own git-tag resume
+            // mechanism in the kept workspace is what actually picks the run back up
+            actions.add(new Button("paused".equals(job.status()) ? "Resume" : "Requeue", e -> {
+                try {
+                    client.requeue(job.id());
+                    onChanged.run();
+                } catch (final Exception ex) {
+                    log.warn("could not requeue job {}: {}", job.id(), ex.toString());
+                    Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
+                }
+            }));
+        }
+        return actions;
     }
 
     /** The plan's own task table: planned order, id, description, and a live status - replaces the

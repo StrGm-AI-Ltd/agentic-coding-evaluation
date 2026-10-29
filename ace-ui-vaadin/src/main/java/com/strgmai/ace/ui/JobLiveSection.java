@@ -45,6 +45,7 @@ public final class JobLiveSection extends VerticalLayout {
     private final String jobId;
     private final Runnable onChanged;
     private final Runnable onLiveChanged;
+    private final boolean alwaysShowLiveData;
     private final JobLiveState live = new JobLiveState();
 
     private transient Thread sseThread;
@@ -123,10 +124,22 @@ public final class JobLiveSection extends VerticalLayout {
      *  updatePlanGrid() as its own first line, on every single live update it ever ran. */
     public JobLiveSection(final ServiceClient client, final String jobId, final Runnable onChanged,
             final Runnable onLiveChanged, final com.vaadin.flow.component.Component planCard) {
+        this(client, jobId, onChanged, onLiveChanged, planCard, false);
+    }
+
+    /** alwaysShowLiveData: when true, a TERMINAL job's Sessions/Recent-requests/log-tail still get
+     *  populated from the replayed JobLiveState instead of the early-return below that otherwise
+     *  blanks them for one - JobDetailPrototypeView's own choice (a finished job's session history
+     *  is still worth showing there), kept opt-in rather than the new default so JobDetailView's own
+     *  existing behavior (hide them once a job is done - nothing left to watch live) is unchanged. */
+    public JobLiveSection(final ServiceClient client, final String jobId, final Runnable onChanged,
+            final Runnable onLiveChanged, final com.vaadin.flow.component.Component planCard,
+            final boolean alwaysShowLiveData) {
         this.client = client;
         this.jobId = jobId;
         this.onChanged = onChanged;
         this.onLiveChanged = onLiveChanged;
+        this.alwaysShowLiveData = alwaysShowLiveData;
         setPadding(false);
         setSpacing(false);
         getStyle().set("margin-top", "16px");
@@ -176,6 +189,34 @@ public final class JobLiveSection extends VerticalLayout {
         return live;
     }
 
+    /** Individual-component accessors, for an owning view that wants its own visual presentation of
+     *  these pieces instead of the pre-assembled layout the constructor builds (JobDetailPrototypeView's
+     *  own case - see its own javadoc). Each returned Component is still a child of this VerticalLayout
+     *  until the caller add()s it elsewhere, which Vaadin reparents automatically; this class keeps
+     *  updating it in place either way, since renderLive() only ever touches these fields directly, never
+     *  their current parent. A caller that reparents every one of these should also set this component's
+     *  own setVisible(false) - it still needs to stay add()ed SOMEWHERE for its attach/detach listener to
+     *  drive the SSE connection, but has nothing left worth showing once its content moves out. */
+    public Grid<JobLiveState.SessionRow> sessionsGrid() {
+        return sessionsGrid;
+    }
+
+    public Grid<JobLiveState.RequestRow> requestsGrid() {
+        return requestsGrid;
+    }
+
+    public ApexCharts requestLatencyChart() {
+        return requestLatencyChart;
+    }
+
+    public Div logTail() {
+        return logTail;
+    }
+
+    public Span requestsLine() {
+        return requestsLine;
+    }
+
     /** Called once per poll tick by the owning view with its own freshly-fetched job/planTasks/
      *  currentTaskStats - mirrors JobDetailView's own update()+updateLive() split before this class
      *  existed, just parameter-driven instead of reading instance fields implicitly. */
@@ -200,15 +241,16 @@ public final class JobLiveSection extends VerticalLayout {
         // single live update, not just the ones that reach the end of this method.
         onLiveChanged.run();
         final var terminal = currentJob != null && JobStatuses.isTerminal(currentJob.status());
+        final var hideForTerminal = terminal && !alwaysShowLiveData;
         lostNotice.setVisible(sseThread != null && !sseThread.isAlive()
                 && !terminal && !sseStopped);
-        terminalNote.setVisible(terminal);
+        terminalNote.setVisible(hideForTerminal);
         plannedOrderLine.setVisible(!terminal && !live.executionOrder().isEmpty());
         liveStatsRow.setVisible(!terminal);
-        sessionsGrid.setVisible(!terminal);
-        requestsLine.setVisible(!terminal);
+        sessionsGrid.setVisible(!hideForTerminal);
+        requestsLine.setVisible(!hideForTerminal);
 
-        if (terminal) {
+        if (hideForTerminal) {
             final var result = currentJob.result_line();
             if (result != null && !result.isBlank()) {
                 logTail.setText(result);
@@ -247,8 +289,18 @@ public final class JobLiveSection extends VerticalLayout {
 
         requestsGrid.setVisible(!recent.isEmpty());
         requestsGrid.setItems(recent);
-        requestLatencyChart.setVisible(!recent.isEmpty());
-        updateRequestLatencyChart(recent);
+        // found live: a terminal job's one-shot replay (alwaysShowLiveData=true) delivers its
+        // entire request history as a burst of individual events within a second or two, each one
+        // calling renderLive() again - unlike a genuinely live job, where real request timing
+        // naturally paces these calls seconds or minutes apart. The ApexCharts Flow wrapper's own
+        // client-side updateSeries() can't keep up with that burst rate (TypeError thrown
+        // repeatedly in the browser console) - skipped here for that one case; the grid/text above
+        // (what alwaysShowLiveData was actually asked to restore) have no such issue.
+        final var chartable = !terminal || !alwaysShowLiveData;
+        requestLatencyChart.setVisible(chartable && !recent.isEmpty());
+        if (chartable) {
+            updateRequestLatencyChart(recent);
+        }
 
         final var tail = live.logTail() != null ? live.logTail()
                 : (currentJob != null ? currentJob.result_line() : null);
