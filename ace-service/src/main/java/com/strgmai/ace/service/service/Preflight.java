@@ -42,6 +42,16 @@ public class Preflight {
         // treatment as git immediately above, for the identical reason: a deployment missing it
         // can never actually run a task, so it must refuse to start, not fail hours in.
         add(out, "zsh", DockerService.sh(15, "zsh", "--version").rc() == 0, "zsh", true);
+        // #555, found live the same way zsh was above: a real deployment's runtime image had no
+        // archive-extraction tool at all (eclipse-temurin:21-jre + git/zsh/docker-cli only, no
+        // unzip) - every task in an L2 run failed at its very first step (bootstrapping a Gradle
+        // wrapper, which ships as a .zip) because the agent's own bash tool (AgentTools.bash(),
+        // same exec path zsh guards above) had nothing able to extract it. Same fatal treatment:
+        // a deployment missing this can still START a run, but every task needing an archive
+        // (near-universal for bootstrapping a fresh project) silently can't finish, burning the
+        // whole run's budget the same way the missing-zsh incident did before that got this same
+        // check - this surfaces it before a run starts instead of hours into one.
+        add(out, "unzip", DockerService.sh(15, "unzip", "-v").rc() == 0, "unzip", true);
         try {
             Class.forName("com.strgmai.ace.service.agent.ReferenceAgent");
             add(out, "reference agent", true, BenchProperties.HARNESS_VERSION, true);

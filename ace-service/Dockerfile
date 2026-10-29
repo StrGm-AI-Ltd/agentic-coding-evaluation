@@ -49,7 +49,7 @@ FROM eclipse-temurin:21-jre
 # until #327's own new failure-category telemetry made the crash directly visible. Added as its own
 # fatal Preflight check too (Preflight.java), so a future deployment missing it refuses to start
 # instead of silently burning a whole run's budget the same way again.
-RUN apt-get update && apt-get install -y --no-install-recommends git zsh ca-certificates curl gnupg \
+RUN apt-get update && apt-get install -y --no-install-recommends git zsh unzip ca-certificates curl gnupg \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \
