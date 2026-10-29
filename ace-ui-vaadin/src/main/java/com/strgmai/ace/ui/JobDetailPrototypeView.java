@@ -5,6 +5,7 @@ import com.github.appreciated.css.grid.sizes.Length;
 import com.github.appreciated.css.grid.sizes.MinMax;
 import com.github.appreciated.css.grid.sizes.Repeat;
 import com.github.appreciated.layout.FlexibleGridLayout;
+import com.vaadin.flow.component.badge.Badge;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.grid.Grid;
@@ -206,11 +207,12 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
 
     /** The "Params" tile - the job's own CLI invocation flags (job.argv()), one pill-shaped Badge
      *  per flag instead of a flat mono-space blob - the same Badge component the status pill up
-     *  top already renders with (Badges.status()), just on the neutral CONTRAST theme rather than
-     *  a status color: per this class's own design rationale above, color here is reserved for
-     *  status specifically, and a param isn't a status. Spans every column via
-     *  `grid-column: 1 / -1` and lands in its own row below the compact tiles through normal grid
-     *  auto-placement - no explicit row index needed. */
+     *  top already renders with (Badges.status()). Neutral CONTRAST theme by default (per this
+     *  class's own design rationale above, color is reserved for status specifically, and a param
+     *  isn't a status), except a purely numeric value switches to WARNING - a quick visual pick-out
+     *  for the token/time budget knobs sitting among the state ("ref", "agent", "on") and
+     *  freeform-text flags. Spans every column via `grid-column: 1 / -1` and lands in its own row
+     *  below the compact tiles through normal grid auto-placement - no explicit row index needed. */
     private static Div paramsTile(final Api.Job job) {
         final var argv = job.argv() == null ? List.<String>of() : job.argv();
         final var chips = new Div();
@@ -218,7 +220,7 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         if (argv.isEmpty()) {
             chips.add(new Span("–"));
         } else {
-            argv.forEach(a -> chips.add(Badges.text(formatParam(a), Badges.CONTRAST)));
+            argv.forEach(a -> chips.add(paramBadge(a)));
         }
         final var tile = Panels.statTile("Params", chips);
         tile.getStyle()
@@ -234,13 +236,16 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
      *  replaced with spaces in the key only (never the value, which may legitimately contain its
      *  own "-", e.g. a run id); a bare flag with no "=" (e.g. "--self-review") just gets its own
      *  dashes replaced, with no ": " since there's no value to separate it from. */
-    private static String formatParam(final String arg) {
+    private static Badge paramBadge(final String arg) {
         final var stripped = arg.startsWith("--") ? arg.substring(2) : arg;
         final var eq = stripped.indexOf('=');
         if (eq < 0) {
-            return stripped.replace('-', ' ');
+            return Badges.text(stripped.replace('-', ' '), Badges.CONTRAST);
         }
-        return stripped.substring(0, eq).replace('-', ' ') + ": " + stripped.substring(eq + 1);
+        final var key = stripped.substring(0, eq).replace('-', ' ');
+        final var value = stripped.substring(eq + 1);
+        final var theme = value.matches("-?\\d+(\\.\\d+)?") ? Badges.WARNING : Badges.CONTRAST;
+        return Badges.text(key + ": " + value, theme);
     }
 
     /** Panels.statTile() plus a visible border/surface/radius, via real Aura/base tokens
