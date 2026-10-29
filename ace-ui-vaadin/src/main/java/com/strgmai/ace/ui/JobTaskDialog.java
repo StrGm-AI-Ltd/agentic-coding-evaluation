@@ -68,6 +68,15 @@ final class JobTaskDialog {
      *  changing for as long as the task keeps running. */
     static void open(final ServiceClient client, final String jobId, final Api.PlanTask task,
             final Supplier<Api.Job> currentJob, final JobLiveState live, final Component ownerView, final Runnable onChanged) {
+        // #575, found live: the Plan grid's own row-click event carries an item key resolved
+        // against whichever data provider the server happens to have at the moment the click's own
+        // RPC round-trip is actually processed - the grid's poll cycle replaces the whole item list
+        // wholesale (setItems(planTasks)) every ~2s, and a click landing in that narrow window
+        // resolves to no item at all. A null task here used to reach task.id() on the very next
+        // line as an unguarded NullPointerException, surfaced to DefaultErrorHandler - the click
+        // target evaporated under a concurrent refresh, not an operator-facing error worth a
+        // notification, so this is a quiet no-op instead.
+        if (task == null) return;
         final var dialog = new com.vaadin.flow.component.dialog.Dialog();
         dialog.setHeaderTitle(task.id() + (task.title() == null || task.title().isBlank() ? "" : " — " + task.title()));
         dialog.setWidth("min(900px, 90vw)");
