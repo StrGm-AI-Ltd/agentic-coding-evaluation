@@ -44,8 +44,13 @@ import java.util.Objects;
  * once per navigation; the 2 s poll of GET /api/jobs/{id} and the /jobs/{id}/events
  * SSE stream (flushed via @Push) update individual fields, so live updates never
  * rebuild the DOM, steal focus, or lose text selection.
+ *
+ * <p>Moved off the primary "jobs/:jobId" route to "jobs/:jobId/classic" once
+ * JobDetailPrototypeView took over as the main Job detail page - kept fully intact and linked
+ * from there as the fallback for an in-progress job (Sessions/Recent requests/live log tail/
+ * Restart-Resume), none of which the new static-snapshot page has yet.
  */
-@Route(value = "jobs/:jobId", layout = MainLayout.class)
+@Route(value = "jobs/:jobId/classic", layout = MainLayout.class)
 public class JobDetailView extends VerticalLayout implements BeforeEnterObserver {
     private static final Logger log = LoggerFactory.getLogger(JobDetailView.class);
 

@@ -20,23 +20,30 @@ import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
 
 import java.time.Duration;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * UX-redesign prototype for the Job detail page - a parallel, read-only route
- * (jobs/:jobId/prototype) that does NOT touch JobDetailView.java, so the real live page keeps
- * working exactly as-is while this explores a different information hierarchy on the same real
- * data.
+ * Job detail — the primary jobs/:jobId page. Started as a parallel, read-only UX-redesign
+ * prototype at jobs/:jobId/prototype that deliberately didn't touch JobDetailView.java while this
+ * explored a different information hierarchy on the same real data; now promoted to the main
+ * route. JobDetailView.java moved to jobs/:jobId/classic rather than being deleted - it stays
+ * fully intact as the fallback for an in-progress job (see the terminal-job guard in beforeEnter()
+ * below), since this page still doesn't have a Sessions table, Recent requests, a live log tail,
+ * or Restart/Resume controls.
  *
- * Deliberately a STATIC SNAPSHOT, not a live reimplementation: it fetches the job + plan once via
- * the same ServiceClient the real page uses, but does not replicate JobDetailView's own 2s-poll/
- * SSE-live-state machinery (JobLiveState, JobEventLoop) - that's a lot of plumbing duplication
- * this layout exploration doesn't need to prove or disprove the new hierarchy. Session-level data
- * (live sessions/requests/log-tail) is out of scope here - this prototype targets TERMINAL jobs
- * only (see the JobStatuses.isTerminal() guard in beforeEnter() below) and would under-report a
- * still-running job's current task.
+ * Still a STATIC SNAPSHOT for everything except the Plan grid's own time/generated/prefilled
+ * columns: it fetches the job + plan once via the same ServiceClient the real page uses, and does
+ * not keep JobDetailView's own 2s-poll/@Push machinery running for live field updates. It DOES do
+ * one synchronous, one-shot SSE replay (replaySessions() below) to populate those three Plan
+ * columns, reusing JobDetailView.taskStats(sessions, taskId, currentStep) directly rather than
+ * re-deriving that aggregation - see replaySessions()'s own javadoc for why blocking on it here is
+ * safe. Everything else session-level (the Sessions table itself, Recent requests, the live log
+ * tail) is still out of scope - this page only renders TERMINAL jobs (see the
+ * JobStatuses.isTerminal() guard in beforeEnter() below) and links to the classic page for
+ * anything still running or queued.
  *
  * Found live, checking this against real data: PlanTask.implemented() is false for EVERY task on
  * every already-succeeded job actually in this DB (checked l2-gran-fine-4, l2-gran-medium-6) - so
@@ -71,7 +78,7 @@ import java.util.Map;
  *   intentional exception, the "Params" tile (the job's own CLI flags), which spans the full grid
  *   row via `grid-column: 1 / -1` because free-form argv text doesn't fit a short value span.
  */
-@Route(value = "jobs/:jobId/prototype", layout = MainLayout.class)
+@Route(value = "jobs/:jobId", layout = MainLayout.class)
 public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnterObserver {
 
     private final ServiceClient client;
@@ -85,9 +92,9 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
     public void beforeEnter(final BeforeEnterEvent event) {
         removeAll();
         final var jobId = event.getRouteParameters().get("jobId").orElse(null);
-        add(new ViewHeader("Job detail — layout prototype"));
-        final var note = new Span("Static snapshot for UX review - no live updates, Sessions, or Recent requests here. "
-                + "See the real, live page for those.");
+        add(new ViewHeader("Job detail"));
+        final var note = new Span("Static snapshot - no live updates, Sessions, or Recent requests here yet. "
+                + "Use the classic page for an in-progress job, or to intervene on a run.");
         note.getStyle().set("font-size", "0.85em").set("opacity", "0.75");
         add(note);
         if (jobId == null) {
@@ -97,24 +104,59 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         try {
             final var job = client.job(jobId);
             if (!JobStatuses.isTerminal(job.status())) {
-                add(Panels.warn("This prototype only renders finished jobs (see the class javadoc for why) "
-                        + "- this job is still " + job.status() + "."));
+                add(stillRunningNotice(job.status(), jobId));
                 return;
             }
             final var plan = client.jobPlan(jobId);
-            render(job, plan.tasks() == null ? List.of() : plan.tasks());
+            render(job, plan.tasks() == null ? List.of() : plan.tasks(), replaySessions(jobId));
         } catch (final Exception e) {
             add(Panels.error(client.errorText(e)));
         }
     }
 
-    private void render(final Api.Job job, final List<Api.PlanTask> tasks) {
-        add(new RouterLink("← Queue", JobsView.class));
-        final var openLive = new Button("Open live page",
-                e -> getUI().ifPresent(ui -> ui.navigate("jobs/" + job.id())));
-        openLive.addThemeVariants(ButtonVariant.TERTIARY);
+    /** Same chrome as Panels.warn() (padding/border-radius/margin/white-space), rebuilt locally
+     *  because that helper only takes plain text (setText() would wipe out a child RouterLink) -
+     *  the one case on this page where the warning itself needs a link, not just a sentence. */
+    private static Div stillRunningNotice(final String status, final String jobId) {
+        final var text = new Span("This page only renders finished jobs (see the class javadoc for why) "
+                + "- this job is still " + status + ". ");
+        final var classicLink = new RouterLink("Open the classic page", JobDetailView.class,
+                new com.vaadin.flow.router.RouteParameters("jobId", jobId));
+        final var notice = new Div(text, classicLink);
+        notice.getStyle()
+                .set("padding", "8px 12px")
+                .set("border-radius", "4px")
+                .set("margin", "6px 0")
+                .set("white-space", "pre-wrap");
+        return notice;
+    }
 
-        final var titleRow = new HorizontalLayout(Badges.status(job.status()), openLive);
+    /** One-shot, synchronous replay of /jobs/{id}/events into a fresh JobLiveState - safe to block
+     *  on here (unlike the real page, which keeps this stream open for live updates) because the
+     *  job is already confirmed terminal at this point: JobEventLoop's own class doc already
+     *  establishes that the server itself ends the stream once a job is terminal, after replaying
+     *  its full backlog, so this returns promptly with the complete session history and never
+     *  needs a background thread or @Push. Reuses the exact same JobLiveState the real page
+     *  accumulates its Sessions table from, rather than re-deriving time/token totals from scratch -
+     *  best-effort: a transient failure here just means the Plan grid's time/generated/prefilled
+     *  columns fall back to "–" for every task, not that the whole page fails to render. */
+    private JobLiveState replaySessions(final String jobId) {
+        final var state = new JobLiveState();
+        try {
+            client.streamJobEvents(jobId, state::apply);
+        } catch (final Exception e) {
+            // best-effort - see javadoc above
+        }
+        return state;
+    }
+
+    private void render(final Api.Job job, final List<Api.PlanTask> tasks, final JobLiveState live) {
+        add(new RouterLink("← Queue", JobsView.class));
+        final var openClassic = new Button("Open classic page",
+                e -> getUI().ifPresent(ui -> ui.navigate("jobs/" + job.id() + "/classic")));
+        openClassic.addThemeVariants(ButtonVariant.TERTIARY);
+
+        final var titleRow = new HorizontalLayout(Badges.status(job.status()), openClassic);
         titleRow.setAlignItems(FlexComponent.Alignment.CENTER);
         titleRow.setSpacing(true);
         titleRow.setPadding(false);
@@ -145,14 +187,30 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
             }
         }
 
-        add(statTileGrid(job, tasks, lastAttempt));
+        final var statGrid = statTileGrid(job, tasks, lastAttempt);
+        // found live via getBoundingClientRect(): the stat-tile grid's own 12px bottom margin
+        // stacked with Panels.card()'s own 10px top margin, the VerticalLayout's own inter-child
+        // spacing, the Plan card's own top padding, and sectionTitle()'s own 16px margin-top added
+        // up to a 60px gap down to the "Plan" title - nearly double the 32px tile-row rhythm the
+        // rest of this page uses. Trimmed to 4px here (locally - the grid is otherwise untouched
+        // above the tiles, where this same margin still applies).
+        statGrid.getStyle().set("margin", "12px 0 4px 0");
+        add(statGrid);
 
         if (!tasks.isEmpty()) {
-            final var planCard = Panels.card("Plan", buildPlanGrid(tasks, lastAttempt));
+            final var planCard = Panels.card("Plan", buildPlanGrid(tasks, lastAttempt, live));
             // Panels.card()'s own 16px horizontal padding insets the Grid 16px in from the card's
             // outer edge on each side - zeroing it here (locally, not in the shared helper) lines
             // the Grid's own visible left/right edges up exactly with the Params tile's above it.
-            planCard.getStyle().set("padding", "12px 0");
+            // Top margin also zeroed (see the stat-tile grid's own comment above) - the 10px
+            // bottom margin is kept, for spacing below the Plan grid.
+            planCard.getStyle().set("padding", "12px 0").set("margin", "0 0 10px 0");
+            // sectionTitle()'s own 16px margin-top (Panels.java, shared) is part of the same
+            // over-tall gap found above - shrunk here to 4px, matching its own margin-bottom,
+            // without touching that shared helper (card()'s only child when called with one
+            // content component, as here, is always its own sectionTitle() header).
+            planCard.getChildren().findFirst()
+                    .ifPresent(title -> title.getElement().getStyle().set("margin-top", "4px"));
             add(planCard);
         }
     }
@@ -220,7 +278,8 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         if (argv.isEmpty()) {
             chips.add(new Span("–"));
         } else {
-            argv.forEach(a -> chips.add(paramBadge(a)));
+            argv.stream().sorted(Comparator.comparing(JobDetailPrototypeView::paramKey))
+                    .forEach(a -> chips.add(paramBadge(a)));
         }
         final var tile = Panels.statTile("Params", chips);
         tile.getStyle()
@@ -246,6 +305,14 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         final var value = stripped.substring(eq + 1);
         final var theme = value.matches("-?\\d+(\\.\\d+)?") ? Badges.WARNING : Badges.CONTRAST;
         return Badges.text(key + ": " + value, theme);
+    }
+
+    /** The sort key for a raw argv entry - its key portion (before "=", or the whole flag when
+     *  there's none), pre-dash-replacement so it sorts the same regardless of the display format. */
+    private static String paramKey(final String arg) {
+        final var stripped = arg.startsWith("--") ? arg.substring(2) : arg;
+        final var eq = stripped.indexOf('=');
+        return eq < 0 ? stripped : stripped.substring(0, eq);
     }
 
     /** Panels.statTile() plus a visible border/surface/radius, via real Aura/base tokens
@@ -302,7 +369,17 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         return Fmt.daysHoursMinutes(Duration.between(start, end).getSeconds());
     }
 
-    private Grid<Api.PlanTask> buildPlanGrid(final List<Api.PlanTask> tasks, final Map<String, Api.TaskAttempt> lastAttempt) {
+    /** Same column set as JobDetailView.buildPlanGrid()'s own real-page grid, including the time/
+     *  generated/prefilled trio - reuses JobDetailView.taskStats(sessions, taskId, currentStep)
+     *  directly (package-private, same package) rather than re-deriving that aggregation here, so
+     *  this stays byte-for-byte consistent with the real page's own numbers. sessions/currentStep
+     *  come from replaySessions()'s one-shot replay; an empty JobLiveState (the replay's best-effort
+     *  failure path) just means every task's figures read "–"/"0" via taskStats()'s own no-match
+     *  default, same as the real page shows for a task with no sessions at all. */
+    private Grid<Api.PlanTask> buildPlanGrid(final List<Api.PlanTask> tasks, final Map<String, Api.TaskAttempt> lastAttempt,
+            final JobLiveState live) {
+        final var sessions = live.sessions();
+        final var currentStep = live.currentStep();
         final var grid = new Grid<>(Api.PlanTask.class, false);
         grid.addColumn(Api.PlanTask::order).setHeader("#").setAutoWidth(true).setFlexGrow(0);
         grid.addColumn(Api.PlanTask::id).setHeader("task").setAutoWidth(true).setFlexGrow(0);
@@ -314,8 +391,15 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
                     final var a = lastAttempt.get(t.id());
                     return a == null ? null : a.reported_detail();
                 });
+        grid.addColumn(t -> Fmt.daysHoursMinutes(JobDetailView.taskStats(sessions, t.id(), currentStep).wallSec()))
+                .setHeader("time").setAutoWidth(true).setFlexGrow(0);
+        grid.addColumn(t -> Fmt.count(JobDetailView.taskStats(sessions, t.id(), currentStep).completionTokens()))
+                .setHeader("generated").setAutoWidth(true).setFlexGrow(0);
+        grid.addColumn(t -> Fmt.count(JobDetailView.taskStats(sessions, t.id(), currentStep).promptTokens()))
+                .setHeader("prefilled").setAutoWidth(true).setFlexGrow(0);
         grid.addColumn(t -> t.attempts() <= 1 && !t.rescued() ? "" : t.attempts() + (t.rescued() ? " (rescued)" : ""))
                 .setHeader("attempts").setAutoWidth(true).setFlexGrow(0);
+        grid.getColumns().forEach(c -> c.setResizable(true));
         grid.setItems(tasks);
         grid.setHeight(Math.min(tasks.size() * 44 + 60, 420) + "px");
         return grid;

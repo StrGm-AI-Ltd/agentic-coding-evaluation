@@ -20,12 +20,12 @@ public final class Links {
     }
 
     public static RouterLink jobLink(final String jobId) {
-        return paramLink(jobId, JobDetailView.class, "jobId", jobId);
+        return paramLink(jobId, JobDetailPrototypeView.class, "jobId", jobId);
     }
 
     /** A link showing the run id that opens the job detail — how the Jinja queue page links runs. */
     public static RouterLink runToJobLink(final String runId, final String jobId) {
-        return paramLink(runId, JobDetailView.class, "jobId", jobId);
+        return paramLink(runId, JobDetailPrototypeView.class, "jobId", jobId);
     }
 
     public static RouterLink experimentLink(final String experimentId) {
