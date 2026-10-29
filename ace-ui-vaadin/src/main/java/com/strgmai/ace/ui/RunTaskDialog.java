@@ -157,17 +157,14 @@ final class RunTaskDialog {
                     statsBody.add(Panels.card(section.header(), Panels.mono(section.body())));
                 }
                 JobDetailView.addCompactionEffectivenessTables(section, statsBody);
-                // #517 (B): this dialog is a one-shot load (a finished, already-imported run - no
-                // polling), so build-then-immediately-update is just the simplest way to reuse the
-                // same build()/update() split JobDetailView's own live version needs for its
-                // in-place redraws; no second update ever follows here.
+                // #517 (B): this dialog is a one-shot load (a finished, already-imported run), so
+                // its real data is already in hand - build each chart with it embedded at
+                // construction (see buildRequestSpeedChart()'s own javadoc for why, #541-followup).
                 final var attemptLabel = multiAttempt ? " — Attempt " + (i + 1) : "";
-                final var speedChart = JobDetailView.buildRequestSpeedChart();
-                JobDetailView.updateRequestSpeedChart(speedChart, section.requestSpeeds(), section.compactionsBeforeRequest(),
-                        section.judgeOnTrackRequests(), section.judgeOffTrackRequests());
-                final var timingChart = JobDetailView.buildRequestTimingChart();
-                JobDetailView.updateRequestTimingChart(timingChart, section.requestSpeeds(), section.compactionsBeforeRequest(),
-                        section.judgeOnTrackRequests(), section.judgeOffTrackRequests());
+                final var speedChart = JobDetailView.buildRequestSpeedChart(section.requestSpeeds(),
+                        section.compactionsBeforeRequest(), section.judgeOnTrackRequests(), section.judgeOffTrackRequests());
+                final var timingChart = JobDetailView.buildRequestTimingChart(section.requestSpeeds(),
+                        section.compactionsBeforeRequest(), section.judgeOnTrackRequests(), section.judgeOffTrackRequests());
                 statsBody.add(Panels.card("Prefill speed by request" + attemptLabel, speedChart),
                         Panels.card("Request timing" + attemptLabel, timingChart));
             }

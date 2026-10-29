@@ -141,6 +141,14 @@ final class JobTaskDialog {
         // javadoc), so restarting one from here would just fail with a confusing server error
         // instead of doing nothing visibly wrong.
         restartTab.setVisible(!task.stage());
+        // loadStatsOnSelect is set below, once loadStats itself exists - the listener only needs
+        // to know the Stats tab was just selected, not run it inline. #541-followup: Stats is now
+        // loaded ON DEMAND (only while actually selected), not on every poll tick regardless of
+        // which tab is showing - this is what makes "the chart's real data is already in hand by
+        // the time it's first built" (see buildRequestSpeedChart()'s javadoc) true in the first
+        // place: a chart built while the dialog sits on the Prompt tab would have no real data to
+        // embed yet, forcing it back onto the old build-empty-then-updateSeries() pattern.
+        final Runnable[] loadStatsOnSelect = new Runnable[1];
         tabs.addSelectedChangeListener(e -> {
             promptBody.setVisible(tabs.getSelectedTab() == promptTab);
             diffBody.setVisible(tabs.getSelectedTab() == changesTab);
@@ -150,6 +158,7 @@ final class JobTaskDialog {
             statsBody.setVisible(tabs.getSelectedTab() == statsTab);
             transcriptBody.setVisible(tabs.getSelectedTab() == transcriptTab);
             interveneRow.setVisible(tabs.getSelectedTab() == transcriptTab);
+            if (tabs.getSelectedTab() == statsTab && loadStatsOnSelect[0] != null) loadStatsOnSelect[0].run();
         });
 
         final var content = new VerticalLayout(tabs, promptBody, diffBody, restartBody, historyBody, judgeBody, statsBody, transcriptBody, interveneRow);
@@ -326,15 +335,29 @@ final class JobTaskDialog {
                 final var sections = JobDetailView.attemptSections(stats);
                 final var multiAttempt = sections.size() > 1;
                 while (attemptUis.size() < sections.size()) {
-                    final var attemptLabel = multiAttempt ? " — Attempt " + (attemptUis.size() + 1) : "";
-                    final var speedChart = JobDetailView.buildRequestSpeedChart();
-                    final var timingChart = JobDetailView.buildRequestTimingChart();
+                    final var newIndex = attemptUis.size();
+                    final var newSection = sections.get(newIndex);
+                    final var attemptLabel = multiAttempt ? " — Attempt " + (newIndex + 1) : "";
+                    // #541-followup, root-caused: this attempt's real data is already in hand here
+                    // (newSection), so it's embedded directly at each chart's own construction
+                    // instead of a separate updateSeries() call moments later - see
+                    // buildRequestSpeedChart()'s own javadoc for the mount-race this avoids.
+                    final var speedChart = JobDetailView.buildRequestSpeedChart(newSection.requestSpeeds(),
+                            newSection.compactionsBeforeRequest(), newSection.judgeOnTrackRequests(), newSection.judgeOffTrackRequests());
+                    final var timingChart = JobDetailView.buildRequestTimingChart(newSection.requestSpeeds(),
+                            newSection.compactionsBeforeRequest(), newSection.judgeOnTrackRequests(), newSection.judgeOffTrackRequests());
                     final var chartsBody = new Div();
                     chartsBody.add(Panels.card("Prefill speed by request" + attemptLabel, speedChart),
                             Panels.card("Request timing" + attemptLabel, timingChart));
                     final var ui = new AttemptChartUi(new Div(), chartsBody, speedChart, timingChart);
                     attemptUis.add(ui);
                     statsAttemptsBody.add(ui.textBody(), ui.chartsBody());
+                    // this chart already shows newSection's data in full (just embedded above) - the
+                    // redraw loop below must see it as already up to date, or it would immediately
+                    // updateSeries() it again in this SAME pass and reintroduce the very race this
+                    // construction-time embed exists to avoid.
+                    lastChartedAttemptIndex[0] = newIndex;
+                    lastChartedPointCount[0] = newSection.requestSpeeds().size();
                 }
                 for (int i = 0; i < sections.size(); i++) {
                     final var section = sections.get(i);
@@ -370,12 +393,15 @@ final class JobTaskDialog {
                 statsSummaryBody.add(Panels.error(client.errorText(ex)));
             }
         };
+        loadStatsOnSelect[0] = loadStats;
         final Runnable loadAll = () -> {
             loadPrompt.run();
             loadDiff.run();
             loadHistory.run();
             loadJudge.run();
-            loadStats.run();
+            // on demand: only while the operator is actually looking at the Stats tab, not on
+            // every poll tick regardless of which tab is showing - see loadStatsOnSelect above.
+            if (tabs.getSelectedTab() == statsTab) loadStats.run();
             if (promptSettled[0] && diffSettled[0] && pollReg[0] != null) {
                 pollReg[0].remove();
                 pollReg[0] = null;
