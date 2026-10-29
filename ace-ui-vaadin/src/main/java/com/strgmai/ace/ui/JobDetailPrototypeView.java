@@ -189,9 +189,9 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
             return a != null && "done".equals(a.reported_status());
         }).count();
         final var grid = new FlexibleGridLayout()
-                .withColumns(Repeat.RepeatMode.AUTO_FIT, new MinMax(new Length("180px"), new Flex(1)))
+                .withColumns(Repeat.RepeatMode.AUTO_FIT, new MinMax(new Length("130px"), new Flex(1)))
                 .withAutoRows(new Length("auto"))
-                .withGap(new Length("12px"))
+                .withGap(new Length("10px"))
                 .withItems(
                         dashboardTile("Kind", job.kind() + (job.arm() != null ? " · " + job.arm() + " r" + job.repeat() : "")),
                         dashboardTile("Model", modelOf(job)),
@@ -206,14 +206,21 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
 
     /** Panels.statTile() plus a visible border/surface/radius, via real Aura/base tokens
      *  (--vaadin-border-color-secondary, --vaadin-radius-l, --vaadin-background-container - all
-     *  confirmed against the Aura styling docs) rather than hand-picked colors. */
+     *  confirmed against the Aura styling docs) rather than hand-picked colors - and a smaller
+     *  footprint than that shared helper's own default: tighter padding here, plus the value
+     *  span's own font-size shrunk from Panels.statTile()'s 1.4em default (tileShell()'s 2
+     *  children are always [0]=label, [1]=value when called with no detail, as here). */
     private static Div dashboardTile(final String label, final String value) {
         final var tile = Panels.statTile(label, value, null);
         tile.getStyle()
                 .set("border", "1px solid var(--vaadin-border-color-secondary)")
                 .set("border-radius", "var(--vaadin-radius-l)")
                 .set("background", "var(--vaadin-background-container)")
-                .set("padding", "16px 18px");
+                .set("padding", "8px 10px");
+        final var children = tile.getChildren().toList();
+        if (children.size() > 1) {
+            children.get(1).getElement().getStyle().set("font-size", "1.05em");
+        }
         return tile;
     }
 
