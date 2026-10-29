@@ -3,6 +3,7 @@ package com.strgmai.ace.ui;
 import com.github.appreciated.apexcharts.ApexCharts;
 import com.github.appreciated.apexcharts.ApexChartsBuilder;
 import com.github.appreciated.apexcharts.config.builder.ChartBuilder;
+import com.github.appreciated.apexcharts.config.chart.builder.AnimationsBuilder;
 import com.github.appreciated.apexcharts.config.builder.SeriesBuilder;
 import com.github.appreciated.apexcharts.config.builder.ThemeBuilder;
 import com.github.appreciated.apexcharts.config.builder.XAxisBuilder;
@@ -1061,10 +1062,20 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  updateRequestSpeedChart() below (the data-dependent half: categories + the 6 series) - the
      *  actively-updating attempt's chart is now updated in place via updateSeries()/setXaxis() each
      *  poll instead of torn down and rebuilt, the same technique #476/PR3's own job-level latency
-     *  chart already uses, for the same reason (a full rebuild every poll flashes/flickers). */
+     *  chart already uses, for the same reason (a full rebuild every poll flashes/flickers).
+     *
+     *  <p>#541-followup: animations disabled, same fix #542 applied to the job-level latency chart
+     *  and for the same reason - this chart is built AND immediately populated with its full real
+     *  dataset in the same loadStats() pass (JobTaskDialog.java), which can race the client's own
+     *  chart-mount lifecycle against its first updateSeries() call the same way two back-to-back
+     *  live updates can on the job-level chart; found live opening a real task's Stats tab on a
+     *  page whose OWN job-level chart was independently failing under a large SSE replay burst -
+     *  the resulting storm of client-side errors left this chart's SVG skeleton built but visually
+     *  blank (no axes, no lines) even though its underlying data had loaded correctly. */
     static ApexCharts buildRequestSpeedChart() {
         final var chart = ApexChartsBuilder.get()
-                .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent").build())
+                .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent")
+                        .withAnimations(AnimationsBuilder.get().withEnabled(false).build()).build())
                 .withTheme(ThemeBuilder.get().withMode(Mode.DARK).build())
                 .withColors("#008FFB", "#e74c3c", "#00E396", "#546E7A", "#27ae60", "#e67e22")
                 .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get()
@@ -1175,10 +1186,12 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  annotations (see compactionColumnData()'s own javadoc for why), legend hidden and tooltip
      *  custom for the same reason that chart's is. */
     /** #517 (B): same split as buildRequestSpeedChart()/updateRequestSpeedChart() above, for the
-     *  same reason - see that pair's own javadoc. */
+     *  same reason - see that pair's own javadoc. #541-followup: animations disabled too, same
+     *  reason as buildRequestSpeedChart()'s own fix - see its javadoc. */
     static ApexCharts buildRequestTimingChart() {
         final var chart = ApexChartsBuilder.get()
-                .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent").build())
+                .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent")
+                        .withAnimations(AnimationsBuilder.get().withEnabled(false).build()).build())
                 .withTheme(ThemeBuilder.get().withMode(Mode.DARK).build())
                 .withColors("#775DD0", "#FEB019", "#e74c3c", "#546E7A", "#27ae60", "#e67e22")
                 .withStroke(com.github.appreciated.apexcharts.config.builder.StrokeBuilder.get()

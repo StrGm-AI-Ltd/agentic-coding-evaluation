@@ -49,6 +49,15 @@ public final class JobLiveSection extends VerticalLayout {
     private final boolean alwaysShowLiveData;
     private final JobLiveState live = new JobLiveState();
 
+    // #541-followup: animations alone (see buildRequestLatencyChart()'s own javadoc) only fixed
+    // the race for a GENUINELY live job's own naturally-paced requests - found live against a real
+    // paused job with 48 historical sessions that a bulk SSE replay (every historical event
+    // delivered back to back, not spaced out like real inference time) still broke the chart even
+    // with animations off. This throttle is the actual fix for that case: see renderLive()'s own
+    // comment at its call site.
+    private static final long CHART_REDRAW_THROTTLE_MS = 1000;
+    private long lastChartRedrawMs;
+
     private transient Thread sseThread;
     private volatile boolean sseStopped;
 
@@ -299,8 +308,26 @@ public final class JobLiveSection extends VerticalLayout {
         // (what alwaysShowLiveData was actually asked to restore) have no such issue.
         final var chartable = !terminal || !alwaysShowLiveData;
         requestLatencyChart.setVisible(chartable && !recent.isEmpty());
+        // #541-followup: a NON-terminal job (a genuinely running one, or - found live - a PAUSED
+        // one, which JobStatuses deliberately never counts as terminal: see its own class javadoc)
+        // still opens a real SSE connection whose initial replay can carry dozens of sessions'
+        // worth of already-finished history, delivered back to back with no real-inference-time
+        // gap between them - the same burst-rate problem the comment above already describes for
+        // the terminal+alwaysShowLiveData case, just not covered by that guard since chartable is
+        // unconditionally true here. Throttled instead of skipped outright (unlike that case, a
+        // live/paused job's chart SHOULD eventually show every request): recent/live themselves
+        // are still updated above on every single event, so no DATA is ever stale - only the
+        // chart's own canvas redraw is capped to at most once per CHART_REDRAW_THROTTLE_MS. Safe to
+        // drop an intermediate redraw here because the owning view's own poll cycle calls update()
+        // (and so renderLive()) at least every 2s for as long as the job stays non-terminal,
+        // guaranteeing a catch-up redraw with whatever the CURRENT state is shortly after any
+        // SSE-driven burst settles - never silently stuck showing a stale mid-burst frame forever.
         if (chartable) {
-            updateRequestLatencyChart(recent);
+            final var now = System.currentTimeMillis();
+            if (now - lastChartRedrawMs >= CHART_REDRAW_THROTTLE_MS) {
+                updateRequestLatencyChart(recent);
+                lastChartRedrawMs = now;
+            }
         }
 
         final var tail = live.logTail() != null ? live.logTail()
