@@ -147,7 +147,12 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         add(statTileGrid(job, tasks, lastAttempt));
 
         if (!tasks.isEmpty()) {
-            add(Panels.card("Plan", buildPlanGrid(tasks, lastAttempt)));
+            final var planCard = Panels.card("Plan", buildPlanGrid(tasks, lastAttempt));
+            // Panels.card()'s own 16px horizontal padding insets the Grid 16px in from the card's
+            // outer edge on each side - zeroing it here (locally, not in the shared helper) lines
+            // the Grid's own visible left/right edges up exactly with the Params tile's above it.
+            planCard.getStyle().set("padding", "12px 0");
+            add(planCard);
         }
     }
 
