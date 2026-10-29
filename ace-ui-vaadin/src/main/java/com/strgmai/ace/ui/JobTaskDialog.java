@@ -96,6 +96,16 @@ final class JobTaskDialog {
         final var statsBody = new Div();
         statsBody.getStyle().set("overflow", "auto").set("width", "100%").set("box-sizing", "border-box");
         statsBody.setVisible(false);
+        // on demand (see loadStats/loadStatsOnSelect below): a manual way to pull fresh stats
+        // without waiting for the next poll tick or leaving and re-entering the tab. Lives in the
+        // DIALOG'S OWN footer, not inside statsBody - Vaadin Dialog renders header/content/footer
+        // as three separate regions, where only the middle (content) scrolls; a footer child stays
+        // fixed in place regardless of how far the operator has scrolled statsBody's own charts, with
+        // no hand-rolled CSS position:sticky needed. Shared with every other tab's footer row, so
+        // its own visibility is toggled alongside each body's below - only meaningful while Stats is
+        // actually the selected tab.
+        final var refreshStatsButton = new Button("Refresh stats");
+        refreshStatsButton.setVisible(false);
         // statsSummaryBody (the top text lines) is cleared and rebuilt every poll, same as before -
         // statsAttemptsBody is a SIBLING, same reason transcriptBody/interveneRow are siblings below:
         // a chart inside it must survive statsSummaryBody's own removeAll() every 2s, or every chart
@@ -158,6 +168,7 @@ final class JobTaskDialog {
             statsBody.setVisible(tabs.getSelectedTab() == statsTab);
             transcriptBody.setVisible(tabs.getSelectedTab() == transcriptTab);
             interveneRow.setVisible(tabs.getSelectedTab() == transcriptTab);
+            refreshStatsButton.setVisible(tabs.getSelectedTab() == statsTab);
             if (tabs.getSelectedTab() == statsTab && loadStatsOnSelect[0] != null) loadStatsOnSelect[0].run();
         });
 
@@ -166,7 +177,7 @@ final class JobTaskDialog {
         content.setSpacing(false);
         content.setSizeFull();
         dialog.add(content);
-        dialog.getFooter().add(new Button("Close", e -> dialog.close()));
+        dialog.getFooter().add(refreshStatsButton, new Button("Close", e -> dialog.close()));
 
         final Registration[] pollReg = new Registration[1];
         // #256, found live: Packs.taskPack() caps the whole id/title/goal/services/acceptance
@@ -347,7 +358,7 @@ final class JobTaskDialog {
                     final var timingChart = JobDetailView.buildRequestTimingChart(newSection.requestSpeeds(),
                             newSection.compactionsBeforeRequest(), newSection.judgeOnTrackRequests(), newSection.judgeOffTrackRequests());
                     final var chartsBody = new Div();
-                    chartsBody.add(Panels.card("Prefill speed by request" + attemptLabel, speedChart),
+                    chartsBody.add(Panels.card("Request throughput" + attemptLabel, speedChart),
                             Panels.card("Request timing" + attemptLabel, timingChart));
                     final var ui = new AttemptChartUi(new Div(), chartsBody, speedChart, timingChart);
                     attemptUis.add(ui);
@@ -394,6 +405,7 @@ final class JobTaskDialog {
             }
         };
         loadStatsOnSelect[0] = loadStats;
+        refreshStatsButton.addClickListener(e -> loadStats.run());
         final Runnable loadAll = () -> {
             loadPrompt.run();
             loadDiff.run();
