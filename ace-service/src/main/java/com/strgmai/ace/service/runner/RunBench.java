@@ -749,7 +749,7 @@ public class RunBench {
             // ---- oracle: the pinned-container build checks, the compose runtime checks, the black-box suite ----
             manifest.put("ended", nowIso());
             manifest.put("journal", journal.toString());
-            final Map<String, Object> facts = JournalFacts.facts(journal.toString(), null, null, List.of(), List.of(), null, backend);
+            final Map<String, Object> facts = JournalFacts.facts(journal.toString(), null, null, reviewWindows(manifest), List.of(), null, backend);
             manifest.put("journal_facts", facts);
             manifest.put("validity", Validity.validity(manifest, facts, props.maxErrorRate()));
             writeManifest(rd, manifest);
@@ -1587,6 +1587,22 @@ public class RunBench {
     }
 
     static Set<String> doneSet(Map<String, String[]> snapshots) { return snapshots.keySet(); }
+
+    /** #626, found live: Reviews.renderTrajectory() already excludes review traffic from the
+     *  agent's own trajectory analysis by reading this back - manifest["journal_facts"] (and,
+     *  through it, Validity and metrics.json's speed-by-context chart) did not, passing a
+     *  hardcoded empty exclude list instead and silently blending the reviewer's own requests/
+     *  tokens/speed into the coder's own numbers whenever a reviewer session's traffic shares the
+     *  journal (true whenever the reviewer model is LOCAL, not external - Reviews.java's own
+     *  `external` check). Each entry Reviews.java records is a 2-element [start, end] List<String>;
+     *  JournalFacts.facts()'s own exclude param wants String[] pairs. */
+    @SuppressWarnings("unchecked")
+    static List<String[]> reviewWindows(final Map<String, Object> manifest) {
+        if (!(manifest.get("review_windows") instanceof List<?> rw)) return List.of();
+        final List<String[]> out = new ArrayList<>();
+        for (Object w : rw) if (w instanceof List<?> pair && pair.size() == 2) out.add(new String[]{(String) pair.get(0), (String) pair.get(1)});
+        return out;
+    }
 
     Path agentSessionFile(Path rd, String runId, String id) {
         for (Path p : sessionFiles(rd.resolve("sessions")))

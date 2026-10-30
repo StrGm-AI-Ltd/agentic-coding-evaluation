@@ -113,6 +113,28 @@ class RunBenchTest {
         }
     }
 
+    /** #626, found live: Reviews.renderTrajectory() already excludes review traffic from the
+     *  agent's own trajectory analysis by reading manifest["review_windows"] back - the
+     *  manifest["journal_facts"]/metrics.json speed-by-context call site did not, passing a
+     *  hardcoded empty exclude list and silently blending a reviewer's own requests/tokens/speed
+     *  into the coder's own numbers whenever a reviewer's traffic shares the journal (true
+     *  whenever the reviewer model is local, not external). */
+    @Test
+    void reviewWindowsConvertsEachRecordedPairIntoAStringArrayForJournalFactsExclude() {
+        final var manifest = Map.<String, Object>of("review_windows", List.of(
+                List.of("2026-10-30T13:00:00Z", "2026-10-30T13:05:00Z"),
+                List.of("2026-10-30T14:00:00Z", "2026-10-30T14:10:00Z")));
+        final List<String[]> windows = RunBench.reviewWindows(manifest);
+        assertEquals(2, windows.size());
+        assertArrayEquals(new String[]{"2026-10-30T13:00:00Z", "2026-10-30T13:05:00Z"}, windows.get(0));
+        assertArrayEquals(new String[]{"2026-10-30T14:00:00Z", "2026-10-30T14:10:00Z"}, windows.get(1));
+    }
+
+    @Test
+    void reviewWindowsIsEmptyWhenNoReviewEverRan() {
+        assertEquals(List.of(), RunBench.reviewWindows(Map.of()));
+    }
+
     /** #173: --impl-wall (cfg's "impl_wall_sec") matches a monolithic arm's single implementation
      *  session budget to an orchestrated arm's N-tasks x per-task budget (design rule 10) - it must
      *  win over the rung's own impl_sec default whenever the run explicitly set one. */
