@@ -108,6 +108,15 @@ public final class CompactionStrategies {
             switch (strategy) {
                 case TOOL_RESULT_MASK -> masked += AgentSession.compact(msgs, keepRecentTurns, keepTokenBudget, strategies.contains(TOOL_OUTPUT_RECALL));
                 case STRUCTURED_EVICTION -> summarized |= structuredEvict(msgs, keepRecentTurns, keepTokenBudget, state, summarize);
+                // found live: ERROR_LINE_EXTRACTION/TOOL_OUTPUT_RECALL are real, KNOWN strategies
+                // with no masking logic of their own to run here - they're enforced elsewhere via
+                // plain `enabledStrategies.contains(...)` checks (AgentTools.bash's error-line
+                // extraction; ReferenceAgent's toolSpecs/recall_tool_output gating) - but they were
+                // falling into the `default` branch below, which logged every enabled run's own
+                // DEFAULT list (#423/#424 - both members of it) as "unknown ... ignored" on every
+                // single compaction event, loudly contradicting the very KNOWN set the warning
+                // itself printed. No-op here; still fully honored by their own real call sites.
+                case ERROR_LINE_EXTRACTION, TOOL_OUTPUT_RECALL -> { }
                 // #417 follow-up review (C6): this used to be a silent `default -> 0` with a
                 // comment claiming "RunSpec's own validation already rejects an unknown name
                 // before it ever reaches here" - true for a run-level RunSpec, FALSE for a task
