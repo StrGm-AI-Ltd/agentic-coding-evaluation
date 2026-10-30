@@ -13,7 +13,7 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.tabs.Tab;
 import com.vaadin.flow.component.tabs.Tabs;
 import com.vaadin.flow.component.textfield.IntegerField;
-import com.vaadin.flow.component.textfield.TextArea;
+import com.vaadin.flow.component.textfield.TextField;
 import com.vaadin.flow.shared.Registration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -145,11 +145,11 @@ final class JobTaskDialog {
         // transcript - visually stranded there with a big gap before the dialog's own Close button,
         // which sits in the FOOTER. Lives in the footer now instead, the same pane Close (and
         // refreshStatsButton below) already use - flex-grow so it claims the space Close doesn't
-        // need, same reasoning as the Send button's own flex-grow on the TextArea beside it. NOT
+        // need, same reasoning as the Send button's own flex-grow on the text field beside it. NOT
         // width:100% though (found live, #568 follow-up): on a flex ITEM that sets flex-basis to
         // 100% too, which claims the ENTIRE footer row for this Div alone and wraps Close onto its
         // own second line below it - the exact fight flex-grow-not-width:100% avoids one level down,
-        // between the TextArea and the Send button, repeated here one level up by mistake.
+        // between the text field and the Send button, repeated here one level up by mistake.
         final var interveneRow = new Div();
         interveneRow.getStyle().set("box-sizing", "border-box").set("flex-grow", "1");
         interveneRow.setVisible(false);
@@ -656,9 +656,12 @@ final class JobTaskDialog {
      *  task is actually running: a message sent to one that isn't just sits unconsumed until
      *  either it starts or this task's own next attempt clears it - a quiet no-op, not an error. */
     private static void buildInterveneRow(final ServiceClient client, final String jobId, final Api.PlanTask task, final Div interveneRow) {
-        final var text = new TextArea();
-        text.setPlaceholder("Steer the agent directly - delivered as its next instruction and logged in its own session transcript.");
-        text.setMinHeight("70px");
+        // a single-line TextField, not a multi-line TextArea (found live, #568 follow-up): now that
+        // this row sits in the footer beside Close rather than its own block in the content area,
+        // a tall multi-line box made the footer visibly taller than every other dialog's own footer.
+        // TextField shares the same default Lumo control height as Button with no extra sizing needed.
+        final var text = new TextField();
+        text.setPlaceholder("Steer the agent - delivered at its next turn");
         final var send = new Button("Send", e -> {
             final var value = text.getValue();
             if (value == null || value.isBlank()) return;
