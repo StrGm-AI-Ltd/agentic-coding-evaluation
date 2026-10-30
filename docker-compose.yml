@@ -53,6 +53,19 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     group_add:
       - "${DOCKER_GID}"
+    extra_hosts:
+      # #604, found live: this container sits on its own bridge network (not host networking), so
+      # when the AGENT's own bash tool (executing inside here) runs `docker compose up` to start a
+      # sibling service (Postgres, its own built image, ...), that sibling's published port lands on
+      # the HOST's own network interfaces - never on this container's. The agent's natural, expected
+      # `localhost:<port>` then gets "Connection refused" no matter how correctly it wrote its own
+      # compose file (confirmed live: job cf0ccdb6's T6 brought up a real Postgres container,
+      # downloaded and correctly configured Flyway, and still got "Connection to localhost:5432
+      # refused"). Same fix the caddy service below already uses for the identical problem (reaching
+      # the SSH tunnel on the host's own port 9191) - host.docker.internal now resolves here too.
+      # Preflight.java/KNOWN_GOTCHAS still need to actually tell the agent to use this host instead
+      # of localhost; this alone only makes the address reachable, not discoverable.
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
   ace-ui-vaadin:
