@@ -225,6 +225,30 @@ class RunDetailViewTest {
                 "{\"compaction_overhead\": {\"total_sec\": 0.0, \"tasks\": {}, \"timeline\": []}}")));
     }
 
+    /** #353-followup, found live: a real run logged 605 compaction-overhead points, each rendering
+     *  as its own X-axis category label - a solid, unreadable smear. thinnedForChart() must bring
+     *  any oversized series down to exactly maxPoints while always keeping the real first/last point
+     *  (they anchor the chart's actual start/end), and must leave an already-small series untouched. */
+    @Test
+    void thinnedForChart_capsAtMaxPointsKeepingFirstAndLast() {
+        final var points = new java.util.ArrayList<RunDetailView.CompactionOverheadPoint>();
+        for (int i = 0; i < 605; i++) points.add(new RunDetailView.CompactionOverheadPoint(i * 10L, i * 1.5));
+
+        final var thinned = RunDetailView.thinnedForChart(points, 30);
+
+        assertEquals(30, thinned.size());
+        assertEquals(points.get(0), thinned.get(0), "the real first point must survive");
+        assertEquals(points.get(604), thinned.get(29), "the real last point must survive");
+    }
+
+    @Test
+    void thinnedForChart_leavesAnAlreadySmallSeriesUntouched() {
+        final var points = List.of(
+                new RunDetailView.CompactionOverheadPoint(0L, 20.0),
+                new RunDetailView.CompactionOverheadPoint(3600L, 70.0));
+        assertEquals(points, RunDetailView.thinnedForChart(points, 30));
+    }
+
     @Test
     void metaLine_omitsLatencyAndTtftWhenAbsent() {
         var run = new Api.Run("r1", null, null, "L3p_point_in_time", "orchestrated", "m", null, 3, true,

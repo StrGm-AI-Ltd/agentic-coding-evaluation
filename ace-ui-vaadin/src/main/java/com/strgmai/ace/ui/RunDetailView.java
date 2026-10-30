@@ -501,12 +501,37 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         return points;
     }
 
+    /** #353-followup, found live: a long task session can log a compaction overhead point for
+     * every single compaction event - a real run hit 605 of them, each rendering as its own X-axis
+     * CATEGORY label (ApexCharts' tickAmount is a numeric/datetime-axis option, unreliable on a
+     * category axis like this one), making the axis a solid unreadable smear of overlapping text.
+     * Evenly thins the SERIES down to at most maxPoints before charting - compactionOverheadPoints()
+     * itself stays the untouched, fully faithful raw accessor (other consumers may want every point);
+     * this is purely a display-time concern, same split speedByContextRows()/addSpeedByContextChart()
+     * already keep. The first and last points always survive (they anchor the chart's real start/end),
+     * and since the real series is a monotonically-increasing step function, dropping intermediate
+     * points changes the exact step timing but never the overall shape or final total. */
+    static List<CompactionOverheadPoint> thinnedForChart(final List<CompactionOverheadPoint> points, final int maxPoints) {
+        if (points.size() <= maxPoints || maxPoints < 2) {
+            return points;
+        }
+        final List<CompactionOverheadPoint> out = new ArrayList<>(maxPoints);
+        final double stride = (points.size() - 1) / (double) (maxPoints - 1);
+        for (int i = 0; i < maxPoints; i++) {
+            out.add(points.get((int) Math.round(i * stride)));
+        }
+        return out;
+    }
+
     /** Cumulative compaction overhead over the run's own elapsed wall-clock time — a step function
      * that climbs every time a compaction's re-prefill cost more than this session's own normal
      * turn. A flat line is the healthy case; a steepening climb (T7's own shape, found live in
      * #351) is where compacting started costing more than it saved. */
     private void addCompactionOverheadChart(final JsonNode metrics) {
-        final var points = compactionOverheadPoints(metrics);
+        // 30, not speedByContextRows()'s own ~40: elapsed-minute labels run wider (multi-digit on a
+        // long task, e.g. "137") than that chart's single/double-digit K-token labels, so the same
+        // label count would crowd sooner here.
+        final var points = thinnedForChart(compactionOverheadPoints(metrics), 30);
         if (points.isEmpty()) {
             return;
         }
