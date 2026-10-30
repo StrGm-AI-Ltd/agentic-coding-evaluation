@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.*;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 
@@ -68,6 +69,21 @@ public class Reviews {
         final boolean external = !reviewer.startsWith(localPrefix);
         // only one local model fits: a second local reviewer falls back to the run's own model
         if (!external && !reviewer.equals(localPrefix + cfg.getOrDefault("model", props.model()))) reviewer = localPrefix + cfg.getOrDefault("model", props.model());
+        manifestMap(manifest, "review_config").putAll(Map.of("model", reviewer, "external", external, "blind", blind));
+        // unset -> Collect's own 0.1 default; only present when the run actually pinned a weight
+        if (cfg.get("review") instanceof Map<?, ?> rc && rc.get("weight") instanceof Number w)
+            manifestMap(manifest, "review_config").put("weight", w.doubleValue());
+        // #628, found live: a requeue/restart that re-enters runOnce() after self-review already
+        // completed used to call runReviewerSession() again regardless - continueSession=true plus
+        // the deterministic session id meant this RESUMED the already-settled session via
+        // --continue rather than skipping it (every task in RunBench's own main loop already
+        // guards this with an identical tagExists check) - confirmed live: a review session that
+        // should have been one bounded pass instead ran ~2 hours across several restarts and
+        // finally ended on a forced length cutoff instead of stopping cleanly.
+        if (RunBenchSupport.tagExists(ws, "phase/review")) {
+            log.info("run {}: phase/review already completed in a prior attempt, resuming past it", manifest.get("run_id"));
+            return resumedSelfReview(ws, rd, manifest, reviewer, external, blind);
+        }
         final var pre = Path.of(RunBenchSupport.snapshot(ws, "phase/pre-review"));
         manifestMap(manifest, "snapshots").put("pre-review", pre.toString());
         final Path verifyLog = rd.resolve("verify/pre-review.log");
@@ -78,10 +94,6 @@ public class Reviews {
         Files.writeString(sysPath, Packs.reviewSystem(promptText));
         final Path packPath = rd.resolve("packs/REVIEW.md");
         Files.writeString(packPath, Packs.reviewPack(ws, tasks, verified, blind));
-        manifestMap(manifest, "review_config").putAll(Map.of("model", reviewer, "external", external, "blind", blind));
-        // unset -> Collect's own 0.1 default; only present when the run actually pinned a weight
-        if (cfg.get("review") instanceof Map<?, ?> rc && rc.get("weight") instanceof Number w)
-            manifestMap(manifest, "review_config").put("weight", w.doubleValue());
         Files.createDirectories(ws.resolve("review"));
         final ReferenceAgent.SessionResult rec = runReviewerSession(cfg, "REVIEW", packPath, sysPath, reviewer, external, ws, rd, manifest, proxies, rd.resolve("review.log"));
         // the code is frozen: anything the reviewer changed outside review/ is reverted and recorded
@@ -124,6 +136,49 @@ public class Reviews {
         return out;
     }
 
+    /** #628: ws/review/self_review.json and the session file behind the deterministic REVIEW
+     *  session id both survive a restart (ws is the run's own git repo; AgentSession.write() is
+     *  unbuffered) - rebuilds the same shape selfReview() itself returns from those, instead of
+     *  re-invoking an already-settled reviewer session via --continue. */
+    private Map<String, Object> resumedSelfReview(final Path ws, final Path rd, final Map<String, Object> manifest,
+                                                   final String reviewer, final boolean external, final boolean blind) throws Exception {
+        final String runId = String.valueOf(manifest.get("run_id"));
+        final var sessionId = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/REVIEW").getBytes());
+        final Path sessionFile = RunBenchSupport.findSessionFile(rd.resolve("sessions"), sessionId.toString());
+        final var span = com.strgmai.ace.service.agent.AgentSession.span(sessionFile);
+        manifestMap(manifest, "snapshots").put("pre-review", RunBenchSupport.gitOut(ws, "rev-parse", "phase/pre-review"));
+        manifestMap(manifest, "snapshots").put("review", RunBenchSupport.gitOut(ws, "rev-parse", "phase/review"));
+        final List<String> changed = changedSources(ws, "review/");
+        final Map<String, Object> parsed = Packs.parseSelfReview(ws.resolve("review/self_review.json"));
+        final Map<String, Object> out = new LinkedHashMap<>();
+        out.put("reviewer_model", reviewer);
+        out.put("external", external);
+        out.put("blind", blind);
+        out.put("seconds", span == null ? 0.0 : (double) Duration.between(span.start(), span.end()).getSeconds());
+        out.put("rc", 0);
+        out.put("over_budget", false);
+        final Map<String, Long> usage = com.strgmai.ace.service.agent.AgentSession.usage(sessionFile);
+        out.put("usage", usage);
+        if (external) out.put("cost_usd", com.strgmai.ace.service.agent.ModelPricing.costUsd(reviewer.substring(reviewer.indexOf('/') + 1), usage));
+        if (!external && span != null) {
+            Map<String, Object> rf = com.strgmai.ace.service.runner.JournalFacts.facts(rd.resolve("interactions.jsonl").toString(),
+                    span.start().toString(), span.end().toString(), null, null, null);
+            out.put("requests", rf.get("requests"));
+            out.put("token_budget_exhausted", ((Number) rf.getOrDefault("budget_refusals", 0)).intValue() > 0);
+        }
+        out.put("parse_ok", parsed != null);
+        out.put("modified_code", !changed.isEmpty());
+        out.put("modified_paths", changed.subList(0, Math.min(10, changed.size())));
+        out.put("md_present", Files.isRegularFile(ws.resolve("review/SELF_REVIEW.md")));
+        if (parsed != null) out.putAll(parsed);
+        if (span != null) manifestCompute(manifest, "review_windows").add(List.of(span.start().toString(), span.end().toString()));
+        for (String f : List.of("SELF_REVIEW.md", "self_review.json")) {
+            final Path src = ws.resolve("review").resolve(f);
+            if (Files.isRegularFile(src)) Files.copy(src, rd.resolve(f), StandardCopyOption.REPLACE_EXISTING);
+        }
+        return out;
+    }
+
     /** trajectory review: render the journal first (before the reviewer adds its own requests),
      *  then review the agent's process against the objective index. */
     public Map<String, Object> trajectoryReview(Map<String, Object> cfg, Path ws, Path rd, Map<String, Object> manifest,
@@ -132,6 +187,22 @@ public class Reviews {
         String reviewer = providerStore.resolveModel(reviewerModel, localPrefix + cfg.getOrDefault("model", props.model()));
         final boolean external = !reviewer.startsWith(localPrefix);
         if (!external && !reviewer.equals(localPrefix + cfg.getOrDefault("model", props.model()))) reviewer = localPrefix + cfg.getOrDefault("model", props.model());
+        // Collect.java reads this same shape (model/external/weight) for review_config already -
+        // this was never written at all before, so trajectory's blend weight and "use" mode (see
+        // below) silently fell back to Collect's own defaults on every run
+        final Map<String, Object> trajConfig = new LinkedHashMap<>(Map.of("model", reviewer, "external", external));
+        if (cfg.get("trajectory_review") instanceof Map<?, ?> tc) {
+            if (tc.get("weight") instanceof Number w) trajConfig.put("weight", w.doubleValue());
+            if (tc.get("use") instanceof String u && !u.isBlank()) trajConfig.put("use", u);
+        }
+        manifestMap(manifest, "trajectory_review_config").putAll(trajConfig);
+        // #628: see selfReview()'s identical guard/comment - trajectoryReview() had the same gap
+        // (and, until this fix, never even wrote its own "phase/trajectory_review" completion tag
+        // at all, so there was nothing a guard could have checked against).
+        if (RunBenchSupport.tagExists(ws, "phase/trajectory_review")) {
+            log.info("run {}: phase/trajectory_review already completed in a prior attempt, resuming past it", manifest.get("run_id"));
+            return resumedTrajectoryReview(ws, rd, manifest, reviewer, external);
+        }
         final Path tdir = ws.resolve("trajectory");
         Files.createDirectories(tdir);
         // render the trajectory as of now (before the reviewer adds its own requests to the journal)
@@ -149,15 +220,6 @@ public class Reviews {
         Files.writeString(packPath, Packs.trajectoryReviewPack(summary, head));
         final Path sysPath = rd.resolve("packs/trajectory_review_system.md");
         Files.writeString(sysPath, Packs.TRAJ_ROLE);
-        // Collect.java reads this same shape (model/external/weight) for review_config already -
-        // this was never written at all before, so trajectory's blend weight and "use" mode (see
-        // below) silently fell back to Collect's own defaults on every run
-        final Map<String, Object> trajConfig = new LinkedHashMap<>(Map.of("model", reviewer, "external", external));
-        if (cfg.get("trajectory_review") instanceof Map<?, ?> tc) {
-            if (tc.get("weight") instanceof Number w) trajConfig.put("weight", w.doubleValue());
-            if (tc.get("use") instanceof String u && !u.isBlank()) trajConfig.put("use", u);
-        }
-        manifestMap(manifest, "trajectory_review_config").putAll(trajConfig);
         Files.createDirectories(ws.resolve("review"));
         final var pre = Path.of(RunBenchSupport.snapshot(ws, "phase/pre-trajectory-review"));
         final ReferenceAgent.SessionResult rec = runReviewerSession(cfg, "TRAJECTORY_REVIEW", packPath, sysPath, reviewer, external, ws, rd, manifest, proxies, rd.resolve("review.log"));
@@ -191,6 +253,55 @@ public class Reviews {
         out.put("objective_penalties", summary.get("harness_trajectory_penalties"));
         out.put("md_present", Files.isRegularFile(ws.resolve("review/TRAJECTORY_REVIEW.md")));
         if (parsed != null) out.putAll(parsed);
+        for (String f : List.of("TRAJECTORY_REVIEW.md", "trajectory_review.json")) {
+            final Path src = ws.resolve("review").resolve(f);
+            if (Files.isRegularFile(src)) Files.copy(src, rd.resolve(f), StandardCopyOption.REPLACE_EXISTING);
+        }
+        // #628: previously missing entirely - selfReview()'s own "phase/review" is what
+        // resumedSelfReview()'s tagExists check needs to find; trajectoryReview() needs its own
+        // completion tag the identical way, for resumedTrajectoryReview() below to find.
+        manifestMap(manifest, "snapshots").put("trajectory_review", RunBenchSupport.snapshot(ws, "phase/trajectory_review"));
+        return out;
+    }
+
+    /** #628: ws/review/trajectory_review.json and the session file behind the deterministic
+     *  TRAJECTORY_REVIEW session id both survive a restart - rebuilds the same shape
+     *  trajectoryReview() itself returns from those (plus a freshly-recomputed trajectory
+     *  summary - cheap, pure analysis, no LLM call), instead of re-invoking an already-settled
+     *  reviewer session via --continue. */
+    private Map<String, Object> resumedTrajectoryReview(final Path ws, final Path rd, final Map<String, Object> manifest,
+                                                          final String reviewer, final boolean external) throws Exception {
+        final String runId = String.valueOf(manifest.get("run_id"));
+        final var sessionId = UUID.nameUUIDFromBytes(("agentbench/" + runId + "/TRAJECTORY_REVIEW").getBytes());
+        final Path sessionFile = RunBenchSupport.findSessionFile(rd.resolve("sessions"), sessionId.toString());
+        final var span = com.strgmai.ace.service.agent.AgentSession.span(sessionFile);
+        final Map<String, Object> summary = renderTrajectory(rd, manifest);
+        manifestMap(manifest, "snapshots").put("pre-trajectory-review", RunBenchSupport.gitOut(ws, "rev-parse", "phase/pre-trajectory-review"));
+        manifestMap(manifest, "snapshots").put("trajectory_review", RunBenchSupport.gitOut(ws, "rev-parse", "phase/trajectory_review"));
+        final List<String> changed = changedSources(ws, "review/", "trajectory/");
+        final Map<String, Object> parsed = Packs.parseTrajectoryReview(ws.resolve("review/trajectory_review.json"));
+        final Map<String, Object> out = new LinkedHashMap<>();
+        out.put("reviewer_model", reviewer);
+        out.put("external", external);
+        out.put("seconds", span == null ? 0.0 : (double) Duration.between(span.start(), span.end()).getSeconds());
+        out.put("rc", 0);
+        out.put("over_budget", false);
+        final Map<String, Long> usage = com.strgmai.ace.service.agent.AgentSession.usage(sessionFile);
+        out.put("usage", usage);
+        if (external) out.put("cost_usd", com.strgmai.ace.service.agent.ModelPricing.costUsd(reviewer.substring(reviewer.indexOf('/') + 1), usage));
+        if (!external && span != null) {
+            Map<String, Object> rf = com.strgmai.ace.service.runner.JournalFacts.facts(rd.resolve("interactions.jsonl").toString(),
+                    span.start().toString(), span.end().toString(), null, null, null);
+            out.put("requests", rf.get("requests"));
+            out.put("token_budget_exhausted", ((Number) rf.getOrDefault("budget_refusals", 0)).intValue() > 0);
+        }
+        out.put("parse_ok", parsed != null);
+        out.put("modified_files", !changed.isEmpty());
+        out.put("objective_index_pct", summary.get("harness_trajectory_pct"));
+        out.put("objective_penalties", summary.get("harness_trajectory_penalties"));
+        out.put("md_present", Files.isRegularFile(ws.resolve("review/TRAJECTORY_REVIEW.md")));
+        if (parsed != null) out.putAll(parsed);
+        if (span != null) manifestCompute(manifest, "review_windows").add(List.of(span.start().toString(), span.end().toString()));
         for (String f : List.of("TRAJECTORY_REVIEW.md", "trajectory_review.json")) {
             final Path src = ws.resolve("review").resolve(f);
             if (Files.isRegularFile(src)) Files.copy(src, rd.resolve(f), StandardCopyOption.REPLACE_EXISTING);

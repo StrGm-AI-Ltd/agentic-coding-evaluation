@@ -74,9 +74,14 @@ public final class RunBenchSupport {
      *  BenchController.taskDiff()'s own display-time filter (for whatever slipped in on a
      *  workspace initialised before a given entry was added here - #260, found live: a full
      *  unpacked Eclipse Temurin JDK distribution landed at .toolchains/ straight in the project
-     *  root, committed whole because nothing excluded it). */
+     *  root, committed whole because nothing excluded it). "gradle-dist/" is the same pattern's
+     *  next instance, found live: a task that could not get its own Gradle wrapper download
+     *  working self-unzipped gradle.zip into gradle-dist/ instead - ~20,900 of its own files (the
+     *  entire Gradle 8.5 distribution) landed in that one task's own `files_changed` metric,
+     *  swamping its real ~5-file diff and making every other task's own count look suspiciously
+     *  tiny by comparison. */
     public static final List<String> VENDORED_PATHS = List.of(
-            "build/", ".gradle/", ".gradle-cache/", "target/", "node_modules/", "out/", "dist/", ".idea/", ".toolchains/");
+            "build/", ".gradle/", ".gradle-cache/", "target/", "node_modules/", "out/", "dist/", ".idea/", ".toolchains/", "gradle-dist/");
 
     /** commit + tag; returns the commit SHA. Build outputs never enter a snapshot. */
     public static String snapshot(final Path ws, final String tag) throws IOException, InterruptedException {
@@ -277,8 +282,9 @@ public final class RunBenchSupport {
     /** best-effort: a timed-out attempt's session file already has whatever it wrote before being
      *  cut off (AgentSession.write() appends per turn, not buffered), so the manifest's session_id
      *  for a timed-out task still points at real, if partial, data. Same lookup AgentSession itself
-     *  uses for --continue. */
-    private static Path findSessionFile(final Path sessionDir, final String sessionId) {
+     *  uses for --continue. Package-visible (#628): Reviews.java's own resume path needs this same
+     *  lookup to recover an already-completed review's session file by its deterministic id. */
+    static Path findSessionFile(final Path sessionDir, final String sessionId) {
         try (var s = Files.list(sessionDir)) {
             return s.filter(p -> p.getFileName().toString().contains(sessionId) && p.getFileName().toString().endsWith(".jsonl"))
                     .max(Comparator.comparing(RunBenchSupport::lastModifiedOrEpoch))
