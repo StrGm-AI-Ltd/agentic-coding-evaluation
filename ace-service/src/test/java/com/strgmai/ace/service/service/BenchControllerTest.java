@@ -692,6 +692,45 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.tasks[0].reported_detail").value("missing a DB migration"));
     }
 
+    /** #642, found live: docs/PROGRESS.md is a shared, agent-mutable file re-scanned on every
+     *  /plan call - a genuinely-finished task's own line can be LOST later (overwritten by a later
+     *  task's own session, concatenated into a neighbor's line with no separator, or never written
+     *  at all) even though that task's own attempt genuinely finished and was correctly recorded in
+     *  task_attempts.jsonl (append-only, never agent-mutated, captured by logTaskAttempt() at the
+     *  one moment PROGRESS.md was still guaranteed fresh for that task). T1 here has NO PROGRESS.md
+     *  line at all (simulating the exact loss #642 found live) but DOES have a recorded attempt
+     *  with reported_status "done" - /plan must still report "done" for it, reading from the
+     *  durable attempt record instead of the now-stale live file scan. T2 has neither an attempt
+     *  nor a PROGRESS.md line - a task still genuinely mid-session - and must stay null, not a
+     *  false "done": the fallback-to-file-scan path must still work for that case. */
+    @Test
+    void jobPlanPrefersTaskAttemptsFileOverProgressMdWhenAnAttemptIsAlreadyRecorded() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir);
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"),
+                "## T1 — a task\n- Goal: something\n\n## T2 — another\n- Goal: something else\n");
+        Files.writeString(runDir.resolve("task_attempts.jsonl"),
+                "{\"task_id\":\"T1\",\"attempt_number\":1,\"rc\":0,"
+                        + "\"reported_status\":\"done\",\"reported_detail\":\"all tests green\"}\n");
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws.resolve("docs"));
+        Files.writeString(ws.resolve("docs/PROGRESS.md"), "");   // T1's own line genuinely lost
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/T1");
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/plan"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tasks[0].id").value("T1"))
+                .andExpect(jsonPath("$.tasks[0].reported_status").value("done"))
+                .andExpect(jsonPath("$.tasks[0].reported_detail").value("all tests green"))
+                .andExpect(jsonPath("$.tasks[1].id").value("T2"))
+                .andExpect(jsonPath("$.tasks[1].reported_status").doesNotExist());
+    }
+
     /** #337: a visible effort signal per task - how many attempts task_attempts.jsonl actually
      *  shows, and whether any of them needed a rescue, so a clean pass and a rescued/retried one
      *  read as different outcomes in the Plan grid. */
