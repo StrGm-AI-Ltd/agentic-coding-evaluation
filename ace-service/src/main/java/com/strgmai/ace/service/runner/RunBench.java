@@ -818,8 +818,20 @@ public class RunBench {
      *  never clobbers an earlier, good bundle from calling this again later in the same run. */
     static void bundleWorkspace(final Path ws, final Path rd) {
         final Path tmp = rd.resolve("workspace.bundle.tmp");
+        // #593-adjacent, found live: git bundle create writes to its OWN lock file first
+        // (<tmp>.lock), atomically renaming it to <tmp> only once the write finishes - a process
+        // interrupted mid-write (the exact shape of a pause-after-task signal landing while this
+        // call is still in flight, confirmed live via job cd4c11a8's own logs) leaves that .lock
+        // file orphaned. The existing cleanup below only ever deleted tmp itself, never tmp.lock -
+        // every SUBSEQUENT call then failed immediately with "fatal: Unable to create
+        // '.../workspace.bundle.tmp.lock': File exists", on every replayed task, for the rest of
+        // the run's life, until something removed it by hand. Safe to delete unconditionally before
+        // every attempt: this single-worker-thread architecture guarantees nothing else is ever
+        // concurrently writing to this run's own results dir.
+        final Path lock = rd.resolve("workspace.bundle.tmp.lock");
         try {
             Files.deleteIfExists(tmp);
+            Files.deleteIfExists(lock);
             // Found live: rd is a RELATIVE path (results/<runId>) - fine for every plain Files.*
             // call in this method, which resolve it against the JVM's own cwd same as everywhere
             // else, but `git -C ws` makes ws git's own effective base for THIS command only, so a
@@ -836,6 +848,7 @@ public class RunBench {
             log.warn("could not bundle workspace {}: {}", ws, e.toString());
         } finally {
             try { Files.deleteIfExists(tmp); } catch (Exception e) { log.debug("could not remove leftover bundle temp file {}: {}", tmp, e.toString()); }
+            try { Files.deleteIfExists(lock); } catch (Exception e) { log.debug("could not remove leftover bundle lock file {}: {}", lock, e.toString()); }
         }
     }
 

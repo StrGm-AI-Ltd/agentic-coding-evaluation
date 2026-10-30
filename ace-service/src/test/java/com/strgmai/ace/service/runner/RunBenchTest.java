@@ -675,6 +675,31 @@ class RunBenchTest {
         assertTrue(Files.size(rdAbs.resolve("workspace.bundle")) > 0);
     }
 
+    /** #593-adjacent, found live on job cd4c11a8: a pause-after-task signal landing while
+     *  bundleWorkspace()'s own `git bundle create` was still in flight interrupted it mid-write,
+     *  leaving git's own lock file (<tmp>.lock) orphaned - every SUBSEQUENT call then failed
+     *  immediately with "fatal: Unable to create '...workspace.bundle.tmp.lock': File exists", on
+     *  every replayed task, for the rest of the run's life. Pins the fix: a stale lock file left
+     *  over from an earlier interrupted attempt must not block this call from succeeding. */
+    @Test
+    void bundleWorkspaceRecoversFromAStaleLockFileLeftByAnEarlierInterruptedAttempt(@org.junit.jupiter.api.io.TempDir final Path tmp) throws Exception {
+        final Path ws = track(Files.createDirectory(tmp.resolve("ws")));
+        final Path rd = track(Files.createDirectory(tmp.resolve("rd")));
+        git(ws, "init", "-q");
+        git(ws, "config", "user.email", "bench@local");
+        git(ws, "config", "user.name", "bench");
+        Files.writeString(ws.resolve("docker-compose.yml"), "services: {}\n");
+        git(ws, "add", "-A");
+        git(ws, "commit", "-q", "-m", "T1");
+        Files.writeString(rd.resolve("workspace.bundle.tmp.lock"), "");   // the orphaned lock
+
+        RunBench.bundleWorkspace(ws, rd);
+
+        assertTrue(Files.isRegularFile(rd.resolve("workspace.bundle")), "must succeed despite the stale lock file");
+        assertTrue(Files.size(rd.resolve("workspace.bundle")) > 0);
+        assertFalse(Files.exists(rd.resolve("workspace.bundle.tmp.lock")), "the stale lock must not survive a successful call");
+    }
+
     /** #263: taskOverride() is Map.of() - never null, and never a false-positive match - for every
      *  session name that isn't a real, overridden plan task id. */
     @Test
