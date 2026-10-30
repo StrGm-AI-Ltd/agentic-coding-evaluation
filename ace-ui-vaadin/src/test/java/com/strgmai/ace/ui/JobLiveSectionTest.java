@@ -117,11 +117,17 @@ class JobLiveSectionTest {
      *  permanent client-side TypeError the moment the chart's first-ever redraw jumped straight
      *  from an empty series to a large backlog delivered by the SSE replay before the first poll
      *  tick. shouldRebuildChart() is the pure decision updateRequestLatencyChart() uses to tell
-     *  that case apart from a genuinely live job's own small, single-digit-per-tick growth. */
+     *  that case apart from a genuinely live job's own small, single-digit-per-tick growth.
+     *
+     *  <p>#588-followup, found live on job cd4c11a8 right after #588 itself deployed: the SAME
+     *  TypeError reproduced again, this time via a SMALL initial delta - see shouldRebuildChart()'s
+     *  own javadoc for the real root cause (a chart instance's very first updateSeries() call can
+     *  race its own async first render(), regardless of how small that first update is). */
     @Test
     void shouldRebuildChart_trueOnlyForALargeJumpInPointCount() {
         assertTrue(JobLiveSection.shouldRebuildChart(0, 300), "cold load with an already-large backlog - the exact #588 repro shape");
         assertTrue(JobLiveSection.shouldRebuildChart(40, 500), "a reconnect replaying a burst mid-session");
+        assertTrue(JobLiveSection.shouldRebuildChart(0, 1), "#588-followup: a chart's very first-ever data, however small, still races its own first render()");
         assertFalse(JobLiveSection.shouldRebuildChart(0, 0), "nothing to chart yet - never a spurious rebuild");
         assertFalse(JobLiveSection.shouldRebuildChart(40, 42), "one real request landed since the last poll tick - the common, genuinely-live case");
         assertFalse(JobLiveSection.shouldRebuildChart(40, 40), "no change at all between polls");
