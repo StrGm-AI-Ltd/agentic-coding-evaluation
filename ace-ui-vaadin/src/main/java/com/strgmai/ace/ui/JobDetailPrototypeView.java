@@ -73,8 +73,8 @@ import java.util.Map;
  *   disclosure, the dominant 2026 SaaS-dashboard pattern for secondary detail), then promoted to
  *   an always-visible card above Plan, and now live as the "Params" tile inside the stat-tile grid
  *   itself - flags are what EXPLAINS a run's own behavior, not secondary detail an operator
- *   reaches for only occasionally. The new live sections (Sessions/Recent requests/Live output)
- *   follow the SAME always-visible principle, for every job regardless of status: unlike the
+ *   reaches for only occasionally. The new live sections (Sessions/Recent requests) follow the
+ *   SAME always-visible principle, for every job regardless of status: unlike the
  *   classic page (which hides Sessions/Requests once a job is terminal - nothing left to watch
  *   live), this page keeps them populated from the replayed session history even for a finished
  *   job, via JobLiveSection's own alwaysShowLiveData flag - a run's own session/request history
@@ -88,8 +88,12 @@ import java.util.Map;
  *   the SAME size, reflowing by count rather than by deliberately uneven sizing - with ONE
  *   intentional exception, the "Params" tile (the job's own CLI flags), which spans the full grid
  *   row via `grid-column: 1 / -1` because free-form argv text doesn't fit a short value span. The
- *   live sections carry that same bordered-tile chrome into Sessions/Recent requests/Live output,
- *   rather than the classic page's own plain, unbordered presentation of the same data.
+ *   live sections carry that same bordered-tile chrome into Sessions/Recent requests (and, #552,
+ *   the Plan/"Planned tasks" grid too), rather than the classic page's own plain, unbordered
+ *   presentation of the same data. "Live output" (#554) was dropped outright rather than given
+ *   this chrome: it only ever shows a job's own one-line terminal result_line, which the "Result"
+ *   dashboard tile already covers the one time it has content, and sits empty for the entire rest
+ *   of a job's life otherwise - not a genuine live log, despite the name.
  */
 @Route(value = "jobs/:jobId", layout = MainLayout.class)
 public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnterObserver {
@@ -179,8 +183,8 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
      *  dashboard row in place. liveSectionComponent's own default layout (plannedOrderLine, its own
      *  stat tiles, a "Recent requests" card) is never shown - see its own constructor javadoc for the
      *  reparenting pattern this uses instead: a throwaway Div as its planCard slot, immediately
-     *  hidden, with its real content (sessionsGrid/requestsGrid/requestLatencyChart/logTail/
-     *  requestsLine) pulled out via its new accessor methods into this page's own bordered-tile
+     *  hidden, with its real content (sessionsGrid/requestsGrid/requestLatencyChart/
+     *  requestsLine) pulled out via its own accessor methods into this page's own bordered-tile
      *  cards below. It still gets add()ed to the page (invisible) purely so its own attach/detach
      *  listener keeps driving the SSE connection. */
     private void buildChrome(final Api.Job job) {
@@ -215,30 +219,42 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         dashboardHolder.getStyle().set("width", "100%").set("box-sizing", "border-box");
         add(dashboardHolder);
 
-        final var planCard = Panels.card("Plan", planGrid);
-        tightenCardChrome(planCard);
-        add(planCard);
+        // #552, found live: Panels.card() (used here before) deliberately dropped all border/
+        // background chrome in the Aura migration (#529) - every OTHER section on this page
+        // (Sessions/Recent requests, and the dashboard tile row above) uses the bordered-tile look
+        // liveTile() below gives them instead, so Plan was the one visibly unstyled grid on an
+        // otherwise consistently-chromed page. Reusing liveTile() here gives it the exact same
+        // look, and renames the section "Planned tasks" per the issue's own request.
+        add(liveTile("Planned tasks", planGrid));
 
         // alwaysShowLiveData=true - unlike the classic page, a finished job's Sessions/Recent
-        // requests/Live output stay populated here instead of blanking once terminal (see
-        // JobLiveSection's own constructor javadoc for the flag). onLiveChanged re-sets the Plan
-        // grid's items on every live update, not just every 2s poll tick - same reason
-        // JobDetailView's own onLiveChanged does this (see its buildChrome()'s own comment): the
-        // Plan grid's time/generated/prefilled columns read liveSectionComponent.live() lazily, and
-        // a terminal job's one-shot replay can otherwise deliver its whole session history between
-        // one poll tick and the next, leaving the grid stuck on its first (likely all-zero) render
-        // until the next scheduled poll catches up.
+        // requests stay populated here instead of blanking once terminal (see JobLiveSection's own
+        // constructor javadoc for the flag). onLiveChanged re-sets the Plan grid's items on every
+        // live update, not just every 2s poll tick - same reason JobDetailView's own onLiveChanged
+        // does this (see its buildChrome()'s own comment): the Plan grid's time/generated/prefilled
+        // columns read liveSectionComponent.live() lazily, and a terminal job's one-shot replay can
+        // otherwise deliver its whole session history between one poll tick and the next, leaving
+        // the grid stuck on its first (likely all-zero) render until the next scheduled poll
+        // catches up.
         liveSectionComponent = new JobLiveSection(client, jobId, this::refresh,
                 () -> planGrid.setItems(planTasks), new Div(), true);
         liveSectionComponent.setVisible(false);
         add(liveSectionComponent);
 
+        // #554, found live: "Live output" only ever shows a job's own one-line terminal result_line
+        // (JobLiveState.logTail() is set exclusively from a "status" SSE event's own result_line
+        // field) - never a genuine streaming log, despite the name. That line is already shown by
+        // the "Result" dashboard tile above (resultTileValue()) the one time it has content; for
+        // every job not yet at that point (the entire body of a still-running job's own life, or
+        // any job that ended WITHOUT a final result_line - cancelled, infra-failed) it just sits
+        // empty, exactly the screenshot #554 was filed against. Dropped rather than fixed "why is
+        // it empty" - there's no second source of content to populate it with, it would just
+        // duplicate the Result tile the few times it isn't empty.
         liveCardsHolder.getStyle().set("width", "100%").set("box-sizing", "border-box");
         liveCardsHolder.add(
                 liveTile("Sessions", liveSectionComponent.sessionsGrid()),
                 liveTile("Recent requests", liveSectionComponent.requestsLine(),
-                        liveSectionComponent.requestLatencyChartHolder(), liveSectionComponent.requestsGrid()),
-                liveTile("Live output", liveSectionComponent.logTail()));
+                        liveSectionComponent.requestLatencyChartHolder(), liveSectionComponent.requestsGrid()));
         add(liveCardsHolder);
     }
 
@@ -320,16 +336,7 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         liveSectionComponent.update(job, planTasks, null);
     }
 
-    /** Panels.card()'s own 16px horizontal padding and sectionTitle()'s own 16px margin-top are
-     *  both part of the same over-tall gap found live against the stat-tile row's own 32px rhythm
-     *  (see the original prototype's own commit history) - zeroed/shrunk here, locally, the same
-     *  way every other card on this page already is, rather than touching Panels.java itself. */
-    private static void tightenCardChrome(final Div card) {
-        card.getStyle().set("padding", "12px 0").set("margin", "0 0 10px 0");
-        card.getChildren().findFirst().ifPresent(title -> title.getElement().getStyle().set("margin-top", "4px"));
-    }
-
-    /** A live section (Sessions / Recent requests / Live output) in the same bordered-tile chrome
+    /** A live section (Sessions / Recent requests) in the same bordered-tile chrome
      *  as the dashboard row and Params tile above, rather than the classic page's own plain,
      *  unbordered card - see class javadoc for why this got a genuine redesign pass instead of
      *  just porting the old section styling. Full-width (the live grids need the room a 1/7-column
