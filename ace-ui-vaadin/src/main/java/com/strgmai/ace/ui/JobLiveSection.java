@@ -11,6 +11,7 @@ import com.github.appreciated.apexcharts.config.builder.YAxisBuilder;
 import com.github.appreciated.apexcharts.config.chart.Type;
 import com.github.appreciated.apexcharts.config.theme.Mode;
 import com.github.appreciated.apexcharts.config.yaxis.builder.TitleBuilder;
+import com.github.appreciated.apexcharts.config.XAxis;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.grid.ColumnTextAlign;
 import com.vaadin.flow.component.grid.Grid;
@@ -22,6 +23,7 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.data.provider.SortDirection;
 import tools.jackson.databind.JsonNode;
 
+import java.math.BigDecimal;
 import java.util.Comparator;
 import java.util.List;
 
@@ -424,6 +426,18 @@ public final class JobLiveSection extends VerticalLayout {
         return requestLatencyChartWithData(new String[0], new Double[0]);
     }
 
+    /** found live on job cd4c11a8 (308 requests): the x-axis categories are plain sequential
+     *  request indices ("1".."308"), and with no tick limit ApexCharts renders every single one as
+     *  its own label - illegible past a couple dozen requests. Capping to a fixed number of evenly
+     *  spaced ticks (ApexCharts picks which categories to actually label) keeps it readable
+     *  regardless of how large recent grows; both buildXaxis() call sites below share it so the
+     *  rebuild and incremental update paths stay visually identical. */
+    private static final BigDecimal MAX_X_AXIS_TICKS = BigDecimal.TEN;
+
+    private static XAxis buildXaxis(final String[] categories) {
+        return XAxisBuilder.get().withCategories(categories).withTickAmount(MAX_X_AXIS_TICKS).build();
+    }
+
     /** #588: the SAME builder buildRequestLatencyChart() always used, but with the real series
      *  baked in from construction - the chart this produces has never had updateSeries() called
      *  on it at all, so there is nothing for ApexCharts' own client-side diff code to race against
@@ -434,7 +448,7 @@ public final class JobLiveSection extends VerticalLayout {
                 .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent")
                         .withAnimations(AnimationsBuilder.get().withEnabled(false).build()).build())
                 .withTheme(ThemeBuilder.get().withMode(Mode.DARK).build())
-                .withXaxis(XAxisBuilder.get().withCategories(categories).build())
+                .withXaxis(buildXaxis(categories))
                 .withYaxis(YAxisBuilder.get().withTitle(TitleBuilder.get().withText("latency (s)").build()).build())
                 .withSeries(SeriesBuilder.get().withName("latency (s)").withData(data).build())
                 .build();
@@ -478,7 +492,7 @@ public final class JobLiveSection extends VerticalLayout {
             requestLatencyChartHolder.add(fresh);
             requestLatencyChart = fresh;
         } else {
-            requestLatencyChart.setXaxis(XAxisBuilder.get().withCategories(categories).build());
+            requestLatencyChart.setXaxis(buildXaxis(categories));
             requestLatencyChart.updateSeries(SeriesBuilder.get().withName("latency (s)").withData(data).build());
         }
         lastChartedPointCount = recent.size();
