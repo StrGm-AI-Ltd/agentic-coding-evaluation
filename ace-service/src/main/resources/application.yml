@@ -24,6 +24,8 @@ ace:
   results-dir: ${ACE_RESULTS_DIR:./results}
   workspace-root: ${ACE_WORKSPACE_ROOT:${java.io.tmpdir}/ace-service-ws}
   poll-sec: 10
+  docker-gc:
+    interval-sec: 3600   # #621: periodic `docker container/image/volume prune -f` - never touches anything still in use
   max-error-rate: 0.2
   java-home: ${ACE_JAVA_HOME:}
   omlx-server-log: ${ACE_OMLX_SERVER_LOG:}   # EMPTY = no capture; the model server's own log (path is operator/machine-specific)
