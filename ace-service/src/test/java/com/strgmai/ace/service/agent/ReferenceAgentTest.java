@@ -98,6 +98,19 @@ class ReferenceAgentTest {
         assertFalse(ReferenceAgent.isEmptyModelResponse(blankFinishButText), "real text means the model actually said something");
     }
 
+    /** found live (job cd4c11a8, T6): some models occasionally write a tool call as literal text
+     *  instead of using the real function-calling mechanism - the response still carries a normal
+     *  "stop" finish reason and zero real tool calls, so nothing else distinguishes this from a
+     *  genuine final answer except the text shape itself. */
+    @Test
+    void looksLikeATextToolCallAttemptDetectsOnlyTheTextMimickedToolCallShape() {
+        assertTrue(ReferenceAgent.looksLikeATextToolCallAttempt(
+                "\n<function=bash>\n<parameter=command>\n./gradlew compileTestJava -q\n</parameter>\n</function>\n</tool_call>"));
+        assertFalse(ReferenceAgent.looksLikeATextToolCallAttempt("T6 | done | all tests green"), "a genuine final answer must never be flagged");
+        assertFalse(ReferenceAgent.looksLikeATextToolCallAttempt(""), "blank text is not a tool-call attempt");
+        assertFalse(ReferenceAgent.looksLikeATextToolCallAttempt(null), "null text must not throw");
+    }
+
     /** found live (T4 rescue, job 416dcfb6): Nemotron emitted `{"command": "file gradle.zip"` (no
      *  closing brace) as a tool call's arguments. Unsanitized, that raw string got resent verbatim
      *  as conversation history on the next request and the upstream provider 400'd the whole

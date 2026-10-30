@@ -106,6 +106,17 @@ public class ReferenceAgent {
         return noText && noToolCalls && noFinish;
     }
 
+    /** found live (job cd4c11a8, T6): some models occasionally write a tool call as literal text
+     *  (e.g. "<function=bash><parameter=command>...</parameter></function></tool_call>") instead of
+     *  using the real function-calling mechanism - the response carries zero real tool calls and a
+     *  normal "stop" finish reason, so it looks exactly like an intentional, content-only turn
+     *  unless this specific text shape is checked for. Only called when calls.isEmpty() is already
+     *  true (see its own call site), so this narrows further: among turns with no real tool call,
+     *  is this one a FAILED tool-call attempt rather than a genuine final answer. */
+    static boolean looksLikeATextToolCallAttempt(final String text) {
+        return text != null && text.contains("<function=");
+    }
+
     public record SessionResult(String id, int rc, double seconds, String finish, int turns, int toolErrors,
                                 int compactions, Path sessionFile, Instant start, Instant end) {}
 
@@ -451,6 +462,13 @@ public class ReferenceAgent {
         int turns = 0, toolErrors = 0, compactions = preloadCompactions, lastPrompt = 0;
         String finish = null; int rc = 0;
         FinalTurn pendingFinalTurn = finalTurn;   // consumed (set null) the first time it fires - see FinalTurn's own javadoc
+        // found live (job cd4c11a8, T6): some models occasionally WRITE a tool call as literal text
+        // (e.g. "<function=bash><parameter=command>...</parameter></function></tool_call>") instead
+        // of actually using the real function-calling mechanism - finish_reason comes back "stop"
+        // with zero real tool calls, so the turn looks like a natural, intentional stop. The task
+        // then silently ends one real action short of what the model was clearly trying to do.
+        // Nudged exactly once per session (not once per occurrence) - see its own call site below.
+        boolean nudgedForTextToolCall = false;
         // #417 follow-up review: both scoped to THIS session's own turn loop, never shared across
         // sessions - compactionState lets structured_eviction skip a redundant re-summarization
         // (C9, see CompactionStrategies.State's own javadoc); recallCounts bounds how many times
@@ -545,6 +563,18 @@ public class ReferenceAgent {
                     "output", completion == null ? 0 : completion, "cached", cachedTokens(resp)));
             msgs.add(sanitizedForHistory(ai, calls));
             if (calls.isEmpty()) {
+                // see looksLikeATextToolCallAttempt()'s own javadoc - checked BEFORE the FinalTurn
+                // hook below, since this is a formatting failure to correct, not a genuine
+                // "the agent is done" signal.
+                if (!nudgedForTextToolCall && looksLikeATextToolCallAttempt(ai.text())) {
+                    nudgedForTextToolCall = true;
+                    final String nudge = "Your previous message looked like an attempted tool call written as "
+                            + "plain text, not a real tool call - nothing executed. Make the SAME call again, "
+                            + "but using your actual tool-calling mechanism, not text.";
+                    msgs.add(UserMessage.from(nudge));
+                    session.user(nudge);
+                    continue;
+                }
                 // #300/#302: the task is about to naturally stop - give the one-shot FinalTurn hook
                 // a chance to ask for one more live turn (e.g. a handoff note) before actually
                 // ending, while this connection's own accumulated prefix cache is still warm.
