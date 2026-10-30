@@ -74,4 +74,22 @@ class RunOracleTest {
         // build_image_digest is null whenever `docker image inspect` can't run/find it (no Docker
         // here) - asserting this doesn't throw is the point; a Map.of() version of this line NPEs
     }
+
+    /** #616, found live: JobCfgFactory.build() hardcodes system_base_url to null for every real
+     *  job, so this default is what EVERY run's C2/F1-F9 checks actually use, unconditionally.
+     *  "localhost:8080" is unreachable from inside ace-service's own container on the containerized
+     *  deployment (confirmed live, in isolation: rc 000 via localhost, 200 via host.docker.internal
+     *  against the same published port) - the same root cause #604 already fixed for the agent's
+     *  own bash-tool checks, just a second, separate call site. */
+    @Test
+    void effectiveSystemBaseUrlDefaultsToHostDockerInternalNotLocalhost() {
+        assertEquals("http://host.docker.internal:8080", RunOracle.effectiveSystemBaseUrl(null));
+        assertEquals("http://host.docker.internal:8080", RunOracle.effectiveSystemBaseUrl(""));
+        assertEquals("http://host.docker.internal:8080", RunOracle.effectiveSystemBaseUrl("   "));
+    }
+
+    @Test
+    void effectiveSystemBaseUrlStillHonorsAnExplicitOverrideWhenOneIsEverProvided() {
+        assertEquals("http://example-system:9090", RunOracle.effectiveSystemBaseUrl("http://example-system:9090"));
+    }
 }
