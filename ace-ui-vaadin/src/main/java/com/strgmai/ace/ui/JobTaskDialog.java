@@ -681,7 +681,10 @@ final class JobTaskDialog {
         // the whole row to overflow - flex-grow alone correctly claims exactly "the row's width
         // minus the Send button's own natural width", with no fixed width to fight.
         row.setFlexGrow(1, text);
-        row.getStyle().set("margin-top", "8px");
+        // #568 follow-up, found live: this 8px top margin dates from when this row sat right below
+        // the transcript in the scrollable content area (visual separation from the text above it).
+        // It now lives alone in the footer beside Close - the leftover margin just pushed the text
+        // field and Send 4px lower than Close's own top edge instead of sitting flush with it.
         interveneRow.removeAll();
         interveneRow.add(row);
     }
