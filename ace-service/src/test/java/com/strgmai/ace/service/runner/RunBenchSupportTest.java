@@ -304,4 +304,27 @@ class RunBenchSupportTest {
 
         assertEquals(phaseT1Sha, before, "a real, nearer phase/* tag must still win over the run/start fallback");
     }
+
+    /** #605, found live (job 9b4213e4): a scaffolding tool (`gradle init`, `npm init`, ...) can
+     *  leave a nested, commit-less .git directory somewhere under the workspace as a routine side
+     *  effect, not a mistake. `git add -A` on the OUTER repo then treats that path as a submodule
+     *  reference with nothing to point at and refuses outright - an uncaught IOException that used
+     *  to crash the entire run at the very next phase boundary, losing every already-completed
+     *  task's real work. snapshot() must survive this and still capture the agent's real files
+     *  sitting beside the stray nested repo. */
+    @Test
+    void snapshotSurvivesAndStripsAStrayNestedGitRepoWithNoCommitsYet() throws Exception {
+        final Path ws = track(Files.createTempDirectory("ws-nested-git"));
+        RunBenchSupport.snapshot(ws, "run/start");
+
+        final Path nested = ws.resolve("account-service");
+        Files.createDirectories(nested);
+        Files.writeString(nested.resolve("gradle-8.5-bin.zip"), "not a real zip, just a stray scaffold artifact");
+        RunBenchSupport.runGit(nested, "init", "-q");   // mirrors exactly what gradle init/npm init do on their own
+
+        assertDoesNotThrow(() -> RunBenchSupport.snapshot(ws, "phase/T1"),
+                "a stray nested repo with no commits must not crash the whole run's snapshot");
+        assertFalse(Files.exists(nested.resolve(".git")), "the stray nested .git itself should be gone");
+        assertTrue(Files.exists(nested.resolve("gradle-8.5-bin.zip")), "the agent's own real file beside it must survive untouched");
+    }
 }

@@ -2,6 +2,8 @@ package com.strgmai.ace.service.runner;
 
 import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.docker.DockerService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.channels.FileChannel;
@@ -26,6 +28,8 @@ import java.util.function.Consumer;
  *  process environment, so its AB_RUN_ID sweep could never match; descendants() covers the process tree. */
 public final class RunBenchSupport {
     private RunBenchSupport() {}
+
+    private static final Logger log = LoggerFactory.getLogger(RunBenchSupport.class);
 
     /** one benchmark run at a time on this machine */
     public static FileChannel acquireLock(final Path lockPath) {
@@ -84,10 +88,43 @@ public final class RunBenchSupport {
             Files.writeString(ws.resolve(".git/info/exclude"), String.join("\n", VENDORED_PATHS) + "\n");
             Files.writeString(ws.resolve(".git/info/attributes"), "docs/PROGRESS.md merge=union\nhandoff/*.md merge=union\n");
         }
+        stripNestedGitDirs(ws);
         runGit(ws, "add", "-A");
         runGit(ws, "commit", "-q", "--allow-empty", "-m", tag);
         runGit(ws, "tag", "-f", tag);
         return gitOut(ws, "rev-parse", "HEAD");
+    }
+
+    /** #605, found live: an agent scaffolding tool (`gradle init`, `npm init`, etc. - any of these
+     *  can auto-initialize a git repo as a convenience when it finds none) can leave a NESTED .git
+     *  directory somewhere under the workspace, uncommitted. `git add -A` on the OUTER repo then
+     *  treats that path as a submodule reference and - since a submodule needs at least one commit to
+     *  record a SHA for - refuses outright ("does not have a commit checked out"), throwing an
+     *  IOException with nothing downstream positioned to catch it: it propagates out of snapshot()
+     *  (called at EVERY phase boundary) and crashes the entire run, losing however much real,
+     *  already-completed task work preceded it - a single ordinary agent action (creating a nested
+     *  git repo is routine scaffolding behavior, not a mistake worth penalizing) taking down 18
+     *  tasks' worth of progress. Removing just the stray `.git` entry - never the real files sitting
+     *  beside it - lets the outer `git add -A` pick up everything the agent actually wrote, same as
+     *  if that tool had never touched git at all. Depth-limited and skips VENDORED_PATHS for the same
+     *  reason scratchCopy() does: a deep find through a multi-hundred-MB node_modules/.gradle tree on
+     *  every single snapshot would be real, avoidable overhead. */
+    private static void stripNestedGitDirs(final Path ws) {
+        try (var walk = Files.walk(ws, 6)) {
+            for (Path p : walk.filter(q -> q.getFileName() != null && q.getFileName().toString().equals(".git")).toList()) {
+                if (p.equals(ws.resolve(".git"))) continue;   // the outer repo's own .git - never touch it
+                final Path rel = ws.relativize(p);
+                if (rel.getNameCount() > 1 && VENDORED_PATHS.stream().anyMatch(v -> rel.getName(0).toString().equals(v.replace("/", "")))) continue;
+                try (var inner = Files.walk(p)) {
+                    for (Path f : inner.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(f);
+                    log.warn("stripped a stray nested git repo at {} before snapshotting {} - an agent scaffolding tool likely auto-initialized it", rel, ws);
+                } catch (IOException e) {
+                    log.warn("could not strip nested git repo at {}: {}", rel, e.toString());
+                }
+            }
+        } catch (IOException e) {
+            log.warn("could not scan {} for nested git repos before snapshotting: {}", ws, e.toString());
+        }
     }
 
     /** #265, found live: a task interrupted by an external pause (not the dedicated restart-task
