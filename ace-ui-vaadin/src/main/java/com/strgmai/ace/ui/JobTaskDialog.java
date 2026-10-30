@@ -141,8 +141,13 @@ final class JobTaskDialog {
         // a SIBLING of transcriptBody, never nested inside it - transcriptBody.removeAll() runs on
         // every single incoming SSE line (see openTaskTranscriptTab()), which would wipe an input
         // box (and any not-yet-sent, half-typed text) on every streaming update if it lived inside.
+        // #568, found live: this used to sit in the scrollable CONTENT area, right after the
+        // transcript - visually stranded there with a big gap before the dialog's own Close button,
+        // which sits in the FOOTER. Lives in the footer now instead, the same pane Close (and
+        // refreshStatsButton below) already use - flex-grow so it claims the space Close doesn't
+        // need, same reasoning as the Send button's own flex-grow on the TextArea beside it.
         final var interveneRow = new Div();
-        interveneRow.getStyle().set("width", "100%").set("box-sizing", "border-box");
+        interveneRow.getStyle().set("width", "100%").set("box-sizing", "border-box").set("flex-grow", "1");
         interveneRow.setVisible(false);
 
         final var promptTab = new Tab("Prompt");
@@ -181,12 +186,12 @@ final class JobTaskDialog {
             if (tabs.getSelectedTab() == statsTab && loadStatsOnSelect[0] != null) loadStatsOnSelect[0].run();
         });
 
-        final var content = new VerticalLayout(tabs, promptBody, diffBody, restartBody, historyBody, judgeBody, statsBody, transcriptBody, interveneRow);
+        final var content = new VerticalLayout(tabs, promptBody, diffBody, restartBody, historyBody, judgeBody, statsBody, transcriptBody);
         content.setPadding(false);
         content.setSpacing(false);
         content.setSizeFull();
         dialog.add(content);
-        dialog.getFooter().add(refreshStatsButton, new Button("Close", e -> dialog.close()));
+        dialog.getFooter().add(interveneRow, refreshStatsButton, new Button("Close", e -> dialog.close()));
 
         final Registration[] pollReg = new Registration[1];
         // #256, found live: Packs.taskPack() caps the whole id/title/goal/services/acceptance
