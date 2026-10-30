@@ -13,12 +13,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** #593: unit tests for StuckWorkerWatchdog's two pure helpers. check() itself (the Runtime.halt()
+/** #593: unit tests for StuckWorkerWatchdog's pure helpers. check() itself (the Runtime.halt()
  *  call) is deliberately NOT driven here - unlike every other side-effecting entry point in this
  *  codebase, a test accidentally triggering it would kill the test JVM itself, not just fail an
- *  assertion. isStuck()/lastWriteTime() carry the actual decision logic and are fully covered;
- *  check()'s own wiring is a few lines of glue, verified by code review and live production
- *  behavior instead - the same split already established for JobLiveSection.shouldRebuildChart(). */
+ *  assertion. isStuck()/lastWriteTime()/hasLiveDescendantProcess() carry the actual decision logic
+ *  and are fully covered; check()'s own wiring (the fileTime-vs-startedAt floor, the
+ *  hasLiveDescendantProcess() short-circuit) is a few lines of glue, verified by code review and
+ *  live production behavior instead - the same split already established for
+ *  JobLiveSection.shouldRebuildChart(). */
 class StuckWorkerWatchdogTest {
 
     @Test
@@ -46,5 +48,23 @@ class StuckWorkerWatchdogTest {
     void lastWriteTime_emptyWhenTheFileDoesNotExistYet(@TempDir final Path dir) {
         assertEquals(java.util.Optional.empty(), StuckWorkerWatchdog.lastWriteTime(dir.resolve("interactions.jsonl")),
                 "a job's very first request hasn't landed yet - the caller falls back to its start time");
+    }
+
+    /** #593-followup: this JVM's own test process is guaranteed to have no live descendants of its
+     *  own under a normal test run (nothing in this test spawns a subprocess) - a true result here
+     *  would mean the check is finding processes it shouldn't, a real false-negative risk for the
+     *  "genuinely wedged" case. The live-process-exists case (the one that actually matters in
+     *  production - a shelled-out bash/docker/gradle call) is exercised by spawning a real,
+     *  deliberately-slow child process and confirming it's detected while still running. */
+    @Test
+    void hasLiveDescendantProcess_falseWithNoChildrenTrueWithARealOne() throws Exception {
+        assertFalse(StuckWorkerWatchdog.hasLiveDescendantProcess(), "this test JVM has spawned nothing yet");
+
+        final Process p = new ProcessBuilder("sleep", "5").start();
+        try {
+            assertTrue(StuckWorkerWatchdog.hasLiveDescendantProcess(), "a real, still-running child process must be detected");
+        } finally {
+            p.destroyForcibly();
+        }
     }
 }
