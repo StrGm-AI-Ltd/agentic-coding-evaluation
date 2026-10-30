@@ -44,6 +44,15 @@ class JobStatusesTest {
         assertFalse(JobStatuses.isTerminal("paused"), "paused must be resumable, never terminal");
     }
 
+    /** #556, found live: a paused job's own action row kept showing "Pause"/"Pause after task"
+     *  alongside "Resume" - pause_requested resets to false once JobQueue.paused() actually lands the
+     *  job on "paused" (see its own javadoc), so the flag alone never ruled this out; "paused" itself
+     *  has to be excluded by status. */
+    @Test
+    void canPause_excludesAlreadyPaused() {
+        assertFalse(JobStatuses.canPause("paused", false, false), "an already-paused job must not re-offer Pause");
+    }
+
     @Test
     void terminalMatchesQueuePy() {
         assertTrue(JobStatuses.isTerminal("succeeded"));
