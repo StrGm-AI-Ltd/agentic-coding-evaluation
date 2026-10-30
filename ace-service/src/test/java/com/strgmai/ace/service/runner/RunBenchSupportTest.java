@@ -327,4 +327,30 @@ class RunBenchSupportTest {
         assertFalse(Files.exists(nested.resolve(".git")), "the stray nested .git itself should be gone");
         assertTrue(Files.exists(nested.resolve("gradle-8.5-bin.zip")), "the agent's own real file beside it must survive untouched");
     }
+
+    /** Found live on a real run: a task that could not get its own Gradle wrapper download working
+     *  self-unzipped gradle.zip into gradle-dist/ instead - the entire Gradle 8.5 distribution
+     *  (~20,900 files) was NOT in VENDORED_PATHS, so `git add -A` tracked every one of them, and
+     *  the next task's own `files_changed` metric (a diff against the immediately preceding
+     *  phase tag) came back ~20,900 instead of the handful of files that task's real work touched.
+     *  Confirms the actual mechanism the fix relies on: .git/info/exclude is seeded from
+     *  VENDORED_PATHS once, at the FIRST snapshot() call for a fresh workspace (see its own code) -
+     *  so gradle-dist/ must be excluded from THAT VERY FIRST commit onward, not just from some
+     *  later point once an operator notices. */
+    @Test
+    void snapshotNeverTracksASelfUnzippedGradleDistribution() throws Exception {
+        final Path ws = track(Files.createTempDirectory("ws-gradle-dist"));
+        RunBenchSupport.snapshot(ws, "run/start");   // the first-ever snapshot: seeds .git/info/exclude
+
+        final Path dist = ws.resolve("gradle-dist/gradle-8.5/bin");
+        Files.createDirectories(dist);
+        Files.writeString(dist.resolve("gradle"), "#!/bin/sh\necho stand-in for the real launcher script\n");
+        Files.writeString(ws.resolve("build.gradle.kts"), "// the agent's own real work");
+        RunBenchSupport.snapshot(ws, "phase/T5");
+
+        final String tracked = RunBenchSupport.gitOut(ws, "ls-tree", "-r", "--name-only", "phase/T5");
+        assertFalse(tracked.contains("gradle-dist"), "the self-unzipped distribution must never enter a snapshot: " + tracked);
+        assertTrue(tracked.contains("build.gradle.kts"), "the agent's own real file must still be tracked");
+        assertTrue(Files.exists(dist.resolve("gradle")), "the distribution itself must survive untouched on disk, just unTRACKED");
+    }
 }
