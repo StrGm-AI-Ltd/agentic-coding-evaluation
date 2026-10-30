@@ -249,6 +249,41 @@ class JournalFactsTest {
         assertEquals(90.0, ((Number) buckets.get(1).get("avg_prefill_tok_per_sec")).doubleValue(), 0.001);
     }
 
+    /** #607-followup, found live: a remote OpenAI-compatible provider (Nebius, etc.) never reports
+     *  oMLX's own prompt_tokens_per_second/generation_tokens_per_second fields - the run page's
+     *  "Speed vs context size" chart went entirely blank for a real Nebius run (every bucket's
+     *  avg_prefill_tok_per_sec/avg_decode_tok_per_sec came back null). Same derived-fallback formula
+     *  BenchController's own parseRequestSpeedEntry() already uses for the LIVE Stats-tab chart
+     *  (#591): prefill = prompt_tokens / (first_byte_ms/1000), decode = completion_tokens /
+     *  (latency_sec - first_byte_ms/1000). */
+    @Test
+    void speedByContextDerivesPrefillAndDecodeWhenNoNativeSpeedFieldsArePresent() throws Exception {
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
+        Files.writeString(j,
+                chat("2026-09-14T10:00:00Z", ", \"latency_sec\": 2.0, \"first_byte_ms\": 500",
+                        "\"usage\": {\"completion_tokens\": 30, \"prompt_tokens\": 100}", REQ));
+        final Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null, backend());
+        final List<Map<String, Object>> buckets = (List<Map<String, Object>>) f.get("speed_by_context");
+        assertEquals(1, buckets.size());
+        assertEquals(200.0, ((Number) buckets.get(0).get("avg_prefill_tok_per_sec")).doubleValue(), 0.001, "100 prompt tokens / 0.5s to first token");
+        assertEquals(20.0, ((Number) buckets.get(0).get("avg_decode_tok_per_sec")).doubleValue(), 0.001, "30 completion tokens / (2.0s - 0.5s)");
+    }
+
+    /** A real native field, when the backend DOES report one, must still win outright - the derived
+     *  fallback only fires when the native lookup comes back missing, never overrides it. */
+    @Test
+    void speedByContextPrefersTheNativeFieldOverTheDerivedFallbackWhenBothAreAvailable() throws Exception {
+        final Path j = track(Files.createTempFile("j", ".jsonl"));
+        Files.writeString(j,
+                chat("2026-09-14T10:00:00Z", ", \"latency_sec\": 2.0, \"first_byte_ms\": 500",
+                        "\"usage\": {\"completion_tokens\": 30, \"prompt_tokens\": 100, "
+                                + "\"prompt_tokens_per_second\": 999.0, \"generation_tokens_per_second\": 999.0}", REQ));
+        final Map<String, Object> f = JournalFacts.facts(j.toString(), null, null, null, null, null, backend());
+        final List<Map<String, Object>> buckets = (List<Map<String, Object>>) f.get("speed_by_context");
+        assertEquals(999.0, ((Number) buckets.get(0).get("avg_prefill_tok_per_sec")).doubleValue(), 0.001);
+        assertEquals(999.0, ((Number) buckets.get(0).get("avg_decode_tok_per_sec")).doubleValue(), 0.001);
+    }
+
     /** #65: entries() caches parsed Entry objects per (backend, path) - never just path - because
      *  Entry.prefillTps/decodeTps are baked in at parse time from whatever backend's field names
      *  were in effect for THAT parse. Calling facts() for the SAME file first with no backend (a

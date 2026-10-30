@@ -261,18 +261,32 @@ public final class JournalFacts {
         if (req != null && req.isObject())
             effort = String.valueOf(req.path("reasoning_effort").asText(null) == null ? "none"
                     : req.path("reasoning_effort").asText());
+        final Long completionTokens = u == null ? 0 : u.path("completion_tokens").asLong(0);
+        final Long promptTokens = u == null || u.path("prompt_tokens").isMissingNode() ? null : u.path("prompt_tokens").asLong();
+        final double latencySec = r.path("latency_sec").asDouble(0.0);
+        final Long firstByteMs = r.path("first_byte_ms").isMissingNode() ? null : r.path("first_byte_ms").asLong();
+        Double prefillTps = u == null || speedFields == null || !u.path(speedFields.prefillTpsField()).isNumber()
+                ? null : u.path(speedFields.prefillTpsField()).asDouble();
+        Double decodeTps = u == null || speedFields == null || !u.path(speedFields.decodeTpsField()).isNumber()
+                ? null : u.path(speedFields.decodeTpsField()).asDouble();
+        // #607-followup, found live: a remote OpenAI-compatible provider (Nebius, etc.) never reports
+        // native prefill/decode tok/s in its own usage block - speedFields' lookup above always comes
+        // back null for every entry, leaving "Speed vs context size" on the run page entirely blank
+        // for any run against one. Same derived-fallback formula BenchController's own
+        // parseRequestSpeedEntry() already uses for the LIVE Stats-tab chart (#591) - time to first
+        // token from first_byte_ms, generation time as the remainder of the request's own latency.
+        if (prefillTps == null && promptTokens != null && firstByteMs != null && firstByteMs > 0)
+            prefillTps = promptTokens / (firstByteMs / 1000.0);
+        if (decodeTps == null && completionTokens != null && firstByteMs != null && latencySec - firstByteMs / 1000.0 > 0)
+            decodeTps = completionTokens / (latencySec - firstByteMs / 1000.0);
         return new Entry(off, r.path("task").asText(null), ts, r.path("status").asInt(0),
                 r.path("budget_exceeded").asBoolean(false), r.path("upstream_error").asBoolean(false),
                 r.path("client_aborted").asBoolean(false), r.path("drain_aborted").asBoolean(false),
                 r.path("truncated").asBoolean(false),
-                u == null ? 0 : u.path("completion_tokens").asLong(0), u != null && u.path("estimated").asBoolean(false),
-                u == null || u.path("prompt_tokens").isMissingNode() ? null : u.path("prompt_tokens").asLong(),
+                completionTokens, u != null && u.path("estimated").asBoolean(false), promptTokens,
                 resp == null || !resp.isObject() ? null : resp.path("finish_reason").asText(null),
                 effort, req != null && req.isObject(), ws,
-                r.path("latency_sec").asDouble(0.0),
-                r.path("first_byte_ms").isMissingNode() ? null : r.path("first_byte_ms").asLong(),
-                u == null || speedFields == null || !u.path(speedFields.prefillTpsField()).isNumber() ? null : u.path(speedFields.prefillTpsField()).asDouble(),
-                u == null || speedFields == null || !u.path(speedFields.decodeTpsField()).isNumber() ? null : u.path(speedFields.decodeTpsField()).asDouble(),
+                latencySec, firstByteMs, prefillTps, decodeTps,
                 // #415: resp carries the upstream's own "error" either way - the raw upstream body
                 // for a non-streamed response, or SseAssembler's already-extracted string for a
                 // streamed one (RecordingProxy.streamSse()) - com.strgmai.ace.service.proxy.SseAssembler.errorText()
