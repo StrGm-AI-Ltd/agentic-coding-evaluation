@@ -237,7 +237,7 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         liveCardsHolder.add(
                 liveTile("Sessions", liveSectionComponent.sessionsGrid()),
                 liveTile("Recent requests", liveSectionComponent.requestsLine(),
-                        liveSectionComponent.requestLatencyChart(), liveSectionComponent.requestsGrid()),
+                        liveSectionComponent.requestLatencyChartHolder(), liveSectionComponent.requestsGrid()),
                 liveTile("Live output", liveSectionComponent.logTail()));
         add(liveCardsHolder);
     }
