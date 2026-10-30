@@ -132,18 +132,44 @@ public final class ComposeChecks {
         return hits;
     }
 
-    /** `context:`/`dockerfile:` or bind-mount sources given as absolute paths escape the source-only
-     *  copy the oracle builds from. */
+    /** `context:`/`dockerfile:` given as an ABSOLUTE path escapes the source-only copy the oracle
+     *  builds from - unlike a bind-mount source (see below), a RELATIVE context/dockerfile (`./backend`,
+     *  the common, legitimate multi-service-subdirectory pattern) stays within the repository and is
+     *  fine: confirmed live that `docker compose build` reads a build context - relative OR the
+     *  implicit "." - from its own (the `docker compose` CLI's) local filesystem view and tar-streams
+     *  it to the daemon's Build API, never asking the daemon to resolve/bind-mount that path itself
+     *  (see the compose-volume case's own javadoc for the contrasting case where it DOES).
+     *
+     *  <p>A bind-mount `volumes:` source given as an absolute OR relative (`./`, `../`) LOCAL path
+     *  DOES escape the source-only copy - a named volume (bare `<name>:/path`, no leading `.`/`/`,
+     *  Compose's own rule for "this is a volume, not a bind mount") is unaffected and never flagged.
+     *
+     *  <p>#613, found live: unlike BuildChecks' own `docker run -v <host-path>:/w` (fixed by #612's
+     *  DockerService.hostPath() translation - that call site builds the "-v" argument directly in
+     *  Java, so a translation call slots right in), a Compose bind-mount's source is resolved
+     *  INSIDE the third-party `docker compose` CLI itself (relative to the compose file's own
+     *  directory), never as a string ace-service's own code ever sees or controls - there is no
+     *  equivalent one-line fix available at this call site. Confirmed live, reproducing #612's
+     *  exact "silently mounts empty instead of erroring" symptom with a RELATIVE bind mount
+     *  specifically (ComposeChecks' own scratch copy sits under java.io.tmpdir, invisible to the
+     *  daemon the same way BuildChecks' pre-#612 scratch copy was): a file written to
+     *  `./data/marker.txt` next to the compose file, bind-mounted via `volumes: - ./data:/mounted`,
+     *  read back from inside the container as "No such file or directory" - not an error, an EMPTY
+     *  mount. This method already caught the absolute-path flavor of a bind-mount source (R5 C-19);
+     *  it now also catches the relative flavor, since both are equally invisible to the daemon here -
+     *  and the task spec itself (T16's own goal text) already calls for a NAMED volume for exactly
+     *  this (postgres's data directory), so a compliant solution never needs a local bind mount at
+     *  all - this is a legitimate FAIL, not an oracle limitation to work around. */
     static List<String> absoluteComposePaths(final Path composeFile) {
         final List<String> hits = new ArrayList<>();
         String txt;
         // a read failure here silently means this compose file is never checked for an escaped
-        // absolute path (R5 C-19) - an empty result then reads as "clean", not "could not check"
+        // local path (R5 C-19) - an empty result then reads as "clean", not "could not check"
         try { txt = Files.readString(composeFile); }
-        catch (IOException e) { log.warn("could not read {} for the absolute-path check: {}", composeFile, e.toString()); return hits; }
+        catch (IOException e) { log.warn("could not read {} for the local-path check: {}", composeFile, e.toString()); return hits; }
         for (var m : Pattern.compile("(?m)^\\s*(?:context|dockerfile)\\s*:\\s*(/\\S+)", Pattern.CASE_INSENSITIVE).matcher(txt).results().toList())
             hits.add(m.group(0).strip());
-        for (var m : Pattern.compile("(?m)^\\s*-\\s*['\"]?(/(?!dev/|proc/|sys/)[^:'\"\\s]+):", Pattern.CASE_INSENSITIVE).matcher(txt).results().toList())
+        for (var m : Pattern.compile("(?m)^\\s*-\\s*['\"]?((?:\\.{1,2}/|/(?!dev/|proc/|sys/))[^:'\"\\s]+):", Pattern.CASE_INSENSITIVE).matcher(txt).results().toList())
             hits.add(m.group(0).strip());
         return hits;
     }
@@ -173,9 +199,12 @@ public final class ComposeChecks {
                 for (CheckId c : IDS) if (wanted.test(c)) out.add(CheckResult.fail(c, "image depends on a host-built artefact (" + head(pre.get(0), 120) + "): images must build from source on a clean checkout"));
                 return out;
             }
-            List<String> absp = absoluteComposePaths(cf);    // R5 C-19: an absolute build context/bind mount escapes the copy
+            // R5 C-19 / #613: an absolute build context, or an absolute/relative bind-mount source,
+            // escapes the copy - see absoluteComposePaths()'s own javadoc for why a RELATIVE build
+            // context is fine but a RELATIVE bind mount is not
+            List<String> absp = absoluteComposePaths(cf);
             if (!absp.isEmpty()) {
-                for (CheckId c : IDS) if (wanted.test(c)) out.add(CheckResult.fail(c, "compose file uses absolute host paths (" + head(absp.get(0), 100) + "): the stack must build from the repository"));
+                for (CheckId c : IDS) if (wanted.test(c)) out.add(CheckResult.fail(c, "compose file uses a local host path (" + head(absp.get(0), 100) + "): the stack must build from the repository, and a bind-mount volume (even a relative one) is not visible to the oracle - use a named volume instead"));
                 return out;
             }
             sweepStale();
