@@ -108,4 +108,66 @@ public final class DockerService {
 
     public static void sleep(int sec) { try { TimeUnit.SECONDS.sleep(sec); } catch (InterruptedException e) { Thread.currentThread().interrupt(); } }
     public static String nowIso() { return DateTimeFormatter.ISO_INSTANT.format(Instant.now()); }
+
+    // #612, found live: when ace-service itself runs as a container (Docker-outside-of-Docker, the
+    // only topology that deployment uses), a path string that's meaningful INSIDE this container's
+    // own mount namespace (e.g. "/app/data/...", the named-volume mount point docker-compose.yml
+    // itself defines) is NOT a real path on the actual host - it only happens to exist there as an
+    // accidental, empty, auto-created directory the first time something bind-mounts it (confirmed
+    // live: `docker run -v /app/data/x:/w alpine ls /w` silently creates an empty host-root
+    // "/app/data/x" and mounts THAT in, exit 0, no error). Every sibling container BuildChecks/
+    // ComposeChecks spawn via "-v <container-path>:/w" over the shared host daemon was silently
+    // getting an empty directory instead of the real scratch copy just written there - this is what
+    // hostPath() actually fixes: given a path under one of THIS container's own mounts, resolve the
+    // REAL host-side source Docker itself already knows about (self-introspection via `docker
+    // inspect` on this container's own id - HOSTNAME is Docker's own default container-id env var,
+    // not something this image sets), so the sibling container's "-v" argument points at the same
+    // bytes instead of a coincidentally-matching but empty host path.
+    private static volatile List<Map.Entry<String, String>> ownMounts;   // destination -> host source, longest-first
+
+    private static List<Map.Entry<String, String>> ownMounts() {
+        var m = ownMounts;
+        if (m != null) return m;
+        synchronized (DockerService.class) {
+            if (ownMounts != null) return ownMounts;
+            final String id = System.getenv("HOSTNAME");
+            final List<Map.Entry<String, String>> out = new ArrayList<>();
+            if (id != null && !id.isBlank()) {
+                final Sh r = sh(15, "docker", "inspect", id, "--format",
+                        "{{range .Mounts}}{{.Destination}}\t{{.Source}}\n{{end}}");
+                if (r.rc() == 0) {
+                    for (String line : r.out().split("\n")) {
+                        final String[] parts = line.split("\t", 2);
+                        if (parts.length == 2 && !parts[0].isBlank()) out.add(Map.entry(parts[0], parts[1]));
+                    }
+                } else {
+                    log.warn("could not resolve this container's own mounts via `docker inspect {}` (rc={}) - hostPath() will fall back to returning paths unchanged, which silently reproduces the empty-mount bug this exists to fix", id, r.rc());
+                }
+            }
+            out.sort((a, b) -> b.getKey().length() - a.getKey().length());   // longest destination prefix must win (e.g. "/app/data/x" over "/app/data")
+            ownMounts = List.copyOf(out);
+            return ownMounts;
+        }
+    }
+
+    /** Translates a path under one of THIS container's own mounts (e.g. "/app/data/workspaces/x")
+     *  into its real host-side equivalent, for passing as the SOURCE half of a sibling container's
+     *  own "-v" bind mount. Returns the path unchanged (with a one-time warning already logged by
+     *  ownMounts() above) if it isn't under any known mount or this isn't running containerized at
+     *  all - the same behavior the code had before this existed, never a new failure mode. */
+    public static String hostPath(final Path containerPath) {
+        return hostPath(containerPath, ownMounts());
+    }
+
+    /** The pure matching logic, split out from ownMounts()'s own `docker inspect` call so it's
+     *  testable with a literal mount list instead of a real container environment. mounts must
+     *  already be longest-destination-first (ownMounts() guarantees this); this does not re-sort. */
+    static String hostPath(final Path containerPath, final List<Map.Entry<String, String>> mounts) {
+        final String p = containerPath.toString();
+        for (final var mount : mounts) {
+            final String dest = mount.getKey();
+            if (p.equals(dest) || p.startsWith(dest + "/")) return mount.getValue() + p.substring(dest.length());
+        }
+        return p;
+    }
 }

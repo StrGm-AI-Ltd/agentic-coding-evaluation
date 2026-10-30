@@ -85,8 +85,11 @@ public final class BuildChecks {
 
     static String gradle(Path copy, final String image, final String task, Infra infra, final int timeout) throws IOException, InterruptedException {
         Files.createDirectories(CACHE);
+        // #612: the sibling gradle:... container's own "-v" source must be a REAL host path, not
+        // this container's own view of it - see DockerService.hostPath()'s own javadoc for why a
+        // container-internal path silently mounts empty instead of erroring.
         List<String> cmd = new ArrayList<>(List.of("docker", "run", "--rm",
-                "-v", copy + ":/w", "-v", CACHE + ":/gh", "-w", "/w",
+                "-v", DockerService.hostPath(copy) + ":/w", "-v", DockerService.hostPath(CACHE) + ":/gh", "-w", "/w",
                 "-e", "GRADLE_USER_HOME=/gh", "-e", "GRADLE_OPTS=-Dorg.gradle.daemon=false", "--memory=6g"));
         if (infra.ok)
             cmd.addAll(List.of("--network", infra.net,
@@ -253,7 +256,23 @@ public final class BuildChecks {
             return out;
         }
         final var infra = new Infra("abnet" + ProcessHandle.current().pid()).up();
-        final var tmp = Files.createTempDirectory("ab-build-");
+        // #612, found live: java.io.tmpdir (the no-arg createTempDirectory's own default) is
+        // ace-service's own CONTAINER-PRIVATE /tmp when deployed via docker-compose.yml's
+        // Docker-outside-of-Docker setup - never bind-mounted to the real host. scratchCopy() below
+        // writes the agent's real files there correctly (same process, same filesystem view), but
+        // gradle()'s own "-v copy:/w" then hands that identical path string to the HOST's docker
+        // daemon (over the shared socket) as if it were a literal HOST path. A nonexistent host path
+        // in a bind mount is not an error - Docker silently auto-creates an EMPTY directory there and
+        // mounts THAT in instead (confirmed live: `docker run -v /tmp/nonexistent:/w alpine ls /w`
+        // exits 0 with an empty listing). Every B1/B2/B3/C2/F5/F6/F7 check then ran against an empty
+        // scratch copy regardless of what the agent actually wrote, surfacing as a confusing "Directory
+        // '/w' does not contain a Gradle build" - which infraReason() correctly does NOT treat as
+        // INFRA (that message legitimately also means "the agent genuinely never wrote settings.gradle"
+        // in other cases), so this silently scored as a real agent FAIL instead. ws's own parent IS
+        // host-visible (ACE_WORKSPACE_ROOT=/app/data/workspaces, the one real named volume this
+        // deployment bind-equivalents to the host) - creating the scratch copy there instead fixes
+        // the root cause rather than papering over the symptom.
+        final var tmp = Files.createTempDirectory(ws.getParent(), "ab-build-");
         try {
             final Path copy = scratchCopy(ws, tmp);
             final List<Path> croots = roots.stream().map(r -> r.equals(ws) ? copy : copy.resolve(ws.relativize(r))).toList();
@@ -353,7 +372,21 @@ public final class BuildChecks {
             return out;
         } finally {
             infra.down();
+            // #612: tmp now lives under ws's own parent (the real host-backed volume) instead of
+            // the container-private /tmp a restart used to wipe for free - without this, every
+            // scoring call leaks a full scratch copy of the agent's source tree permanently, the
+            // same class of disk-filling problem already found and fixed once this session (#593-
+            // adjacent), just reintroduced by the fix immediately above if left uncleaned.
+            deleteRecursively(tmp);
         }
+    }
+
+    private static void deleteRecursively(final Path dir) {
+        try (var stream = Files.walk(dir)) {
+            stream.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try { Files.delete(p); } catch (final Exception ignored) { /* best-effort cleanup of a scratch temp dir */ }
+            });
+        } catch (final Exception ignored) { /* best-effort cleanup of a scratch temp dir */ }
     }
 
     static String head(String s, int n) { return s == null ? "" : s.substring(0, Math.min(n, s.length())); }
