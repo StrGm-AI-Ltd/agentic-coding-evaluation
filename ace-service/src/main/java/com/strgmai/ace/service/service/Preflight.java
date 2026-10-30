@@ -60,7 +60,13 @@ public class Preflight {
         // the JDK the RUN will pin - the one thing that broke silently before (R4 C-2)
         String jh = props.javaHome() == null || props.javaHome().isBlank()
                 ? DockerService.sh(20, "/usr/libexec/java_home", "-v", "21").out().strip() : props.javaHome();
-        final boolean jdkOk = !jh.isBlank() && Files.isRegularFile(Path.of(jh, "bin", "java"));
+        // #597, found live: this used to check only bin/java - a JRE (java, no javac) passed this
+        // check as if it were a full JDK, so ACE_JAVA_HOME pointing at ace-service's own runtime JRE
+        // (#596's own root cause) sailed through Preflight silently. Every agent task that compiled
+        // or ran tests failed hours later with Gradle's own "Java compiler is not available" instead
+        // of this gate catching it before a run even started. Checking javac too is what "pinned
+        // JDK 21" actually promises - a JRE was never a JDK to begin with.
+        final boolean jdkOk = !jh.isBlank() && Files.isRegularFile(Path.of(jh, "bin", "java")) && Files.isRegularFile(Path.of(jh, "bin", "javac"));
         add(out, "pinned JDK 21", jdkOk, jh.isBlank() ? "none found: set ace.java-home or $ACE_JAVA_HOME" : jh, true);
 
         // #466: a job's own model may be "providerKey/model" (the same registered-prefix

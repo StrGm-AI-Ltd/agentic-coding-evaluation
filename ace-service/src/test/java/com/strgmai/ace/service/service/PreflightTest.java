@@ -28,9 +28,20 @@ class PreflightTest {
                 null, null, null, javaHome, null, null, null);
     }
 
-    /** a fake bin/java so the "pinned JDK 21" check passes without shelling out to /usr/libexec/java_home */
+    /** a fake bin/java AND bin/javac so the "pinned JDK 21" check passes without shelling out to
+     *  /usr/libexec/java_home - #597: a real JDK has both, a bare JRE only has the former. */
     private static String fakeJavaHome() throws Exception {
         final var home = Files.createTempDirectory("java-home");
+        Files.createDirectories(home.resolve("bin"));
+        Files.createFile(home.resolve("bin/java"));
+        Files.createFile(home.resolve("bin/javac"));
+        return home.toString();
+    }
+
+    /** #597: java present, javac absent - what a bare JRE looks like. Mirrors fakeJavaHome() minus
+     *  the compiler binary. */
+    private static String fakeJreOnlyHome() throws Exception {
+        final var home = Files.createTempDirectory("jre-home");
         Files.createDirectories(home.resolve("bin"));
         Files.createFile(home.resolve("bin/java"));
         return home.toString();
@@ -160,6 +171,28 @@ class PreflightTest {
             final Preflight.Check unzip = byName(r, "unzip");
             assertFalse(unzip.ok());
             assertTrue(unzip.fatal());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /** #597, found live: a bare JRE (java present, javac absent - exactly what ACE_JAVA_HOME pointed
+     *  at before #595/#596's fix) used to pass this check as if it were a full JDK, since it only
+     *  ever looked for bin/java. Every agent task that compiled or ran tests then failed hours later
+     *  with Gradle's own "Java compiler is not available", instead of this gate catching it up
+     *  front the way it's supposed to. */
+    @Test
+    void jreWithNoJavacBlocksEvenThoughGitZshUnzipAreUp() throws Exception {
+        final HttpServer server = fakeModelServer("target-model");
+        try (MockedStatic<DockerService> docker = mockDocker(0, 0, 0)) {
+            final var pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJreOnlyHome()),
+                    new com.strgmai.ace.service.agent.ProviderStore(null));
+            final Preflight.Report r = pf.check(null);
+
+            assertTrue(r.blocked());
+            final Preflight.Check jdk = byName(r, "pinned JDK 21");
+            assertFalse(jdk.ok());
+            assertTrue(jdk.fatal());
         } finally {
             server.stop(0);
         }
