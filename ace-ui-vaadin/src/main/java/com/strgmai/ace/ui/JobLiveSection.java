@@ -90,9 +90,19 @@ public final class JobLiveSection extends VerticalLayout {
 
     private final Grid<JobLiveState.RequestRow> requestsGrid = buildRequestsGrid();
     private final Grid<JobLiveState.SessionRow> sessionsGrid = buildSessionsGrid();
-    // #476 PR 3/3: a job-level (not per-task) live chart, built once and updated in place via
-    // ApexCharts' own updateSeries()/setXaxis() - see updateRequestLatencyChart().
-    private final ApexCharts requestLatencyChart = buildRequestLatencyChart();
+    // #588: requestLatencyChart itself is now REASSIGNABLE - updateRequestLatencyChart() swaps in
+    // a brand-new ApexCharts instance (never calling the old one's own updateSeries() again) once
+    // a redraw would otherwise hand it a large jump in point count, the trigger #588 found for a
+    // permanent client-side TypeError. requestLatencyChartHolder is the STABLE component actually
+    // added to this class's own layout (and the one JobDetailPrototypeView's own liveTile() call
+    // reparents elsewhere) - callers never touch requestLatencyChart directly, so a mid-life swap
+    // is invisible to everything outside updateRequestLatencyChart() itself.
+    private ApexCharts requestLatencyChart = buildRequestLatencyChart();
+    private final Div requestLatencyChartHolder = new Div(requestLatencyChart);
+    // the point count requestLatencyChart's own series held as of the last successful redraw - 0
+    // until the first one. Compared against recent.size() on the NEXT call to decide incremental
+    // update vs. full rebuild - see shouldRebuildChart()'s own javadoc for why.
+    private int lastChartedPointCount;
 
     // #476 PR 3/3: wraps the current-step/active-time stat tiles so both hide together on a
     // terminal job, instead of each tile's own inner Span hiding and leaving an empty tile shell.
@@ -153,7 +163,7 @@ public final class JobLiveSection extends VerticalLayout {
                 Panels.statTile("Tool errors", toolErrorsLine));
 
         add(plannedOrderLine, planCard, liveStatsRow, sessionsGrid, requestsLine, lostNotice, terminalNote,
-                Panels.card("Recent requests", requestLatencyChart, requestsGrid), logTail);
+                Panels.card("Recent requests", requestLatencyChartHolder, requestsGrid), logTail);
         plannedOrderLine.getStyle().set("font-size", "0.9em");
         stepLine.getStyle().set("font-weight", "600");
         activeTimeLine.getStyle().set("font-size", "0.9em");
@@ -206,8 +216,16 @@ public final class JobLiveSection extends VerticalLayout {
         return requestsGrid;
     }
 
-    public ApexCharts requestLatencyChart() {
-        return requestLatencyChart;
+    /** #588: returns the STABLE holder, not the chart itself - updateRequestLatencyChart() may
+     *  swap the real ApexCharts instance living inside it at any time (see its own javadoc), so a
+     *  caller that reparented the raw chart component (what this method returned before #588)
+     *  would freeze on whichever instance happened to exist at the moment it called this, never
+     *  seeing a later swap. Reparenting the holder instead - same Vaadin add()-moves-it semantics
+     *  the class javadoc above already documents for sessionsGrid()/requestsGrid() - means a swap
+     *  stays invisible to every caller. Renamed from requestLatencyChart() (its pre-#588 name) so
+     *  the method name itself no longer promises "the chart" when it's really "the chart's home". */
+    public Div requestLatencyChartHolder() {
+        return requestLatencyChartHolder;
     }
 
     public Div logTail() {
@@ -386,8 +404,9 @@ public final class JobLiveSection extends VerticalLayout {
 
     /** #476 PR 3/3: a job-level (not per-task) live chart sitting beside requestsGrid, built from
      *  the SAME live.recentRequests() data already driving that grid - avoids the "which task's
-     *  chart" ambiguity the per-task dialog charts would have at this, whole-job scope. Built once;
-     *  see updateRequestLatencyChart() for how it's kept current without a full rebuild.
+     *  chart" ambiguity the per-task dialog charts would have at this, whole-job scope. Built once
+     *  with EMPTY data - the real series is handed to it (or a later rebuilt instance - see #588
+     *  below) by updateRequestLatencyChart(); see that method for how it's kept current.
      *
      *  <p>Found live, verifying this class's own poll+SSE path against a genuinely running job for
      *  the first time (a gap flagged after Phase 2): animations disabled - with them on, two real
@@ -402,30 +421,80 @@ public final class JobLiveSection extends VerticalLayout {
      *  together. No loss of real functionality: the chart still reflects every request, just via
      *  instant redraws instead of an animated transition between them. */
     private static ApexCharts buildRequestLatencyChart() {
+        return requestLatencyChartWithData(new String[0], new Double[0]);
+    }
+
+    /** #588: the SAME builder buildRequestLatencyChart() always used, but with the real series
+     *  baked in from construction - the chart this produces has never had updateSeries() called
+     *  on it at all, so there is nothing for ApexCharts' own client-side diff code to race against
+     *  on its very first real paint. Used both for the initial (empty) chart and for every REBUILT
+     *  one updateRequestLatencyChart() swaps in - see that method's own javadoc. */
+    private static ApexCharts requestLatencyChartWithData(final String[] categories, final Double[] data) {
         final var chart = ApexChartsBuilder.get()
                 .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent")
                         .withAnimations(AnimationsBuilder.get().withEnabled(false).build()).build())
                 .withTheme(ThemeBuilder.get().withMode(Mode.DARK).build())
-                .withXaxis(XAxisBuilder.get().withCategories(new String[0]).build())
+                .withXaxis(XAxisBuilder.get().withCategories(categories).build())
                 .withYaxis(YAxisBuilder.get().withTitle(TitleBuilder.get().withText("latency (s)").build()).build())
-                .withSeries(SeriesBuilder.get().withName("latency (s)").withData(new Double[0]).build())
+                .withSeries(SeriesBuilder.get().withName("latency (s)").withData(data).build())
                 .build();
         chart.setHeight("220px");
         chart.setVisible(false);
         return chart;
     }
 
-    /** Updated in place via ApexCharts' own updateSeries()/setXaxis() rather than rebuilt from
-     *  scratch - a running job polls every 2s, and a full chart re-render that often would
-     *  flash/flicker the same way a full-DOM rebuild would steal focus elsewhere on this page. */
+    /** #588, found live: job 44484604 (paused, 48+ sessions, hundreds of requests) threw a
+     *  permanent client-side `TypeError: Cannot read properties of undefined (reading '0')` in
+     *  ApexChartsWrapper.updateData on cold page load, repeating on every single poll tick for the
+     *  rest of the page's life. #546 (redrawChart only from the owning view's own poll-driven
+     *  update(), never from a raw SSE event) successfully caps this method to ONE call per 2s poll
+     *  tick, but does nothing about the SIZE of what that first call hands to updateSeries(): on a
+     *  large-backlog job, the SSE replay can deliver hundreds of already-finished requests before
+     *  the very first poll tick ever fires, so that first call jumps from the chart's own
+     *  just-built EMPTY series straight to hundreds of points in one shot - and ApexCharts' own
+     *  client-side updateSeries()/updateData does not recover once a single call like that races
+     *  and throws (see buildRequestLatencyChart()'s own javadoc on the sibling animation bug this
+     *  class already worked around once before).
+     *
+     *  shouldRebuildChart() decides, per call, whether this jump is small enough for the existing
+     *  cheap incremental path (setXaxis()+updateSeries() on the SAME instance - a running job polls
+     *  every 2s, and a full chart replacement that often would flash/flicker the same way a
+     *  full-DOM rebuild would steal focus elsewhere on this page) or large enough that a fresh
+     *  ApexCharts instance - built WITH the real data from construction via
+     *  requestLatencyChartWithData(), never calling updateSeries() on it at all - is swapped in
+     *  instead. A rebuilt chart has no corrupted client-side state to inherit, so even if the
+     *  SAME large-jump pattern recurs on a later poll tick (a reconnect replaying a burst mid-
+     *  session), it gets a clean instance again rather than compounding on an already-broken one. */
     private void updateRequestLatencyChart(final List<JobLiveState.RequestRow> recent) {
         final var categories = new String[recent.size()];
         for (int i = 0; i < recent.size(); i++) {
             categories[i] = String.valueOf(i + 1);
         }
-        requestLatencyChart.setXaxis(XAxisBuilder.get().withCategories(categories).build());
-        requestLatencyChart.updateSeries(SeriesBuilder.get().withName("latency (s)")
-                .withData(recent.stream().map(JobLiveState.RequestRow::latencySec).toArray(Double[]::new)).build());
+        final var data = recent.stream().map(JobLiveState.RequestRow::latencySec).toArray(Double[]::new);
+        if (shouldRebuildChart(lastChartedPointCount, recent.size())) {
+            final var fresh = requestLatencyChartWithData(categories, data);
+            fresh.setVisible(requestLatencyChart.isVisible());
+            requestLatencyChartHolder.removeAll();
+            requestLatencyChartHolder.add(fresh);
+            requestLatencyChart = fresh;
+        } else {
+            requestLatencyChart.setXaxis(XAxisBuilder.get().withCategories(categories).build());
+            requestLatencyChart.updateSeries(SeriesBuilder.get().withName("latency (s)").withData(data).build());
+        }
+        lastChartedPointCount = recent.size();
+    }
+
+    /** #588: pure decision, tested directly - true exactly when the jump in point count since the
+     *  last successful redraw is large enough that ApexCharts' own incremental updateSeries() is
+     *  the known-risky path (a cold load with an already-large backlog; a reconnect replaying a
+     *  burst mid-session), false for the small, single-digit-per-tick growth a genuinely live job
+     *  produces between ordinary 2s poll ticks, where the cheap in-place update is both safe and
+     *  worth keeping (no flicker, no lost scroll/hover state). The threshold (10) is deliberately
+     *  far above what one real inferencing session could ever add in one 2s tick, and far below
+     *  "hundreds landed at once" - it only needs to separate those two regimes, not pinpoint
+     *  ApexCharts' own exact breaking point. */
+    static boolean shouldRebuildChart(final int lastChartedPointCount, final int newPointCount) {
+        return newPointCount - lastChartedPointCount > 10;
     }
 
     /** #47: the stage a session ended at, alongside its label - a session that outlives its own

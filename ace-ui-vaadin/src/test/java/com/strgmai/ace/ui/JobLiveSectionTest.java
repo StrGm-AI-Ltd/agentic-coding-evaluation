@@ -112,4 +112,18 @@ class JobLiveSectionTest {
         assertTrue(JobLiveSection.matchingTask(List.of(planTask("T5", false)), sessionRow("T50")).isEmpty(),
                 "a task id must not prefix-match a DIFFERENT task's longer id with no separator");
     }
+
+    /** #588, found live: job 44484604 (paused, 48+ sessions, hundreds of requests) threw a
+     *  permanent client-side TypeError the moment the chart's first-ever redraw jumped straight
+     *  from an empty series to a large backlog delivered by the SSE replay before the first poll
+     *  tick. shouldRebuildChart() is the pure decision updateRequestLatencyChart() uses to tell
+     *  that case apart from a genuinely live job's own small, single-digit-per-tick growth. */
+    @Test
+    void shouldRebuildChart_trueOnlyForALargeJumpInPointCount() {
+        assertTrue(JobLiveSection.shouldRebuildChart(0, 300), "cold load with an already-large backlog - the exact #588 repro shape");
+        assertTrue(JobLiveSection.shouldRebuildChart(40, 500), "a reconnect replaying a burst mid-session");
+        assertFalse(JobLiveSection.shouldRebuildChart(0, 0), "nothing to chart yet - never a spurious rebuild");
+        assertFalse(JobLiveSection.shouldRebuildChart(40, 42), "one real request landed since the last poll tick - the common, genuinely-live case");
+        assertFalse(JobLiveSection.shouldRebuildChart(40, 40), "no change at all between polls");
+    }
 }
