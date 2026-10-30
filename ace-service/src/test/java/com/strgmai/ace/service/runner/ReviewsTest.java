@@ -11,7 +11,11 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -82,5 +86,67 @@ class ReviewsTest {
         final var extra = reviews.externalCredentials();
         assertEquals(Map.of("nebius", "sk-nebius-test"), extra);
         assertFalse(extra.containsKey("openai"), "openai has no key configured, so it must be absent, not blank");
+    }
+
+    /** #628: a requeue/restart that lands after self-review already completed must skip straight
+     *  to reconstructing its own result from disk, never re-invoking an already-settled reviewer
+     *  session. Proven by pointing `reviews` at an endpoint with nothing listening
+     *  (http://127.0.0.1:9191/v1, this constructor's own default) - if the resume guard were
+     *  missing or broken, selfReview() would attempt a real network call and this test would hang
+     *  or throw a connection exception instead of returning cleanly. */
+    @Test
+    void selfReviewSkipsAnAlreadyCompletedReviewInsteadOfReInvokingTheReviewerSession() throws Exception {
+        final Path ws = Files.createTempDirectory("reviews-resume-ws");
+        final Path rd = Files.createTempDirectory("reviews-resume-rd");
+        RunBenchSupport.snapshot(ws, "run/start");
+        RunBenchSupport.snapshot(ws, "phase/pre-review");
+        RunBenchSupport.snapshot(ws, "phase/review");   // the completion tag selfReview()'s own guard checks for
+
+        final Map<String, Object> manifest = new LinkedHashMap<>();
+        manifest.put("run_id", "resume-test-run");
+        final String sessionId = UUID.nameUUIDFromBytes("agentbench/resume-test-run/REVIEW".getBytes()).toString();
+        Files.createDirectories(rd.resolve("sessions"));
+        Files.writeString(rd.resolve("sessions").resolve("2026-01-01T00-00-00.000Z_" + sessionId + ".jsonl"),
+                "{\"type\":\"session\",\"id\":\"" + sessionId + "\",\"label\":\"REVIEW\",\"ts\":\"2026-01-01T00:00:00.000Z\"}\n"
+                        + "{\"type\":\"end\",\"finish\":\"stop\",\"turns\":1,\"ts\":\"2026-01-01T00:01:00.000Z\"}\n");
+        Files.createDirectories(ws.resolve("review"));
+        Files.writeString(ws.resolve("review/self_review.json"), "{\"score\": 80}");
+
+        final Map<String, Object> out = reviews.selfReview(Map.of(), ws, rd, manifest, List.of(), "a prompt",
+                new RecordingProxyFactory(new BenchProperties(null, "http://127.0.0.1:9191/v1", null, null, null, null, null, null, null, null,
+                        null, null, null, null, null, null, null)), null, false);
+
+        assertEquals(true, out.get("parse_ok"));
+        assertEquals(80.0, out.get("score"), "the already-written self_review.json must be re-parsed, not lost");
+        assertEquals(0, out.get("rc"));
+        assertEquals(1, ((List<?>) manifest.get("review_windows")).size(), "the recovered session span must still be recorded");
+    }
+
+    /** #628: trajectoryReview()'s identical guard. */
+    @Test
+    void trajectoryReviewSkipsAnAlreadyCompletedReviewInsteadOfReInvokingTheReviewerSession() throws Exception {
+        final Path ws = Files.createTempDirectory("reviews-resume-traj-ws");
+        final Path rd = Files.createTempDirectory("reviews-resume-traj-rd");
+        RunBenchSupport.snapshot(ws, "run/start");
+        RunBenchSupport.snapshot(ws, "phase/pre-trajectory-review");
+        RunBenchSupport.snapshot(ws, "phase/trajectory_review");
+
+        final Map<String, Object> manifest = new LinkedHashMap<>();
+        manifest.put("run_id", "resume-test-run");
+        final String sessionId = UUID.nameUUIDFromBytes("agentbench/resume-test-run/TRAJECTORY_REVIEW".getBytes()).toString();
+        Files.createDirectories(rd.resolve("sessions"));
+        Files.writeString(rd.resolve("sessions").resolve("2026-01-01T00-00-00.000Z_" + sessionId + ".jsonl"),
+                "{\"type\":\"session\",\"id\":\"" + sessionId + "\",\"label\":\"TRAJECTORY_REVIEW\",\"ts\":\"2026-01-01T00:00:00.000Z\"}\n"
+                        + "{\"type\":\"end\",\"finish\":\"stop\",\"turns\":1,\"ts\":\"2026-01-01T00:01:00.000Z\"}\n");
+        Files.createDirectories(ws.resolve("review"));
+        Files.writeString(ws.resolve("review/trajectory_review.json"), "{\"score\": 70}");
+
+        final Map<String, Object> out = reviews.trajectoryReview(Map.of(), ws, rd, manifest, null,
+                new RecordingProxyFactory(new BenchProperties(null, "http://127.0.0.1:9191/v1", null, null, null, null, null, null, null, null,
+                        null, null, null, null, null, null, null)));
+
+        assertEquals(true, out.get("parse_ok"));
+        assertEquals(70.0, out.get("score"), "the already-written trajectory_review.json must be re-parsed, not lost");
+        assertEquals(0, out.get("rc"));
     }
 }

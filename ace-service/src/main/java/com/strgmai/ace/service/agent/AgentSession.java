@@ -257,6 +257,36 @@ public final class AgentSession {
         return t;
     }
 
+    /** #628, found live: selfReview()/trajectoryReview() have no tagExists resume-guard, so a
+     *  requeue/restart that lands after one already completed must reconstruct its own SessionResult
+     *  (start/end/sessionFile) purely from the already-written session file, rather than from a
+     *  live run() call that will never happen again this attempt. The header's own "ts" is the
+     *  session's true first moment; the LAST record's own "ts" (whatever its type - the session
+     *  file's own write() always stamps one) is its true last moment, spanning every continuation
+     *  this session file has ever been resumed through, not just the latest one - a closer match to
+     *  "when did this session actually run" than the live path's own per-invocation start/end
+     *  (ReferenceAgent.result()'s own Instant.now()), which only covers whichever single run() call
+     *  happened to finish it. */
+    public record Span(Instant start, Instant end) {}
+    public static Span span(final Path sessionFile) {
+        if (sessionFile == null || !Files.isRegularFile(sessionFile)) return null;
+        Instant first = null, last = null;
+        try {
+            for (String line : Files.readAllLines(sessionFile, StandardCharsets.UTF_8)) {
+                if (line.isBlank()) continue;
+                JsonNode r;
+                try { r = JSON.readTree(line); } catch (Exception e) { log.debug("could not parse session line while reading its span, skipping it: {}", e.toString()); continue; }
+                if (!r.has("ts")) continue;
+                try {
+                    final Instant ts = Instant.parse(r.get("ts").asText());
+                    if (first == null) first = ts;
+                    last = ts;
+                } catch (Exception e) { log.debug("could not parse a session line's own ts while reading its span: {}", e.toString()); }
+            }
+        } catch (IOException e) { log.warn("could not read session {} for its span: {}", sessionFile, e.toString()); }
+        return first == null ? null : new Span(first, last);
+    }
+
     /** #417 follow-up review (C8): sidecar_usage records (structured_eviction's own summarization
      *  calls) are not conversation turns, so they're summed separately from usage()'s own
      *  "turns"-counted tally above rather than folded into it - callers that want the FULL token
