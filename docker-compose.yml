@@ -43,9 +43,11 @@ services:
       # Preflight.java's "pinned JDK 21" check is a FATAL gate (WorkerService's own guard() -
       # it genuinely blocks every job, not just advisory UI) and falls back to macOS's
       # /usr/libexec/java_home when this is unset - which doesn't exist on this (Linux) image, so
-      # every job would be refused forever without this. /opt/java/openjdk is eclipse-temurin's
-      # own JAVA_HOME (confirmed inside the built image) - reusing it, not a new path to maintain.
-      ACE_JAVA_HOME: /opt/java/openjdk
+      # every job would be refused forever without this. NOT /opt/java/openjdk: that's this image's
+      # own RUNTIME java (a JRE, no javac - found live, job cf0ccdb6: every agent task that compiled
+      # or tested Java failed with Gradle's "Java compiler is not available"). /opt/agent-jdk is the
+      # full JDK the Dockerfile copies in specifically for the agent's own tool calls and VerifyTask.
+      ACE_JAVA_HOME: /opt/agent-jdk
     volumes:
       - ace-data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock

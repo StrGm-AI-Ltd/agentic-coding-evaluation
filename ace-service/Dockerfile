@@ -78,6 +78,15 @@ WORKDIR /app
 RUN mkdir -p /app/results /app/data/db /app/data/results /app/data/workspaces && chown -R appuser /app
 COPY --from=build /src/app.jar app.jar
 RUN chown appuser /app/app.jar
+# #581 wired ACE_JAVA_HOME (the JDK handed to the agent's own `./gradlew`/tool calls and to
+# VerifyTask's post-task test run) to reuse this image's OWN runtime JAVA_HOME for simplicity - but
+# this stage's base is deliberately `eclipse-temurin:21-jre` (no javac, just java, to keep ace-service's
+# own runtime image small), so every agent task that compiles or tests Java failed with Gradle's
+# "Java compiler is not available" (found live, job cf0ccdb6: T1's wrapper bootstrap and T11's test
+# compile both hit this - a 100% reproducible harness bug, not an agent mistake). The build stage above
+# already has a full JDK (`eclipse-temurin:21-jdk`) at this same conventional Temurin path; copy it in
+# under its own name so it never collides with or replaces this image's own runtime JRE.
+COPY --from=build --chown=appuser /opt/java/openjdk /opt/agent-jdk
 USER appuser
 EXPOSE 8765
 ENTRYPOINT ["java", "-jar", "app.jar"]
