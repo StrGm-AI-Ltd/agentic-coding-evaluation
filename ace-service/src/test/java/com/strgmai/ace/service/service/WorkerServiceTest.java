@@ -389,6 +389,49 @@ class WorkerServiceTest {
         verify(queue, never()).finish(eq(JOB_1), eq("failed"), any(), any());
     }
 
+    /** #593: StuckWorkerWatchdog has no way to know what the single worker thread is currently
+     *  supposed to be writing to other than these two fields - this pins that WorkerService
+     *  actually populates them while a job is running and clears them once it's done, the same way
+     *  busyNow() already does for the plain busy flag. */
+    @Test
+    void currentRunDirAndStartedAtAreSetWhileRunningAndClearedAfter() throws Exception {
+        final var tmpHome = Files.createTempDirectory("fake-home");
+        final var resultsDir = Files.createTempDirectory("results");
+        final JobQueue queue = mock(JobQueue.class);
+        when(queue.list()).thenReturn(List.of());
+        final TreatmentPin pin = mock(TreatmentPin.class);
+        when(pin.current()).thenReturn("build-abc123");
+        final Preflight preflight = mock(Preflight.class);
+        when(preflight.check(any())).thenReturn(new Preflight.Report(List.of(), false));
+        final BenchProperties props = mock(BenchProperties.class);
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(Files.createTempDirectory("ws").toString());
+        when(props.model()).thenReturn("m");
+        final RunBench runBench = mock(RunBench.class);
+        when(runBench.runOnce(any(), any(), any(), any(), any())).thenAnswer(inv -> {
+            Thread.sleep(1500);
+            return Map.of();
+        });
+
+        final JobQueue.Job job = new JobQueue.Job(JOB_1, null, "A", 1, "run", "run-1",
+                List.of("--task=L3p_point_in_time", "--model=m"),
+                "queued", null, 0, null, null, false, false, null, null, "build-abc123", "build-abc123", java.util.Map.of());
+        when(queue.claim()).thenReturn(job);
+        when(queue.get(JOB_1)).thenReturn(Map.of("cancel_requested", false, "pause_requested", false));
+
+        final WorkerService ws = new WorkerService(queue, runBench, mock(ImporterService.class),
+                mock(ExperimentsService.class), preflight, pin, props, mock(ContextProbe.class), mock(RecordingProxyFactory.class));
+        withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
+
+        Thread.sleep(500);   // let the job actually start running first
+        assertEquals(resultsDir.resolve("run-1"), ws.currentRunDir(), "must point at the running job's own results dir");
+        assertNotNull(ws.currentJobStartedAt());
+
+        verify(queue, timeout(3000)).finish(eq(JOB_1), eq("succeeded"), eq(0), anyString());
+        assertNull(ws.currentRunDir(), "must clear once the job is no longer running, same as busyNow()");
+        assertNull(ws.currentJobStartedAt());
+    }
+
     @Test
     void fatalPreflightCheckIsBlocked() throws Exception {
         final var tmpHome = Files.createTempDirectory("fake-home");

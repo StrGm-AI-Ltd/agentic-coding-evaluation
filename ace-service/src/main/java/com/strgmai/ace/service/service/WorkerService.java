@@ -81,6 +81,11 @@ public class WorkerService {
     private volatile boolean cancelCurrent;
     private volatile boolean pauseCurrent;
     private volatile Future<?> currentJobFuture;
+    // #593: the currently-running job's own results dir and start time - StuckWorkerWatchdog reads
+    // these (never writes) to tell "genuinely still working" apart from "wedged", without needing
+    // any deeper wiring into RunBench itself.
+    private volatile Path currentRunDir;
+    private volatile Instant currentJobStartedAt;
 
     /** port of worker.py guard(): the run lock (waiting_lock) and preflight for the model THIS job
      *  will request - all before the budget is spent. #247: a treatment-pin mismatch used to block
@@ -177,6 +182,8 @@ public class WorkerService {
             try {
                 queue.started(job.id(), (int) ProcessHandle.current().pid(), null);
                 log.info("job {}: started {} ({})", job.id(), job.runId(), job.argv());
+                currentRunDir = Path.of(props.resultsDir(), job.runId());
+                currentJobStartedAt = Instant.now();
                 final Map<String, Object> cfg = JobCfgFactory.build(job.argv(), props, job.taskOverrides());
                 final String mode = flag(job.argv(), "--mode") != null ? flag(job.argv(), "--mode") : "monolithic";
                 final String planSource = flag(job.argv(), "--plan-source") != null ? flag(job.argv(), "--plan-source") : "agent";
@@ -218,6 +225,8 @@ public class WorkerService {
                 }
             } finally {
                 busy.set(false);
+                currentRunDir = null;
+                currentJobStartedAt = null;
                 // #273: cancelCurrent is set by the separate cancel-watch thread the moment it OBSERVES
                 // cancel_requested, regardless of whether anything actually stopped - the try-block
                 // above may have already run to completion (queue.finish(..., "succeeded"/"failed", ...))
@@ -258,4 +267,14 @@ public class WorkerService {
 
     public boolean busyNow() { return busy.get(); }
     public Instant idleSince() { return null; }
+
+    /** #593: the currently-running job's own results dir, or null when idle - read by
+     *  StuckWorkerWatchdog, which has no other way to know what the single worker thread is
+     *  currently supposed to be writing to. */
+    public Path currentRunDir() { return currentRunDir; }
+
+    /** #593: when the currently-running job started, or null when idle - StuckWorkerWatchdog's
+     *  fallback reference point before the job's first request has landed (currentRunDir may exist
+     *  with nothing written under it yet). */
+    public Instant currentJobStartedAt() { return currentJobStartedAt; }
 }
