@@ -499,31 +499,35 @@ public final class JobLiveSection extends VerticalLayout {
     }
 
     /** #588-followup, found live on job cd4c11a8 right after #588 itself deployed: the ORIGINAL
-     *  TypeError still reproduced, on a SMALL initial delta this time - tracing the browser's own
-     *  stack trace into apexcharts-wrapper.ts (the vendored client source, com.github.appreciated:
-     *  apexcharts:25.0.1) showed updateData() is reachable ONLY via an explicit server-side
-     *  updateSeries() call (chartComponent.updateSeries(...)), never via the construction/attach
-     *  path (firstUpdated() builds a fresh ApexCharts instance and calls its own async
-     *  beginRender()/render() directly - a different method entirely). So the crash was never
-     *  really about DATA SIZE: it's that the chart's very first render() is async, and a chart
-     *  instance's very first updateSeries()/setXaxis() call can land before that promise resolves
-     *  - at which point ApexCharts' own client code reads internal state render() would have set up
-     *  and throws, no matter how small the update is. shouldRebuildChart()'s big-jump threshold
-     *  happened to mask this for #588's own large-backlog repro (forced a rebuild, which never
-     *  calls updateSeries() at all) - but a job whose first real delta is small walked straight into
-     *  the same race the big-jump case was already dodging by accident.
+     *  TypeError still reproduced - tracing the browser's own stack trace into apexcharts-
+     *  wrapper.ts (the vendored client source, com.github.appreciated:apexcharts:25.0.1) showed
+     *  updateData() is reachable ONLY via an explicit server-side updateSeries() call
+     *  (chartComponent.updateSeries(...)), never via the construction/attach path (firstUpdated()
+     *  builds a fresh ApexCharts instance and calls its own async beginRender()/render() directly -
+     *  a different method entirely, confirmed by decompiling ApexChartsBuilder.build(): it only
+     *  ever calls setSeries(), never updateSeries()). So the crash was never really about DATA
+     *  SIZE: it's that the chart's very first render() is async, and a chart instance's very first
+     *  updateSeries()/setXaxis() call - EVEN ONE CARRYING NO DATA AT ALL - can land before that
+     *  promise resolves, at which point ApexCharts' own client code reads internal state render()
+     *  would have set up and throws. A job that hasn't made its first LLM request yet calls this
+     *  method every ~2s poll tick with recent still empty (0,0) - an all-zero FIRST attempt at
+     *  gating on "lastChartedPointCount == 0 && newPointCount > 0" missed exactly this case, since
+     *  it still let the all-zero call through to the incremental (unsafe) branch.
      *
-     *  <p>True exactly when: this is the very first time this chart has ever been asked to show ANY
-     *  data at all (lastChartedPointCount == 0 && newPointCount > 0 - the one moment the current
-     *  instance's own first render() may still be in flight), OR the jump since the last successful
-     *  redraw is large enough that ApexCharts' own incremental updateSeries() is a known-risky path
-     *  for an unrelated reason (a reconnect replaying a burst mid-session against an instance that
-     *  HAS already rendered once). False for the small, single-digit-per-tick growth a genuinely
-     *  live job produces between ordinary 2s poll ticks on an instance that already survived at
-     *  least one update - by then its first render() is long done, so the cheap in-place path is
-     *  both safe and worth keeping (no flicker, no lost scroll/hover state). */
+     *  <p>True whenever the CURRENT chart instance has never had a successful redraw recorded yet
+     *  (lastChartedPointCount == 0, regardless of how much or little there now is to show - the
+     *  one signal available server-side for "this instance's own first render() may still be in
+     *  flight"), or the jump since the last successful redraw is large enough that ApexCharts' own
+     *  incremental updateSeries() is a known-risky path for an unrelated reason (a reconnect
+     *  replaying a burst mid-session against an instance that HAS already rendered once). False
+     *  for the small, single-digit-per-tick growth a genuinely live job produces between ordinary
+     *  2s poll ticks on an instance that already survived at least one update - by then its first
+     *  render() is long done, so the cheap in-place path is both safe and worth keeping (no
+     *  flicker, no lost scroll/hover state). The cost of rebuilding on every all-zero tick before a
+     *  job's first request lands is a few harmless, invisible (setVisible(false)) DOM replacements -
+     *  cheap next to a permanently broken chart for the rest of the page's life. */
     static boolean shouldRebuildChart(final int lastChartedPointCount, final int newPointCount) {
-        return (lastChartedPointCount == 0 && newPointCount > 0) || newPointCount - lastChartedPointCount > 10;
+        return lastChartedPointCount == 0 || newPointCount - lastChartedPointCount > 10;
     }
 
     /** #47: the stage a session ended at, alongside its label - a session that outlives its own
