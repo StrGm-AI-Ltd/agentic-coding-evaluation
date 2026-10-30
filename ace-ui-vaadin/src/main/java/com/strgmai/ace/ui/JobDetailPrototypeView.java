@@ -103,6 +103,12 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
     private boolean chromeBuilt;
     private boolean loadFailed;
     private String lastActionsSignature;
+    // #566-followup, found live: this page never had an "Open run detail" link at all - left out of
+    // the initial build on purpose (see this page's own plan doc), but a finished job here has no
+    // way to reach its own scorecard without switching to the classic page first. Same
+    // probe-once-per-navigation-plus-terminal-transition caching JobDetailView already uses for
+    // this, reusing its own static helpers rather than re-implementing the probe.
+    private Boolean runImported;
 
     private JobLiveSection liveSectionComponent;
     private final Div dashboardHolder = new Div();
@@ -251,19 +257,33 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
     }
 
     private void update(final Api.Job job) {
+        final var previousStatus = lastStatus;
         currentJob = job;
         lastStatus = job.status();
         final var terminal = JobStatuses.isTerminal(job.status());
         getUI().ifPresent(ui -> ui.setPollInterval(terminal ? -1 : 2000));
+        if (job.run_id() != null && JobDetailView.shouldProbeRun(runImported, previousStatus, job.status())) {
+            runImported = JobDetailView.isRunImported(client, job.run_id());
+        }
 
         statusHolder.removeAll();
         statusHolder.add(Badges.status(job.status()));
 
-        final var signature = job.status() + "|" + job.cancel_requested() + "|" + job.pause_requested();
+        final var signature = job.status() + "|" + job.cancel_requested() + "|" + job.pause_requested()
+                + "|" + runImported + "|" + (job.run_id() != null);
         if (!signature.equals(lastActionsSignature)) {
             lastActionsSignature = signature;
             actionsHolder.removeAll();
-            actionsHolder.add(JobDetailView.buildCancelPauseRequeueRow(client, job, this::refresh));
+            final var actions = JobDetailView.buildCancelPauseRequeueRow(client, job, this::refresh);
+            if (job.run_id() != null && Boolean.TRUE.equals(runImported)) {
+                actions.add(new Button("Open run detail", e ->
+                        getUI().ifPresent(ui -> ui.navigate("runs/" + job.run_id()))));
+            } else if (job.run_id() != null) {
+                final var hint = new Span(JobDetailView.runNotImportedHint(job.status()));
+                hint.getStyle().set("font-size", "0.85em");
+                actions.add(hint);
+            }
+            actionsHolder.add(actions);
         }
 
         if (planTasks.isEmpty()) {
