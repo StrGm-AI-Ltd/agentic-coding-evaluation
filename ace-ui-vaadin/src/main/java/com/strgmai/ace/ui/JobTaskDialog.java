@@ -153,6 +153,15 @@ final class JobTaskDialog {
         final var interveneRow = new Div();
         interveneRow.getStyle().set("box-sizing", "border-box").set("flex-grow", "1");
         interveneRow.setVisible(false);
+        // #566, found live: same class of bug as #568 above, just for the Restart tab - "Restart
+        // from <id>"/"Save settings for <id>" used to be the LAST child appended inside restartBody,
+        // at the bottom of a form long enough (task budgets, compaction, judge, rescue, lesson
+        // recording) that it sat well below the fold, with Close up in the footer instead. Same fix,
+        // same holder-Div pattern as interveneRow: buildRestartTab() adds the real button into this
+        // once built, instead of onto restartBody.
+        final var restartButtonHolder = new Div();
+        restartButtonHolder.getStyle().set("box-sizing", "border-box").set("flex-grow", "1");
+        restartButtonHolder.setVisible(false);
 
         final var promptTab = new Tab("Prompt");
         final var changesTab = new Tab("Changes");
@@ -186,6 +195,7 @@ final class JobTaskDialog {
             statsBody.setVisible(tabs.getSelectedTab() == statsTab);
             transcriptBody.setVisible(tabs.getSelectedTab() == transcriptTab);
             interveneRow.setVisible(tabs.getSelectedTab() == transcriptTab);
+            restartButtonHolder.setVisible(tabs.getSelectedTab() == restartTab);
             refreshStatsButton.setVisible(tabs.getSelectedTab() == statsTab);
             if (tabs.getSelectedTab() == statsTab && loadStatsOnSelect[0] != null) loadStatsOnSelect[0].run();
         });
@@ -195,7 +205,7 @@ final class JobTaskDialog {
         content.setSpacing(false);
         content.setSizeFull();
         dialog.add(content);
-        dialog.getFooter().add(interveneRow, refreshStatsButton, new Button("Close", e -> dialog.close()));
+        dialog.getFooter().add(interveneRow, restartButtonHolder, refreshStatsButton, new Button("Close", e -> dialog.close()));
 
         final Registration[] pollReg = new Registration[1];
         // #256, found live: Packs.taskPack() caps the whole id/title/goal/services/acceptance
@@ -442,7 +452,7 @@ final class JobTaskDialog {
                 pollReg[0] = null;
             }
         });
-        buildRestartTab(client, jobId, task, currentJob, dialog, restartBody, onChanged);
+        buildRestartTab(client, jobId, task, currentJob, dialog, restartBody, restartButtonHolder, onChanged);
         openTaskTranscriptTab(client, jobId, task, ownerView, dialog, transcriptBody);
         buildInterveneRow(client, jobId, task, interveneRow);
         dialog.open();
@@ -463,7 +473,7 @@ final class JobTaskDialog {
      *  needed since the task was never going to run until the job resumes anyway. */
     private static void buildRestartTab(final ServiceClient client, final String jobId, final Api.PlanTask task,
             final Supplier<Api.Job> currentJob, final com.vaadin.flow.component.dialog.Dialog dialog,
-            final Div restartBody, final Runnable onChanged) {
+            final Div restartBody, final Div restartButtonHolder, final Runnable onChanged) {
         final boolean pending = !task.implemented();
         final var job = currentJob.get();
         if (job == null || !"paused".equals(job.status())) {
@@ -584,8 +594,11 @@ final class JobTaskDialog {
                 Notification.show(client.errorText(ex), 6000, Notification.Position.BOTTOM_END);
             }
         });
-        restartButton.getStyle().set("margin-top", "8px");
-        restartBody.add(warning, form, compactionForm, judgeForm, rescueForm, lessonRecordingForm, restartButton);
+        // #566, found live: lives in the footer now (restartButtonHolder), not as the last child of
+        // this scrollable form - same reasoning and same holder-Div pattern as #568's interveneRow.
+        restartBody.add(warning, form, compactionForm, judgeForm, rescueForm, lessonRecordingForm);
+        restartButtonHolder.removeAll();
+        restartButtonHolder.add(restartButton);
     }
 
     /** #264: the sessionsGrid counterpart of this dialog - scoped to the three pre-task phases with
