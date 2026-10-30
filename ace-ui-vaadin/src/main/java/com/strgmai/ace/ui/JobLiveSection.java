@@ -230,10 +230,6 @@ public final class JobLiveSection extends VerticalLayout {
         return requestLatencyChartHolder;
     }
 
-    public Div logTail() {
-        return logTail;
-    }
-
     public Span requestsLine() {
         return requestsLine;
     }
