@@ -31,6 +31,13 @@ public final class Fmt {
             return "–";
         }
         final var total = seconds.longValue();
+        // found live: every caller here (a per-task/per-session wall time, a job's own budget) can
+        // legitimately be under a minute - a quick handoff, a fast judge turn, a task that finishes
+        // almost immediately - and the old "{h}h{mm}m"-only format rendered every one of those as
+        // the literal string "0h00m", indistinguishable from a genuine zero. One real run showed
+        // this on 4 of its own 12 tasks (3.8s-50.4s each), reading as "this task took no time at
+        // all" to an operator looking at the Plan tasks grid.
+        if (total < 60) return total + "s";
         return (total / 3600) + "h" + String.format(Locale.ROOT, "%02d", (total % 3600) / 60) + "m";
     }
 

@@ -28,9 +28,20 @@ class FmtTest {
     @Test
     void duration_hoursAndMinutes() {
         assertEquals("1h02m", Fmt.duration(3725.0));
-        assertEquals("0h00m", Fmt.duration(59.9));
         assertEquals("0h01m", Fmt.duration(60.0));
         assertEquals("–", Fmt.duration(null));
+    }
+
+    /** found live: a real run had T1/T4/T5/T9 (3.8s-50.4s each) all showing the literal string
+     *  "0h00m" in the Plan tasks grid, read by an operator as "this task took no time at all"
+     *  even though each one did real, non-trivial work. */
+    @Test
+    void duration_underAMinuteShowsSecondsInsteadOfALiteralZero() {
+        assertEquals("3s", Fmt.duration(3.8));
+        assertEquals("29s", Fmt.duration(29.5));
+        assertEquals("50s", Fmt.duration(50.4));
+        assertEquals("59s", Fmt.duration(59.9));
+        assertEquals("0s", Fmt.duration(0.0));
     }
 
     @Test
