@@ -31,6 +31,21 @@ public class RunOracle {
         return score(ws, task, systemBaseUrl, null);
     }
 
+    /** #616, found live: JobCfgFactory.build() hardcodes system_base_url to null for every real
+     *  job (no operator-facing override path exists), so this fallback is what EVERY run actually
+     *  uses, unconditionally. On the containerized deployment (the only topology this deployment
+     *  uses), "localhost:8080" from inside ace-service's own container never reaches the agent's
+     *  compose stack's published port on the real host - confirmed live, in isolation: curl against
+     *  a throwaway container published on :8080 got rc 000 via localhost, 200 via
+     *  host.docker.internal. Every C2/F1-F9 check (the majority of a rung's own point value)
+     *  silently FAILed or NOT_ATTEMPTED on every real run, regardless of how correct the agent's own
+     *  stack was - the same root cause #604 already fixed for the agent's OWN bash-tool checks, just
+     *  a second, separate call site. Extracted as its own pure function so this default is locked in
+     *  by a regression test without needing real Docker/compose infrastructure. */
+    static String effectiveSystemBaseUrl(final String systemBaseUrl) {
+        return systemBaseUrl == null || systemBaseUrl.isBlank() ? "http://host.docker.internal:8080" : systemBaseUrl;
+    }
+
     /** full form: the runner's manifest carries the per-phase snapshot SHAs P3 diffs (05_phases.py) */
     @SuppressWarnings("unchecked")
     public Map<String, Object> score(final Path ws, final String task, final String systemBaseUrl, final Map<String, Object> manifest) throws Exception {
@@ -71,7 +86,7 @@ public class RunOracle {
             }
             if (wanted.stream().anyMatch(id -> id == CheckId.C1 || id == CheckId.C2 || id.name().startsWith("F"))) {
                 try {   // 04_compose.py: build -> up -> C1/C2 -> F* (F6 grades the observed responses) -> down
-                    final String base = systemBaseUrl == null || systemBaseUrl.isBlank() ? "http://localhost:8080" : systemBaseUrl;
+                    final String base = effectiveSystemBaseUrl(systemBaseUrl);
                     for (CheckResult r : ComposeChecks.run(ws, 2400, 600, wanted::contains, base, manifest == null ? ws : Path.of(String.valueOf(manifest.getOrDefault("workspace", ws)))))
                         if (wanted.contains(r.id())) got.put(r.id(), r);
                 } catch (Exception e) {
