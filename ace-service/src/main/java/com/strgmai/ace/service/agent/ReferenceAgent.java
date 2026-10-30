@@ -543,7 +543,7 @@ public class ReferenceAgent {
             final List<ToolExecutionRequest> calls = ai.hasToolExecutionRequests() ? ai.toolExecutionRequests() : List.of();
             session.assistant(ai.thinking(), ai.text(), calls, finish, Map.of("input", promptTokens == null ? 0 : promptTokens,
                     "output", completion == null ? 0 : completion, "cached", cachedTokens(resp)));
-            msgs.add(ai);
+            msgs.add(sanitizedForHistory(ai, calls));
             if (calls.isEmpty()) {
                 // #300/#302: the task is about to naturally stop - give the one-shot FinalTurn hook
                 // a chance to ask for one more live turn (e.g. a handoff note) before actually
@@ -703,6 +703,33 @@ public class ReferenceAgent {
                 default -> new AgentTools.Outcome("error: unknown tool " + name, AgentTools.FailureCategory.MALFORMED_ARGS);
             };
         } catch (Exception e) { return new AgentTools.Outcome("error: " + e, AgentTools.FailureCategory.COMMAND_CRASHED); }
+    }
+
+    /** found live (T4 rescue, job 416dcfb6): a model that emits a syntactically invalid tool-call
+     *  `arguments` string (seen: Nemotron truncating a JSON object mid-emission, missing its
+     *  closing brace) must not poison every later request in THIS live turn loop. AgentSession's
+     *  own persisted record already recovers from this (falls back to {"_unparsed": ...} - see
+     *  AgentSession.assistant()), but msgs here was always built straight from the model's raw
+     *  AiMessage, so the same malformed string got resent verbatim as conversation history on
+     *  every subsequent request - and most OpenAI-compatible providers themselves validate that
+     *  `arguments` is well-formed JSON, so this turned one bad tool call into an immediate,
+     *  non-retryable 400 (chatWithRetry's own "4xx are final") on the very next request, ending
+     *  the whole turn loop (rc=2) instead of just costing the one turn. Mirrors AgentSession's own
+     *  {"_unparsed": ...} rewrite exactly, so a resumed (--continue) session and a live turn loop
+     *  see byte-identical history for the same malformed call. */
+    static AiMessage sanitizedForHistory(final AiMessage ai, final List<ToolExecutionRequest> calls) throws com.fasterxml.jackson.core.JsonProcessingException {
+        if (calls.isEmpty()) return ai;
+        boolean anyBad = false;
+        final List<ToolExecutionRequest> fixed = new ArrayList<>(calls.size());
+        for (final ToolExecutionRequest c : calls) {
+            try { MAPPER.readTree(c.arguments()); fixed.add(c); }
+            catch (Exception e) {
+                anyBad = true;
+                fixed.add(ToolExecutionRequest.builder().id(c.id()).name(c.name())
+                        .arguments(MAPPER.writeValueAsString(Map.of("_unparsed", c.arguments()))).build());
+            }
+        }
+        return anyBad ? AiMessage.from(ai.text(), fixed) : ai;
     }
 
     /** port of chat_retry: 4 attempts with backoff on transient (5xx/connection) errors; 4xx are

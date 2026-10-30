@@ -21,6 +21,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** reasoningKind() maps a session name to a DEFAULT_REASONING key; this pins the mapping so a
@@ -95,6 +96,33 @@ class ReferenceAgentTest {
 
         final ChatResponse blankFinishButText = ChatResponse.builder().aiMessage(AiMessage.from("some content")).build();
         assertFalse(ReferenceAgent.isEmptyModelResponse(blankFinishButText), "real text means the model actually said something");
+    }
+
+    /** found live (T4 rescue, job 416dcfb6): Nemotron emitted `{"command": "file gradle.zip"` (no
+     *  closing brace) as a tool call's arguments. Unsanitized, that raw string got resent verbatim
+     *  as conversation history on the next request and the upstream provider 400'd the whole
+     *  request for carrying invalid JSON in `arguments` - ending the turn loop outright instead of
+     *  costing just the one turn. */
+    @Test
+    void sanitizedForHistoryRewritesAMalformedToolCallArgumentsStringInsteadOfResendingItVerbatim() throws Exception {
+        final var badCall = ToolExecutionRequest.builder().id("call_1").name("bash").arguments("{\"command\": \"file gradle.zip\"").build();
+        final var ai = AiMessage.from("", List.of(badCall));
+        final var fixed = ReferenceAgent.sanitizedForHistory(ai, List.of(badCall));
+
+        assertEquals(1, fixed.toolExecutionRequests().size());
+        final var fixedArgs = fixed.toolExecutionRequests().get(0).arguments();
+        assertTrue(fixedArgs.contains("_unparsed"), "must fall back to the same {\"_unparsed\": ...} shape AgentSession.assistant() already uses: " + fixedArgs);
+        new com.fasterxml.jackson.databind.ObjectMapper().readTree(fixedArgs);   // must not throw - this is what the upstream provider itself validates
+    }
+
+    @Test
+    void sanitizedForHistoryLeavesWellFormedToolCallsAndTextOnlyTurnsUntouched() throws Exception {
+        final var goodCall = ToolExecutionRequest.builder().id("call_1").name("bash").arguments("{\"command\": \"ls\"}").build();
+        final var withCall = AiMessage.from("", List.of(goodCall));
+        assertSame(withCall, ReferenceAgent.sanitizedForHistory(withCall, List.of(goodCall)), "nothing to fix - must return the same instance, not a rebuilt copy");
+
+        final var textOnly = AiMessage.from("done");
+        assertSame(textOnly, ReferenceAgent.sanitizedForHistory(textOnly, List.of()));
     }
 
     @Test
