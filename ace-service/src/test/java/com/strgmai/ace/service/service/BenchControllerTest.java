@@ -448,7 +448,7 @@ class BenchControllerTest {
      *  stage actually exists (p1_plan/PARALLEL_PLAN have none here, so they're absent entirely -
      *  not merely blank rows). "implemented" reads each stage's own irregular completion tag
      *  (phase/p0, not phase/p0_definition; phase/review, not phase/REVIEW - see
-     *  BenchController.PRE_TASK_STAGES/POST_TASK_STAGE's own javadoc for why). */
+     *  BenchController.PRE_TASK_STAGES/POST_TASK_STAGES's own javadoc for why). */
     @Test
     void jobPlanIncludesPipelineStagesAroundTheRealTasksWhenTheirSessionsExist() throws Exception {
         final var resultsDir = Files.createTempDirectory("results");
@@ -487,6 +487,47 @@ class BenchControllerTest {
                 .andExpect(jsonPath("$.tasks[2].implemented").value(false));
     }
 
+    /** Found live: trajectory-review (Reviews.trajectoryReview(), session label
+     *  "TRAJECTORY_REVIEW") had no entry in POST_TASK_STAGES at all - only self-review did - so a
+     *  real run that did trajectory-review got no Plan-grid row for it, and the Sessions grid's own
+     *  "Trajectory review" row has no working detail view (JobSessionDialog's dead-end message).
+     *  Pins that it now appears, in order, after REVIEW - mirroring REVIEW's own existing row
+     *  shape exactly (same "implemented" tag-existence check, "phase/trajectory_review" per #628,
+     *  not "phase/REVIEW"/"phase/TRAJECTORY_REVIEW"). */
+    @Test
+    void jobPlanIncludesTrajectoryReviewAfterSelfReviewWhenItsSessionExists() throws Exception {
+        final var resultsDir = Files.createTempDirectory("results");
+        final var runDir = resultsDir.resolve("run-1");
+        Files.createDirectories(runDir.resolve("sessions"));
+        Files.writeString(runDir.resolve("IMPLEMENTATION_PLAN.md"), """
+                # Plan
+                ## T1 — model the schema
+                - Goal: create the entities
+                - Dependencies: none
+                """);
+        Files.writeString(runDir.resolve("sessions/a.jsonl"),
+                "{\"type\":\"session\",\"id\":\"s-review\",\"label\":\"REVIEW\",\"ts\":\"2026-10-20T09:00:00Z\"}\n");
+        Files.writeString(runDir.resolve("sessions/b.jsonl"),
+                "{\"type\":\"session\",\"id\":\"s-traj\",\"label\":\"TRAJECTORY_REVIEW\",\"ts\":\"2026-10-20T10:00:00Z\"}\n");
+        final var wsRoot = Files.createTempDirectory("ws-root");
+        final var ws = wsRoot.resolve("run-1").resolve("workspace");
+        Files.createDirectories(ws);
+        com.strgmai.ace.service.runner.RunBenchSupport.snapshot(ws, "phase/trajectory_review");   // trajectory-review's own irregular tag; "review" stays unimplemented
+        when(props.resultsDir()).thenReturn(resultsDir.toString());
+        when(props.workspaceRoot()).thenReturn(wsRoot.toString());
+        when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1"));
+
+        mvc.perform(get("/api/jobs/" + JOB_1 + "/plan"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tasks", hasSize(3)))
+                .andExpect(jsonPath("$.tasks[1].id").value("REVIEW"))
+                .andExpect(jsonPath("$.tasks[1].implemented").value(false))
+                .andExpect(jsonPath("$.tasks[2].id").value("TRAJECTORY_REVIEW"))
+                .andExpect(jsonPath("$.tasks[2].title").value("Trajectory review"))
+                .andExpect(jsonPath("$.tasks[2].stage").value(true))
+                .andExpect(jsonPath("$.tasks[2].implemented").value(true));
+    }
+
     @Test
     void jobPlanOmitsAPipelineStageEntirelyWhenItHasNoSessionAtAll() throws Exception {
         final var resultsDir = Files.createTempDirectory("results");
@@ -509,7 +550,7 @@ class BenchControllerTest {
     }
 
     /** RunBench's own fixed final step after every task wave finishes ("---- integration: the fixed
-     *  final task ----") - now a stage row too, same gate/shape as PRE_TASK_STAGES/POST_TASK_STAGE,
+     *  final task ----") - now a stage row too, same gate/shape as PRE_TASK_STAGES/POST_TASK_STAGES,
      *  sitting between the real tasks and REVIEW (self-review reviews the integrated result). */
     @Test
     void jobPlanIncludesIntegrationAfterTheRealTasksWhenItsSessionExists() throws Exception {

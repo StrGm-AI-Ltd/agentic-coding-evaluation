@@ -482,8 +482,38 @@ public final class JobLiveSection extends VerticalLayout {
         // planGrid's own row click already opens the task dialog - this grid previously had no
         // click handling at all, so "Definition"/"Plan"/"Parallel plan" (no other way to inspect
         // them) just did nothing when clicked.
-        sessions.addItemClickListener(e -> JobSessionDialog.open(client, jobId, () -> currentJob, e.getItem(), onChanged));
+        //
+        // #630-followup, found live: EVERY session row routed here, including a real task's own
+        // ("T5", "T5-judge-turn5", ...) and every pipeline stage's (REVIEW/TRAJECTORY_REVIEW/
+        // INTEGRATION/p0_definition/p1_plan/PARALLEL_PLAN) - but JobSessionDialog only has real
+        // content for the three pre-task phases; every other row (a real task, REVIEW,
+        // TRAJECTORY_REVIEW, INTEGRATION) landed on its own dead-end "There is no detail view for
+        // this session" message, even though JobTaskDialog's Stats tab already has real, live
+        // turns/tokens/wall-time data for every one of them (confirmed live: REVIEW's own Plan-grid
+        // row already opens JobTaskDialog correctly and shows "974 so far" turns - only the
+        // SESSIONS grid's own routing was wrong). Matches the row's own raw session label against
+        // planTasks via JobDetailView.matchesSession() - the SAME matching the Plan grid's own
+        // task-stats accumulation already uses - and opens JobTaskDialog whenever a PlanTask is
+        // found (every id in planTasks(), stage or real, matches itself exactly); only a session
+        // with genuinely no corresponding PlanTask (planTasks hasn't loaded yet, or a stray/
+        // unexpected label) falls back to JobSessionDialog.
+        sessions.addItemClickListener(e -> {
+            final var row = e.getItem();
+            final var task = matchingTask(planTasks, row);
+            if (task.isPresent()) JobTaskDialog.open(client, jobId, task.get(), () -> currentJob, live, this, onChanged);
+            else JobSessionDialog.open(client, jobId, () -> currentJob, row, onChanged);
+        });
         sessions.getStyle().set("cursor", "pointer");
         return sessions;
+    }
+
+    /** The Sessions grid's own row-click routing decision, pulled out as its own pure, directly-
+     *  testable method - the click listener itself isn't (Vaadin's click-to-dialog wiring has no
+     *  unit-test harness in this codebase, and JobTaskDialog.open()/JobSessionDialog.open() both
+     *  fire real network calls the moment they're invoked). Empty when no PlanTask's own id
+     *  matches this row's raw label (planTasks hasn't loaded yet, or a stray/unexpected label) -
+     *  the caller then falls back to JobSessionDialog instead of passing a null task through. */
+    static java.util.Optional<Api.PlanTask> matchingTask(final List<Api.PlanTask> planTasks, final JobLiveState.SessionRow row) {
+        return planTasks.stream().filter(t -> JobDetailView.matchesSession(row.name(), t.id())).findFirst();
     }
 }

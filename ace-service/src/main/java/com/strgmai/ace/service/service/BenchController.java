@@ -285,7 +285,15 @@ public class BenchController {
      *  task loop has actually reached it, so this still goes through the same sessionCounts().found()
      *  gate as every other stage below ("show what's actually there"), not an unconditional row. */
     private static final String[] INTEGRATION_STAGE = {"INTEGRATION", "Integration", "phase/INTEGRATION"};
-    private static final String[] POST_TASK_STAGE = {"REVIEW", "Self-review", "phase/review"};
+    /** found live: trajectory-review (Reviews.trajectoryReview(), session label "TRAJECTORY_REVIEW",
+     *  its own completion tag "phase/trajectory_review" per #628) had NO entry here at all - only
+     *  self-review did - so it never got a Plan-grid row, and the Sessions grid's own "Trajectory
+     *  review" row has no working detail view (JobSessionDialog: "There is no detail view for this
+     *  session"). This is the one place that otherwise-unreachable session gets a real row with a
+     *  working Stats tab (turns/tokens/wall time, live while the job is still running). */
+    private static final List<String[]> POST_TASK_STAGES = List.of(
+            new String[]{"REVIEW", "Self-review", "phase/review"},
+            new String[]{"TRAJECTORY_REVIEW", "Trajectory review", "phase/trajectory_review"});
 
     @GetMapping("/api/jobs/{id}/plan")
     public Map<String, Object> plan(@PathVariable UUID id) {
@@ -342,7 +350,8 @@ public class BenchController {
                 rows.add(stageRow(order++, new String[]{fixId, "Fix (wave " + waveIndex + ")", "phase/" + fixId}, ws));
         }
         if (sessionCounts(base, INTEGRATION_STAGE[0]).found()) rows.add(stageRow(order++, INTEGRATION_STAGE, ws));
-        if (sessionCounts(base, POST_TASK_STAGE[0]).found()) rows.add(stageRow(order, POST_TASK_STAGE, ws));
+        for (final String[] stage : POST_TASK_STAGES)
+            if (sessionCounts(base, stage[0]).found()) rows.add(stageRow(order++, stage, ws));
         return Map.of("tasks", rows);
     }
 

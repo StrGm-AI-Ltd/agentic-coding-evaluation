@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Objects;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** #528 (Phase 1): the REQUESTS_BY_ and SESSIONS_BY_ comparators moved here from JobDetailViewTest
  *  along with the comparators themselves - these two pin the same regressions they always did (the
@@ -66,5 +68,48 @@ class JobLiveSectionTest {
                 .map(r -> r.ts() == null ? "null" : r.ts()).toList();
         assertEquals(List.of("2026-09-14T23:00:00+01:00", "2026-09-15T02:00:00Z", "null"),
                 byTs, "chronological across formats, absent last");
+    }
+
+    private static Api.PlanTask planTask(final String id, final boolean stage) {
+        return new Api.PlanTask(0, id, "", "", List.of(), false, false, null, null, 0, false, stage);
+    }
+
+    private static JobLiveState.SessionRow sessionRow(final String rawLabel) {
+        return new JobLiveState.SessionRow("sid", "sid", "description", null, null, null, null, null, null, null, null, rawLabel, null);
+    }
+
+    /** #630-followup, found live: every Sessions-grid row used to route to JobSessionDialog
+     *  regardless of what it actually was - a real task's own row, or REVIEW/TRAJECTORY_REVIEW/
+     *  INTEGRATION, all landed on JobSessionDialog's own dead-end "There is no detail view for
+     *  this session" message, even though JobTaskDialog's Stats tab already has real, live data
+     *  for every one of them (confirmed live: REVIEW's own PLAN-grid row already opens
+     *  JobTaskDialog correctly - only the SESSIONS grid's own routing was wrong). matchingTask()
+     *  is the routing decision itself: a real task's own raw label ("T5"), and a pipeline stage's
+     *  ("REVIEW", "TRAJECTORY_REVIEW", "p0_definition", ...) all match their own PlanTask by id
+     *  exactly, stage or not. */
+    @Test
+    void matchingTask_findsTheRealTaskAndEveryPipelineStageAlike() {
+        final var planTasks = List.of(
+                planTask("T5", false),
+                planTask("REVIEW", true),
+                planTask("TRAJECTORY_REVIEW", true),
+                planTask("INTEGRATION", true));
+
+        assertEquals("T5", JobLiveSection.matchingTask(planTasks, sessionRow("T5")).map(Api.PlanTask::id).orElse(null));
+        assertEquals("REVIEW", JobLiveSection.matchingTask(planTasks, sessionRow("REVIEW")).map(Api.PlanTask::id).orElse(null));
+        assertEquals("TRAJECTORY_REVIEW", JobLiveSection.matchingTask(planTasks, sessionRow("TRAJECTORY_REVIEW")).map(Api.PlanTask::id).orElse(null));
+        assertEquals("INTEGRATION", JobLiveSection.matchingTask(planTasks, sessionRow("INTEGRATION")).map(Api.PlanTask::id).orElse(null));
+        // a sub-session (judge/continuation) still matches its own base task, the same way the
+        // Plan grid's own live-stats accumulation already does for a real task's judge turns
+        assertEquals("T5", JobLiveSection.matchingTask(planTasks, sessionRow("T5-judge-turn5")).map(Api.PlanTask::id).orElse(null));
+    }
+
+    /** No PlanTask with a matching id (planTasks hasn't loaded yet, or a genuinely stray label) -
+     *  must be empty, never throw, so the caller's own fallback to JobSessionDialog is reachable. */
+    @Test
+    void matchingTask_isEmptyWhenNothingMatches() {
+        assertTrue(JobLiveSection.matchingTask(List.of(), sessionRow("REVIEW")).isEmpty());
+        assertTrue(JobLiveSection.matchingTask(List.of(planTask("T5", false)), sessionRow("T50")).isEmpty(),
+                "a task id must not prefix-match a DIFFERENT task's longer id with no separator");
     }
 }
