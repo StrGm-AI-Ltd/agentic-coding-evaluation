@@ -145,9 +145,13 @@ final class JobTaskDialog {
         // transcript - visually stranded there with a big gap before the dialog's own Close button,
         // which sits in the FOOTER. Lives in the footer now instead, the same pane Close (and
         // refreshStatsButton below) already use - flex-grow so it claims the space Close doesn't
-        // need, same reasoning as the Send button's own flex-grow on the TextArea beside it.
+        // need, same reasoning as the Send button's own flex-grow on the TextArea beside it. NOT
+        // width:100% though (found live, #568 follow-up): on a flex ITEM that sets flex-basis to
+        // 100% too, which claims the ENTIRE footer row for this Div alone and wraps Close onto its
+        // own second line below it - the exact fight flex-grow-not-width:100% avoids one level down,
+        // between the TextArea and the Send button, repeated here one level up by mistake.
         final var interveneRow = new Div();
-        interveneRow.getStyle().set("width", "100%").set("box-sizing", "border-box").set("flex-grow", "1");
+        interveneRow.getStyle().set("box-sizing", "border-box").set("flex-grow", "1");
         interveneRow.setVisible(false);
 
         final var promptTab = new Tab("Prompt");
