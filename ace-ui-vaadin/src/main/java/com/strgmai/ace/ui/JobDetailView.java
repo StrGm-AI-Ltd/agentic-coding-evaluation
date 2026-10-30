@@ -561,8 +561,10 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  ("REVIEW", "p0_definition") alike, unlike the OLD "Task " + id prefix-on-description() check
      *  this replaces, which only ever matched a real task's own "Task <id>" rendering - never a
      *  stage's ("Definition", "Self review", ...), silently leaving a stage's own live time/tokens/
-     *  running-status undetectable. */
-    private static boolean matchesSession(final String rawLabel, final String taskId) {
+     *  running-status undetectable. Package-visible (#630-followup): JobLiveSection's own Sessions-
+     *  grid click routing reuses this exact matching to find a session's own PlanTask, rather than
+     *  reimplementing it. */
+    static boolean matchesSession(final String rawLabel, final String taskId) {
         return rawLabel != null && (rawLabel.equals(taskId) || rawLabel.startsWith(taskId + "-"));
     }
 
