@@ -325,18 +325,38 @@ public class BenchController {
                 row.put("deps", t.deps == null ? List.of() : t.deps);
                 row.put("implemented", com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/" + t.id));
                 row.put("handoff_done", com.strgmai.ace.service.runner.RunBenchSupport.tagExists(ws, "phase/" + t.id + "-handoff"));
-                // #261/#262: the agent's own self-reported outcome (done/partial/blocked) and WHY
-                // (how it was verified, what's missing, why it's blocked), or the harness's
-                // "unfinished" fallback (with its own fixed explanation) when even a dedicated
-                // wrap-up chance came back empty - both null until the task's main session
-                // actually ends. See RunBench.reportedStatus().
-                final var reported = com.strgmai.ace.service.runner.RunBench.reportedStatus(ws, t.id);
-                row.put("reported_status", reported == null ? null : reported.status());
-                row.put("reported_detail", reported == null ? null : reported.detail());
                 // #337: visible effort signal - how many attempts this task's own task_attempts.jsonl
                 // history actually shows, and whether any of them needed a same-session rescue, so a
                 // clean first-try pass and a costly rescued/retried one read as different outcomes.
                 final List<Map<String, Object>> taskAttempts = attemptsByTask.getOrDefault(t.id, List.of());
+                // #261/#262: the agent's own self-reported outcome (done/partial/blocked) and WHY
+                // (how it was verified, what's missing, why it's blocked), or the harness's
+                // "unfinished" fallback (with its own fixed explanation) when even a dedicated
+                // wrap-up chance came back empty - both null until the task's main session
+                // actually ends.
+                //
+                // #642, found live: docs/PROGRESS.md is a shared, agent-mutable file re-scanned on
+                // every call to RunBench.reportedStatus() - a genuinely-finished task's own line can
+                // be LOST (overwritten, concatenated into a neighbor's line with no separator, or
+                // never written at all) by a LATER task's own session touching the same shared
+                // file, even though that task's own attempt genuinely finished. task_attempts.jsonl
+                // (append-only, never agent-mutated) already carries the SAME reportedStatus() call's
+                // own result - but captured by logTaskAttempt() at the one moment PROGRESS.md was
+                // still guaranteed fresh for THIS task (right as its own session ended), before any
+                // later task had a chance to corrupt the shared file. Preferring that durable,
+                // already-captured value - when at least one attempt has been recorded - removes this
+                // whole class of display-only data loss; the live file scan is now only a fallback
+                // for a task that hasn't finished even one attempt yet (reportedStatus() is still
+                // needed there - the live file is the only source while a session is still running).
+                final var lastAttempt = taskAttempts.isEmpty() ? null : taskAttempts.get(taskAttempts.size() - 1);
+                if (lastAttempt != null && lastAttempt.get("reported_status") != null) {
+                    row.put("reported_status", lastAttempt.get("reported_status"));
+                    row.put("reported_detail", lastAttempt.get("reported_detail"));
+                } else {
+                    final var reported = com.strgmai.ace.service.runner.RunBench.reportedStatus(ws, t.id);
+                    row.put("reported_status", reported == null ? null : reported.status());
+                    row.put("reported_detail", reported == null ? null : reported.detail());
+                }
                 row.put("attempts", taskAttempts.size());
                 row.put("rescued", taskAttempts.stream().anyMatch(a -> Boolean.TRUE.equals(a.get("rescue_succeeded"))));
                 row.put("stage", false);
