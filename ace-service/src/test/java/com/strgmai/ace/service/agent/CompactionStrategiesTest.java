@@ -147,6 +147,29 @@ class CompactionStrategiesTest {
         assertFalse(result.summarized());
     }
 
+    /** found live (124 occurrences across one run's own logs): ERROR_LINE_EXTRACTION and
+     *  TOOL_OUTPUT_RECALL are real, KNOWN strategies with no masking logic of their own to run in
+     *  apply()'s loop (they're enforced elsewhere, via plain `enabledStrategies.contains(...)`
+     *  checks) - but with no explicit case for either, apply()'s own `default` branch logged BOTH
+     *  as "unknown ... ignored" on every single compaction event of every run whose list included
+     *  them (which DEFAULT itself always does), directly contradicting the very KNOWN set the
+     *  warning itself printed in the same breath. Captures the real log output (not just apply()'s
+     *  return value, which the old, buggy code already produced identically) since the defect was
+     *  entirely in what got logged, not in any masking behavior. */
+    @Test
+    void applyNeverLogsErrorLineExtractionOrToolOutputRecallAsUnknown() {
+        final var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(CompactionStrategies.class);
+        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            CompactionStrategies.apply(CompactionStrategies.DEFAULT, threeTurns(), 1, 0, new CompactionStrategies.State(),
+                    range -> fail("structured_eviction wasn't configured"));
+            assertTrue(appender.list.stream().noneMatch(e -> e.getFormattedMessage().contains("unknown compaction strategy")),
+                    "DEFAULT's own entries must never be logged as unknown: " + appender.list);
+        } finally { logger.detachAppender(appender); }
+    }
+
     @Test
     void parseTrimsEachEntryAndDropsUnknownNamesInsteadOfSilentlyDisablingEverythingElse() {
         assertEquals(List.of(CompactionStrategies.TOOL_RESULT_MASK, CompactionStrategies.STRUCTURED_EVICTION),
