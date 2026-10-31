@@ -1286,4 +1286,41 @@ class RunBenchTest {
         assertEquals(8, RunBench.rescueKeepRecentTurnsFor(Map.of(), false, 8), "no override - still the operator-wide default for rc=3/4, unchanged behavior");
         assertEquals(5, RunBench.rescueKeepRecentTurnsFor(Map.of("keep_recent_turns", 5), true, 8), "an explicit override always wins");
     }
+
+    /** #656-followup2, found live (job 76b308ac, T6): a rescue session can answer with a well-formed
+     *  status line as plain chat text instead of actually calling write/edit to put it in
+     *  docs/PROGRESS.md - the harness's own PRE-rescue synthetic "unfinished" fallback line (already
+     *  written before rescueStep() ever runs) was then the only thing left in the file, discarding a
+     *  status the model had, in substance, already given. salvageRescueStatus() recovers it from the
+     *  rescue's own final response text. */
+    @Test
+    void salvageRescueStatus_recoversAWellFormedLineFromPlainResponseText() throws Exception {
+        final Path ws = track(Files.createTempDirectory("ws-salvage"));
+        Files.createDirectories(ws.resolve("docs"));
+        Files.writeString(ws.resolve("docs/PROGRESS.md"),
+                "T6 | unfinished | budget exhausted before a status was written (the model produced no further output after 2 turns)\n");
+        assertNull(RunBench.progressStatus(ws, "T6"), "only the harness's own synthetic fallback is present so far");
+
+        RunBench.salvageRescueStatus(ws, "T6",
+                "\nT6 | done | implemented AccountService.deposit with positive-amount validation and HALF_EVEN rounding");
+
+        assertEquals("done", RunBench.progressStatus(ws, "T6"), "the salvaged real line must now win over the earlier synthetic fallback");
+    }
+
+    @Test
+    void salvageRescueStatus_noOpWhenThereIsNothingToSalvage() throws Exception {
+        final Path ws = track(Files.createTempDirectory("ws-salvage-noop"));
+        Files.createDirectories(ws.resolve("docs"));
+        Files.writeString(ws.resolve("docs/PROGRESS.md"), "T6 | unfinished | budget exhausted before a status was written\n");
+
+        assertDoesNotThrow(() -> RunBench.salvageRescueStatus(ws, "T6", null));
+        assertDoesNotThrow(() -> RunBench.salvageRescueStatus(ws, "T6", "   "));
+        assertDoesNotThrow(() -> RunBench.salvageRescueStatus(ws, "T6",
+                "I looked at the test output and the fix looks correct, but I'm not confident enough to call it done."));
+        // reportedStatus(), not progressStatus(): the latter deliberately EXCLUDES the harness's own
+        // fallback line by design (it decides whether that fallback still needs writing), so it
+        // would read as null here regardless of whether salvage left the file alone or corrupted it.
+        assertEquals("unfinished", RunBench.reportedStatus(ws, "T6").status(),
+                "none of the above contain a real <tid> | status | detail line - the existing fallback must survive untouched");
+    }
 }

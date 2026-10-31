@@ -120,7 +120,17 @@ public class ReferenceAgent {
         return text != null && text.contains("<function=");
     }
 
-    public record SessionResult(String id, int rc, double seconds, String finish, int turns, int toolErrors,
+    /** lastText: the model's own final response text when the session ended by answering with no
+     *  tool call (ai.text() right where that branch returns) - null for every other ending (an
+     *  exception path, a turn-limit cutoff) where there is no single coherent "final answer" to
+     *  point at. #656-followup2, found live (job 76b308ac, T6's rescue): a rescue session can
+     *  answer with a well-formed docs/PROGRESS.md status line as plain chat text instead of
+     *  actually calling write/edit to put it in the file - the same "said it instead of doing it"
+     *  shape as the text-mimicked tool-call bug (#648/#656) elsewhere in this class. Without this
+     *  field, that clearly-articulated status was simply unrecoverable after the fact; RunBench's
+     *  own rescueStep() uses it to salvage one instead of reporting "unfinished" over information
+     *  the model did, in substance, already provide. */
+    public record SessionResult(String id, int rc, double seconds, String finish, String lastText, int turns, int toolErrors,
                                 int compactions, Path sessionFile, Instant start, Instant end) {}
 
     /** a mid-task trajectory check, invoked every N turns from inside the loop below (turn count
@@ -540,11 +550,11 @@ public class ReferenceAgent {
             } catch (BudgetExhausted e) {
                 rc = 3; finish = "budget";
                 session.end(turns, toolErrors, compactions, finish);
-                return result(name, rc, t0, finish, turns, toolErrors, compactions, session, start);
+                return result(name, rc, t0, finish, null, turns, toolErrors, compactions, session, start);
             } catch (ContextWindowExceeded e) {
                 rc = 4; finish = "context_window";
                 session.end(turns, toolErrors, compactions, finish);
-                return result(name, rc, t0, finish, turns, toolErrors, compactions, session, start);
+                return result(name, rc, t0, finish, null, turns, toolErrors, compactions, session, start);
             } catch (TransientError e) {
                 // rc=2 alone gives no way to tell auth failure/5xx/network drop apart after the
                 // fact - the real cause (e's cause carries the HTTP status per chatWithRetry) is
@@ -557,7 +567,7 @@ public class ReferenceAgent {
                 // going for anyway.
                 log.warn("session {} ended (rc=2) after retries were exhausted", name, e.getCause() == null ? e : e.getCause());
                 session.end(turns, toolErrors, compactions, finish);
-                return result(name, 2, t0, finish, turns, toolErrors, compactions, session, start);
+                return result(name, 2, t0, finish, null, turns, toolErrors, compactions, session, start);
             }
             turns++;
             final AiMessage ai = resp.aiMessage();
@@ -607,7 +617,7 @@ public class ReferenceAgent {
                     }
                 }
                 session.end(turns, toolErrors, compactions, finish);
-                return result(name, rc, t0, finish, turns, toolErrors, compactions, session, start);   // done: answered without a tool call
+                return result(name, rc, t0, finish, ai.text(), turns, toolErrors, compactions, session, start);   // done: answered without a tool call
             }
             String thrashWarning = null;
             for (ToolExecutionRequest c : calls) {
@@ -655,12 +665,12 @@ public class ReferenceAgent {
         // a turn-capped exit (rc still 0) means the model never stopped on its own: report a failure, not a success
         if (rc == 0 && turns >= maxTurns) { rc = 1; finish = finish == null ? "turn_limit" : finish; }
         session.end(turns, toolErrors, compactions, finish);
-        return result(name, rc, t0, finish, turns, toolErrors, compactions, session, start);
+        return result(name, rc, t0, finish, null, turns, toolErrors, compactions, session, start);
     }
 
-    private SessionResult result(final String id, final int rc, final long t0, final String finish, final int turns, final int toolErrors, final int compactions, final AgentSession s, final Instant start) {
+    private SessionResult result(final String id, final int rc, final long t0, final String finish, final String lastText, final int turns, final int toolErrors, final int compactions, final AgentSession s, final Instant start) {
         final double secs = (System.nanoTime() - t0) / 1e9;
-        return new SessionResult(id, rc, Math.round(secs * 10) / 10.0, finish, turns, toolErrors, compactions, s.path(), start, Instant.now());
+        return new SessionResult(id, rc, Math.round(secs * 10) / 10.0, finish, lastText, turns, toolErrors, compactions, s.path(), start, Instant.now());
     }
 
     /** #417 follow-up review (C12): bounds how many times the SAME archived tool-call id may be

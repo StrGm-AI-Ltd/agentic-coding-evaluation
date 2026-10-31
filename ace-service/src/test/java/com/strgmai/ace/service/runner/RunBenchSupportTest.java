@@ -48,7 +48,7 @@ class RunBenchSupportTest {
         final Instant start = Instant.now();
         final Callable<ReferenceAgent.SessionResult> call = () -> {
             Thread.sleep(300);
-            return new ReferenceAgent.SessionResult("T1", 0, 0.3, "stop", 1, 0, 0, null, start, Instant.now());
+            return new ReferenceAgent.SessionResult("T1", 0, 0.3, "stop", null, 1, 0, 0, null, start, Instant.now());
         };
 
         final var result = RunBenchSupport.runBounded(0, "T1", sessionDir, "sid",
@@ -63,7 +63,7 @@ class RunBenchSupportTest {
         final Path sessionDir = track(Files.createTempDirectory("sessions"));
         final Instant start = Instant.now();
         final Callable<ReferenceAgent.SessionResult> call = () ->
-                new ReferenceAgent.SessionResult("T1", 0, 1.2, "stop", 3, 0, 0, null, start, Instant.now());
+                new ReferenceAgent.SessionResult("T1", 0, 1.2, "stop", null, 3, 0, 0, null, start, Instant.now());
 
         final var result = RunBenchSupport.runBounded(10, "T1", sessionDir, "sid",
                 reason -> fail("abort must not run on a normal finish (reason: " + reason + ")"), call);
@@ -86,7 +86,7 @@ class RunBenchSupportTest {
                 interrupted.set(true);
                 throw ie;
             }
-            return new ReferenceAgent.SessionResult("T1", 0, 10.0, "stop", 1, 0, 0, null, Instant.now(), Instant.now());
+            return new ReferenceAgent.SessionResult("T1", 0, 10.0, "stop", null, 1, 0, 0, null, Instant.now(), Instant.now());
         };
 
         final long t0 = System.currentTimeMillis();
@@ -195,7 +195,7 @@ class RunBenchSupportTest {
                 innerInterrupted.set(true);
                 throw ie;
             }
-            return new ReferenceAgent.SessionResult("T1", 0, 60.0, "stop", 1, 0, 0, null, Instant.now(), Instant.now());
+            return new ReferenceAgent.SessionResult("T1", 0, 60.0, "stop", null, 1, 0, 0, null, Instant.now(), Instant.now());
         };
 
         final Throwable[] thrown = new Throwable[1];

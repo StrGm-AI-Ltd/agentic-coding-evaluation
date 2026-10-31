@@ -196,6 +196,6 @@ public class PiAgent {
         final String finish = JournalFacts.lastFinish(journal.toString(), start.toString());
         final Instant end = Instant.now();
         final double seconds = Math.round(java.time.Duration.between(start, end).toMillis() / 100.0) / 10.0;
-        return new ReferenceAgent.SessionResult(name, rc, seconds, finish, NOT_OBSERVABLE, NOT_OBSERVABLE, NOT_OBSERVABLE, null, start, end);
+        return new ReferenceAgent.SessionResult(name, rc, seconds, finish, null, NOT_OBSERVABLE, NOT_OBSERVABLE, NOT_OBSERVABLE, null, start, end);
     }
 }

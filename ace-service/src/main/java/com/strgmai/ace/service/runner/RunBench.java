@@ -166,13 +166,21 @@ public class RunBench {
         return scanProgressStatus(ws, tid, false);
     }
 
+    /** the `<tid> | <status> | <detail>` shape every status-line reader/writer in this class must
+     *  agree on - factored out so salvageRescueStatus() (a SECOND place that needs to recognize this
+     *  exact shape, in a model's raw response text rather than a PROGRESS.md line) can never drift
+     *  from what scanProgressStatus() itself accepts. */
+    private static Pattern statusLineRegex(final String tid) {
+        return Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*\\|?\\s*\\*{0,3}" + Pattern.quote(tid)
+                + "\\*{0,3}\\s*\\|\\s*\\*{0,3}(\\w+)\\*{0,3}(?:\\s*\\|\\s*\\*{0,3}(.*))?$", Pattern.CASE_INSENSITIVE);
+    }
+
     private static ReportedStatus scanProgressStatus(final Path ws, final String tid, final boolean excludeHarnessFallback) {
         final Path p = ws.resolve("docs/PROGRESS.md");
         if (!Files.isRegularFile(p)) return null;
         try {
             ReportedStatus result = null;
-            final Pattern re = Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*\\|?\\s*\\*{0,3}" + Pattern.quote(tid)
-                    + "\\*{0,3}\\s*\\|\\s*\\*{0,3}(\\w+)\\*{0,3}(?:\\s*\\|\\s*\\*{0,3}(.*))?$", Pattern.CASE_INSENSITIVE);
+            final Pattern re = statusLineRegex(tid);
             for (String line : Files.readAllLines(p)) {
                 final java.util.regex.Matcher m = re.matcher(line);
                 if (m.find() && !(excludeHarnessFallback && line.contains("budget exhausted before a status was written"))) {
@@ -1965,11 +1973,50 @@ public class RunBench {
                 rec.put("rc", 0);
                 rec.put("rescue_succeeded", true);
                 rec.put("verification", VerifyTask.verify(ws, cfg, rd.resolve("verify/" + t.id + "-rescue.log")));
+                // #656-followup2, found live (job 76b308ac): "rescue_succeeded" above only means the
+                // rescue SESSION itself returned cleanly (h.rc()==0) - it says nothing about whether
+                // the model actually called write/edit to put a status line in docs/PROGRESS.md, the
+                // one thing rescueInstruction() above explicitly asked it to do. Confirmed live: the
+                // model answered with a well-formed "T6 | done | ..." line as plain chat text and
+                // zero tool calls, so PROGRESS.md kept its PRE-rescue synthetic "unfinished" fallback
+                // line, and the task was scored unfinished despite the model clearly having a real
+                // answer. If PROGRESS.md still has no REAL status after a successful rescue, salvage
+                // one from the rescue's own final response text instead of silently discarding it.
+                if (progressStatus(ws, t.id) == null) salvageRescueStatus(ws, t.id, h.lastText());
             }
             appendRescueLesson(cfg, rd, t.id, reason, h.rc() == 0);
         } finally {
             proxy.stop();
             Files.writeString(rd.resolve("rescue/" + t.id + ".done"), "");
+        }
+    }
+
+    /** #656-followup2: scans lastText (the rescue session's own final response, no tool call) line
+     *  by line for the same `<tid> | <status> | <detail>` shape scanProgressStatus() itself accepts,
+     *  and appends the FIRST match verbatim to docs/PROGRESS.md - same append-only convention the
+     *  harness's own synthetic-fallback writer already uses (scanProgressStatus()'s "last line for
+     *  this tid wins" means this newly-appended real line naturally supersedes the earlier synthetic
+     *  one already in the file, with no need to find-and-remove it). A no-op (not an error) when
+     *  lastText is null/blank or contains nothing recognizable - the caller's own synthetic fallback,
+     *  already written before rescueStep() ever ran, stands unchanged in that case. Best-effort: a
+     *  failure here must never fail the run itself (same contract as logTaskAttempt and friends). */
+    static void salvageRescueStatus(final Path ws, final String tid, final String lastText) {
+        if (lastText == null || lastText.isBlank()) return;
+        try {
+            final Pattern re = statusLineRegex(tid);
+            for (final String line : lastText.lines().toList()) {
+                if (!re.matcher(line.strip()).find()) continue;
+                final Path pp = ws.resolve("docs/PROGRESS.md");
+                Files.createDirectories(pp.getParent());
+                final String existing = Files.isRegularFile(pp) ? Files.readString(pp) : "";
+                Files.writeString(pp, (existing.isEmpty() || existing.endsWith("\n") ? "" : "\n") + line.strip() + "\n",
+                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                log.info("run: salvaged {}'s own status line from its rescue session's final response text "
+                        + "(the model answered but never called write/edit): {}", tid, line.strip());
+                return;
+            }
+        } catch (final Exception e) {
+            log.warn("could not salvage {}'s rescue status from its final response text: {}", tid, e.toString());
         }
     }
 
