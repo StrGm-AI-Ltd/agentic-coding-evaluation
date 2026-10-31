@@ -223,22 +223,34 @@ public final class ComposeChecks {
                 return out;
             }
             // ---- up + health (its own budget) ----
-            // found live (#652-followup): the ONLY portInUse() guard ran once, above, before the
-            // (potentially long, its own GRADLE_TIMEOUT-scale budget) build step - a port that gets
-            // taken DURING the build slips past that early exit entirely and surfaces here as a raw,
+            // found live (#653), investigated on svc-20261030-185444: the ONLY portInUse() guard ran
+            // once, above, before the (potentially long, GRADLE_TIMEOUT-scale) build step - a port
+            // taken DURING the build slipped past that early exit and surfaced below as a raw,
             // unhelpful "Error response from daemon" instead of the same clear, already-existing
-            // message. Confirmed live on svc-20261030-185444: the agent's own INTEGRATION-stage
-            // manual troubleshooting backgrounded a jar bound to host port 8080
-            // (`java -jar build/libs/....jar &`, left running, never observed killed) - a highly
-            // plausible source of exactly this kind of late-arriving collision, on the very port
-            // this check already knows to look for. Re-checking right before "up" too costs nothing
-            // and turns a mystery INFRA reason into the SAME actionable one portInUse() already
-            // produces elsewhere in this method.
+            // message. A circumstantial, NOT confirmed, candidate cause on that run: the agent's own
+            // INTEGRATION-stage manual troubleshooting backgrounded a jar bound to host port 8080 -
+            // but the actual tool-result for that command never made it into interactions.jsonl (the
+            // call was still in flight when an unrelated restart killed the JVM, then got replayed),
+            // so whether it was still alive, or ever bound the port at all, by the time this ran is
+            // genuinely unknown; the full raw daemon error text isn't persisted either, by design.
+            // Re-checking right before "up" (this first check) narrows that race but can never close
+            // it - there is always a gap between any check and the daemon's own bind - so an up
+            // failure that's STILL infra-classified gets one short retry below, which doesn't depend
+            // on knowing the exact cause: any transient contention (this task's own leftover process,
+            // a genuinely transient daemon hiccup, anything) has a real chance of having cleared
+            // itself a few seconds later, for a cost of a few seconds against a 16-of-27-point loss.
             if (DockerService.portInUse(8080, "127.0.0.1")) {
                 for (CheckId c : IDS) if (wanted.test(c)) out.add(new CheckResult(c, CheckStatus.INFRA, "port 8080 already bound by a non-benchmark process before compose up"));
                 return out;
             }
-            final DockerService.Sh u = compose(proj, cf, healthTimeout, "up", "-d", "--no-build", "--quiet-pull");
+            DockerService.Sh u = compose(proj, cf, healthTimeout, "up", "-d", "--no-build", "--quiet-pull");
+            if (u.rc() != 0) {
+                final String firstReason = BuildChecks.infraReason(u.out().strip());
+                if (!firstReason.isEmpty()) {
+                    DockerService.sleep(5);
+                    u = compose(proj, cf, healthTimeout, "up", "-d", "--no-build", "--quiet-pull");
+                }
+            }
             if (u.rc() != 0) {
                 final String txt = u.out().strip();
                 final String reason = BuildChecks.infraReason(txt);
