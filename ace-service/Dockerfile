@@ -23,24 +23,28 @@ COPY ace-service/build.gradle ace-service/build.gradle
 # migration file to build the scratch SQLite DB jOOQ introspects - it is needed at probe time too,
 # not just once the real sources arrive below.
 COPY ace-service/src/main/resources/db ace-service/src/main/resources/db
-# pre-fetch ALL dependencies into this layer: a one-line source change invalidates only the src
-# layer below, never a full Maven Central re-download. The probe class is a dummy so compileJava
-# (and thus the whole dependency graph) resolves before the real sources arrive.
-RUN chmod +x gradlew && ./gradlew --version \
-    && mkdir -p ace-service/src/main/java/com/strgmai/ace/service \
-    && echo 'package com.strgmai.ace.service; final class __probe{}' > ace-service/src/main/java/com/strgmai/ace/service/__probe.java \
-    && ./gradlew --no-daemon :ace-service:compileJava \
-    && rm -rf ace-service/src   # the probe is done its job; delete it so COPY src below brings ONLY the real sources
+RUN chmod +x gradlew
 # #673: the agent's own sandbox has no `gradle` at all - no system binary, no pre-made wrapper
 # (it hand-writes build.gradle.kts from scratch, not from a Spring-Initializr-style skeleton that
 # ships gradlew+gradle-wrapper.jar+gradle-wrapper.properties). `gradle wrapper` itself needs an
 # EXISTING Gradle to generate one, so with neither, the only path left is downloading a full
 # distribution zip by hand and hand-rolling a gradlew against it - fragile (no persistent shell
 # state between separate bash calls) and the single biggest cause of wasted task budget seen this
-# session. The `./gradlew --version` call above already bootstrapped a real, working distribution
-# into this stage's own wrapper cache (same reasoning as the dependency pre-fetch layer it sits in)
-# - copy IT (not a freshly re-downloaded one) to a fixed path the final stage can pick up, the same
-# way it already does for the JDK below.
+# session.
+# #679: found live (job c965a635, T5) - this used to just reuse whatever Gradle version THIS
+# repo's OWN build below happens to pin (gradle/wrapper/gradle-wrapper.properties), coupling two
+# unrelated concerns: the harness's own build tooling, and what we hand an agent whose training
+# data defaults to "well-known, slightly older" plugin versions (e.g. Spring Boot Gradle plugin
+# 3.2.0). Pairing that against whatever Gradle happens to be bleeding-edge this week is a near-
+# guaranteed mismatch: Spring Boot plugin 3.2.0's `bootJar` task called an internal Gradle API
+# ('CopyProcessingSpec.getDirMode()') this repo's own pinned Gradle 9.5.1 no longer has - the agent
+# then "fixed" it by abandoning `bootJar` for the plain `jar` task, which bundles neither
+# dependencies nor an executable manifest and can never actually run; no curl variant
+# (localhost/host.docker.internal/the container's own IP) could ever reach a health endpoint from a
+# service that was crashing on startup every time. AGENT_GRADLE_VERSION is bootstrapped from its
+# OWN temporary wrapper-properties override - independent of whatever this repo's wrapper uses
+# below - pinned to a release still broadly compatible with the wide span of Spring Boot 3.x plugin
+# versions a model is likely to reach for.
 # found live: the first version of this command used -maxdepth 4, one short of where the real
 # launcher actually sits (dists/gradle-<v>-bin/<hash>/gradle-<v>/bin/gradle is 5 path segments
 # below dists/, not 4) - find silently matched nothing, $gradle_bin stayed empty, and
@@ -48,11 +52,27 @@ RUN chmod +x gradlew && ./gradlew --version \
 # project tree (gradlew, settings.gradle, source) into /opt/gradle-dist instead of a real Gradle
 # install - no build error anywhere, just a broken binary discovered only by actually running it.
 # The explicit [ -n ... ] guard below turns the next occurrence of exactly this mistake into a
-# loud build failure instead of a silent wrong-directory copy.
-RUN gradle_bin=$(find /root/.gradle/wrapper/dists -maxdepth 5 -type f -name gradle -path '*/bin/gradle' | head -1) \
-    && [ -n "$gradle_bin" ] || { echo "ERROR: could not locate the bootstrapped gradle launcher under /root/.gradle/wrapper/dists"; exit 1; } \
+# loud build failure instead of a silent wrong-directory copy. This step runs BEFORE this repo's
+# own dependency pre-fetch below so /root/.gradle/wrapper/dists holds ONLY this one distribution
+# when found - no ambiguity between the agent's pinned version and the repo's own.
+ARG AGENT_GRADLE_VERSION=8.11
+RUN cp gradle/wrapper/gradle-wrapper.properties /tmp/repo-gradle-wrapper.properties \
+    && sed -i "s|^distributionUrl=.*|distributionUrl=https://services.gradle.org/distributions/gradle-${AGENT_GRADLE_VERSION}-bin.zip|" gradle/wrapper/gradle-wrapper.properties \
+    && ./gradlew --version \
+    && gradle_bin=$(find /root/.gradle/wrapper/dists -maxdepth 5 -type f -name gradle -path '*/bin/gradle' | head -1) \
+    && [ -n "$gradle_bin" ] || { echo "ERROR: could not locate the bootstrapped agent-gradle launcher under /root/.gradle/wrapper/dists"; exit 1; } \
     && cp -r "$(dirname "$(dirname "$gradle_bin")")" /opt/gradle-dist \
-    && /opt/gradle-dist/bin/gradle --version
+    && /opt/gradle-dist/bin/gradle --version \
+    && cp /tmp/repo-gradle-wrapper.properties gradle/wrapper/gradle-wrapper.properties
+# pre-fetch ALL dependencies into this layer: a one-line source change invalidates only the src
+# layer below, never a full Maven Central re-download. The probe class is a dummy so compileJava
+# (and thus the whole dependency graph) resolves before the real sources arrive. Uses THIS repo's
+# own pinned Gradle (restored above) - unaffected by the agent-gradle bootstrap that ran first.
+RUN ./gradlew --version \
+    && mkdir -p ace-service/src/main/java/com/strgmai/ace/service \
+    && echo 'package com.strgmai.ace.service; final class __probe{}' > ace-service/src/main/java/com/strgmai/ace/service/__probe.java \
+    && ./gradlew --no-daemon :ace-service:compileJava \
+    && rm -rf ace-service/src   # the probe is done its job; delete it so COPY src below brings ONLY the real sources
 COPY ace-service/src ace-service/src
 RUN ./gradlew :ace-service:bootJar --no-daemon -x test
 # exactly ONE boot jar is expected: if the filter ever matched more (a -sources/-javadoc jar, a new
