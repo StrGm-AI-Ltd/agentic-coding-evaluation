@@ -2,6 +2,7 @@ package com.strgmai.ace.service.runner;
 
 import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.docker.DockerService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,6 +31,7 @@ public final class RunBenchSupport {
     private RunBenchSupport() {}
 
     private static final Logger log = LoggerFactory.getLogger(RunBenchSupport.class);
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     /** one benchmark run at a time on this machine */
     public static FileChannel acquireLock(final Path lockPath) {
@@ -140,31 +142,58 @@ public final class RunBenchSupport {
      *  conflicting lines for the same task id with the newest not even necessarily landing last.
      *  Called right before a task's own fresh (non-continuation) attempt begins; a no-op on a
      *  genuinely first attempt, where there is nothing to strip. */
-    /** #656-followup, found live (job 76b308ac, T10): an agent's own `docker compose up` (started
-     *  during an EARLIER task's own implementation/verification work) is never torn down when that
-     *  task ends - every task workspace is `.../workspace`, so Compose's own default project-naming
-     *  (the compose directory's basename) names EVERY task's stack identically ("workspace"), and
-     *  nothing removes it before the NEXT task starts. T10 (Flyway Migration) ran `docker ps`,
-     *  found several PostgreSQL containers left running from hours-old attempts (including this
-     *  exact run's own earlier task), had no way to tell which one was actually its, and could not
-     *  get a migration to apply - a genuine environment-confusion failure, not an agent mistake (it
-     *  had already correctly worked out to use `host.docker.internal`, the one documented gotcha for
-     *  reaching a just-started compose service from here).
+    /** #656-followup/#671-followup2: an agent's own `docker compose up` (started during an EARLIER
+     *  task's own implementation/verification work, or by the INTEGRATION stage's own explicit
+     *  instruction to confirm `docker compose up` works - see Packs.INTEGRATION_INSTRUCTION, which
+     *  never asks it to come back down again) is never torn down on its own - this is a harness
+     *  responsibility, not something a prompt asking the agent to remember can reliably guarantee.
      *
-     *  <p>Mirrors ComposeChecks.sweepStale()'s own precedent (tear down a known-shape stale project
-     *  before the next thing that needs a clean Docker state runs) but for the AGENT's own task-time
-     *  compose usage rather than the oracle's. Called at every task boundary (see RunBench's own two
-     *  call sites, both right next to pauseAfterTask's own between-tasks checkpoint) so each task
-     *  starts against a clean slate instead of silently inheriting (or colliding with) whatever a
-     *  PRIOR task happened to leave running - the same reasoning VerifyTask/ComposeChecks already
-     *  apply: a task's own state should never implicitly depend on exactly what ran before it.
-     *  `down` with a project name alone needs no compose file (it works off each container's own
-     *  `com.docker.compose.project` label) - safe to call even when nothing is up. */
+     *  <p>The FIRST version of this method (#656-followup) assumed the project would always be
+     *  named after the workspace ROOT's own basename ("workspace", since every task workspace is
+     *  `.../workspace`) - wrong in practice: an agent that `cd`s into a subdirectory before running
+     *  `docker compose up` (e.g. `account-service/`, the Spring project's own dir name) gets THAT
+     *  directory's basename as the Compose project name instead, since that is Compose's own
+     *  default naming rule (the compose file's containing directory), not anything tied to the task
+     *  workspace itself. Found live, still reproducing AFTER that first fix shipped (job 76b308ac,
+     *  run svc-20261031-012905): the INTEGRATION stage's own `docker compose up` (from
+     *  `workspace/account-service/`, project name "account-service") sat running for over an hour,
+     *  host ports 8080 AND 5432 both bound, still there when the oracle's own LATER `docker compose
+     *  up` for C2/F5/F6/F7 scoring collided with it ("Error response from daemon") - undetected by
+     *  the FIRST sweepAgentCompose() (wrong project name) AND by ComposeChecks' own portInUse(8080)
+     *  pre-flight guard (see its own javadoc: that check is ALSO blind to this, a separate bug).
+     *
+     *  <p>Fixed by discovery instead of name-guessing: `docker compose ls` (the same mechanism
+     *  ComposeChecks.sweepStale() already uses for its own, differently-scoped sweep) lists every
+     *  compose project's own `ConfigFiles` path - tear down any project whose config file lives
+     *  under THIS run's own workspace, regardless of what Compose happened to name it. Never matches
+     *  the ACE platform's own compose project (ace-service/ace-ui-vaadin/caddy) - its config file
+     *  lives at the operator's own deploy path, never under a run's `/app/data/workspaces/...` tree.
+     *
+     *  <p>Called at every task boundary (RunBench's own call sites, next to pauseAfterTask's own
+     *  between-tasks checkpoint) AND, critically, once more immediately before oracle.score() runs -
+     *  the one guaranteed checkpoint that does not depend on every earlier call site having actually
+     *  fired (a restart between the last task boundary and scoring would otherwise skip straight
+     *  past it) - "ensure infra is ready for the judge" is the harness's own job, not an emergent
+     *  property of enough earlier cleanup calls happening to have covered every path. */
     public static void sweepAgentCompose(final Path ws) {
-        final DockerService.Sh r = DockerService.sh(120, "docker", "compose", "-p", ws.getFileName().toString(),
-                "down", "-v", "--remove-orphans");
-        if (r.rc() != 0) log.debug("sweepAgentCompose: `docker compose -p {} down` rc={} (fine if nothing was up): {}",
-                ws.getFileName(), r.rc(), r.out());
+        final DockerService.Sh ls = DockerService.sh(60, "docker", "compose", "ls", "-a", "--format", "json");
+        if (ls.rc() != 0) {
+            log.warn("sweepAgentCompose: `docker compose ls` failed (rc={}), skipping: {}", ls.rc(), ls.out());
+            return;
+        }
+        try {
+            final String wsReal = ws.toRealPath().toString();
+            for (final var p : JSON.readTree(ls.out().isEmpty() ? "[]" : ls.out())) {
+                final String name = p.path("Name").asText("");
+                final String configFiles = p.path("ConfigFiles").asText("");
+                if (name.isBlank() || !configFiles.startsWith(wsReal)) continue;
+                final DockerService.Sh down = DockerService.sh(120, "docker", "compose", "-p", name, "down", "-v", "--remove-orphans");
+                if (down.rc() != 0) log.warn("sweepAgentCompose: `docker compose -p {} down` rc={}: {}", name, down.rc(), down.out());
+                else log.info("sweepAgentCompose: tore down stray compose project '{}' ({})", name, configFiles);
+            }
+        } catch (final Exception e) {
+            log.warn("sweepAgentCompose failed for {}: {}", ws, e.toString());
+        }
     }
 
     public static void clearStaleProgressLine(final Path ws, final String taskId) throws IOException {

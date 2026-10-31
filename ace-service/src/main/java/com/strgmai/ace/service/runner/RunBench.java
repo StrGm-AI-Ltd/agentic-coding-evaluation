@@ -761,6 +761,13 @@ public class RunBench {
             manifest.put("journal_facts", facts);
             manifest.put("validity", Validity.validity(manifest, facts, props.maxErrorRate()));
             writeManifest(rd, manifest);
+            // #671-followup2: the one guaranteed checkpoint, independent of whether every earlier
+            // per-task-boundary sweep actually fired (a restart between the last one and here would
+            // otherwise skip straight past them) - see sweepAgentCompose()'s own javadoc for the live
+            // incident (job 76b308ac) this closes: the INTEGRATION stage's own `docker compose up`
+            // verification left a stack running for over an hour, still there when oracle.score()'s
+            // own compose up collided with it.
+            RunBenchSupport.sweepAgentCompose(ws);
             final Map<String, Object> oracleReport = oracle.score(ws, task, (String) cfg.get("system_base_url"), manifest);
             Files.writeString(rd.resolve("oracle.json"), json.writerWithDefaultPrettyPrinter().writeValueAsString(oracleReport));
             // --efficiency-weight: unlike review/trajectory/parallel-plan's weight, this isn't tied to a
