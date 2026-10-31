@@ -5,6 +5,7 @@ import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.agent.AgentSession;
 import com.strgmai.ace.service.backend.LocalModelBackend;
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.pack.Packs;
 import com.strgmai.ace.service.proxy.RecordingProxy;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
@@ -80,7 +81,9 @@ public class Judge {
             describe the problem: tell it directly, as a command, what to stop doing and what to do
             instead right now (e.g. "You are stuck re-disassembling bytecode. Stop. Check whether
             the test's Spring context provides a DataSource bean instead."), addressed to "you",
-            not written about "the agent".""";
+            not written about "the agent". The known gotchas below are the same ones the agent's own
+            system prompt carries - recognizing one in its trajectory is a strong, specific signal
+            worth naming directly in your command, not just "this looks wrong".""" + "\n\n" + Packs.KNOWN_GOTCHAS;
 
     /** builds the checkpoint callback RunBench wires into a task's main session via the new
      *  ReferenceAgent.run() overload. `judgeCfg` is the effective (override-resolved) judge
@@ -105,7 +108,7 @@ public class Judge {
             final long taskWallSec, final long taskTokens, final long taskStartMs, final Map<String, Object> judgeCfg,
             final int turn, final List<ChatMessage> trajectory) throws Exception {
         final long elapsedSec = (System.currentTimeMillis() - taskStartMs) / 1000;
-        final String prompt = buildPrompt(ws, taskId, goal, taskWallSec, taskTokens, elapsedSec, trajectory);
+        final String prompt = buildPrompt(ws, rd, taskId, goal, taskWallSec, taskTokens, elapsedSec, trajectory);
 
         final String rawModel = judgeCfg.get("model") instanceof String m && !m.isBlank() ? m : null;
         final String localPrefix = backend.providerKey() + "/";
@@ -145,14 +148,21 @@ public class Judge {
         }
     }
 
-    private String buildPrompt(final Path ws, final String taskId, final String goal, final long wallSec,
+    private String buildPrompt(final Path ws, final Path rd, final String taskId, final String goal, final long wallSec,
             final long tokenBudget, final long elapsedSec, final List<ChatMessage> trajectory) {
         final String diff = cap(currentDiffSummary(ws), MAX_DIFF_CHARS);
         final String traj = capTail(renderTrajectory(trajectory), MAX_TRAJECTORY_CHARS);
+        // #404's own lessons.md, read fresh every checkpoint - the same run-wide, judge-populated
+        // signal later TASKS already get via Packs.taskPack(); the judge itself never saw it before,
+        // so it could not recognize "this is the same mistake another task already got caught on".
+        final String lessons = RunBench.readLessons(rd);
         return "## Task " + taskId + "\n" + (goal == null ? "" : goal) + "\n\n"
                 + "## Budget\n" + (wallSec > 0 ? "wall: " + wallSec + "s (elapsed: " + elapsedSec + "s)" : "wall: unlimited (elapsed: " + elapsedSec + "s)")
                 + ", tokens: " + (tokenBudget > 0 ? String.valueOf(tokenBudget) : "unlimited") + "\n\n"
                 + "## What has been produced so far\n" + (diff.isBlank() ? "(nothing yet - no files changed or created)" : diff) + "\n\n"
+                + (lessons == null || lessons.isBlank() ? "" :
+                        "## Lessons learned earlier in this run (apply proactively - another task already got caught on this)\n"
+                                + cap(lessons, Packs.CAPS.get("lessons")) + "\n\n")
                 + "## Recent trajectory\n" + traj;
     }
 

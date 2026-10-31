@@ -70,7 +70,7 @@ public final class Packs {
      *  lessons file (#404, dynamically populated by the judge DURING a run and scoped to that run
      *  only), this is static and ships in every run from the moment it's added here; a developer
      *  adds an entry when a new gotcha is found, the same way HYGIENE_TEMPLATE above is maintained. */
-    static final String KNOWN_GOTCHAS = """
+    public static final String KNOWN_GOTCHAS = """
             ## Known gotchas (apply proactively - found live, repeatedly, on this task suite)
             - PostgreSQL JDBC + `Instant`: a bare `Instant` passed to `JdbcTemplate`'s untyped `setObject` fails on real PostgreSQL ("Bad value for type timestamp") even though it works on the H2 fallback. Convert with `java.sql.Timestamp.from(instant)` before binding.
             - `JdbcTemplate` insert + generated key: use the `update(PreparedStatementCreator, KeyHolder)` two-argument overload, not the varargs `update(String, Object...)` overload with a `KeyHolder` appended as if it were a bind parameter - the varargs form silently binds the `KeyHolder` itself and throws `NotSerializableException` on H2.
