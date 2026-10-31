@@ -24,10 +24,15 @@ class VerifyTaskTest {
         return ws;
     }
 
+    /** #680: a real wrapper always ships gradle-wrapper.jar alongside gradlew - verify() now
+     *  requires it before trusting gradlew at all (see its own javadoc), so every fixture here
+     *  creates one too, matching a genuine wrapper's own real shape. */
     private static void fakeGradlew(final Path ws, final String script) throws Exception {
         final Path gradlew = ws.resolve("gradlew");
         Files.writeString(gradlew, "#!/bin/sh\n" + script + "\n");
         assertTrue(gradlew.toFile().setExecutable(true));
+        Files.createDirectories(ws.resolve("gradle/wrapper"));
+        Files.writeString(ws.resolve("gradle/wrapper/gradle-wrapper.jar"), "not a real jar, existence is all verify() checks");
     }
 
     /** verify()'s own very first step deletes any PRE-EXISTING XML matching this glob (stale-result
@@ -107,6 +112,30 @@ class VerifyTaskTest {
 
         final String log = Files.readString(ws.resolve("verify.log"));
         assertTrue(log.contains("SAW=from-scrubbed-env"), "the configured _agent_env's own variable must reach the subprocess: " + log);
+    }
+
+    /** #680: a `gradlew` with no `gradle/wrapper/gradle-wrapper.jar` sitting next to it cannot be a
+     *  real wrapper (one cannot run at all without that jar) - found live as a model-written fake
+     *  stub that always printed a canned version string and exited 0 for ANY argument, which this
+     *  used to trust outright. Proves the untrusted script is never invoked at all: whatever
+     *  verify() actually runs instead (the bare "gradle" fallback, resolved via the REAL process
+     *  PATH - ProcessBuilder resolves a bare command name against its OWN launching environment,
+     *  not the target env map, so this deliberately does not try to control or assert what that
+     *  fallback finds) never gets a chance to report the untrusted script's own lie (99 tests). */
+    @Test
+    void distrustsAGradlewWithNoWrapperJarAndNeverInvokesIt() throws Exception {
+        final Path ws = fixture("no-wrapper-jar");
+        final Path gradlew = ws.resolve("gradlew");
+        // if this ran, it would lie: claims 99 tests passed; no gradle-wrapper.jar written alongside it
+        Files.writeString(gradlew, "#!/bin/sh\n" + writeJunitXmlCommand(99, 0) + "\nexit 0\n");
+        assertTrue(gradlew.toFile().setExecutable(true));
+
+        final Map<String, Object> v = VerifyTask.verify(ws, Map.of(), ws.resolve("verify.log"));
+
+        assertTrue(v.get("executed") == null || ((int) v.get("executed")) != 99,
+                "the untrusted gradlew must never run: " + v);
+        final String log = Files.readString(ws.resolve("verify.log"));
+        assertTrue(log.contains("cmd=gradle "), "verify() must fall back to the bare \"gradle\" command, not the untrusted gradlew path: " + log);
     }
 
     @Test

@@ -1349,6 +1349,72 @@ public class RunBench {
 
     private Map<String, Object> manifestOf(Map<String, Object> cfg) { return (Map<String, Object>) cfg.get("_manifest"); }
 
+    /** #680: true exactly when a task's own "done" claim and the harness's independent VerifyTask
+     *  check disagree - never for the inconclusive (could-not-run) case, which VerifyTask's own
+     *  contract says is never held against the agent (R4 C-2: a toolchain/environment failure, not
+     *  a lie). Extracted so the retry decision below reads as what it is, not an inline null-check. */
+    static boolean verificationDisagreed(final Map<String, Object> rec) {
+        return Boolean.FALSE.equals(rec.get("done_verified"));
+    }
+
+    /** #680: the correction fed back into the SAME task's own one automatic retry (see this
+     *  method's own call site) - names the exact, concrete harness signal that disagreed with the
+     *  claim, not a vague "try again", so the retry has something specific to act on instead of
+     *  repeating whatever produced the same false claim. */
+    static String verificationCorrectionInstruction(final Map<String, Object> rec) {
+        return "Your previous attempt on this SAME task claimed it was done, but the harness's own independent "
+                + "verification (it never trusts your own self-report) could not confirm it: "
+                + VerifyTask.verifyText((Map<String, Object>) rec.get("verification"))
+                + ". Do not just make a check superficially pass again - find and fix the actual underlying problem this time.";
+    }
+
+    /** #680: the message a job fails with when a task claims done twice in a row (once with an
+     *  explicit correction already fed back) and the harness's own verification still disagrees
+     *  both times - at that point the run's own ground truth for this task cannot be established,
+     *  so every later task building on it would be doing so blind (found live, job c965a635: T1's
+     *  fake gradlew stub did exactly that, undetected, for the rest of that whole run). */
+    static String verificationFailureMessage(final String taskId, final Map<String, Object> rec) {
+        return taskId + " claimed done twice in a row (including one retry with an explicit correction), but the "
+                + "harness's own independent verification still disagrees: " + VerifyTask.verifyText((Map<String, Object>) rec.get("verification"))
+                + " - failing the run rather than let every later task keep building on an unverifiable result.";
+    }
+
+    /** #680: one actual attempt at a plan task's own main session - builds its pack, runs the main
+     *  session, gives rescueStep() its chance - factored out of the sequential task loop so the
+     *  automatic retry on a verification disagreement (see orchestratedPhase's own call site) can
+     *  run this exact same sequence a second time with an extra, corrective instruction appended,
+     *  without duplicating it inline. Deliberately does NOT commit the "phase/&lt;id&gt;" snapshot
+     *  tag or clear mergeConflicts - the caller does that exactly once, after it has settled on a
+     *  FINAL rec (the first attempt or the retry), never per attempt. */
+    private Map<String, Object> runTaskAttempt(final Map<String, Object> cfg, final String runId, final Path rd, final Path ws,
+            final Path journal, final PlanTask t, final List<PlanTask> tasks, final Map<String, String[]> snapshots,
+            final String prev, final Path prevSession, final List<String[]> handoffs, final String prevVerified,
+            final List<String[]> mergeConflicts, final Map<String, Object> taskOverride, final long effTaskWall,
+            final long effTaskTokens, final String extraInstruction) throws Exception {
+        RunBenchSupport.clearStaleProgressLine(ws, t.id);
+        final String tp = Packs.taskPack(ws, t, tasks, snapshots, doneSet(snapshots), prev, prevSession, handoffs, readLessons(rd), prevVerified, mergeConflicts.isEmpty() ? null : mergeConflicts, null);
+        Files.writeString(rd.resolve("packs/" + t.id + ".md"), tp);
+        // #263: a restarted task's own task_wall_sec/task_tokens override (set via the restart-task
+        // endpoint) takes effect right here, since the proxy's own token-budget enforcement is
+        // sized at creation, not re-checked against whatever sessionWithPolicy is later told -
+        // overriding only there would leave the OLD, un-overridden token budget still enforced underneath it.
+        final var proxy = proxies.start(journal, effTaskTokens, null, effectiveSamplerOverrides(cfg, taskOverride));
+        final var judgeCheckpoint = buildJudgeCheckpoint(cfg, runId, ws, rd, t.id, t.goal, effTaskWall, effTaskTokens, taskOverride);
+        final var handoffFinalTurn = buildHandoffFinalTurn(handoffs, ws, t.id);
+        final var lessonRecorder = buildLessonRecorder(cfg, taskOverride, rd, t.id);
+        final String instruction = Packs.taskInstruction(t.id) + (extraInstruction == null ? "" : "\n\n" + extraInstruction) + "\n\n" + tp;
+        final Map<String, Object> rec;
+        try {
+            rec = sessionWithPolicy(cfg, runId, t.id, instruction,
+                    effTaskWall, effTaskTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null, false, judgeCheckpoint, handoffFinalTurn, lessonRecorder);
+        } finally { proxy.stop(); intervene.clear(runId, t.id); }
+        // #307: before anything downstream (the phase tag, logTaskAttempt, handoffStep) ever looks
+        // at this task's own final state - a successful rescue changes what that state actually
+        // is, so everything after this point must see it, not the pre-rescue one
+        rescueStep(cfg, runId, t, rd, ws, journal, rec, taskOverride);
+        return rec;
+    }
+
     // ---------------- orchestrated mode: stable pack, task packs, parallel waves, merge, FIX, integration
     private void orchestratedPhase(Map<String, Object> cfg, String runId, Path rd, Path ws, Path home, Path journal,
                                    Map<String, Object> manifest, String planSource, String promptText, int taskWall, long taskTokens,
@@ -1520,9 +1586,6 @@ public class RunBench {
                         snapshots.put(t.id, new String[]{String.valueOf(manifestSnap(manifest, "p1", planSha)), after});
                         mergeConflicts.clear();
                     } else {
-                        RunBenchSupport.clearStaleProgressLine(ws, t.id);
-                        final String tp = Packs.taskPack(ws, t, tasks, snapshots, doneSet(snapshots), prev, prevSession, handoffs, readLessons(rd), prevVerified, mergeConflicts.isEmpty() ? null : mergeConflicts, null);
-                        Files.writeString(rd.resolve("packs/" + t.id + ".md"), tp);
                         // #263: a restarted task's own task_wall_sec/task_tokens override (set via
                         // the restart-task endpoint) takes effect right here, since the proxy's own
                         // token-budget enforcement is sized at creation, not re-checked against
@@ -1531,26 +1594,34 @@ public class RunBench {
                         final var taskOverride = taskOverride(cfg, t.id);
                         final int effTaskWall = effectiveInt(taskOverride, "task_wall_sec", taskWall);
                         final long effTaskTokens = effectiveLong(taskOverride, "task_tokens", taskTokens);
-                        final var proxy = proxies.start(journal, effTaskTokens, null, effectiveSamplerOverrides(cfg, taskOverride));
-                        final var judgeCheckpoint = buildJudgeCheckpoint(cfg, runId, ws, rd, t.id, t.goal, effTaskWall, effTaskTokens, taskOverride);
-                        final var handoffFinalTurn = buildHandoffFinalTurn(handoffs, ws, t.id);
-                        final var lessonRecorder = buildLessonRecorder(cfg, taskOverride, rd, t.id);
-                        try {
-                            rec = sessionWithPolicy(cfg, runId, t.id, Packs.taskInstruction(t.id) + "\n\n" + tp,
-                                    effTaskWall, effTaskTokens, rd, ws, journal, proxy, rd.resolve("packs/stable.md").toString(), null, null, false, judgeCheckpoint, handoffFinalTurn, lessonRecorder);
-                        } finally { proxy.stop(); intervene.clear(runId, t.id); }
-                        // #307: before anything downstream (the phase tag, logTaskAttempt, handoffStep)
-                        // ever looks at this task's own final state - a successful rescue changes what
-                        // that state actually is, so everything after this point must see it, not the
-                        // pre-rescue one
-                        rescueStep(cfg, runId, t, rd, ws, journal, rec, taskOverride);
+                        final int effMaxTurns = effectiveInt(taskOverride, "max_turns",
+                                cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS);
+                        rec = runTaskAttempt(cfg, runId, rd, ws, journal, t, tasks, snapshots, prev, prevSession, handoffs,
+                                prevVerified, mergeConflicts, taskOverride, effTaskWall, effTaskTokens, null);
+                        logTaskAttempt(rd, ws, t.id, taskOverride, effTaskWall, effTaskTokens, effMaxTurns, rec);
+                        // #680, found live (job c965a635, T1): the harness's own independent
+                        // post-task verification disagreeing with a claimed "done" used to be a
+                        // write-only signal (done_verified logged but nothing ever acted on it) -
+                        // T1 fabricated a `gradlew` stub that always printed a canned version
+                        // string and exited 0, and every LATER task's own verification silently
+                        // inherited that same broken wrapper for the rest of the run, with nothing
+                        // anywhere reacting. One automatic retry, with the exact verification
+                        // failure fed back as a correction, before failing the whole run outright -
+                        // the same bar a human operator supervising this run manually already
+                        // applied by hand this session.
+                        if (verificationDisagreed(rec)) {
+                            recordLesson(cfg, rd, t.id + " (verification disagreement)", t.id + " claimed done, but the "
+                                    + "harness's own independent verification disagreed: " + VerifyTask.verifyText((Map<String, Object>) rec.get("verification"))
+                                    + " - its own artifacts should not be trusted without double-checking before building on them.");
+                            rec = runTaskAttempt(cfg, runId, rd, ws, journal, t, tasks, snapshots, prev, prevSession, handoffs,
+                                    prevVerified, mergeConflicts, taskOverride, effTaskWall, effTaskTokens, verificationCorrectionInstruction(rec));
+                            logTaskAttempt(rd, ws, t.id, taskOverride, effTaskWall, effTaskTokens, effMaxTurns, rec);
+                            if (verificationDisagreed(rec)) throw new IllegalStateException(verificationFailureMessage(t.id, rec));
+                        }
                         final String after = RunBenchSupport.snapshot(ws, "phase/" + t.id);
                         ((Map<String, String>) manifest.get("snapshots")).put(t.id, after);
                         snapshots.put(t.id, new String[]{String.valueOf(manifestSnap(manifest, "p1", planSha)), after});
                         mergeConflicts.clear();
-                        final int effMaxTurns = effectiveInt(taskOverride, "max_turns",
-                                cfg.get("max_turns") instanceof Number mt ? mt.intValue() : ReferenceAgent.DEFAULT_MAX_TURNS);
-                        logTaskAttempt(rd, ws, t.id, taskOverride, effTaskWall, effTaskTokens, effMaxTurns, rec);
                     }
                     rec.put("title", t.title);
                     ((List<Map<String, Object>>) manifest.get("tasks")).add(rec);
