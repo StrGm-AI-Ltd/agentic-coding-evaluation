@@ -115,7 +115,12 @@ public class ReferenceAgent {
      *  normal "stop" finish reason, so it looks exactly like an intentional, content-only turn
      *  unless this specific text shape is checked for. Only called when calls.isEmpty() is already
      *  true (see its own call site), so this narrows further: among turns with no real tool call,
-     *  is this one a FAILED tool-call attempt rather than a genuine final answer. */
+     *  is this one a FAILED tool-call attempt rather than a genuine final answer.
+     *
+     *  #682, found live (job c4fe4bd6, p1_plan): this exact shape can land ENTIRELY inside the
+     *  response's own `thinking` content block, with no `text` block at all (ai.text() then null) -
+     *  the call site below checks this same pattern against ai.thinking() too for that reason, a
+     *  plain String match either way, nothing thinking-specific belongs in this method itself. */
     static boolean looksLikeATextToolCallAttempt(final String text) {
         return text != null && text.contains("<function=");
     }
@@ -585,8 +590,14 @@ public class ReferenceAgent {
             if (calls.isEmpty()) {
                 // see looksLikeATextToolCallAttempt()'s own javadoc - checked BEFORE the FinalTurn
                 // hook below, since this is a formatting failure to correct, not a genuine
-                // "the agent is done" signal.
-                if (textToolCallNudges < MAX_TEXT_TOOL_CALL_NUDGES && looksLikeATextToolCallAttempt(ai.text())) {
+                // "the agent is done" signal. #682: also checked against ai.thinking() - the exact
+                // same failure shape can land there instead of ai.text() (found live, job c4fe4bd6:
+                // a p1_plan session whose whole response was one `thinking` block containing a
+                // literal-text tool-call attempt and no `text` block at all), in which case ai.text()
+                // alone is null and this would otherwise never fire, silently ending the session
+                // with nothing accomplished instead of asking for a real retry.
+                if (textToolCallNudges < MAX_TEXT_TOOL_CALL_NUDGES
+                        && (looksLikeATextToolCallAttempt(ai.text()) || looksLikeATextToolCallAttempt(ai.thinking()))) {
                     textToolCallNudges++;
                     final String nudge = "Your previous message looked like an attempted tool call written as "
                             + "plain text, not a real tool call - nothing executed. Make the SAME call again, "
