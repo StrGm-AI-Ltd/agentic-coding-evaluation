@@ -14,7 +14,7 @@ class JobCfgFactoryTest {
 
     private static BenchProperties props() {
         return new BenchProperties("default-model", "http://127.0.0.1:9191/v1", "", null, null, null, null, null,
-                null, null, "/results", "/workspace", null, null, null, null, null);
+                null, null, "/results", "/workspace", null, null, null, null, null, null);
     }
 
     @Test
@@ -75,7 +75,7 @@ class JobCfgFactoryTest {
 
     private static BenchProperties propsWithJavaHome(final String javaHome) {
         return new BenchProperties("default-model", "http://127.0.0.1:9191/v1", "", null, null, null, null, null,
-                null, null, "/results", "/workspace", null, javaHome, null, null, null);
+                null, null, "/results", "/workspace", null, javaHome, null, null, null, null);
     }
 
     /** #581, found live: no job's own argv ever actually carries --java-home (the New Job form

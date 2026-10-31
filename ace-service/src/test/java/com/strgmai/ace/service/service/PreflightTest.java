@@ -24,8 +24,12 @@ import static org.mockito.Mockito.mockStatic;
 class PreflightTest {
 
     private static BenchProperties props(final String model, final String endpoint, final String javaHome) {
+        return props(model, endpoint, javaHome, "/opt/agent-gradle");
+    }
+
+    private static BenchProperties props(final String model, final String endpoint, final String javaHome, final String gradleHome) {
         return new BenchProperties(model, endpoint, "", null, null, null, null, null, null, null,
-                null, null, null, javaHome, null, null, null);
+                null, null, null, javaHome, null, null, null, gradleHome);
     }
 
     /** a fake bin/java AND bin/javac so the "pinned JDK 21" check passes without shelling out to
@@ -60,6 +64,14 @@ class PreflightTest {
      *  every bash tool call for hours with nothing refusing the run up front). #555: unzipRc is
      *  the same pattern again, for the same reason, found live the same way. */
     private static MockedStatic<DockerService> mockDocker(final int dockerRc, final int composeRc, final int gitRc, final int zshRc, final int unzipRc) {
+        return mockDocker(dockerRc, composeRc, gitRc, zshRc, unzipRc, 0);
+    }
+
+    /** #673: gradleRc is the same pattern yet again - the agent's own sandbox otherwise has no
+     *  `gradle` at all, found live the same way git/zsh/unzip each were. Matched by cmd[0] ending
+     *  in "/bin/gradle" rather than an exact name, since Preflight invokes it via its own full
+     *  $ACE_GRADLE_HOME/bin/gradle path, not a bare "gradle" on PATH. */
+    private static MockedStatic<DockerService> mockDocker(final int dockerRc, final int composeRc, final int gitRc, final int zshRc, final int unzipRc, final int gradleRc) {
         final MockedStatic<DockerService> docker = mockStatic(DockerService.class);
         docker.when(() -> DockerService.sh(anyInt(), any(String[].class))).thenAnswer(inv -> {
             Object[] all = inv.getArguments();   // Mockito flattens the varargs: [timeoutSec, cmd[0], cmd[1], ...]
@@ -68,6 +80,7 @@ class PreflightTest {
             if (cmd[0].equals("git")) return new DockerService.Sh(gitRc, "git version 2.42.0");
             if (cmd[0].equals("zsh")) return new DockerService.Sh(zshRc, "zsh 5.9");
             if (cmd[0].equals("unzip")) return new DockerService.Sh(unzipRc, "UnZip 6.00");
+            if (cmd[0].endsWith("/bin/gradle")) return new DockerService.Sh(gradleRc, "Gradle 9.5.1");
             if (cmd[0].equals("docker") && cmd.length > 1 && cmd[1].equals("info")) return new DockerService.Sh(dockerRc, "24.0.0");
             if (cmd[0].equals("docker") && cmd.length > 1 && cmd[1].equals("compose")) return new DockerService.Sh(composeRc, "2.20.0");
             return new DockerService.Sh(1, "");
@@ -171,6 +184,47 @@ class PreflightTest {
             final Preflight.Check unzip = byName(r, "unzip");
             assertFalse(unzip.ok());
             assertTrue(unzip.fatal());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /** #673, found live: the agent's own sandbox otherwise has no `gradle` at all - no system
+     *  binary, no pre-made wrapper - found the same way git/zsh/unzip each were: hours of task
+     *  budget silently burned hand-bootstrapping a distribution from a zip, with nothing refusing
+     *  the run up front. Same fatal treatment. */
+    @Test
+    void missingGradleBlocksEvenThoughGitZshUnzipAreUp() throws Exception {
+        final HttpServer server = fakeModelServer("target-model");
+        try (MockedStatic<DockerService> docker = mockDocker(0, 0, 0, 0, 0, 1)) {
+            final var pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome()),
+                    new com.strgmai.ace.service.agent.ProviderStore(null));
+            final Preflight.Report r = pf.check(null);
+
+            assertTrue(r.blocked());
+            final Preflight.Check gradle = byName(r, "agent gradle");
+            assertFalse(gradle.ok());
+            assertTrue(gradle.fatal());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /** The other half of #673's own fatal gate: $ACE_GRADLE_HOME unset entirely (never deployed at
+     *  all) must be caught the same way a deployed-but-broken gradle is - not silently skipped
+     *  because there was nothing to shell out to in the first place. */
+    @Test
+    void unsetGradleHomeBlocksTheSameWayAMissingBinaryDoes() throws Exception {
+        final HttpServer server = fakeModelServer("target-model");
+        try (MockedStatic<DockerService> docker = mockDocker(0, 0, 0)) {
+            final var pf = new Preflight(props("target-model", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", fakeJavaHome(), null),
+                    new com.strgmai.ace.service.agent.ProviderStore(null));
+            final Preflight.Report r = pf.check(null);
+
+            assertTrue(r.blocked());
+            final Preflight.Check gradle = byName(r, "agent gradle");
+            assertFalse(gradle.ok());
+            assertTrue(gradle.fatal());
         } finally {
             server.stop(0);
         }

@@ -42,9 +42,9 @@ class ReviewsTest {
         providerStore = new ProviderStore(freshDb("reviews-test"));
         reviews = new Reviews(
                 new BenchProperties(null, "http://127.0.0.1:9191/v1", null, null, null, null, null, null, null, null,
-                        null, null, null, null, null, null, null),
+                        null, null, null, null, null, null, null, null),
                 new ReferenceAgent(new BenchProperties(null, null, null, null, null, null, null, null, null, null,
-                        null, null, null, null, null, null, null), providerStore),
+                        null, null, null, null, null, null, null, null), providerStore),
                 new Intervene(), providerStore, new OmlxBackend(Files.createTempDirectory("omlx-test")));
     }
 
@@ -114,7 +114,7 @@ class ReviewsTest {
 
         final Map<String, Object> out = reviews.selfReview(Map.of(), ws, rd, manifest, List.of(), "a prompt",
                 new RecordingProxyFactory(new BenchProperties(null, "http://127.0.0.1:9191/v1", null, null, null, null, null, null, null, null,
-                        null, null, null, null, null, null, null)), null, false);
+                        null, null, null, null, null, null, null, null)), null, false);
 
         assertEquals(true, out.get("parse_ok"));
         assertEquals(80.0, out.get("score"), "the already-written self_review.json must be re-parsed, not lost");
@@ -143,7 +143,7 @@ class ReviewsTest {
 
         final Map<String, Object> out = reviews.trajectoryReview(Map.of(), ws, rd, manifest, null,
                 new RecordingProxyFactory(new BenchProperties(null, "http://127.0.0.1:9191/v1", null, null, null, null, null, null, null, null,
-                        null, null, null, null, null, null, null)));
+                        null, null, null, null, null, null, null, null)));
 
         assertEquals(true, out.get("parse_ok"));
         assertEquals(70.0, out.get("score"), "the already-written trajectory_review.json must be re-parsed, not lost");

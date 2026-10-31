@@ -28,7 +28,7 @@ class RecordingProxyFactoryTest {
 
     private static BenchProperties props(final String upstreamBase) {
         return new BenchProperties(null, upstreamBase, null, null, null, null, 100,
-                null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null);
     }
 
     @Test

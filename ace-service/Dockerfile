@@ -31,6 +31,28 @@ RUN chmod +x gradlew && ./gradlew --version \
     && echo 'package com.strgmai.ace.service; final class __probe{}' > ace-service/src/main/java/com/strgmai/ace/service/__probe.java \
     && ./gradlew --no-daemon :ace-service:compileJava \
     && rm -rf ace-service/src   # the probe is done its job; delete it so COPY src below brings ONLY the real sources
+# #673: the agent's own sandbox has no `gradle` at all - no system binary, no pre-made wrapper
+# (it hand-writes build.gradle.kts from scratch, not from a Spring-Initializr-style skeleton that
+# ships gradlew+gradle-wrapper.jar+gradle-wrapper.properties). `gradle wrapper` itself needs an
+# EXISTING Gradle to generate one, so with neither, the only path left is downloading a full
+# distribution zip by hand and hand-rolling a gradlew against it - fragile (no persistent shell
+# state between separate bash calls) and the single biggest cause of wasted task budget seen this
+# session. The `./gradlew --version` call above already bootstrapped a real, working distribution
+# into this stage's own wrapper cache (same reasoning as the dependency pre-fetch layer it sits in)
+# - copy IT (not a freshly re-downloaded one) to a fixed path the final stage can pick up, the same
+# way it already does for the JDK below.
+# found live: the first version of this command used -maxdepth 4, one short of where the real
+# launcher actually sits (dists/gradle-<v>-bin/<hash>/gradle-<v>/bin/gradle is 5 path segments
+# below dists/, not 4) - find silently matched nothing, $gradle_bin stayed empty, and
+# dirname(dirname("")) resolved to ".", so the build quietly copied this WHOLE STAGE's own /src
+# project tree (gradlew, settings.gradle, source) into /opt/gradle-dist instead of a real Gradle
+# install - no build error anywhere, just a broken binary discovered only by actually running it.
+# The explicit [ -n ... ] guard below turns the next occurrence of exactly this mistake into a
+# loud build failure instead of a silent wrong-directory copy.
+RUN gradle_bin=$(find /root/.gradle/wrapper/dists -maxdepth 5 -type f -name gradle -path '*/bin/gradle' | head -1) \
+    && [ -n "$gradle_bin" ] || { echo "ERROR: could not locate the bootstrapped gradle launcher under /root/.gradle/wrapper/dists"; exit 1; } \
+    && cp -r "$(dirname "$(dirname "$gradle_bin")")" /opt/gradle-dist \
+    && /opt/gradle-dist/bin/gradle --version
 COPY ace-service/src ace-service/src
 RUN ./gradlew :ace-service:bootJar --no-daemon -x test
 # exactly ONE boot jar is expected: if the filter ever matched more (a -sources/-javadoc jar, a new
@@ -87,6 +109,10 @@ RUN chown appuser /app/app.jar
 # already has a full JDK (`eclipse-temurin:21-jdk`) at this same conventional Temurin path; copy it in
 # under its own name so it never collides with or replaces this image's own runtime JRE.
 COPY --from=build --chown=appuser /opt/java/openjdk /opt/agent-jdk
+# #673: same reasoning as /opt/agent-jdk immediately above, for Gradle - see the build stage's own
+# comment for the live incident this closes. ACE_GRADLE_HOME (docker-compose.yml) wires this onto
+# the agent's own PATH via RunBenchSupport.scrubbedEnv(), the same mechanism ACE_JAVA_HOME uses.
+COPY --from=build --chown=appuser /opt/gradle-dist /opt/agent-gradle
 USER appuser
 EXPOSE 8765
 ENTRYPOINT ["java", "-jar", "app.jar"]

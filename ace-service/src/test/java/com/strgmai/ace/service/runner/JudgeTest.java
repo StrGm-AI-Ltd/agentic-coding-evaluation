@@ -32,7 +32,7 @@ class JudgeTest {
     }
 
     private final BenchProperties props = new BenchProperties(null, "http://127.0.0.1:9191/v1", null, null, null, null, null, null, null, null,
-            null, null, null, null, null, null, null);
+            null, null, null, null, null, null, null, null);
     private final ProviderStore providerStore;
     private final Judge judge;
 
@@ -40,7 +40,7 @@ class JudgeTest {
         providerStore = new ProviderStore(freshDb("judge-test"));
         judge = new Judge(props,
                 new ReferenceAgent(new BenchProperties(null, null, null, null, null, null, null, null, null, null,
-                        null, null, null, null, null, null, null), providerStore),
+                        null, null, null, null, null, null, null, null), providerStore),
                 providerStore, new OmlxBackend(Files.createTempDirectory("omlx-test")));
     }
 

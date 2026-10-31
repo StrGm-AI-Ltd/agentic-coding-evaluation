@@ -31,14 +31,14 @@ class TaskMatcherTest {
     }
 
     private final BenchProperties props = new BenchProperties(null, "http://127.0.0.1:9191/v1", null, null, null, null, null, null, null, null,
-            null, null, null, null, null, null, null);
+            null, null, null, null, null, null, null, null);
     private final TaskMatcher matcher;
 
     TaskMatcherTest() throws Exception {
         final var providerStore = new ProviderStore(freshDb("task-matcher-test"));
         matcher = new TaskMatcher(props,
                 new ReferenceAgent(new BenchProperties(null, null, null, null, null, null, null, null, null, null,
-                        null, null, null, null, null, null, null), providerStore),
+                        null, null, null, null, null, null, null, null), providerStore),
                 providerStore, new OmlxBackend(Files.createTempDirectory("omlx-test")));
     }
 
@@ -133,7 +133,7 @@ class TaskMatcherTest {
     @Test
     void externalBaseNeverProducesABlankBaseUrlEvenWhenAceEndpointIsSetButBlank() throws Exception {
         final var blankEndpointProps = new BenchProperties(null, "", null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
         final var providerStore = new ProviderStore(freshDb("task-matcher-blank-endpoint-test"));
         final var blankEndpointMatcher = new TaskMatcher(blankEndpointProps,
                 new ReferenceAgent(blankEndpointProps, providerStore), providerStore, new OmlxBackend(Files.createTempDirectory("omlx-test")));

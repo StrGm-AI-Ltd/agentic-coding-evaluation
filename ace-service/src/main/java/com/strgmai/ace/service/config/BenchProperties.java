@@ -30,7 +30,15 @@ public record BenchProperties(
         String javaHome,
         String omlxServerLog,
         Map<String, Integer> phaseWallSec,
-        Map<String, Integer> phaseTokenBudgets) {
+        Map<String, Integer> phaseTokenBudgets,
+        // #673: ACE_GRADLE_HOME (docker-compose.yml) - the real Gradle distribution the Dockerfile
+        // copies in for the agent's own tool calls, the same mechanism as javaHome above for the
+        // JDK. The agent's own sandbox otherwise has no gradle at all - see
+        // RunBenchSupport.scrubbedEnv()'s own javadoc for the live incident this closes. Appended
+        // at the end, not next to javaHome, so every EXISTING positional constructor call site
+        // (several in tests) keeps compiling unchanged rather than silently shifting every field
+        // after it.
+        String gradleHome) {
 
     public static final String HARNESS_VERSION = "jls-ref-1.0";   // goes into provenance + the comparability key
     public static final int RESULT_SCHEMA = 3;                   // port of registry.RESULT_SCHEMA

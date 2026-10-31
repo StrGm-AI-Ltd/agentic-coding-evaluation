@@ -63,6 +63,14 @@ public final class RunBenchSupport {
             env.put("JAVA_HOME", javaHome);
             env.put("PATH", Paths.get(javaHome).resolve("bin") + ":" + env.getOrDefault("PATH", ""));
         }
+        // #673: a baseline deployment guarantee (set once, operator-level, in docker-compose.yml),
+        // not a per-run configurable knob the way javaHome is above - every task on this benchmark
+        // family needs SOME working gradle, so there is nothing for a run to meaningfully override.
+        // Read directly, same reasoning Preflight.java's own fatal gate for this uses.
+        final String gradleHome = System.getenv("ACE_GRADLE_HOME");
+        if (gradleHome != null && !gradleHome.isBlank()) {
+            env.put("PATH", Paths.get(gradleHome).resolve("bin") + ":" + env.getOrDefault("PATH", ""));
+        }
         // a daemon left running for the whole task session is a sustained, idle memory footprint
         // competing with the model server on the same host (found live - it lined up with an
         // empty-stream stutter #256 was filed for); VerifyTask/BuildChecks already disable it for
