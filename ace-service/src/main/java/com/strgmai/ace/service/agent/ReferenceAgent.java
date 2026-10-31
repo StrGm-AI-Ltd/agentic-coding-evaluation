@@ -41,6 +41,9 @@ public class ReferenceAgent {
     public static final String AGENT_VERSION = "jls-ref-1.0";
     /** #95: the default turn cap when a run doesn't override it via --max-turns. */
     public static final int DEFAULT_MAX_TURNS = 400;
+    /** #653-followup: how many times looksLikeATextToolCallAttempt() gets nudged in one session -
+     *  see nudgedForTextToolCall's own call site for why more than one. */
+    static final int MAX_TEXT_TOOL_CALL_NUDGES = 3;
     /** ObjectMapper is thread-safe and designed for reuse; constructing one per tool call (up to 400
      * turns x several calls) would allocate hundreds of expensive serializer/deserializer instances. */
     private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
@@ -467,8 +470,15 @@ public class ReferenceAgent {
         // of actually using the real function-calling mechanism - finish_reason comes back "stop"
         // with zero real tool calls, so the turn looks like a natural, intentional stop. The task
         // then silently ends one real action short of what the model was clearly trying to do.
-        // Nudged exactly once per session (not once per occurrence) - see its own call site below.
-        boolean nudgedForTextToolCall = false;
+        // #653-followup, found live (job 76b308ac, T8): a ONE-shot nudge (the original fix here)
+        // is not enough - the SAME model repeated the EXACT same text-mimicked-call mistake on the
+        // very next turn, immediately after being nudged, and with no nudge left for a second
+        // occurrence, burned its remaining turn budget without ever recovering ("unfinished -
+        // budget exhausted... no further output after 31 turns"). A nudge costs one cheap turn
+        // either way (the model was going to consume a turn regardless of whether this fires), so
+        // capping at a handful of attempts costs nothing extra on the failure path while giving a
+        // model that eventually self-corrects several real chances to, instead of just one.
+        int textToolCallNudges = 0;
         // #417 follow-up review: both scoped to THIS session's own turn loop, never shared across
         // sessions - compactionState lets structured_eviction skip a redundant re-summarization
         // (C9, see CompactionStrategies.State's own javadoc); recallCounts bounds how many times
@@ -566,8 +576,8 @@ public class ReferenceAgent {
                 // see looksLikeATextToolCallAttempt()'s own javadoc - checked BEFORE the FinalTurn
                 // hook below, since this is a formatting failure to correct, not a genuine
                 // "the agent is done" signal.
-                if (!nudgedForTextToolCall && looksLikeATextToolCallAttempt(ai.text())) {
-                    nudgedForTextToolCall = true;
+                if (textToolCallNudges < MAX_TEXT_TOOL_CALL_NUDGES && looksLikeATextToolCallAttempt(ai.text())) {
+                    textToolCallNudges++;
                     final String nudge = "Your previous message looked like an attempted tool call written as "
                             + "plain text, not a real tool call - nothing executed. Make the SAME call again, "
                             + "but using your actual tool-calling mechanism, not text.";
