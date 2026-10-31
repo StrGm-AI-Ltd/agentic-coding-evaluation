@@ -1116,6 +1116,26 @@ class RunBenchTest {
         assertTrue(message.contains(VerifyTask.verifyText(verification)), message);
     }
 
+    /** #684: raised live from 1 to 5 after confirming the single-retry version worked exactly as
+     *  designed (job e4f45389, T13) - a stuck model can still need more than one honest try at the
+     *  same concrete correction, not just one, before either landing it or genuinely needing the
+     *  run to fail. Pinned so a future change to this constant is a deliberate edit, not a silent
+     *  regression back toward 1. */
+    @Test
+    void maxVerificationRetriesIsFive() {
+        assertEquals(5, RunBench.MAX_VERIFICATION_RETRIES);
+    }
+
+    /** #680-followup: found live (job e4f45389) - the plan session wrote to
+     *  "workspace/docs/IMPLEMENTATION_PLAN.md" (an extra, wrong "workspace/" prefix onto a cwd that
+     *  already WAS its own workspace root) and declared itself done without checking. The
+     *  correction names the exact real path, not a vague "try again". */
+    @Test
+    void planArtifactMissingCorrectionNamesTheExactRealPath() {
+        assertTrue(RunBench.PLAN_ARTIFACT_MISSING_CORRECTION.contains("docs/IMPLEMENTATION_PLAN.md"));
+        assertTrue(RunBench.PLAN_ARTIFACT_MISSING_CORRECTION.contains("workspace/"));
+    }
+
     /** #402/#403: found live that nearly every task on this host independently rediscovered the
      *  same JDK mismatch - discoverJavaHome() is the harness-side fix. parseJavacMajor() is its
      *  one pure, independently-testable piece; the subprocess-probing orchestration around it
