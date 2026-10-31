@@ -164,9 +164,21 @@ public final class VerifyTask {
     }
 
     /** True = claimed done AND harness green; False = claimed done and harness red, or not claimed
-     *  done; None = claimed done but the verification could not run (inconclusive, R4 C-2). */
+     *  done; None = claimed done but the verification could not run (inconclusive, R4 C-2).
+     *
+     *  #680-followup2, found live (job be96af63, T1): "ran:false" (no gradle project found AT ALL)
+     *  is NOT the same kind of inconclusive signal R4 C-2 was written for - that principle protects
+     *  against a REAL project existing but something else (disk full, a daemon crash) stopping the
+     *  test run, never the agent's own fault. "Claims done, but there is nothing here to even
+     *  attempt building" is the opposite: direct, structural proof the claim is false, not a
+     *  toolchain hiccup. T1 claimed "done - ./gradlew wrapper created..." and had committed nothing
+     *  beyond its own status line; verdict() alone mapped that straight to null (never held against
+     *  it), so the retry-then-fail mechanism (#680) never saw it. verdict() itself is left
+     *  unchanged (every other caller - verifyText()'s own display text included - still treats
+     *  "ran:false" as "nothing to verify yet", which is still the right wording there). */
     public static Boolean doneVerified(final String reported, final Map<String, Object> v) {
         if (!"done".equals(reported)) return false;
+        if (v != null && Boolean.FALSE.equals(v.get("ran"))) return false;
         return verdict(v);
     }
 

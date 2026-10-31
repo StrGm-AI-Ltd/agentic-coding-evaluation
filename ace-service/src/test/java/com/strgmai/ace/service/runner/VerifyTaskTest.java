@@ -149,4 +149,37 @@ class VerifyTaskTest {
         assertTrue(log.contains("HOME_WAS=\n") || log.contains("HOME_WAS=\r\n"),
                 "with no _agent_env configured, the fallback must be an empty map (matching ReferenceAgent.toolEnv()'s own null-context convention), never a copy of System.getenv(): " + log);
     }
+
+    /** #680-followup2, found live (job be96af63, T1): claimed "done" with NO gradle project found
+     *  at all is direct, structural proof the claim is false - not the same inconclusive signal
+     *  R4 C-2 protects (a real project existing but something else stopping the test run). Must be
+     *  a real disagreement (false), not null, or the retry-then-fail mechanism (#680) never sees it. */
+    @org.junit.jupiter.api.Test
+    void doneVerifiedIsFalseNotNullWhenClaimedDoneButNoGradleProjectExistsAtAll() {
+        final Map<String, Object> noProject = Map.of("ran", false, "reason", "no gradle project");
+        assertEquals(Boolean.FALSE, VerifyTask.doneVerified("done", noProject));
+    }
+
+    /** the genuine inconclusive case R4 C-2 IS for: a real project exists (ran:true) but the build
+     *  itself failed before any test executed - a toolchain/environment issue, never the agent's
+     *  own RED. Must stay null here, unchanged by #680-followup2's own narrower fix above. */
+    @org.junit.jupiter.api.Test
+    void doneVerifiedStaysNullForAGenuineCouldNotRunWithARealProject() {
+        final Map<String, Object> couldNotRun = new java.util.HashMap<>();
+        couldNotRun.put("ran", true); couldNotRun.put("green", null);
+        couldNotRun.put("executed", 0); couldNotRun.put("failed", 0); couldNotRun.put("rc", java.util.List.of(1));
+        assertNull(VerifyTask.doneVerified("done", couldNotRun));
+    }
+
+    @org.junit.jupiter.api.Test
+    void doneVerifiedIsTrueForAGenuineGreenPass() {
+        final Map<String, Object> green = Map.of("ran", true, "green", true, "executed", 3, "failed", 0, "rc", java.util.List.of(0));
+        assertEquals(Boolean.TRUE, VerifyTask.doneVerified("done", green));
+    }
+
+    @org.junit.jupiter.api.Test
+    void doneVerifiedIsFalseWhenNeverClaimedDoneRegardlessOfVerification() {
+        final Map<String, Object> green = Map.of("ran", true, "green", true, "executed", 3, "failed", 0, "rc", java.util.List.of(0));
+        assertEquals(Boolean.FALSE, VerifyTask.doneVerified("partial", green));
+    }
 }
