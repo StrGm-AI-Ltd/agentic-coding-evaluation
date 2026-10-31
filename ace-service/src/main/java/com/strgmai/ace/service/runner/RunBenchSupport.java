@@ -293,7 +293,7 @@ public final class RunBenchSupport {
                 future.cancel(true);
                 final Path sessionFile = findSessionFile(sessionDir, sessionId);
                 final RecoveredCounts recovered = recoverCountsOnTimeout(sessionFile);
-                return new ReferenceAgent.SessionResult(name, 124, wallSec, null, recovered.turns(), recovered.toolErrors(),
+                return new ReferenceAgent.SessionResult(name, 124, wallSec, null, null, recovered.turns(), recovered.toolErrors(),
                         recovered.compactions(), sessionFile, start, Instant.now());
             } catch (InterruptedException ie) {
                 abortProxy.accept("cancelled");
