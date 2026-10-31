@@ -208,7 +208,7 @@ public final class ComposeChecks {
                 return out;
             }
             sweepStale();
-            if (DockerService.portInUse(8080, "127.0.0.1")) {
+            if (DockerService.hostPortInUse(8080)) {
                 for (CheckId c : IDS) if (wanted.test(c)) out.add(new CheckResult(c, CheckStatus.INFRA, "port 8080 already bound by a non-benchmark process before compose up"));
                 return out;
             }
@@ -227,19 +227,17 @@ public final class ComposeChecks {
             // once, above, before the (potentially long, GRADLE_TIMEOUT-scale) build step - a port
             // taken DURING the build slipped past that early exit and surfaced below as a raw,
             // unhelpful "Error response from daemon" instead of the same clear, already-existing
-            // message. A circumstantial, NOT confirmed, candidate cause on that run: the agent's own
-            // INTEGRATION-stage manual troubleshooting backgrounded a jar bound to host port 8080 -
-            // but the actual tool-result for that command never made it into interactions.jsonl (the
-            // call was still in flight when an unrelated restart killed the JVM, then got replayed),
-            // so whether it was still alive, or ever bound the port at all, by the time this ran is
-            // genuinely unknown; the full raw daemon error text isn't persisted either, by design.
-            // Re-checking right before "up" (this first check) narrows that race but can never close
-            // it - there is always a gap between any check and the daemon's own bind - so an up
-            // failure that's STILL infra-classified gets one short retry below, which doesn't depend
-            // on knowing the exact cause: any transient contention (this task's own leftover process,
-            // a genuinely transient daemon hiccup, anything) has a real chance of having cleared
-            // itself a few seconds later, for a cost of a few seconds against a 16-of-27-point loss.
-            if (DockerService.portInUse(8080, "127.0.0.1")) {
+            // message. Re-checking right before "up" (this second check) narrows that race but can
+            // never close it - there is always a gap between any check and the daemon's own bind -
+            // so an up failure that's STILL infra-classified gets one short retry below regardless.
+            //
+            // #671-followup2: this guard (both copies) used plain portInUse(8080, "127.0.0.1") until
+            // now - from inside ace-service's OWN container, 127.0.0.1 is never the host's loopback,
+            // so this never once actually detected a real collision in production (confirmed live:
+            // host.docker.internal:8080 got a real response against an already-bound host port at the
+            // exact same moment 127.0.0.1:8080 got connection-refused). hostPortInUse() checks both -
+            // see its own javadoc for the full story and why both addresses are needed, not just one.
+            if (DockerService.hostPortInUse(8080)) {
                 for (CheckId c : IDS) if (wanted.test(c)) out.add(new CheckResult(c, CheckStatus.INFRA, "port 8080 already bound by a non-benchmark process before compose up"));
                 return out;
             }

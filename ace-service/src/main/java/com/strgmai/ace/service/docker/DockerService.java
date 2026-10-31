@@ -52,6 +52,29 @@ public final class DockerService {
         catch (IOException e) { return false; }
     }
 
+    /** #671-followup2, found live: ComposeChecks' own pre-flight port-8080 guard called
+     *  portInUse(port, "127.0.0.1") from HERE - inside ace-service's own container (a Docker-
+     *  outside-of-Docker deployment: this JVM shells out to the HOST'S docker daemon via a mounted
+     *  socket, but has its own, separate container network namespace). "127.0.0.1" from inside THAT
+     *  namespace is never the host's loopback - a container published on the real host network
+     *  (0.0.0.0:8080->8080, confirmed live sitting there for over an hour) is NOT reachable via
+     *  127.0.0.1 from here, the exact same "localhost won't work from here" shape the codebase
+     *  already documents as a known gotcha for the AGENT's own bash sandbox (Packs.KNOWN_GOTCHAS) -
+     *  this was the harness's OWN check falling into the identical trap, silently: the guard never
+     *  once detected a real collision, always reporting the port free. Confirmed live: curling
+     *  host.docker.internal:8080 from inside this container got a real HTTP response; 127.0.0.1:8080
+     *  got connection-refused, against the exact same already-bound host port at the same moment.
+     *
+     *  <p>Checks BOTH 127.0.0.1 and host.docker.internal (true if either answers) rather than
+     *  switching to just one, since this same method also has to work when ace-service runs
+     *  directly on a developer's own machine (not containerized at all) - there, 127.0.0.1 IS the
+     *  correct host and "host.docker.internal" may not even resolve; in the container deployment,
+     *  the reverse holds. No environment-detection flag needed - trying both is cheap and correct
+     *  either way. */
+    public static boolean hostPortInUse(final int port) {
+        return portInUse(port, "127.0.0.1") || portInUse(port, "host.docker.internal");
+    }
+
     /** one subprocess run with BOTH streams drained concurrently (read-after-waitFor deadlocks
      *  on >64KB: the pipe fills, the child blocks on write, waitFor never returns) */
     public record Proc(int rc, String out, String err) {}

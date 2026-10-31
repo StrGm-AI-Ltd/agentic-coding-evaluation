@@ -63,4 +63,24 @@ class DockerServiceTest {
         final var mounts = List.of(Map.entry("/app/data", "/var/lib/docker/volumes/x/_data"));
         assertEquals("/tmp/unrelated/path", DockerService.hostPath(Path.of("/tmp/unrelated/path"), mounts));
     }
+
+    /** #671-followup2: ComposeChecks' own pre-flight guard used plain portInUse(port, "127.0.0.1")
+     *  - from inside ace-service's OWN container (Docker-outside-of-Docker), 127.0.0.1 is never the
+     *  host's own loopback, so a port a HOST-level container genuinely published was never once
+     *  detected (confirmed live: host.docker.internal answered, 127.0.0.1 connection-refused,
+     *  against the exact same already-bound port at the same moment). hostPortInUse() checks both.
+     *  A real local server on 127.0.0.1 - the environment this test actually runs in (not
+     *  containerized the same way) - still has to be detected correctly too, not just the
+     *  host.docker.internal half. */
+    @Test
+    void hostPortInUse_detectsARealListenerOn127_andFalseOnAGenuinelyFreePort() throws Exception {
+        try (var server = new java.net.ServerSocket(0)) {
+            final int port = server.getLocalPort();
+            assertTrue(DockerService.hostPortInUse(port), "a real listener on 127.0.0.1 must be detected");
+        }
+        // the ServerSocket above is closed by the time this runs - the OS may keep the port in
+        // TIME_WAIT briefly, so pick a fixed, very-unlikely-to-be-bound high port instead of
+        // reusing the just-closed one to avoid a flaky false positive.
+        assertFalse(DockerService.hostPortInUse(59182), "a genuinely unbound port must read as free");
+    }
 }
