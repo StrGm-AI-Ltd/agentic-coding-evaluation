@@ -60,7 +60,16 @@ public final class VerifyTask {
                 // one factory for the whole glob: newInstance() per XML file re-ran security/feature setup every time
                 final var docFactory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
                 for (Path r : roots) {
+                    // #680, found live (job c965a635, T1): a real Gradle wrapper script cannot run at
+                    // all without its own gradle-wrapper.jar sitting next to it - a wrapper that
+                    // "works" (exits 0) without one is structural proof it is not a real wrapper, not
+                    // just a heuristic guess (confirmed: the agent had written a 4-line stub that
+                    // echoed a canned "Gradle 8.5" and exited 0 for ANY argument - this trusted it
+                    // anyway, so every later task's own "truthful record" silently inherited the SAME
+                    // fake result for the rest of the run). Requiring the jar costs nothing against a
+                    // genuine wrapper, which always has one.
                     String cmd0 = Files.isRegularFile(r.resolve("gradlew")) && r.resolve("gradlew").toFile().canExecute()
+                            && Files.isRegularFile(r.resolve("gradle/wrapper/gradle-wrapper.jar"))
                             ? r.resolve("gradlew").toString() : "gradle";
                     List<String> cmd = List.of(cmd0, "test", "-q", "--console=plain", "--warning-mode=none", "--no-daemon");
                     int rc;

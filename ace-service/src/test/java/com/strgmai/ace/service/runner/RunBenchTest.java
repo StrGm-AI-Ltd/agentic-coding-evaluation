@@ -1084,6 +1084,38 @@ class RunBenchTest {
         assertEquals(entries, RunBench.dedupLessonEntries(entries));
     }
 
+    /** #680: found live, job c965a635 - done_verified disagreeing with a claimed "done" used to be
+     *  a write-only signal (logged, never acted on). These three pins are the pure, directly-
+     *  testable pieces of the fix; the retry-then-fail orchestration itself (runTaskAttempt() called
+     *  a second time, then throwing) lives in the sequential task loop and is heavy, session-
+     *  execution-dependent orchestration with no direct test here, same reasoning rescueStep()/
+     *  handoffStep() already follow above. */
+    @Test
+    void verificationDisagreedIsTrueOnlyWhenDoneVerifiedIsExplicitlyFalse() {
+        assertTrue(RunBench.verificationDisagreed(Map.of("done_verified", false)));
+        assertFalse(RunBench.verificationDisagreed(Map.of("done_verified", true)));
+        assertFalse(RunBench.verificationDisagreed(Map.of()), "no done_verified key at all (e.g. a resumed task) must not look like a disagreement");
+        final Map<String, Object> inconclusive = new java.util.HashMap<>();
+        inconclusive.put("done_verified", null);
+        assertFalse(RunBench.verificationDisagreed(inconclusive), "could-not-run (null) is never held against the agent - R4 C-2");
+    }
+
+    @Test
+    void verificationCorrectionInstructionNamesTheConcreteHarnessSignal() {
+        final var verification = Map.of("ran", true, "green", false, "executed", 0, "failed", 0, "rc", List.of(0), "first_error", "");
+        final String instruction = RunBench.verificationCorrectionInstruction(Map.of("verification", verification));
+        assertTrue(instruction.contains("previous attempt"), instruction);
+        assertTrue(instruction.contains(VerifyTask.verifyText(verification)), "must quote the exact harness verdict, not a vague \"try again\": " + instruction);
+    }
+
+    @Test
+    void verificationFailureMessageNamesTheTaskAndTheHarnessVerdict() {
+        final var verification = Map.of("ran", true, "green", false, "executed", 0, "failed", 0, "rc", List.of(0), "first_error", "");
+        final String message = RunBench.verificationFailureMessage("T1", Map.of("verification", verification));
+        assertTrue(message.startsWith("T1 "), message);
+        assertTrue(message.contains(VerifyTask.verifyText(verification)), message);
+    }
+
     /** #402/#403: found live that nearly every task on this host independently rediscovered the
      *  same JDK mismatch - discoverJavaHome() is the harness-side fix. parseJavacMajor() is its
      *  one pure, independently-testable piece; the subprocess-probing orchestration around it
