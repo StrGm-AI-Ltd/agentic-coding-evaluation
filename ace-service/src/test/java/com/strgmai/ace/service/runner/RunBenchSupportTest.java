@@ -353,4 +353,14 @@ class RunBenchSupportTest {
         assertTrue(tracked.contains("build.gradle.kts"), "the agent's own real file must still be tracked");
         assertTrue(Files.exists(dist.resolve("gradle")), "the distribution itself must survive untouched on disk, just unTRACKED");
     }
+
+    /** #656-followup: the common case at every real task boundary - nothing is actually up under
+     *  this workspace's own compose project name. `docker compose -p <name> down` must tolerate
+     *  that (non-zero rc from Docker, logged at debug, never thrown) rather than this becoming a
+     *  new way for a perfectly healthy task boundary to fail. */
+    @Test
+    void sweepAgentCompose_toleratesNoProjectRunning() throws Exception {
+        final Path ws = track(Files.createTempDirectory("ws-sweep-noop"));
+        assertDoesNotThrow(() -> RunBenchSupport.sweepAgentCompose(ws));
+    }
 }

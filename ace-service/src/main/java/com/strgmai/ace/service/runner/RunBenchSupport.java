@@ -140,6 +140,33 @@ public final class RunBenchSupport {
      *  conflicting lines for the same task id with the newest not even necessarily landing last.
      *  Called right before a task's own fresh (non-continuation) attempt begins; a no-op on a
      *  genuinely first attempt, where there is nothing to strip. */
+    /** #656-followup, found live (job 76b308ac, T10): an agent's own `docker compose up` (started
+     *  during an EARLIER task's own implementation/verification work) is never torn down when that
+     *  task ends - every task workspace is `.../workspace`, so Compose's own default project-naming
+     *  (the compose directory's basename) names EVERY task's stack identically ("workspace"), and
+     *  nothing removes it before the NEXT task starts. T10 (Flyway Migration) ran `docker ps`,
+     *  found several PostgreSQL containers left running from hours-old attempts (including this
+     *  exact run's own earlier task), had no way to tell which one was actually its, and could not
+     *  get a migration to apply - a genuine environment-confusion failure, not an agent mistake (it
+     *  had already correctly worked out to use `host.docker.internal`, the one documented gotcha for
+     *  reaching a just-started compose service from here).
+     *
+     *  <p>Mirrors ComposeChecks.sweepStale()'s own precedent (tear down a known-shape stale project
+     *  before the next thing that needs a clean Docker state runs) but for the AGENT's own task-time
+     *  compose usage rather than the oracle's. Called at every task boundary (see RunBench's own two
+     *  call sites, both right next to pauseAfterTask's own between-tasks checkpoint) so each task
+     *  starts against a clean slate instead of silently inheriting (or colliding with) whatever a
+     *  PRIOR task happened to leave running - the same reasoning VerifyTask/ComposeChecks already
+     *  apply: a task's own state should never implicitly depend on exactly what ran before it.
+     *  `down` with a project name alone needs no compose file (it works off each container's own
+     *  `com.docker.compose.project` label) - safe to call even when nothing is up. */
+    public static void sweepAgentCompose(final Path ws) {
+        final DockerService.Sh r = DockerService.sh(120, "docker", "compose", "-p", ws.getFileName().toString(),
+                "down", "-v", "--remove-orphans");
+        if (r.rc() != 0) log.debug("sweepAgentCompose: `docker compose -p {} down` rc={} (fine if nothing was up): {}",
+                ws.getFileName(), r.rc(), r.out());
+    }
+
     public static void clearStaleProgressLine(final Path ws, final String taskId) throws IOException {
         final Path progress = ws.resolve("docs/PROGRESS.md");
         if (!Files.isRegularFile(progress)) return;

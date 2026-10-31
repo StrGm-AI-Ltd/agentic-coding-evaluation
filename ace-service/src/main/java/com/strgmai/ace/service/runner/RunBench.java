@@ -1555,7 +1555,10 @@ public class RunBench {
                     // the safe, between-tasks moment a "pause after the current task" request
                     // (distinct from the immediate /pause, which can land mid-task and discard
                     // real in-progress work) actually takes effect, via the exact same pause()
-                    // machinery that endpoint already uses.
+                    // machinery that endpoint already uses. Also the right moment to tear down
+                    // whatever this task's own docker compose usage left running - see
+                    // sweepAgentCompose()'s own javadoc for why.
+                    RunBenchSupport.sweepAgentCompose(ws);
                     pauseAfterTask.checkAndPauseIfRequested(runId);
                 }
                 continue;
@@ -1569,7 +1572,9 @@ public class RunBench {
             mergeConflicts = (List<String[]>) wave.get("merge_conflicts");
             // the whole wave is now fully committed and merged - the safe, between-waves moment
             // a "pause after the current task" request takes effect (see the sequential loop's
-            // own identical call above for why).
+            // own identical call above for why), and the same moment to sweep agent-started
+            // compose resources (see sweepAgentCompose()'s own javadoc).
+            RunBenchSupport.sweepAgentCompose(ws);
             pauseAfterTask.checkAndPauseIfRequested(runId);
         }
         // ---- integration: the fixed final task ----
