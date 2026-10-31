@@ -69,6 +69,17 @@ public class Preflight {
         final boolean jdkOk = !jh.isBlank() && Files.isRegularFile(Path.of(jh, "bin", "java")) && Files.isRegularFile(Path.of(jh, "bin", "javac"));
         add(out, "pinned JDK 21", jdkOk, jh.isBlank() ? "none found: set ace.java-home or $ACE_JAVA_HOME" : jh, true);
 
+        // #673: the agent's own sandbox otherwise has no `gradle` at all - the SAME class of
+        // silent, hours-long budget waste the git/zsh/unzip checks above were each added for
+        // (confirmed live: hand-bootstrapping a distribution from a zip, with no persistent shell
+        // state between separate bash calls, burns most of a task's turn budget on infrastructure
+        // archaeology instead of the actual task). Runs --version, not a mere file-existence check
+        // (the #597 lesson above: a file sitting at the right path proves nothing on its own) -
+        // this actually launches the binary and confirms it reports a real version.
+        final String gh = props.gradleHome();
+        final DockerService.Sh gv = gh == null || gh.isBlank() ? null : DockerService.sh(20, gh + "/bin/gradle", "--version");
+        add(out, "agent gradle", gv != null && gv.rc() == 0, gv == null ? "none found: set $ACE_GRADLE_HOME" : first(gv.out()), true);
+
         // #466: a job's own model may be "providerKey/model" (the same registered-prefix
         // convention ProviderStore.route() uses for the main session) - check
         // reachability/membership against THAT provider's own live endpoint, not always the

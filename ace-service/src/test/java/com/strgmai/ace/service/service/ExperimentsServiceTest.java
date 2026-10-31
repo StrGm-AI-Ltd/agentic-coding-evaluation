@@ -33,7 +33,7 @@ class ExperimentsServiceTest {
 
     private static BenchProperties props(final String endpoint) {
         return new BenchProperties(null, endpoint, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
     }
 
     /** These tests exercise ExperimentsService, never the probe's own backend operations - a fresh

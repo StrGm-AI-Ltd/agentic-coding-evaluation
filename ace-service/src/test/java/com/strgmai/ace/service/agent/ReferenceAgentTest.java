@@ -199,7 +199,7 @@ class ReferenceAgentTest {
     @Test
     void apiKeyForRecognisesProviderUrlVariantsConsistently() throws Exception {
         final var agent = new ReferenceAgent(new BenchProperties(
-                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null),
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null),
                 new ProviderStore(freshDb("reference-agent-apikey-test")));
         // extraEnv is keyed by the provider's own providerKey now (ProviderStore.allCredentials()'s
         // own shape), not an env-var name - see ProviderStore's javadoc for why that indirection

@@ -48,6 +48,12 @@ services:
       # or tested Java failed with Gradle's "Java compiler is not available"). /opt/agent-jdk is the
       # full JDK the Dockerfile copies in specifically for the agent's own tool calls and VerifyTask.
       ACE_JAVA_HOME: /opt/agent-jdk
+      # #673: the agent's own sandbox otherwise has no `gradle` at all (no system binary, no
+      # pre-made wrapper) - see the Dockerfile's own comment on /opt/agent-gradle for the live
+      # incident (hours of wasted task budget hand-bootstrapping a distribution from a zip) this
+      # closes. Same mechanism as ACE_JAVA_HOME above: RunBenchSupport.scrubbedEnv() puts this
+      # directory's own bin/ first on the agent's PATH.
+      ACE_GRADLE_HOME: /opt/agent-gradle
     volumes:
       - ace-data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
