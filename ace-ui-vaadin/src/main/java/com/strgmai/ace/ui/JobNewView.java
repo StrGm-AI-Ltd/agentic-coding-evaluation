@@ -1,9 +1,12 @@
 package com.strgmai.ace.ui;
 
+import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.combobox.MultiSelectComboBox;
+import com.vaadin.flow.component.html.Anchor;
+import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
@@ -25,10 +28,37 @@ import java.util.Map;
  * New job form — the Vaadin twin of /jobs/new in the service UI: every RunSpec flag
  * (queue.py) that run_bench.py accepts, plus queue priority. Field values are
  * normalized by JobSpecs (unit-tested) and submitted to POST /api/jobs.
- */
+ *
+ * <p>#569 "Anchored Scan": one continuous page, same nine sections as before, but every section
+ * is now an always-visible bordered tile (the Job Detail page's own chrome - border/radius/
+ * background from the same Aura tokens JobLiveSection's liveTile() and JobDetailPrototypeView use,
+ * see anchoredTile() below) instead of the Details-based accordion collapsibleSection() used to
+ * build, and a sticky left rail (buildAnchorNav()) jumps straight to any of them - picked over four
+ * other researched directions (a wizard, an essentials+grid layout, a live preview panel, a command-
+ * palette search) as the closest literal match to the issue's own "look similar to the job detail
+ * window" ask, and the one requiring the smallest structural departure from this form's existing
+ * field wiring. SECTIONS (just below) is the single source of truth for the rail's own entries and
+ * the client-side scrollspy's own observed-id list - the tiles themselves are still built inline in
+ * the constructor (their field composition differs per section, so a fully data-driven loop would
+ * need its own per-section row-building indirection for no real gain here). */
 @Route(value = "jobs/new", layout = MainLayout.class)
 public class JobNewView extends VerticalLayout {
     private static final Logger log = LoggerFactory.getLogger(JobNewView.class);
+
+    /** id (the tile's own DOM id, and "navlink-" + id for its rail entry) paired with its title -
+     *  in the SAME order the tiles themselves are added, so the rail always lists them top to
+     *  bottom in on-page order. */
+    private static final String[][] SECTIONS = {
+            {"anchor-run", "Run"},
+            {"anchor-budgets", "Budgets"},
+            {"anchor-compaction", "Context compaction"},
+            {"anchor-lessons", "Cross-task lessons"},
+            {"anchor-sampler", "Sampler"},
+            {"anchor-reviewers", "Reviewers"},
+            {"anchor-judge", "Judge"},
+            {"anchor-rescue", "Budget rescue"},
+            {"anchor-flags", "Flags"},
+    };
 
     private final ServiceClient client;
 
@@ -124,7 +154,6 @@ public class JobNewView extends VerticalLayout {
         task.addValueChangeListener(e -> task.setInvalid(false));
         task.addValueChangeListener(e -> renderTaskInfo(e.getValue()));
         taskInfo.setVisible(false);
-        runIdField.setHelperText("blank = auto-generated");
         runIdField.setTooltipText(Tooltips.RUN_ID);
 
         configureSelect(harness, "", "ref", "pi");
@@ -153,111 +182,80 @@ public class JobNewView extends VerticalLayout {
         // the ids RunSpec.PHASES/RunBench.PHASES accept - L7_full_platform's and L3p_point_in_time's
         // own multi-phase sequence; blank/none selected = every phase the rung defines (the default)
         phases.setItems("p0_definition", "p1_plan", "p2_implementation");
-        phases.setHelperText("blank = every phase the rung defines");
         phases.setTooltipText(Tooltips.PHASES);
         parallel.setPlaceholder("auto, or 1–99");
         parallel.setTooltipText(Tooltips.PARALLEL);
         priority.setValue(0);
         priority.setTooltipText(Tooltips.PRIORITY);
         taskWall.setMin(1);
-        taskWall.setHelperText("blank = derived from the rung's budget");
         taskWall.setTooltipText(Tooltips.TASK_WALL);
         taskTokens.setMin(1);
-        taskTokens.setHelperText("blank = derived from the rung's budget");
         taskTokens.setTooltipText(Tooltips.TASK_TOKENS);
         implWall.setMin(1);
-        implWall.setHelperText("blank = rung's derived budget");
         implWall.setTooltipText(Tooltips.IMPL_WALL);
         implTokens.setMin(1);
-        implTokens.setHelperText("blank = operator default");
         implTokens.setTooltipText(Tooltips.IMPL_TOKENS);
         planWall.setMin(0);
-        planWall.setHelperText("blank = default (900s), 0 = unlimited");
         planWall.setTooltipText(Tooltips.PLAN_WALL);
         planTokens.setMin(1);
-        planTokens.setHelperText("blank = operator default");
         planTokens.setTooltipText(Tooltips.PLAN_TOKENS);
         contextWindow.setMin(1);
         contextWindow.setTooltipText(Tooltips.CONTEXT_WINDOW);
         firstTokenTimeout.setMin(1);
-        firstTokenTimeout.setHelperText("blank = default (180s)");
         firstTokenTimeout.setTooltipText(Tooltips.FIRST_TOKEN_TIMEOUT);
         compactionTrigger.setMin(0);
-        compactionTrigger.setHelperText("blank = default (28000), 0 = disabled");
         compactionTrigger.setTooltipText(Tooltips.COMPACTION_TRIGGER);
         compactionStrategies.setValue(List.of(CompactionStrategyList.TOOL_RESULT_MASK, CompactionStrategyList.ERROR_LINE_EXTRACTION,
                 CompactionStrategyList.TOOL_OUTPUT_RECALL));   // mirrors CompactionStrategies.DEFAULT on the service side
         lessonRecordingEnabled.setValue(true);   // on by default now - mirrors RunSpec.from()'s own default
         lessonRecordingEnabled.setTooltipText(Tooltips.LESSON_RECORDING_ENABLED);
         reviewWallSec.setMin(1);
-        reviewWallSec.setHelperText("blank = default (900s)");
         reviewWallSec.setTooltipText(Tooltips.REVIEW_WALL_SEC);
         reviewTokens.setMin(0);
-        reviewTokens.setHelperText("blank = unlimited");
         reviewTokens.setTooltipText(Tooltips.REVIEW_TOKENS);
         maxTurns.setMin(1);
-        maxTurns.setHelperText("blank = default (400)");
         maxTurns.setTooltipText(Tooltips.MAX_TURNS);
         fixWall.setMin(0);
-        fixWall.setHelperText("blank = unlimited");
         fixWall.setTooltipText(Tooltips.FIX_WALL);
         fixTokens.setMin(0);
-        fixTokens.setHelperText("blank = unlimited");
         fixTokens.setTooltipText(Tooltips.FIX_TOKENS);
         parallelPlanTokens.setMin(0);
-        parallelPlanTokens.setHelperText("blank = unlimited");
         parallelPlanTokens.setTooltipText(Tooltips.PARALLEL_PLAN_TOKENS);
         handoffTokens.setMin(0);
-        handoffTokens.setHelperText("blank = unlimited");
         handoffTokens.setTooltipText(Tooltips.HANDOFF_TOKENS);
         wrapupTokens.setMin(0);
-        wrapupTokens.setHelperText("blank = unlimited");
         wrapupTokens.setTooltipText(Tooltips.WRAPUP_TOKENS);
         wallBudget.setMin(1);
-        wallBudget.setHelperText("blank = not used (normal budget applies)");
         wallBudget.setTooltipText(Tooltips.WALL_BUDGET);
         parallelWeight.setMin(0);
         parallelWeight.setMax(1);
-        parallelWeight.setHelperText("blank = default (0.1)");
         parallelWeight.setTooltipText(Tooltips.PARALLEL_WEIGHT);
         efficiencyWeight.setMin(0);
         efficiencyWeight.setMax(1);
-        efficiencyWeight.setHelperText("blank = 0 (opt-in; not blended by default)");
         efficiencyWeight.setTooltipText(Tooltips.EFFICIENCY_WEIGHT);
         reviewWeight.setMin(0);
         reviewWeight.setMax(1);
-        reviewWeight.setHelperText("blank = default (0.1)");
         reviewWeight.setTooltipText(Tooltips.REVIEW_WEIGHT);
         trajectoryWeight.setMin(0);
         trajectoryWeight.setMax(1);
-        trajectoryWeight.setHelperText("blank = default (0.1)");
         trajectoryWeight.setTooltipText(Tooltips.TRAJECTORY_WEIGHT);
         temperature.setMin(0);
-        temperature.setHelperText("blank = operator default");
         temperature.setTooltipText(Tooltips.TEMPERATURE);
         topP.setMin(0);
         topP.setMax(1);
-        topP.setHelperText("blank = operator default");
         topP.setTooltipText(Tooltips.TOP_P);
         topK.setMin(1);
-        topK.setHelperText("blank = model default");
         topK.setTooltipText(Tooltips.TOP_K);
         repetitionPenalty.setMin(0);
-        repetitionPenalty.setHelperText("blank = model default");
         repetitionPenalty.setTooltipText(Tooltips.REPETITION_PENALTY);
         maxTokens.setMin(1);
-        maxTokens.setHelperText("blank = context-probe-derived cap");
         maxTokens.setTooltipText(Tooltips.MAX_TOKENS);
         parallelPlanWall.setMin(1);
-        parallelPlanWall.setHelperText("blank = default (600s)");
         parallelPlanWall.setTooltipText(Tooltips.PARALLEL_PLAN_WALL);
         handoffWall.setMin(1);
-        handoffWall.setHelperText("blank = default (300s)");
         handoffWall.setTooltipText(Tooltips.HANDOFF_WALL);
         wrapupWall.setMin(1);
-        wrapupWall.setHelperText("blank = default (300s, scaled)");
         wrapupWall.setTooltipText(Tooltips.WRAPUP_WALL);
-        javaHome.setHelperText("blank = operator/machine default");
         javaHome.setTooltipText(Tooltips.JAVA_HOME);
         handoffNotes.setTooltipText(Tooltips.HANDOFF_NOTES);
         systemRules.setTooltipText(Tooltips.SYSTEM_RULES);
@@ -269,23 +267,17 @@ public class JobNewView extends VerticalLayout {
         judgeEnabled.setValue(true);   // on by default now - mirrors RunSpec.from()'s own default
         judgeEnabled.setTooltipText(Tooltips.JUDGE_ENABLED);
         judgeEveryNTurns.setMin(1);
-        judgeEveryNTurns.setHelperText("blank = default (10)");
         judgeEveryNTurns.setTooltipText(Tooltips.JUDGE_EVERY_N_TURNS);
         judgeWallSec.setMin(1);
-        judgeWallSec.setHelperText("blank = unlimited");
         judgeWallSec.setTooltipText(Tooltips.JUDGE_WALL_SEC);
         judgeTokens.setMin(1);
-        judgeTokens.setHelperText("blank = unlimited");
         judgeTokens.setTooltipText(Tooltips.JUDGE_TOKENS);
         budgetRescueEnabled.setTooltipText(Tooltips.BUDGET_RESCUE_ENABLED);
         rescueWallSec.setMin(1);
-        rescueWallSec.setHelperText("blank = unlimited");
         rescueWallSec.setTooltipText(Tooltips.RESCUE_WALL_SEC);
         rescueTokens.setMin(1);
-        rescueTokens.setHelperText("blank = unlimited");
         rescueTokens.setTooltipText(Tooltips.RESCUE_TOKENS);
         rescueKeepRecentTurns.setMin(0);
-        rescueKeepRecentTurns.setHelperText("blank = operator default");
         rescueKeepRecentTurns.setTooltipText(Tooltips.RESCUE_KEEP_RECENT_TURNS);
 
         add(new ViewHeader("New job"));
@@ -303,46 +295,148 @@ public class JobNewView extends VerticalLayout {
         add(taskModelRow);
         add(taskInfo);
 
-        add(Forms.section("Run",
-                Forms.row(runIdField, harness, mode, planSource, taskGranularity),
-                Forms.row(phases, parallel, parallelPlan, parallelWeight)));
-        add(Forms.collapsibleSection("Budgets",
-                Forms.row(taskWall, taskTokens, implWall, implTokens),
-                Forms.row(planWall, planTokens, wallBudget, contextWindow),
-                Forms.row(firstTokenTimeout, maxTurns),
-                Forms.row(parallelPlanWall, handoffWall, wrapupWall),
-                Forms.row(parallelPlanTokens, handoffTokens, wrapupTokens),
-                Forms.row(fixWall, fixTokens),
-                Forms.row(efficiencyWeight)));
-        add(Forms.collapsibleSection("Context compaction",
-                Forms.row(compactionTrigger),
-                Forms.row(compactionStrategies)));
-        add(Forms.collapsibleSection("Cross-task lessons",
-                Forms.row(lessonRecordingEnabled)));
-        add(Forms.collapsibleSection("Sampler",
-                Forms.row(temperature, topP, topK, repetitionPenalty),
-                Forms.row(maxTokens, reasoningEffort)));
-        add(Forms.collapsibleSection("Reviewers",
-                Forms.row(reviewerModel, reviewWeight),
-                Forms.row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse),
-                Forms.row(reviewBlind, trajectoryReview),
-                Forms.row(reviewWallSec, reviewTokens)));
-        add(Forms.collapsibleSection("Judge",
-                Forms.row(judgeEnabled, judgeEveryNTurns, judgeModel),
-                Forms.row(judgeWallSec, judgeTokens)));
-        add(Forms.collapsibleSection("Budget rescue",
-                Forms.row(budgetRescueEnabled, rescueWallSec, rescueTokens, rescueKeepRecentTurns)));
-        add(Forms.section("Flags",
-                Forms.row(handoffNotes, systemRules, selfReview),
-                Forms.row(javaHome),
-                Forms.row(noContextProbe, contextProbeFresh),
-                Forms.row(priority)));
-
         final var submit = new Button("Enqueue job", e -> submit());
         submit.getStyle().set("margin-top", "12px");
-        add(submit);
 
-        addAttachListener(e -> loadSuggestions());
+        final var sectionsColumn = new VerticalLayout(
+                anchoredTile(SECTIONS[0][0], SECTIONS[0][1],
+                        Forms.row(runIdField, harness, mode, planSource, taskGranularity),
+                        Forms.row(phases, parallel, parallelPlan, parallelWeight)),
+                anchoredTile(SECTIONS[1][0], SECTIONS[1][1],
+                        Forms.row(taskWall, taskTokens, implWall, implTokens),
+                        Forms.row(planWall, planTokens, wallBudget, contextWindow),
+                        Forms.row(firstTokenTimeout, maxTurns),
+                        Forms.row(parallelPlanWall, handoffWall, wrapupWall),
+                        Forms.row(parallelPlanTokens, handoffTokens, wrapupTokens),
+                        Forms.row(fixWall, fixTokens),
+                        Forms.row(efficiencyWeight)),
+                anchoredTile(SECTIONS[2][0], SECTIONS[2][1],
+                        Forms.row(compactionTrigger),
+                        Forms.row(compactionStrategies)),
+                anchoredTile(SECTIONS[3][0], SECTIONS[3][1],
+                        Forms.row(lessonRecordingEnabled)),
+                anchoredTile(SECTIONS[4][0], SECTIONS[4][1],
+                        Forms.row(temperature, topP, topK, repetitionPenalty),
+                        Forms.row(maxTokens, reasoningEffort)),
+                anchoredTile(SECTIONS[5][0], SECTIONS[5][1],
+                        Forms.row(reviewerModel, reviewWeight),
+                        Forms.row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse),
+                        Forms.row(reviewBlind, trajectoryReview),
+                        Forms.row(reviewWallSec, reviewTokens)),
+                anchoredTile(SECTIONS[6][0], SECTIONS[6][1],
+                        Forms.row(judgeEnabled, judgeEveryNTurns, judgeModel),
+                        Forms.row(judgeWallSec, judgeTokens)),
+                anchoredTile(SECTIONS[7][0], SECTIONS[7][1],
+                        Forms.row(budgetRescueEnabled, rescueWallSec, rescueTokens, rescueKeepRecentTurns)),
+                anchoredTile(SECTIONS[8][0], SECTIONS[8][1],
+                        Forms.row(handoffNotes, systemRules, selfReview),
+                        Forms.row(javaHome),
+                        Forms.row(noContextProbe, contextProbeFresh),
+                        Forms.row(priority)),
+                submit);
+        sectionsColumn.setPadding(false);
+        sectionsColumn.getStyle().set("gap", "16px").set("flex", "1 1 auto").set("min-width", "0");
+
+        final var scanLayout = new HorizontalLayout(buildAnchorNav(), sectionsColumn);
+        scanLayout.setWidthFull();
+        scanLayout.setPadding(false);
+        scanLayout.setSpacing(false);
+        scanLayout.getStyle().set("align-items", "flex-start").set("gap", "24px");
+        add(scanLayout);
+
+        addAttachListener(e -> {
+            loadSuggestions();
+            armScrollspy();
+        });
+    }
+
+    /** #569: the same bordered-tile chrome the Job Detail page's own live/dashboard tiles use
+     *  (JobLiveSection.liveTile(), JobDetailPrototypeView) - border/radius/background drawn from
+     *  the real Aura tokens confirmed in ace-ui-vaadin/node_modules/@vaadin/aura/src/color.css,
+     *  not invented. Every section stays open (unlike the old Details-based collapsibleSection()):
+     *  the sticky rail is what keeps fifty fields reachable now, not collapsing most of them away
+     *  by default. id becomes the tile's own DOM id, the rail's and the scrollspy's own jump/observe
+     *  target. */
+    private static VerticalLayout anchoredTile(final String id, final String title, final Component[]... rows) {
+        final var section = Forms.section(title, rows);
+        section.getElement().setAttribute("id", id);
+        section.getStyle()
+                .set("border", "1px solid var(--vaadin-border-color-secondary)")
+                .set("border-radius", "var(--vaadin-radius-l)")
+                .set("background", "var(--vaadin-background-container)")
+                .set("padding", "14px 20px")
+                .set("margin", "0")
+                .set("box-sizing", "border-box");
+        return section;
+    }
+
+    /** #569: one clickable entry per SECTIONS, each scrolling its own tile into view on click.
+     *  Found live: a plain Anchor("#anchor-judge", ...) here gets intercepted by Vaadin's own
+     *  client-side router (every in-app <a> click is examined for app navigation, including a bare
+     *  #fragment href) and silently mis-routed to an unrelated view instead of jumping down the
+     *  page - confirmed live, repeatedly, clicking "Judge" landed on /info. A plain Span with a
+     *  server-side click listener calling scrollIntoView() via executeJs() sidesteps the router
+     *  entirely - the small round-trip cost is irrelevant for a once-in-a-while navigation click. */
+    private static Div buildAnchorNav() {
+        final var nav = new Div();
+        nav.getStyle()
+                .set("position", "sticky").set("top", "0")
+                .set("display", "flex").set("flex-direction", "column").set("gap", "2px")
+                .set("border-right", "1px solid var(--vaadin-border-color-secondary)")
+                .set("padding", "2px 16px 2px 0")
+                .set("flex", "0 0 180px")
+                .set("align-self", "flex-start");
+        for (final var section : SECTIONS) {
+            final var link = new com.vaadin.flow.component.html.Span(section[1]);
+            link.getElement().setAttribute("id", "navlink-" + section[0]);
+            link.getStyle()
+                    .set("font-size", "0.85em")
+                    .set("color", "var(--vaadin-text-color-secondary)")
+                    .set("cursor", "pointer")
+                    .set("padding", "6px 10px")
+                    .set("border-radius", "var(--vaadin-radius-s)")
+                    .set("border-left", "2px solid transparent");
+            link.addClickListener(e -> link.getElement().executeJs(
+                    "document.getElementById($0)?.scrollIntoView({behavior: 'smooth', block: 'start'})", section[0]));
+            nav.add(link);
+        }
+        return nav;
+    }
+
+    /** #569: highlights whichever SECTIONS tile is currently in view - the same IntersectionObserver
+     *  pattern the design mockup's own JS used for this exact direction, reproduced here against
+     *  the real rendered DOM ids rather than static markup. Run once per attach (armScrollspy()
+     *  observes real elements already in the DOM at that point, unlike the constructor itself,
+     *  where nothing is attached yet).
+     *
+     *  <p>Found live while testing the click-to-jump fix above: near the END of the page, the
+     *  trailing sections (Budget rescue, Flags) are short enough that several of them - plus
+     *  whichever section was just scrolled to - can ALL cross the 0.4 threshold in the same
+     *  viewport at once (the page has no more room to scroll further, so it can't isolate just the
+     *  target section the way it does higher up the page). A naive "last entry in this callback's
+     *  own batch wins" picks whichever one the browser happens to report last, NOT the one the user
+     *  actually jumped to - confirmed live, clicking "Judge" lit up "Flags" instead. Fix: track
+     *  visibility per id across calls (not just the current batch) and, each time it changes,
+     *  highlight whichever currently-visible id comes FIRST in SECTIONS order - the topmost visible
+     *  section, matching what a reader actually sees at the top of their screen and what a jump
+     *  target lands on. */
+    private void armScrollspy() {
+        final var ids = new java.util.ArrayList<String>();
+        for (final var section : SECTIONS) ids.add(section[0]);
+        getElement().executeJs(
+                "const order = $0;"
+                        + "const sections = order.map(id => document.getElementById(id)).filter(Boolean);"
+                        + "const links = () => document.querySelectorAll('[id^=\"navlink-\"]');"
+                        + "const visible = new Set();"
+                        + "const obs = new IntersectionObserver((entries) => {"
+                        + "  entries.forEach((en) => { en.isIntersecting ? visible.add(en.target.id) : visible.delete(en.target.id); });"
+                        + "  const activeId = order.find(id => visible.has(id));"
+                        + "  links().forEach(a => { a.style.color = 'var(--vaadin-text-color-secondary)'; a.style.borderLeftColor = 'transparent'; });"
+                        + "  const active = activeId && document.getElementById('navlink-' + activeId);"
+                        + "  if (active) { active.style.color = 'var(--vaadin-text-color)'; active.style.borderLeftColor = 'var(--vaadin-focus-ring-color)'; }"
+                        + "}, {threshold: 0.4});"
+                        + "sections.forEach(s => obs.observe(s));",
+                ids);
     }
 
     private static void configureSelect(final Select<String> select, final String... options) {
