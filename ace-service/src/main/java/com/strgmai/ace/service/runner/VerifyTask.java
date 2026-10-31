@@ -134,11 +134,22 @@ public final class VerifyTask {
         }
         res.put("seconds", Math.round((System.nanoTime() - t0) / 1e8) / 10.0);
         final List<Integer> rcs = (List<Integer>) res.get("rc");
-        if (ioAborted || (rcs.stream().anyMatch(rc -> rc != 0) && ((int) res.get("executed")) == 0)) {
-            res.put("green", null);   // inconclusive: nothing was executed and the build itself failed
+        // #680-followup3, found live (job d6d9868c, T2): the class's OWN javadoc defines FALSE as
+        // "tests ran AND failed" - that requires executed>0, same as TRUE does. This used to only
+        // treat "nothing executed" as inconclusive when the build ALSO exited non-zero; an early
+        // task whose own job has nothing to test yet (e.g. "add build dependencies") produces a
+        // perfectly clean "NO-SOURCE" gradle test run - executed:0, failed:0, rc:[0] - which fell
+        // through to the else branch and came back green:false purely because executed==0, not
+        // because anything ran and failed. Harmless before #680 gave this a real consequence
+        // (retry-then-fail): a task with nothing to test can never produce a nonzero executed count
+        // no matter how many times it is retried, so this used to silently exhaust every retry and
+        // fail the whole run on a task that did nothing wrong. "Nothing executed" is inconclusive
+        // regardless of exit code now - matching the documented contract.
+        if (ioAborted || ((int) res.get("executed")) == 0) {
+            res.put("green", null);   // inconclusive: nothing was executed, win or lose
             res.put("could_not_run", true);
         } else {
-            res.put("green", rcs.stream().allMatch(rc -> rc == 0) && ((int) res.get("executed")) > 0 && ((int) res.get("failed")) == 0);
+            res.put("green", rcs.stream().allMatch(rc -> rc == 0) && ((int) res.get("failed")) == 0);
         }
         return res;
     }

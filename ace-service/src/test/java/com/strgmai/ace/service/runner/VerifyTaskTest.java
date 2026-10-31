@@ -100,6 +100,26 @@ class VerifyTaskTest {
         assertEquals(0, v.get("executed"));
     }
 
+    /** #680-followup3, found live (job d6d9868c, T2): "add build dependencies" has nothing to test
+     *  yet - a clean `gradle test` run against a project with no test source reports NO-SOURCE,
+     *  executed:0, failed:0, exit 0. That must be inconclusive (could-not-run), never a RED - the
+     *  class's own javadoc defines FALSE as "tests ran AND failed", which requires executed>0.
+     *  Before this fix, exit 0 with executed:0 fell through to green:false purely because nothing
+     *  ran - harmless until #680 gave a disagreement a real consequence (retry-then-fail): a task
+     *  with nothing to test can never produce a nonzero executed count no matter how many times it
+     *  is retried, so this used to exhaust every retry and fail the whole run on a task that did
+     *  nothing wrong. */
+    @Test
+    void couldNotRunWhenNothingExecutedEvenIfTheBuildItselfExitedCleanly() throws Exception {
+        final Path ws = fixture("nothing-to-test-yet");
+        fakeGradlew(ws, "exit 0");   // a clean build, no test source, no XML written at all
+
+        final Map<String, Object> v = VerifyTask.verify(ws, Map.of(), ws.resolve("verify.log"));
+        assertNull(v.get("green"), "nothing executed must be inconclusive regardless of exit code: " + v);
+        assertEquals(Boolean.TRUE, v.get("could_not_run"));
+        assertEquals(0, v.get("executed"));
+    }
+
     /** #293, found live: this used to start from System.getenv() - the real operator environment
      *  of the ace-service JVM itself - instead of the run's own scrubbed "_agent_env", the same
      *  env every other piece of agent-controlled code execution in this harness already uses. */
