@@ -1349,6 +1349,24 @@ public class RunBench {
 
     private Map<String, Object> manifestOf(Map<String, Object> cfg) { return (Map<String, Object>) cfg.get("_manifest"); }
 
+    /** #680/#684: how many automatic retries a verification disagreement gets before the whole run
+     *  fails outright (see this constant's own call site) - raised from 1 to 5 after confirming
+     *  live (job e4f45389, T13) that the single-retry version works exactly as designed: it still
+     *  correctly failed a run rather than let a genuinely stuck model keep building on an
+     *  unverifiable task, but a stuck model can also just need a few more honest tries at the SAME
+     *  concrete correction before it lands - this gives it that room before giving up on the run. */
+    static final int MAX_VERIFICATION_RETRIES = 5;
+
+    /** #680-followup: fed back to the SAME p1_plan session's own next retry (see its call site)
+     *  when it claimed to write docs/IMPLEMENTATION_PLAN.md but the file genuinely isn't there -
+     *  names the exact, concrete mistake (a wrong path, not a vague "try again"), the same reasoning
+     *  verificationCorrectionInstruction() already applies to a task's own retry. */
+    static final String PLAN_ARTIFACT_MISSING_CORRECTION = "Your previous attempt claimed to have written "
+            + "docs/IMPLEMENTATION_PLAN.md, but that file does not actually exist. Write it relative to "
+            + "your OWN current working directory exactly as docs/IMPLEMENTATION_PLAN.md - do not prefix "
+            + "it with \"workspace/\" or any other directory name. Verify with a real tool call (e.g. read "
+            + "the file back) that it actually exists at that exact path before finishing.";
+
     /** #680: true exactly when a task's own "done" claim and the harness's independent VerifyTask
      *  check disagree - never for the inconclusive (could-not-run) case, which VerifyTask's own
      *  contract says is never held against the agent (R4 C-2: a toolchain/environment failure, not
@@ -1357,9 +1375,9 @@ public class RunBench {
         return Boolean.FALSE.equals(rec.get("done_verified"));
     }
 
-    /** #680: the correction fed back into the SAME task's own one automatic retry (see this
+    /** #680: the correction fed back into the SAME task's own next automatic retry (see this
      *  method's own call site) - names the exact, concrete harness signal that disagreed with the
-     *  claim, not a vague "try again", so the retry has something specific to act on instead of
+     *  claim, not a vague "try again", so each retry has something specific to act on instead of
      *  repeating whatever produced the same false claim. */
     static String verificationCorrectionInstruction(final Map<String, Object> rec) {
         return "Your previous attempt on this SAME task claimed it was done, but the harness's own independent "
@@ -1368,24 +1386,26 @@ public class RunBench {
                 + ". Do not just make a check superficially pass again - find and fix the actual underlying problem this time.";
     }
 
-    /** #680: the message a job fails with when a task claims done twice in a row (once with an
-     *  explicit correction already fed back) and the harness's own verification still disagrees
-     *  both times - at that point the run's own ground truth for this task cannot be established,
-     *  so every later task building on it would be doing so blind (found live, job c965a635: T1's
-     *  fake gradlew stub did exactly that, undetected, for the rest of that whole run). */
+    /** #680: the message a job fails with when a task still disagrees with the harness's own
+     *  verification after MAX_VERIFICATION_RETRIES automatic retries (each with an explicit
+     *  correction already fed back) - at that point the run's own ground truth for this task
+     *  cannot be established, so every later task building on it would be doing so blind (found
+     *  live, job c965a635: T1's fake gradlew stub did exactly that, undetected, for the rest of
+     *  that whole run). */
     static String verificationFailureMessage(final String taskId, final Map<String, Object> rec) {
-        return taskId + " claimed done twice in a row (including one retry with an explicit correction), but the "
-                + "harness's own independent verification still disagrees: " + VerifyTask.verifyText((Map<String, Object>) rec.get("verification"))
+        return taskId + " still claims done after " + MAX_VERIFICATION_RETRIES + " retries (each with an explicit "
+                + "correction fed back), but the harness's own independent verification still disagrees: "
+                + VerifyTask.verifyText((Map<String, Object>) rec.get("verification"))
                 + " - failing the run rather than let every later task keep building on an unverifiable result.";
     }
 
     /** #680: one actual attempt at a plan task's own main session - builds its pack, runs the main
      *  session, gives rescueStep() its chance - factored out of the sequential task loop so the
      *  automatic retry on a verification disagreement (see orchestratedPhase's own call site) can
-     *  run this exact same sequence a second time with an extra, corrective instruction appended,
-     *  without duplicating it inline. Deliberately does NOT commit the "phase/&lt;id&gt;" snapshot
-     *  tag or clear mergeConflicts - the caller does that exactly once, after it has settled on a
-     *  FINAL rec (the first attempt or the retry), never per attempt. */
+     *  run this exact same sequence again, each time with an extra, corrective instruction
+     *  appended, without duplicating it inline. Deliberately does NOT commit the "phase/&lt;id&gt;"
+     *  snapshot tag or clear mergeConflicts - the caller does that exactly once, after it has
+     *  settled on a FINAL rec (the first attempt or the last retry), never per attempt. */
     private Map<String, Object> runTaskAttempt(final Map<String, Object> cfg, final String runId, final Path rd, final Path ws,
             final Path journal, final PlanTask t, final List<PlanTask> tasks, final Map<String, String[]> snapshots,
             final String prev, final Path prevSession, final List<String[]> handoffs, final String prevVerified,
@@ -1479,11 +1499,23 @@ public class RunBench {
                 final var p1Override = taskOverride(cfg, "p1_plan");
                 final int effP1Wall = effectiveInt(p1Override, "task_wall_sec", (int) p1Wall);
                 final long effP1Tokens = effectiveLong(p1Override, "task_tokens", planTokens(cfg, "p1_plan", props));
-                final var proxy = proxies.start(journal, effP1Tokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
-                try {
-                    p1rec = sessionWithPolicy(cfg, runId, "p1_plan", PHASE_TEXT.get("p1_plan")[1],
-                            effP1Wall, effP1Tokens, rd, ws, journal, proxy, null, null, null, true);
-                } finally { proxy.stop(); }
+                // #680-followup, found live (job e4f45389): the plan session can claim success and
+                // still never produce a real docs/IMPLEMENTATION_PLAN.md (that run's model wrote to
+                // "workspace/docs/IMPLEMENTATION_PLAN.md", nesting an extra "workspace/" onto a cwd
+                // that already WAS its own workspace root, then declared itself done without ever
+                // checking the real path) - artifact_present below already catches this, but it used
+                // to be exactly the same write-only signal done_verified was before #680. Same fix:
+                // retry with the exact correction fed back, up to the same budget.
+                String instruction = PHASE_TEXT.get("p1_plan")[1];
+                for (int retry = 0; ; retry++) {
+                    final var proxy = proxies.start(journal, effP1Tokens, null, (RecordingProxy.SamplerOverrides) cfg.get("_sampler_overrides"));
+                    try {
+                        p1rec = sessionWithPolicy(cfg, runId, "p1_plan", instruction,
+                                effP1Wall, effP1Tokens, rd, ws, journal, proxy, null, null, null, true);
+                    } finally { proxy.stop(); }
+                    if (Files.isRegularFile(ws.resolve("docs/IMPLEMENTATION_PLAN.md")) || retry >= MAX_VERIFICATION_RETRIES) break;
+                    instruction = PHASE_TEXT.get("p1_plan")[1] + "\n\n" + PLAN_ARTIFACT_MISSING_CORRECTION;
+                }
                 planSha = RunBenchSupport.snapshot(ws, "phase/p1");
             }
             p1rec.put("artifact", PHASE_TEXT.get("p1_plan")[0]);
@@ -1605,19 +1637,19 @@ public class RunBench {
                         // T1 fabricated a `gradlew` stub that always printed a canned version
                         // string and exited 0, and every LATER task's own verification silently
                         // inherited that same broken wrapper for the rest of the run, with nothing
-                        // anywhere reacting. One automatic retry, with the exact verification
-                        // failure fed back as a correction, before failing the whole run outright -
-                        // the same bar a human operator supervising this run manually already
-                        // applied by hand this session.
-                        if (verificationDisagreed(rec)) {
+                        // anywhere reacting. Up to MAX_VERIFICATION_RETRIES automatic retries, each
+                        // with the exact verification failure fed back as a correction, before
+                        // failing the whole run outright - the same bar a human operator supervising
+                        // this run manually already applied by hand this session.
+                        for (int retry = 0; verificationDisagreed(rec) && retry < MAX_VERIFICATION_RETRIES; retry++) {
                             recordLesson(cfg, rd, t.id + " (verification disagreement)", t.id + " claimed done, but the "
                                     + "harness's own independent verification disagreed: " + VerifyTask.verifyText((Map<String, Object>) rec.get("verification"))
                                     + " - its own artifacts should not be trusted without double-checking before building on them.");
                             rec = runTaskAttempt(cfg, runId, rd, ws, journal, t, tasks, snapshots, prev, prevSession, handoffs,
                                     prevVerified, mergeConflicts, taskOverride, effTaskWall, effTaskTokens, verificationCorrectionInstruction(rec));
                             logTaskAttempt(rd, ws, t.id, taskOverride, effTaskWall, effTaskTokens, effMaxTurns, rec);
-                            if (verificationDisagreed(rec)) throw new IllegalStateException(verificationFailureMessage(t.id, rec));
                         }
+                        if (verificationDisagreed(rec)) throw new IllegalStateException(verificationFailureMessage(t.id, rec));
                         final String after = RunBenchSupport.snapshot(ws, "phase/" + t.id);
                         ((Map<String, String>) manifest.get("snapshots")).put(t.id, after);
                         snapshots.put(t.id, new String[]{String.valueOf(manifestSnap(manifest, "p1", planSha)), after});
