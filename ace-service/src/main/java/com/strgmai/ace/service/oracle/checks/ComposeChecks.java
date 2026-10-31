@@ -223,6 +223,21 @@ public final class ComposeChecks {
                 return out;
             }
             // ---- up + health (its own budget) ----
+            // found live (#652-followup): the ONLY portInUse() guard ran once, above, before the
+            // (potentially long, its own GRADLE_TIMEOUT-scale budget) build step - a port that gets
+            // taken DURING the build slips past that early exit entirely and surfaces here as a raw,
+            // unhelpful "Error response from daemon" instead of the same clear, already-existing
+            // message. Confirmed live on svc-20261030-185444: the agent's own INTEGRATION-stage
+            // manual troubleshooting backgrounded a jar bound to host port 8080
+            // (`java -jar build/libs/....jar &`, left running, never observed killed) - a highly
+            // plausible source of exactly this kind of late-arriving collision, on the very port
+            // this check already knows to look for. Re-checking right before "up" too costs nothing
+            // and turns a mystery INFRA reason into the SAME actionable one portInUse() already
+            // produces elsewhere in this method.
+            if (DockerService.portInUse(8080, "127.0.0.1")) {
+                for (CheckId c : IDS) if (wanted.test(c)) out.add(new CheckResult(c, CheckStatus.INFRA, "port 8080 already bound by a non-benchmark process before compose up"));
+                return out;
+            }
             final DockerService.Sh u = compose(proj, cf, healthTimeout, "up", "-d", "--no-build", "--quiet-pull");
             if (u.rc() != 0) {
                 final String txt = u.out().strip();
