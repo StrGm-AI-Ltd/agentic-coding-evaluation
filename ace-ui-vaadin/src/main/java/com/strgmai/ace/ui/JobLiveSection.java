@@ -595,8 +595,17 @@ public final class JobLiveSection extends VerticalLayout {
         // found (every id in planTasks(), stage or real, matches itself exactly); only a session
         // with genuinely no corresponding PlanTask (planTasks hasn't loaded yet, or a stray/
         // unexpected label) falls back to JobSessionDialog.
+        //
+        // found live in production: Grid's own ItemClickEvent.getItem() is null for a click that
+        // lands in the grid's empty body area below the last real row (always present here - the
+        // grid has a fixed 420px height regardless of how many sessions exist so far) - this isn't
+        // an edge case, it's the grid's own documented behavior for a non-item click. Unguarded,
+        // that NPE'd inside matchingTask() before it could even reach the real/fallback dialogs,
+        // caught silently by Vaadin's own DefaultErrorHandler - the click just did nothing, with no
+        // visible error for the user clicking it.
         sessions.addItemClickListener(e -> {
             final var row = e.getItem();
+            if (row == null) return;
             final var task = matchingTask(planTasks, row);
             if (task.isPresent()) JobTaskDialog.open(client, jobId, task.get(), () -> currentJob, live, this, onChanged);
             else JobSessionDialog.open(client, jobId, () -> currentJob, row, onChanged);
