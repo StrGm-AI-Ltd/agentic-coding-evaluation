@@ -2,6 +2,7 @@ package com.strgmai.ace.service.service;
 
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.runner.ContextProbe;
+import com.strgmai.ace.service.runner.JobDockerSidecar;
 import com.strgmai.ace.service.runner.RecordingProxyFactory;
 import com.strgmai.ace.service.runner.RunBench;
 import com.strgmai.ace.service.runner.RunRetention;
@@ -43,13 +44,14 @@ public class WorkerService {
     private final ContextProbe probe;
     private final RecordingProxyFactory proxies;
     private final RunRetention retention;
+    private final JobDockerSidecar dockerSidecar;
 
     public WorkerService(JobQueue queue, RunBench runBench, ImporterService importer, ExperimentsService experiments,
                          Preflight preflight, TreatmentPin pin, BenchProperties props, ContextProbe probe, RecordingProxyFactory proxies,
-                         RunRetention retention) {
+                         RunRetention retention, JobDockerSidecar dockerSidecar) {
         this.queue = queue; this.runBench = runBench; this.importer = importer; this.experiments = experiments;
         this.preflight = preflight; this.pin = pin; this.props = props; this.probe = probe; this.proxies = proxies;
-        this.retention = retention;
+        this.retention = retention; this.dockerSidecar = dockerSidecar;
         reconcile();
     }
 
@@ -74,11 +76,19 @@ public class WorkerService {
      *  only ever re-picks "queued"/"waiting_lock" rows, so nothing short of this fix (or a manual
      *  DB edit) could ever resume it. */
     void reconcile() {
-        for (Map<String, Object> job : queue.list()) {
+        final List<Map<String, Object>> jobs = queue.list();
+        for (Map<String, Object> job : jobs) {
             if (!"running".equals(job.get("status"))) continue;
             log.info("job {}: was still 'running' at startup - no in-process worker survives a restart, requeuing", job.get("id"));
             queue.setStatus((UUID) job.get("id"), "queued", null);
         }
+        // #696: the exact same reasoning as the loop above - a dind-<runId> sidecar for a run id
+        // that is no longer queued/running/waiting_lock/blocked/paused was left behind by a crash
+        // (ace-service itself being killed before its own cleanup ran is exactly how this started)
+        // and is safe to remove. Paused jobs are deliberately kept alive here (not terminal).
+        final Set<String> live = jobs.stream().filter(j -> !RunSpec.TERMINAL.contains(j.get("status")))
+                .map(j -> String.valueOf(j.get("run_id"))).collect(java.util.stream.Collectors.toSet());
+        for (String runId : dockerSidecar.orphaned(live)) dockerSidecar.destroy(runId);
     }
 
     private java.nio.channels.FileChannel runLock;
@@ -200,6 +210,7 @@ public class WorkerService {
                 // run of it down to source-only, keeping binaries only for the one that is now the
                 // most recent valid result.
                 retention.pruneStaleBinaries(task, job.runId());
+                dockerSidecar.destroy(job.runId());   // #696: a genuinely terminal state, same reasoning as retention above
             } catch (Throwable e) {
                 // #289/#273: Future.cancel(true) reliably makes the interrupted runOnce() throw,
                 // landing here even for a deliberate, operator-requested cancel/pause - previously
@@ -236,6 +247,7 @@ public class WorkerService {
                     // of the same task) gets pruned down to source-only too.
                     final String failedTask = flag(job.argv(), "--task") == null ? "L7_full_platform" : flag(job.argv(), "--task");
                     retention.pruneStaleBinaries(failedTask, job.runId());
+                    dockerSidecar.destroy(job.runId());   // #696: a hard failure is also a genuinely terminal state
                 }
             } finally {
                 busy.set(false);
@@ -264,11 +276,13 @@ public class WorkerService {
                     }
                     queue.finish(job.id(), "cancelled", null, "cancelled mid-run");
                     if (job.experimentId() != null) experiments.finalizeIfDone(job.experimentId());
+                    dockerSidecar.destroy(job.runId());   // #696: genuinely terminal, same as the results-dir move above
                 } else if (pauseCurrent) {
                     // the gentle half of the same interrupt: unlike cancelCurrent above, the results
                     // dir and workspace are left exactly where they are - 'paused' is resumable via
                     // Requeue (R18's own git-tag resume mechanism picks up right where this left off),
-                    // not a terminal outcome, so no finalizeIfDone either.
+                    // not a terminal outcome, so no finalizeIfDone either. The docker sidecar (#696)
+                    // is left running for the exact same reason - nothing is lost on a pause.
                     queue.paused(job.id());
                 }
             }
