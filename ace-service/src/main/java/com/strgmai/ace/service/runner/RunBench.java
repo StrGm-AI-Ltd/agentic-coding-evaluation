@@ -431,15 +431,26 @@ public class RunBench {
      *  with the real cause recoverable only via manual oMLX server.log archaeology. Most of the time
      *  this is null (a silent stall sends nothing at all, as T19's own case did) - not itself
      *  evidence of anything; when it IS present, it is the single most specific fact this method can
-     *  report. */
-    static String fallbackTail(final int rc, final long wallSec, final int turns, final String endIso, final String upstreamError) {
+     *  report.
+     *
+     *  #680-followup4, found live (job 378f87a3, T2): "the model produced no further output" is
+     *  flatly false whenever `lastText` is non-blank - the wrap-up's own salvage attempt just
+     *  failed to find a PARSEABLE status line in it (see its own call site), not that the model
+     *  said nothing. Quoting what it actually said, capped, is both more honest and more
+     *  actionable than implying genuine silence when there plainly wasn't any. */
+    static String fallbackTail(final int rc, final long wallSec, final int turns, final String endIso, final String upstreamError, final String lastText) {
         final String base = switch (rc) {
             case 2 -> " (the model's own call failed and its retries were exhausted - see the "
                     + "service log around " + endIso + " for the underlying error, e.g. an "
                     + "upstream model-server rejection)";
             case 124 -> " (task-wall budget of " + wallSec + "s exceeded)";
-            default -> " (the model produced no further output after " + turns
-                    + " turns - check interactions.jsonl for this session around " + endIso + ")";
+            default -> lastText == null || lastText.isBlank()
+                    ? " (the model produced no further output after " + turns
+                            + " turns - check interactions.jsonl for this session around " + endIso + ")"
+                    : " (the model answered with plain text instead of calling a tool, so nothing was "
+                            + "actually written - its own last words: \""
+                            + (lastText.strip().length() <= 200 ? lastText.strip() : lastText.strip().substring(0, 200) + "...")
+                            + "\" - check interactions.jsonl for this session around " + endIso + ")";
         };
         return upstreamError == null || upstreamError.isBlank() ? base : base + " [upstream error: " + upstreamError + "]";
     }
@@ -1253,6 +1264,12 @@ public class RunBench {
         String reported = plainPlan
                 ? (Files.isRegularFile(ws.resolve(name.startsWith("p0") ? "docs/TASK_DEFINITION.md" : "docs/IMPLEMENTATION_PLAN.md")) ? "done" : null)
                 : progressStatus(ws, name);
+        // #680-followup4: carries the most recent session attempt's own final response text
+        // (main, then re-engage, then wrap-up below, whichever ran last) through to the fallback
+        // call site further down - `w` itself is scoped to the wrap-up's own branch and gone by
+        // then, so this is the only way fallbackTail() can tell "genuinely said nothing" apart
+        // from "said something, just never called a tool" once every recovery stage is done.
+        String lastAttemptText = rec.lastText();
         if (!plainPlan && reported == null) {
             final long spentSoFar = ((Number) JournalFacts.facts(journal.toString(), rec.start().toString(), nowIso(), null, null, null).getOrDefault("completion_tokens", 0L)).longValue();
             if (shouldReEngageOnEmptyStop(rec.finish(), rec.rc(), wall, (System.currentTimeMillis() - t0) / 1000, tokens, spentSoFar)) {
@@ -1264,6 +1281,7 @@ public class RunBench {
                             Packs.reEngageInstruction(name), reengageWall, remaining, rd.resolve("sessions"), sid, true, appendSystem, ws.toString(), reengageProxy.base(), reengageProxy.abort(),
                             firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, finalTurn, compactionStrategies, lessonRecorder));
                 } finally { reengageProxy.stop(); }
+                lastAttemptText = rec.lastText();
                 reported = progressStatus(ws, name);
             }
         }
@@ -1304,7 +1322,15 @@ public class RunBench {
             out.put("wrapup_rc", w.rc());
             out.put("wrapup_seconds", w.seconds());
             out.put("wrapup_scale", Math.round(scale * 100) / 100.0);
+            lastAttemptText = w.lastText();
             reported = progressStatus(ws, name);
+            // #680-followup4, found live (job 378f87a3, T2): the wrap-up's WHOLE job is "status
+            // writing only" (see its own instruction text), and it can still fall into the exact
+            // "said a well-formed status line as plain chat text instead of actually calling
+            // write/edit" trap #671's salvageRescueStatus() already exists to catch - that fix only
+            // ever wired it into rescueStep()'s own rescue path, never into this wrap-up, so this
+            // exact shape of recoverable content was silently thrown away here until now.
+            if (reported == null) { salvageRescueStatus(ws, name, lastAttemptText); reported = progressStatus(ws, name); }
         }
         if (!plainPlan && reported == null) {   // the harness owns the status trail
             // #262, found live: this used to always pass "" here, so "budget exhausted" showed even
@@ -1316,7 +1342,7 @@ public class RunBench {
             // #415: whatever the upstream itself said (an explicit OpenAI-shaped "error" - see
             // SseAssembler.errorText), if anything - most of the time this is null (T19's own case)
             final String upstreamError = JournalFacts.lastUpstreamError(journal.toString(), rec.start().toString());
-            final String tail = fallbackTail(rec.rc(), wall, rec.turns(), rec.end().toString(), upstreamError);
+            final String tail = fallbackTail(rec.rc(), wall, rec.turns(), rec.end().toString(), upstreamError, lastAttemptText);
             final Path pp = ws.resolve("docs/PROGRESS.md");
             Files.createDirectories(pp.getParent());
             final String existing = Files.isRegularFile(pp) ? Files.readString(pp) : "";

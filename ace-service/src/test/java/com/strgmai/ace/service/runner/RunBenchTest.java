@@ -875,10 +875,30 @@ class RunBenchTest {
      *  replaced. */
     @Test
     void fallbackTailNamesTheRealCauseInsteadOfBeingBlank() {
-        assertTrue(RunBench.fallbackTail(2, 20000, 46, "2026-10-06T05:43:31Z", null).contains("service log"));
-        assertEquals(" (task-wall budget of 20000s exceeded)", RunBench.fallbackTail(124, 20000, 46, "2026-10-06T05:43:31Z", null));
-        final var plain = RunBench.fallbackTail(0, 20000, 46, "2026-10-06T05:43:31Z", null);
+        assertTrue(RunBench.fallbackTail(2, 20000, 46, "2026-10-06T05:43:31Z", null, null).contains("service log"));
+        assertEquals(" (task-wall budget of 20000s exceeded)", RunBench.fallbackTail(124, 20000, 46, "2026-10-06T05:43:31Z", null, null));
+        final var plain = RunBench.fallbackTail(0, 20000, 46, "2026-10-06T05:43:31Z", null, null);
         assertTrue(plain.contains("46 turns") && plain.contains("interactions.jsonl"));
+    }
+
+    /** #680-followup4, found live (job 378f87a3, T2): the wrap-up's own nudge got the model to
+     *  answer with a well-formed status line as plain text (never a real tool call) - "the model
+     *  produced no further output" would be flatly false there. Quoting what it actually said is
+     *  both more honest and more actionable than implying genuine silence. */
+    @Test
+    void fallbackTailQuotesTheModelsOwnLastWordsInsteadOfClaimingSilenceWhenItSaidSomething() {
+        final var withText = RunBench.fallbackTail(0, 20000, 12, "2026-11-01T00:06:28Z", null,
+                "T2 | done | application starts with PostgreSQL; Flyway migration creates schema_version table");
+        assertTrue(withText.contains("plain text instead of calling a tool"), withText);
+        assertTrue(withText.contains("application starts with PostgreSQL"), withText);
+        assertFalse(withText.contains("produced no further output"), withText);
+    }
+
+    @Test
+    void fallbackTailCapsAnOverlongLastText() {
+        final var withText = RunBench.fallbackTail(0, 20000, 12, "2026-11-01T00:06:28Z", null, "x".repeat(500));
+        assertTrue(withText.contains("x".repeat(200) + "..."), withText);
+        assertFalse(withText.contains("x".repeat(201)), withText);
     }
 
     /** #415: found live on T19 - the real cause (oMLX's own memory-pressure abort) lived only in
@@ -889,11 +909,11 @@ class RunBenchTest {
     @Test
     void fallbackTailAppendsTheUpstreamErrorWhenOneWasFound() {
         final var withError = RunBench.fallbackTail(0, 20000, 46, "2026-10-06T05:43:31Z",
-                "process memory limit exceeded (usage 27.9 GB, abort threshold 28.0 GB)");
+                "process memory limit exceeded (usage 27.9 GB, abort threshold 28.0 GB)", null);
         assertTrue(withError.contains("46 turns") && withError.contains("process memory limit exceeded"),
                 "both the existing text and the new upstream detail must be present");
-        assertEquals(RunBench.fallbackTail(124, 20000, 46, "2026-10-06T05:43:31Z", null),
-                RunBench.fallbackTail(124, 20000, 46, "2026-10-06T05:43:31Z", ""),
+        assertEquals(RunBench.fallbackTail(124, 20000, 46, "2026-10-06T05:43:31Z", null, null),
+                RunBench.fallbackTail(124, 20000, 46, "2026-10-06T05:43:31Z", "", null),
                 "a blank upstreamError must behave exactly like null, not append an empty bracket");
     }
 
