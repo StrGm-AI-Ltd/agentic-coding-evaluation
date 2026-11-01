@@ -4,6 +4,7 @@ import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.runner.ContextProbe;
 import com.strgmai.ace.service.runner.RecordingProxyFactory;
 import com.strgmai.ace.service.runner.RunBench;
+import com.strgmai.ace.service.runner.RunRetention;
 import org.junit.jupiter.api.Test;
 
 import java.nio.channels.FileChannel;
@@ -30,7 +31,7 @@ class WorkerServiceTest {
         when(queue.list()).thenReturn(List.of());   // reconcile() runs in the constructor
         final BenchProperties props = mock(BenchProperties.class);
         return new WorkerService(queue, mock(RunBench.class), mock(ImporterService.class),
-                mock(ExperimentsService.class), preflight, pin, props, mock(ContextProbe.class), mock(RecordingProxyFactory.class));
+                mock(ExperimentsService.class), preflight, pin, props, mock(ContextProbe.class), mock(RecordingProxyFactory.class), mock(RunRetention.class));
     }
 
     private static final UUID JOB_1 = UUID.fromString("00000000-0000-0000-0000-000000000001");
@@ -65,7 +66,7 @@ class WorkerServiceTest {
         final BenchProperties props = mock(BenchProperties.class);
 
         new WorkerService(queue, mock(RunBench.class), mock(ImporterService.class), mock(ExperimentsService.class),
-                mock(Preflight.class), mock(TreatmentPin.class), props, mock(ContextProbe.class), mock(RecordingProxyFactory.class));
+                mock(Preflight.class), mock(TreatmentPin.class), props, mock(ContextProbe.class), mock(RecordingProxyFactory.class), mock(RunRetention.class));
 
         verify(queue).setStatus(JOB_1, "queued", null);
     }
@@ -77,7 +78,7 @@ class WorkerServiceTest {
         final BenchProperties props = mock(BenchProperties.class);
 
         new WorkerService(queue, mock(RunBench.class), mock(ImporterService.class), mock(ExperimentsService.class),
-                mock(Preflight.class), mock(TreatmentPin.class), props, mock(ContextProbe.class), mock(RecordingProxyFactory.class));
+                mock(Preflight.class), mock(TreatmentPin.class), props, mock(ContextProbe.class), mock(RecordingProxyFactory.class), mock(RunRetention.class));
 
         verify(queue, never()).setStatus(eq(JOB_1), anyString(), any());
     }
@@ -97,7 +98,7 @@ class WorkerServiceTest {
         final ExperimentsService experiments = mock(ExperimentsService.class);
         final BenchProperties props = mock(BenchProperties.class);
         final WorkerService ws = new WorkerService(queue, mock(RunBench.class), mock(ImporterService.class),
-                experiments, mock(Preflight.class), mock(TreatmentPin.class), props, mock(ContextProbe.class), mock(RecordingProxyFactory.class));
+                experiments, mock(Preflight.class), mock(TreatmentPin.class), props, mock(ContextProbe.class), mock(RecordingProxyFactory.class), mock(RunRetention.class));
 
         ws.poll();
 
@@ -179,7 +180,7 @@ class WorkerServiceTest {
         when(queue.get(JOB_1)).thenReturn(Map.of("cancel_requested", false));
 
         WorkerService ws = new WorkerService(queue, mock(RunBench.class), mock(ImporterService.class),
-                mock(ExperimentsService.class), preflight, pin, props, mock(ContextProbe.class), mock(RecordingProxyFactory.class));
+                mock(ExperimentsService.class), preflight, pin, props, mock(ContextProbe.class), mock(RecordingProxyFactory.class), mock(RunRetention.class));
         withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
 
         verify(queue, timeout(3000)).finish(eq(JOB_1), eq("succeeded"), eq(0), anyString());
@@ -216,7 +217,7 @@ class WorkerServiceTest {
         when(queue.get(JOB_1)).thenReturn(Map.of("cancel_requested", false, "pause_requested", false));
 
         final WorkerService ws = new WorkerService(queue, runBench, mock(ImporterService.class),
-                mock(ExperimentsService.class), preflight, pin, props, mock(ContextProbe.class), mock(RecordingProxyFactory.class));
+                mock(ExperimentsService.class), preflight, pin, props, mock(ContextProbe.class), mock(RecordingProxyFactory.class), mock(RunRetention.class));
         withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
 
         verify(queue, timeout(3000)).finish(eq(JOB_1), eq("failed"), eq(1), anyString());
@@ -267,7 +268,7 @@ class WorkerServiceTest {
         when(queue.get(JOB_1)).thenAnswer(inv -> Map.of("cancel_requested", cancelRequested.get()));
 
         final WorkerService ws = new WorkerService(queue, runBench, mock(ImporterService.class),
-                mock(ExperimentsService.class), preflight, pin, props, probe, mock(RecordingProxyFactory.class));
+                mock(ExperimentsService.class), preflight, pin, props, probe, mock(RecordingProxyFactory.class), mock(RunRetention.class));
 
         withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
         Thread.sleep(500);           // let the job actually start running first
@@ -315,7 +316,7 @@ class WorkerServiceTest {
         when(queue.get(JOB_1)).thenAnswer(inv -> Map.of("cancel_requested", false, "pause_requested", pauseRequested.get()));
 
         final WorkerService ws = new WorkerService(queue, runBench, mock(ImporterService.class),
-                mock(ExperimentsService.class), preflight, pin, props, probe, proxies);
+                mock(ExperimentsService.class), preflight, pin, props, probe, proxies, mock(RunRetention.class));
 
         withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
         Thread.sleep(500);
@@ -377,7 +378,7 @@ class WorkerServiceTest {
         when(queue.get(JOB_1)).thenAnswer(inv -> Map.of("cancel_requested", cancelRequested.get(), "pause_requested", false, "status", "running"));
 
         final WorkerService ws = new WorkerService(queue, runBench, mock(ImporterService.class),
-                mock(ExperimentsService.class), preflight, pin, props, probe, proxies);
+                mock(ExperimentsService.class), preflight, pin, props, probe, proxies, mock(RunRetention.class));
 
         withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
         Thread.sleep(500);
@@ -420,7 +421,7 @@ class WorkerServiceTest {
         when(queue.get(JOB_1)).thenReturn(Map.of("cancel_requested", false, "pause_requested", false));
 
         final WorkerService ws = new WorkerService(queue, runBench, mock(ImporterService.class),
-                mock(ExperimentsService.class), preflight, pin, props, mock(ContextProbe.class), mock(RecordingProxyFactory.class));
+                mock(ExperimentsService.class), preflight, pin, props, mock(ContextProbe.class), mock(RecordingProxyFactory.class), mock(RunRetention.class));
         withFakeHome(tmpHome.toString(), () -> { ws.poll(); return "done"; });
 
         Thread.sleep(500);   // let the job actually start running first
