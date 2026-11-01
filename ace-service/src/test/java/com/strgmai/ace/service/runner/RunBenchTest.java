@@ -1112,12 +1112,25 @@ class RunBenchTest {
      *  handoffStep() already follow above. */
     @Test
     void verificationDisagreedIsTrueOnlyWhenDoneVerifiedIsExplicitlyFalse() {
-        assertTrue(RunBench.verificationDisagreed(Map.of("done_verified", false)));
-        assertFalse(RunBench.verificationDisagreed(Map.of("done_verified", true)));
+        assertTrue(RunBench.verificationDisagreed(Map.of("reported", "done", "done_verified", false)));
+        assertFalse(RunBench.verificationDisagreed(Map.of("reported", "done", "done_verified", true)));
         assertFalse(RunBench.verificationDisagreed(Map.of()), "no done_verified key at all (e.g. a resumed task) must not look like a disagreement");
         final Map<String, Object> inconclusive = new java.util.HashMap<>();
+        inconclusive.put("reported", "done");
         inconclusive.put("done_verified", null);
         assertFalse(RunBench.verificationDisagreed(inconclusive), "could-not-run (null) is never held against the agent - R4 C-2");
+    }
+
+    /** #694, found live (job 378f87a3): T5 honestly reported "partial" on all six of its attempts
+     *  and never once claimed done. doneVerified() still comes back false for that case (its own
+     *  contract: false covers both "claimed done, harness red" AND "not claimed done at all"), but
+     *  that must not look like a disagreement here - this mechanism exists to catch a task LYING
+     *  about being done, not one honestly admitting it isn't. */
+    @Test
+    void verificationDisagreedIsFalseWhenTheTaskNeverClaimedDoneRegardlessOfDoneVerified() {
+        assertFalse(RunBench.verificationDisagreed(Map.of("reported", "partial", "done_verified", false)));
+        assertFalse(RunBench.verificationDisagreed(Map.of("reported", "blocked", "done_verified", false)));
+        assertFalse(RunBench.verificationDisagreed(Map.of("reported", "unfinished", "done_verified", false)));
     }
 
     @Test
