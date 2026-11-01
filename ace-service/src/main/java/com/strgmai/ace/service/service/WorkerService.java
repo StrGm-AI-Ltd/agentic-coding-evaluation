@@ -4,6 +4,7 @@ import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.runner.ContextProbe;
 import com.strgmai.ace.service.runner.RecordingProxyFactory;
 import com.strgmai.ace.service.runner.RunBench;
+import com.strgmai.ace.service.runner.RunRetention;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -41,11 +42,14 @@ public class WorkerService {
     private final TreatmentPin pin;
     private final ContextProbe probe;
     private final RecordingProxyFactory proxies;
+    private final RunRetention retention;
 
     public WorkerService(JobQueue queue, RunBench runBench, ImporterService importer, ExperimentsService experiments,
-                         Preflight preflight, TreatmentPin pin, BenchProperties props, ContextProbe probe, RecordingProxyFactory proxies) {
+                         Preflight preflight, TreatmentPin pin, BenchProperties props, ContextProbe probe, RecordingProxyFactory proxies,
+                         RunRetention retention) {
         this.queue = queue; this.runBench = runBench; this.importer = importer; this.experiments = experiments;
         this.preflight = preflight; this.pin = pin; this.props = props; this.probe = probe; this.proxies = proxies;
+        this.retention = retention;
         reconcile();
     }
 
@@ -187,10 +191,15 @@ public class WorkerService {
                 final Map<String, Object> cfg = JobCfgFactory.build(job.argv(), props, job.taskOverrides());
                 final String mode = flag(job.argv(), "--mode") != null ? flag(job.argv(), "--mode") : "monolithic";
                 final String planSource = flag(job.argv(), "--plan-source") != null ? flag(job.argv(), "--plan-source") : "agent";
-                runBench.runOnce(cfg, job.runId(), flag(job.argv(), "--task") == null ? "L7_full_platform" : flag(job.argv(), "--task"), mode, planSource);
+                final String task = flag(job.argv(), "--task") == null ? "L7_full_platform" : flag(job.argv(), "--task");
+                runBench.runOnce(cfg, job.runId(), task, mode, planSource);
                 queue.finish(job.id(), "succeeded", 0, resultLine(Path.of(props.resultsDir(), job.runId())));
                 importer.importRun(Path.of(props.resultsDir(), job.runId()), job.kind().equals("run") ? job.id() : null);
                 if (job.experimentId() != null) experiments.finalizeIfDone(job.experimentId());   // the missing call site
+                // #692: a genuinely terminal state now exists for this task - demote every earlier
+                // run of it down to source-only, keeping binaries only for the one that is now the
+                // most recent valid result.
+                retention.pruneStaleBinaries(task, job.runId());
             } catch (Throwable e) {
                 // #289/#273: Future.cancel(true) reliably makes the interrupted runOnce() throw,
                 // landing here even for a deliberate, operator-requested cancel/pause - previously
@@ -222,6 +231,11 @@ public class WorkerService {
                     log.error("job {} failed", job.id(), e);
                     queue.finish(job.id(), "failed", 1, e.toString());
                     if (job.experimentId() != null) experiments.finalizeIfDone(job.experimentId());   // a failed arm is still terminal
+                    // #692: a hard failure is also a genuinely terminal state - this run was never
+                    // going to be the task's own keeper, so it (and every other now-redundant run
+                    // of the same task) gets pruned down to source-only too.
+                    final String failedTask = flag(job.argv(), "--task") == null ? "L7_full_platform" : flag(job.argv(), "--task");
+                    retention.pruneStaleBinaries(failedTask, job.runId());
                 }
             } finally {
                 busy.set(false);
