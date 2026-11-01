@@ -1396,9 +1396,17 @@ public class RunBench {
     /** #680: true exactly when a task's own "done" claim and the harness's independent VerifyTask
      *  check disagree - never for the inconclusive (could-not-run) case, which VerifyTask's own
      *  contract says is never held against the agent (R4 C-2: a toolchain/environment failure, not
-     *  a lie). Extracted so the retry decision below reads as what it is, not an inline null-check. */
+     *  a lie), and never for a task that is honestly not claiming done in the first place.
+     *
+     *  #694, found live (job 378f87a3, T5): doneVerified()'s own contract is also false for "not
+     *  claimed done at all", which is the right answer there (it feeds scoring/display elsewhere),
+     *  but this method used to forward that unchanged - so T5, which honestly reported "partial"
+     *  with a true, concrete status on all six of its attempts and never once claimed done, still
+     *  burned through every retry and failed the whole run, the exact penalty this mechanism exists
+     *  to reserve for a task that LIES about being done. Extracted so the retry decision below reads
+     *  as what it is, not an inline null-check. */
     static boolean verificationDisagreed(final Map<String, Object> rec) {
-        return Boolean.FALSE.equals(rec.get("done_verified"));
+        return "done".equals(rec.get("reported")) && Boolean.FALSE.equals(rec.get("done_verified"));
     }
 
     /** #680: the correction fed back into the SAME task's own next automatic retry (see this
