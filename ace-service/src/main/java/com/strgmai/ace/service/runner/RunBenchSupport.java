@@ -46,7 +46,7 @@ public final class RunBenchSupport {
         } catch (IOException e) { throw new IllegalStateException("cannot lock " + lockPath + ": " + e, e); }
     }
 
-    public static Map<String, String> scrubbedEnv(final String home, final String runId, final String javaHome) {
+    public static Map<String, String> scrubbedEnv(final String home, final String runId, final String javaHome, final String dockerHost) {
         final Map<String, String> env = new LinkedHashMap<>();
         for (String k : List.of("PATH", "LANG", "LC_ALL", "TERM", "TMPDIR", "SHELL")) {   // PATH/LANG/TMPDIR only - no operator tokens
             final String v = System.getenv(k);
@@ -59,6 +59,11 @@ public final class RunBenchSupport {
         env.put("TERM", "dumb");
         env.put("GIT_TERMINAL_PROMPT", "0");
         env.put("ACE_RUN_ID", runId);
+        // #696, found live: without this, the agent's own `docker` CLI calls go straight through
+        // ace-service's own mounted host socket - no isolation at all from ace-service's own sibling
+        // containers or other jobs. `docker`/`docker compose` already honor $DOCKER_HOST on their
+        // own, no shim needed - this redirects every agent docker call into its own JobDockerSidecar.
+        if (dockerHost != null && !dockerHost.isBlank()) env.put("DOCKER_HOST", dockerHost);
         if (javaHome != null && !javaHome.isBlank()) {   // a PINNED JAVA_HOME first on PATH (R4 C-2)
             env.put("JAVA_HOME", javaHome);
             env.put("PATH", Paths.get(javaHome).resolve("bin") + ":" + env.getOrDefault("PATH", ""));

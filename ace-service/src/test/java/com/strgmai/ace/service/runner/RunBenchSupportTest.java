@@ -363,4 +363,21 @@ class RunBenchSupportTest {
         final Path ws = track(Files.createTempDirectory("ws-sweep-noop"));
         assertDoesNotThrow(() -> RunBenchSupport.sweepAgentCompose(ws));
     }
+
+    /** #696: DOCKER_HOST is how the agent's own docker/docker-compose CLI calls get redirected into
+     *  its own per-job sidecar instead of ace-service's own mounted host socket - a null/blank value
+     *  (no sidecar could be created) must leave it unset rather than pointing at an empty string,
+     *  which the docker CLI would treat as a real, broken target instead of falling back to its
+     *  own default. */
+    @Test
+    void scrubbedEnv_setsDockerHostWhenGiven() {
+        final var env = RunBenchSupport.scrubbedEnv("/tmp/home", "run-1", null, "tcp://172.17.0.5:2375");
+        assertEquals("tcp://172.17.0.5:2375", env.get("DOCKER_HOST"));
+    }
+
+    @Test
+    void scrubbedEnv_omitsDockerHostWhenNullOrBlank() {
+        assertNull(RunBenchSupport.scrubbedEnv("/tmp/home", "run-1", null, null).get("DOCKER_HOST"));
+        assertNull(RunBenchSupport.scrubbedEnv("/tmp/home", "run-1", null, "").get("DOCKER_HOST"));
+    }
 }

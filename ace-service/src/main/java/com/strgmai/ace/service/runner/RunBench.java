@@ -61,11 +61,12 @@ public class RunBench {
     private final PauseAfterTask pauseAfterTask;
     private final com.strgmai.ace.service.agent.ProviderStore providerStore;
     private final com.strgmai.ace.service.backend.LocalModelBackend backend;
+    private final JobDockerSidecar dockerSidecar;
     private final ObjectMapper json = new ObjectMapper();
 
-    public RunBench(BenchProperties props, ReferenceAgent agent, PiAgent piAgent, RecordingProxyFactory proxies, RunOracle oracle, Reviews reviews, ContextProbe probe, Judge judge, Intervene intervene, PauseAfterTask pauseAfterTask, com.strgmai.ace.service.agent.ProviderStore providerStore, com.strgmai.ace.service.backend.LocalModelBackend backend) {
+    public RunBench(BenchProperties props, ReferenceAgent agent, PiAgent piAgent, RecordingProxyFactory proxies, RunOracle oracle, Reviews reviews, ContextProbe probe, Judge judge, Intervene intervene, PauseAfterTask pauseAfterTask, com.strgmai.ace.service.agent.ProviderStore providerStore, com.strgmai.ace.service.backend.LocalModelBackend backend, JobDockerSidecar dockerSidecar) {
         this.props = props; this.agent = agent; this.piAgent = piAgent; this.proxies = proxies; this.oracle = oracle; this.reviews = reviews; this.probe = probe; this.judge = judge; this.intervene = intervene; this.pauseAfterTask = pauseAfterTask;
-        this.providerStore = providerStore; this.backend = backend;
+        this.providerStore = providerStore; this.backend = backend; this.dockerSidecar = dockerSidecar;
     }
 
     //todo phases should not be hardcoded
@@ -722,7 +723,14 @@ public class RunBench {
             Path journal = rd.resolve("interactions.jsonl");
 
             DockerService.dockerTools(home.toString());   // CLI plugins (R7), before the HOME is copied for parallel tasks
-            cfg.put("_agent_env", RunBenchSupport.scrubbedEnv(home.toString(), runId, (String) cfg.get("java_home")));   // isolation reaches the agent
+            // #696: each run gets its OWN docker-in-docker sidecar - the agent's own `docker ps -aq`/
+            // `docker rm -f` can then only ever reach its own job's containers, never ace-service's
+            // own sibling containers or another job's (confirmed live: an agent ran exactly that
+            // second command and took down the whole production stack). DOCKER_HOST below is the
+            // only wiring this needs - the agent's own `docker`/`docker compose` CLI calls honor it
+            // automatically.
+            cfg.put("_docker_host", dockerSidecar.ensure(runId, dockerSidecar.resolveNetwork()));
+            cfg.put("_agent_env", RunBenchSupport.scrubbedEnv(home.toString(), runId, (String) cfg.get("java_home"), (String) cfg.get("_docker_host")));   // isolation reaches the agent
 
             if ("orchestrated".equals(mode)) orchestratedPhase(cfg, runId, rd, ws, home, journal, manifest, planSource, promptText, taskWall, taskTokens, task);
             else monolithicPhases(cfg, runId, rd, ws, journal, manifest, promptText, task);
@@ -2499,7 +2507,7 @@ public class RunBench {
                         final int effTaskWall = effectiveInt(taskOverride, "task_wall_sec", taskWall);
                         final long effTaskTokens = effectiveLong(taskOverride, "task_tokens", taskTokens);
                         final var proxy = proxies.start(taskJournals.get(t.id), effTaskTokens, t.id, effectiveSamplerOverrides(cfg, taskOverride));
-                        Map<String, String> envT = RunBenchSupport.scrubbedEnv(Path.of(home + "-home-" + t.id).toString(), runId + "/" + t.id, (String) cfg.get("java_home"));   // the task's own HOME copy (R6)
+                        Map<String, String> envT = RunBenchSupport.scrubbedEnv(Path.of(home + "-home-" + t.id).toString(), runId + "/" + t.id, (String) cfg.get("java_home"), (String) cfg.get("_docker_host"));   // the task's own HOME copy (R6)
                         final Path wsT = Path.of(ws + "-" + t.id);
                         final var judgeCheckpoint = buildJudgeCheckpoint(cfg, runId, wsT, rd, t.id, t.goal, effTaskWall, effTaskTokens, taskOverride);
                         final var lessonRecorder = buildLessonRecorder(cfg, taskOverride, rd, t.id);

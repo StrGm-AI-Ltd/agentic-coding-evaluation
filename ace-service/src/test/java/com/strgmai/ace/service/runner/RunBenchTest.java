@@ -62,7 +62,7 @@ class RunBenchTest {
     private static RunBench runBench(BenchProperties props, com.strgmai.ace.service.backend.LocalModelBackend backend) {
         return new RunBench(props, mock(ReferenceAgent.class), mock(PiAgent.class), mock(RecordingProxyFactory.class),
                 mock(RunOracle.class), mock(Reviews.class), mock(ContextProbe.class), mock(Judge.class), new Intervene(), mock(PauseAfterTask.class),
-                mock(com.strgmai.ace.service.agent.ProviderStore.class), backend);
+                mock(com.strgmai.ace.service.agent.ProviderStore.class), backend, mock(JobDockerSidecar.class));
     }
 
     @Test
