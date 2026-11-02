@@ -1681,8 +1681,12 @@ public class RunBench {
                         // inherited that same broken wrapper for the rest of the run, with nothing
                         // anywhere reacting. Up to MAX_VERIFICATION_RETRIES automatic retries, each
                         // with the exact verification failure fed back as a correction, before
-                        // failing the whole run outright - the same bar a human operator supervising
-                        // this run manually already applied by hand this session.
+                        // this was changed (found live, job a4a532a5, T23) to stop failing the whole
+                        // run outright - the final oracle scoring already rebuilds and re-tests
+                        // everything from a clean checkout independently of this harness-side
+                        // heuristic (see ComposeChecks/BuildChecks), so a task that still disagrees
+                        // after every retry is left to score however the real oracle finds it,
+                        // rather than losing every later task's own work to one stuck task.
                         for (int retry = 0; verificationDisagreed(rec) && retry < MAX_VERIFICATION_RETRIES; retry++) {
                             recordLesson(cfg, rd, t.id + " (verification disagreement)", t.id + " claimed done, but the "
                                     + "harness's own independent verification disagreed: " + VerifyTask.verifyText((Map<String, Object>) rec.get("verification"))
@@ -1691,7 +1695,7 @@ public class RunBench {
                                     prevVerified, mergeConflicts, taskOverride, effTaskWall, effTaskTokens, verificationCorrectionInstruction(rec));
                             logTaskAttempt(rd, ws, t.id, taskOverride, effTaskWall, effTaskTokens, effMaxTurns, rec);
                         }
-                        if (verificationDisagreed(rec)) throw new IllegalStateException(verificationFailureMessage(t.id, rec));
+                        if (verificationDisagreed(rec)) log.warn("run {}: {}", runId, verificationFailureMessage(t.id, rec));
                         final String after = RunBenchSupport.snapshot(ws, "phase/" + t.id);
                         ((Map<String, String>) manifest.get("snapshots")).put(t.id, after);
                         snapshots.put(t.id, new String[]{String.valueOf(manifestSnap(manifest, "p1", planSha)), after});
