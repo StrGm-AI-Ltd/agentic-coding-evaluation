@@ -250,6 +250,22 @@ class ReferenceAgentTest {
         assertEquals("error: tool_call_id is required", out.output());
     }
 
+    /** #700, found live repeatedly: a model under heavy compaction sometimes echoes
+     *  AgentSession's own DROPPED_ARGS placeholder ({"_dropped":true}, left behind in history
+     *  once an earlier call's own result was masked) as if it were a template for a brand new
+     *  call. A generic "empty command" error gave it nothing to act on; this must be caught
+     *  BEFORE dispatch, for every tool, not just bash. */
+    @Test
+    void executeToolNamesTheDroppedPlaceholderInsteadOfADisconnectedGenericError() throws java.io.IOException {
+        final var dir = java.nio.file.Files.createTempDirectory("session");
+        final var session = new AgentSession(dir, "s1c", false);
+        final var out = ReferenceAgent.executeTool("bash", Map.of("_dropped", true), "/task/ws", Map.of(), "T1", session,
+                new java.util.HashMap<>(), CompactionStrategies.DEFAULT);
+        assertTrue(out.isError());
+        assertTrue(out.output().contains("placeholder"), out.output());
+        assertTrue(out.output().contains("dropped to save context"), out.output());
+    }
+
     /** #423/#424: disabled, recall_tool_output refuses even a direct call, not just a hidden
      *  toolSpecs() entry - the toggle is a real behavior change, not merely hiding the affordance. */
     @Test
