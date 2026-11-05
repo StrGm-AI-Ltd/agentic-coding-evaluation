@@ -713,6 +713,20 @@ public class ReferenceAgent {
                                            final String sessionName, final AgentSession session, final Map<String, Integer> recallCounts,
                                            final List<String> enabledStrategies, final LessonRecorder lessonRecorder) {
         try {
+            // #700, found live repeatedly (job 9313fd3f and others): a model under heavy
+            // compaction sometimes echoes AgentSession's own DROPPED_ARGS placeholder
+            // ({"_dropped":true}, left behind in history once an EARLIER call's own result was
+            // masked to save context - see AgentSession.shrinkOwningCallArguments(), the
+            // tool_result_mask strategy) as if it were a template for a BRAND NEW call, instead of
+            // writing real arguments. A bare "error: empty command"/"no such file" gives it
+            // nothing to act on and wastes a turn repeating the same mistake (seen 15 times in one
+            // 120-turn session, contributing to that session running out of budget before it ever
+            // wrote its actual verdict) - naming the exact, recognizable cause lets it recover
+            // immediately instead.
+            if (args != null && args.containsKey("_dropped"))
+                return new AgentTools.Outcome("error: these arguments are a placeholder the harness left behind after an "
+                        + "EARLIER " + name + " call's own result was dropped to save context - it was never meant to be "
+                        + "reused. Write a complete, fresh set of arguments for this call instead.", AgentTools.FailureCategory.MALFORMED_ARGS);
             return switch (name) {
                 case "read" -> AgentTools.read(cwd, args);
                 case "write" -> AgentTools.write(cwd, args);
