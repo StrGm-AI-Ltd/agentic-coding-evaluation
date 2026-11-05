@@ -314,6 +314,21 @@ class ExperimentsServiceTest {
         assertTrue(specs.stream().allMatch(s -> "/opt/jdk-21".equals(s.spec().javaHome())));
     }
 
+    /** found live: plan_source was hardcoded "reference" with no override - L2_one_endpoint has no
+     *  vendored REFERENCE_PLAN.md (only L3p_point_in_time does), so "reference" silently degraded
+     *  to the raw task prompt standing in for the plan (one task, no breakdown), instead of each
+     *  model authoring its own fine-grained plan the way an ordinary "agent"-sourced job does. An
+     *  operator must be able to ask for the real thing. */
+    @Test
+    void planSourceDefaultsToReferenceButCanBeOverriddenToAgent() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final var defaulted = svc.plan("model_ab", Map.of("model_a", "a", "model_b", "b"), 1);
+        assertTrue(defaulted.stream().allMatch(s -> "reference".equals(s.spec().planSource())));
+        final var overridden = svc.plan("model_ab",
+                Map.<String, Object>of("model_a", "a", "model_b", "b", "plan_source", "agent"), 1);
+        assertTrue(overridden.stream().allMatch(s -> "agent".equals(s.spec().planSource())));
+    }
+
     /** lesson_recording_enabled defaults to true when omitted, same as RunSpec.from()'s own default
      *  for a one-off job - an experiment that never mentions it must not silently disable the
      *  cross-task "lessons learned" mechanism every ad-hoc job gets for free. */
