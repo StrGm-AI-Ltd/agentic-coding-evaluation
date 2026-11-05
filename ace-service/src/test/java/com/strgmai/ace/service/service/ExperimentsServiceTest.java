@@ -266,6 +266,65 @@ class ExperimentsServiceTest {
         assertTrue(specs.stream().allMatch(s -> Integer.valueOf(600).equals(s.spec().wrapupWall())));
     }
 
+    /** #700-followup, found live: comparing two models via a real model_ab Experiment silently
+     *  dropped six fields the plain job-creation API (RunSpec.from()) already reads -
+     *  task_granularity especially reshapes the whole plan's own task breakdown, not a cosmetic
+     *  knob, so an operator submitting "the same params" as a one-off job got a materially
+     *  different run out of the Experiment template instead. */
+    @Test
+    void sixPreviouslyDroppedParamsFlowThroughToEveryArmsRunSpec() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab",
+                Map.<String, Object>of("model_a", "a", "model_b", "b",
+                        "task_tokens", 100000, "parallel_plan", "on", "system_rules", true,
+                        "handoff_notes", true, "task_granularity", "fine", "lesson_recording_enabled", false), 1);
+        assertFalse(specs.isEmpty());
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(100000).equals(s.spec().taskTokens())));
+        assertTrue(specs.stream().allMatch(s -> "on".equals(s.spec().parallelPlan())));
+        assertTrue(specs.stream().allMatch(s -> s.spec().systemRules()));
+        assertTrue(specs.stream().allMatch(s -> s.spec().handoffNotes()));
+        assertTrue(specs.stream().allMatch(s -> "fine".equals(s.spec().taskGranularity())));
+        assertTrue(specs.stream().allMatch(s -> !s.spec().lessonRecordingEnabled()));
+    }
+
+    /** #700-followup: the remaining nine New-Job-form fields model_ab was missing, beyond the six
+     *  above - a full audit against every RunSpec field (excluding implWall/implTokens, meaningless
+     *  in model_ab's always-"orchestrated" mode, and run_id, deliberately NOT overridable since the
+     *  experiment's own deterministic per-arm id is load-bearing for comparing arms at all). */
+    @Test
+    void theRemainingNineNewJobFieldsFlowThroughToEveryArmsRunSpec() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab",
+                Map.<String, Object>ofEntries(
+                        Map.entry("model_a", "a"), Map.entry("model_b", "b"),
+                        Map.entry("harness", "pi"), Map.entry("phases", "p1_plan,p2_implementation"),
+                        Map.entry("plan_wall", 1800), Map.entry("plan_tokens", 5000),
+                        Map.entry("wall_budget", 100000), Map.entry("parallel", "2"),
+                        Map.entry("context_probe_fresh", true), Map.entry("compaction_strategies", "tool_result_mask"),
+                        Map.entry("java_home", "/opt/jdk-21")), 1);
+        assertFalse(specs.isEmpty());
+        assertTrue(specs.stream().allMatch(s -> "pi".equals(s.spec().harness())));
+        assertTrue(specs.stream().allMatch(s -> "p1_plan,p2_implementation".equals(s.spec().phases())));
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(1800).equals(s.spec().planWall())));
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(5000).equals(s.spec().planTokens())));
+        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(100000).equals(s.spec().wallBudget())));
+        assertTrue(specs.stream().allMatch(s -> "2".equals(s.spec().parallel())));
+        assertTrue(specs.stream().allMatch(s -> s.spec().contextProbeFresh()));
+        assertTrue(specs.stream().allMatch(s -> "tool_result_mask".equals(s.spec().compactionStrategies())));
+        assertTrue(specs.stream().allMatch(s -> "/opt/jdk-21".equals(s.spec().javaHome())));
+    }
+
+    /** lesson_recording_enabled defaults to true when omitted, same as RunSpec.from()'s own default
+     *  for a one-off job - an experiment that never mentions it must not silently disable the
+     *  cross-task "lessons learned" mechanism every ad-hoc job gets for free. */
+    @Test
+    void lessonRecordingDefaultsToEnabledWhenNotGiven() {
+        final ExperimentsService svc = serviceWithUnreachableModelServer();
+        final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab", Map.of("model_a", "a", "model_b", "b"), 1);
+        assertFalse(specs.isEmpty());
+        assertTrue(specs.stream().allMatch(s -> s.spec().lessonRecordingEnabled()));
+    }
+
     /** #90: self-review's token budget was a Reviews.java-local hardcoded 12000 with no
      *  --review-tokens flag at all; experiments must be able to pin it per-arm too. */
     @Test

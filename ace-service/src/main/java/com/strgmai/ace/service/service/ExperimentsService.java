@@ -134,13 +134,43 @@ public class ExperimentsService {
             case "model_ab" -> {
                 final String a = str(params.get("model_a")), b = str(params.get("model_b"));
                 final int wall = num(params.getOrDefault("task_wall", 0));   // 0 = unlimited
+                // #700-followup, found live: this template used to silently drop every one of these
+                // fifteen fields the plain job-creation API (RunSpec.from()/the New Job form) already
+                // reads - an operator comparing two models here got a materially different run than
+                // the SAME params submitted as a one-off job would have produced (task_granularity
+                // especially: it reshapes the whole plan's own task breakdown, not a minor knob).
+                // Same reader convention RunSpec.from() itself uses for each; implWall/implTokens are
+                // deliberately NOT read here - they only apply to monolithic mode (see harness_effect's
+                // own identical "arm.contains(mono)" null-out above), and model_ab's mode is always
+                // "orchestrated". runId is deliberately NOT overridable either - the experiment's own
+                // deterministic per-arm/per-repeat id is load-bearing for comparing arms at all.
+                final Integer taskTokens = params.get("task_tokens") == null ? null : num(params.get("task_tokens"));
+                final String parallelPlan = str(params.get("parallel_plan"));
+                final boolean systemRules = Boolean.TRUE.equals(params.get("system_rules"));
+                final boolean handoffNotes = Boolean.TRUE.equals(params.get("handoff_notes"));
+                final String taskGranularity = str(params.get("task_granularity"));
+                final boolean lessonRecordingEnabled = !Boolean.FALSE.equals(params.get("lesson_recording_enabled"));
+                final String harness = str(params.get("harness"));
+                final String phases = str(params.get("phases"));
+                final Integer planWall = params.get("plan_wall") == null ? null : num(params.get("plan_wall"));
+                final Integer planTokens = params.get("plan_tokens") == null ? null : num(params.get("plan_tokens"));
+                final Integer wallBudget = params.get("wall_budget") == null ? null : num(params.get("wall_budget"));
+                final String parallel = str(params.get("parallel"));
+                final boolean contextProbeFresh = Boolean.TRUE.equals(params.get("context_probe_fresh"));
+                final String compactionStrategies = str(params.get("compaction_strategies"));
+                final String javaHome = str(params.get("java_home"));
                 // per arm: A and B can be different-sized models, so the window fallback must resolve per model
                 final Integer windowA = contextWindow(params, a), windowB = contextWindow(params, b);
                 final var cp = resolveCommon(params);
                 for (int i = 1; i <= k; i++) {
                     // the arm suffix keeps A and B distinct; model-ab.sh always reviews both sides (self + trajectory)
                     specs.add(new ArmSpec("A", i, RunSpec.builder()
-                            .task(task).model(a).mode("orchestrated").planSource("reference").taskWall(wall)
+                            .task(task).model(a).mode("orchestrated").planSource("reference").taskWall(wall).taskTokens(taskTokens)
+                            .parallelPlan(parallelPlan).systemRules(systemRules).handoffNotes(handoffNotes)
+                            .taskGranularity(taskGranularity).lessonRecordingEnabled(lessonRecordingEnabled)
+                            .harness(harness).phases(phases).planWall(planWall).planTokens(planTokens)
+                            .wallBudget(wallBudget).parallel(parallel).contextProbeFresh(contextProbeFresh)
+                            .compactionStrategies(compactionStrategies).javaHome(javaHome)
                             .selfReview(true).trajectoryReview(true).reviewerModel(cp.reviewerModel())
                             .noContextProbe(cp.noProbe())
                             .contextWindow(windowA).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec()).reviewTokens(cp.reviewTokens())
@@ -153,7 +183,12 @@ public class ExperimentsService {
                             .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight()).judgeEnabled(cp.judgeEnabled()).judgeEveryNTurns(cp.judgeEveryNTurns()).judgeModel(cp.judgeModel()).judgeWallSec(cp.judgeWallSec()).judgeTokens(cp.judgeTokens()).budgetRescueEnabled(cp.budgetRescueEnabled()).rescueWallSec(cp.rescueWallSec()).rescueTokens(cp.rescueTokens()).rescueKeepRecentTurns(cp.rescueKeepRecentTurns())
                             .build()));
                     specs.add(new ArmSpec("B", i, RunSpec.builder()
-                            .task(task).model(b).mode("orchestrated").planSource("reference").taskWall(wall)
+                            .task(task).model(b).mode("orchestrated").planSource("reference").taskWall(wall).taskTokens(taskTokens)
+                            .parallelPlan(parallelPlan).systemRules(systemRules).handoffNotes(handoffNotes)
+                            .taskGranularity(taskGranularity).lessonRecordingEnabled(lessonRecordingEnabled)
+                            .harness(harness).phases(phases).planWall(planWall).planTokens(planTokens)
+                            .wallBudget(wallBudget).parallel(parallel).contextProbeFresh(contextProbeFresh)
+                            .compactionStrategies(compactionStrategies).javaHome(javaHome)
                             .selfReview(true).trajectoryReview(true).reviewerModel(cp.reviewerModel())
                             .noContextProbe(cp.noProbe())
                             .contextWindow(windowB).firstTokenTimeout(cp.firstTokenTimeout()).compactionTrigger(cp.compactionTrigger()).reviewWallSec(cp.reviewWallSec()).reviewTokens(cp.reviewTokens())
