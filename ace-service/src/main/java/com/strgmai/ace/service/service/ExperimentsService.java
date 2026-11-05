@@ -159,13 +159,24 @@ public class ExperimentsService {
                 final boolean contextProbeFresh = Boolean.TRUE.equals(params.get("context_probe_fresh"));
                 final String compactionStrategies = str(params.get("compaction_strategies"));
                 final String javaHome = str(params.get("java_home"));
+                // found live: plan_source itself was hardcoded "reference" with no override at all -
+                // L2_one_endpoint has no vendored tasks/L2_one_endpoint/REFERENCE_PLAN.md (today only
+                // L3p_point_in_time does - see RunBench's own "reference".equals(planSource) branch),
+                // so "reference" silently degraded to the raw task prompt standing in for the plan -
+                // ONE task, no breakdown at all - instead of each model authoring its own fine-grained
+                // plan the way an ordinary "agent"-sourced job already does. An operator asking for
+                // "the same params" as an existing agent-planned job got a structurally different,
+                // much shallower comparison with no way to ask for the real thing. Defaults to
+                // "reference" - today's existing, unchanged behavior - unless explicitly overridden.
+                final String planSourceOverride = str(params.get("plan_source"));
+                final String planSource = planSourceOverride != null ? planSourceOverride : "reference";
                 // per arm: A and B can be different-sized models, so the window fallback must resolve per model
                 final Integer windowA = contextWindow(params, a), windowB = contextWindow(params, b);
                 final var cp = resolveCommon(params);
                 for (int i = 1; i <= k; i++) {
                     // the arm suffix keeps A and B distinct; model-ab.sh always reviews both sides (self + trajectory)
                     specs.add(new ArmSpec("A", i, RunSpec.builder()
-                            .task(task).model(a).mode("orchestrated").planSource("reference").taskWall(wall).taskTokens(taskTokens)
+                            .task(task).model(a).mode("orchestrated").planSource(planSource).taskWall(wall).taskTokens(taskTokens)
                             .parallelPlan(parallelPlan).systemRules(systemRules).handoffNotes(handoffNotes)
                             .taskGranularity(taskGranularity).lessonRecordingEnabled(lessonRecordingEnabled)
                             .harness(harness).phases(phases).planWall(planWall).planTokens(planTokens)
@@ -183,7 +194,7 @@ public class ExperimentsService {
                             .parallelPlanTokens(cp.parallelPlanTokens()).handoffTokens(cp.handoffTokens()).wrapupTokens(cp.wrapupTokens()).parallelWeight(cp.parallelWeight()).efficiencyWeight(cp.efficiencyWeight()).judgeEnabled(cp.judgeEnabled()).judgeEveryNTurns(cp.judgeEveryNTurns()).judgeModel(cp.judgeModel()).judgeWallSec(cp.judgeWallSec()).judgeTokens(cp.judgeTokens()).budgetRescueEnabled(cp.budgetRescueEnabled()).rescueWallSec(cp.rescueWallSec()).rescueTokens(cp.rescueTokens()).rescueKeepRecentTurns(cp.rescueKeepRecentTurns())
                             .build()));
                     specs.add(new ArmSpec("B", i, RunSpec.builder()
-                            .task(task).model(b).mode("orchestrated").planSource("reference").taskWall(wall).taskTokens(taskTokens)
+                            .task(task).model(b).mode("orchestrated").planSource(planSource).taskWall(wall).taskTokens(taskTokens)
                             .parallelPlan(parallelPlan).systemRules(systemRules).handoffNotes(handoffNotes)
                             .taskGranularity(taskGranularity).lessonRecordingEnabled(lessonRecordingEnabled)
                             .harness(harness).phases(phases).planWall(planWall).planTokens(planTokens)
