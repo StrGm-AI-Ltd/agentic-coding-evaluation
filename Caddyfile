@@ -9,3 +9,10 @@ ace.strgm-ai.com {
 omlx.strgm-ai.com {
 	reverse_proxy host.docker.internal:9191
 }
+
+# Same pattern as omlx.strgm-ai.com above, but the tunnel originates from a separate LAN machine
+# (a BC-250 running llama.cpp, not the operator's Mac) via its own dedicated SSH keypair and
+# systemd --user services, landing on THIS HOST's own port 9192.
+bc250.strgm-ai.com {
+	reverse_proxy host.docker.internal:9192
+}
