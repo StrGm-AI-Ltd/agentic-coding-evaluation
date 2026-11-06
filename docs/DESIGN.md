@@ -179,7 +179,7 @@ code:
   above `maxErrorRate`, zero LLM requests recorded, a request referencing another run's workspace, an
   unparseable plan, or (in orchestrated mode) the integration task never running. A budget exhaustion
   is explicitly treated as a **result**, not an invalidation — this is the same "censor both arms the
-  same way" rule from the original's design rules (§18).
+  same way" rule from the original's design rules (§19).
 - **Provenance and snapshots**: `RunBenchSupport.java` provides the scrubbed environment (`ACE_RUN_ID`
   set into the agent's process env — see the note below), git snapshotting after each phase/task, and
   the single-run lock. One deliberately-unrenamed detail: the run lock lives at
@@ -408,7 +408,14 @@ one live run:
 Carried over from the original design, and still true of this port as far as could be verified:
 
 - The agent is not sandboxed: it runs as the operator's OS user with network access on the host.
-- Compose runs on the host Docker daemon (no rootless/DinD).
+- The agent's own docker commands run against a per-job Docker-in-Docker sidecar (`JobDockerSidecar`),
+  isolated from `ace-service`'s own containers and every other job's — not the host daemon directly.
+  The harness's own oracle verification (`ComposeChecks`/`BuildChecks`, §4/§5) is unaffected: it always
+  rebuilds from a fresh, source-only copy against the real host daemon, independently of whatever the
+  agent's session left running. The sidecar still needs `--privileged` (no rootless/sysbox substrate
+  here), and the raw host socket stays mounted into `ace-service`'s own container to create/destroy
+  sidecars — a command that deliberately targets it by its literal path, rather than the ordinary
+  `docker`/`docker compose` CLI (which honors `$DOCKER_HOST`), could still reach it.
 - The gaming-resistance fixture suite (positive control + adversarial cheats + selftest) described in
   the original design **is present** in this port (§6) — but with no CI configured in this
   repository, nothing re-runs it automatically; it only runs when a developer runs the test suite
@@ -435,7 +442,44 @@ verified 1:1 Gradle-task equivalent in this port as of this document — `RunSpe
 service's job queue (`service/JobQueue.java`, `service/WorkerService.java`) and the Vaadin UI's job
 pages (§14), but the exact command surface was not enumerated here.
 
-## 18. Design rules distilled
+## 18. Reaching a local oMLX server from the production deployment
+
+The production deployment (`docker-compose.yml`, `Caddyfile`, both at the repo root) reaches the
+operator's own local oMLX server — the "local-model tinkerer's own machine" case §1 was built
+around — as a public HTTPS endpoint, not a private network path. The chain, confirmed live against
+the running deployment:
+
+1. oMLX itself serves on the operator's own Mac at `127.0.0.1:9191` (ACE's own documented default —
+   §17's `ACE_ENDPOINT`).
+2. An SSH reverse tunnel carries that port from the Mac to the production host, landing on the
+   **host's** own loopback (`127.0.0.1:9191` there too), never inside any container. A macOS
+   LaunchAgent on the operator's own Mac keeps the tunnel alive — the `Caddyfile`'s own comment
+   points at it directly ("see the LaunchAgent that keeps it alive from the operator's Mac"), but it
+   is not checked into this repository; it lives under `~/Library/LaunchAgents/` on the operator's
+   machine, outside version control.
+3. `Caddyfile` proxies the public subdomain `omlx.strgm-ai.com` to `host.docker.internal:9191` —
+   `host.docker.internal`, not `localhost`, because Caddy's own container sits in its own network
+   namespace and the tunnel lands on the *host's* loopback, not the container's. `docker-compose.yml`'s
+   `caddy` service adds `extra_hosts: ["host.docker.internal:host-gateway"]` specifically because
+   plain Linux Docker — unlike Docker Desktop — does not define that hostname on its own.
+4. Caddy terminates TLS for `omlx.strgm-ai.com` the same way it does for `ace.strgm-ai.com` itself
+   (automatic HTTPS via the ACME HTTP-01 challenge) — the subdomain's DNS must already point at the
+   production host before the first certificate request can succeed.
+5. `ace-service` reaches it as an ordinary registered Provider (the `providers` table, `base_url:
+   https://omlx.strgm-ai.com/v1`), not a special-cased local path — the same OpenAI-wire-compatible
+   routing (`ProviderStore.route()`) every other provider (Nebius, etc.) uses. A request leaves the
+   production host over the public internet, through Caddy, back down the SSH tunnel, and lands on
+   the operator's own Mac.
+6. `OMLX_API_KEY`, checked as a bearer token on that endpoint, is what keeps `omlx.strgm-ai.com` from
+   being open to the public internet just because the domain resolves and routes — confirmed live: an
+   unauthenticated request to `/v1/models` on it returns `401`.
+
+Net effect: a process running on a laptop is reachable from the production harness exactly like any
+cloud provider would be, with the SSH tunnel and the LaunchAgent as the only thing bridging the two —
+nothing in `ace-service` itself knows or cares that the "Local oMLX" provider is not actually local to
+the machine serving the request.
+
+## 19. Design rules distilled
 
 These are the original project's design rules. They are methodology, not code, and remain the
 standard this port is held to regardless of language:
