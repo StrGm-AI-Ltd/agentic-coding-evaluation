@@ -560,6 +560,14 @@ public final class AgentSession {
         if (changed) msgs.set(aiIdx, AiMessage.from(ai.text(), shrunk));
     }
 
+    /** Total estimated size of a message list - lets a caller decide WHETHER a preload compaction
+     *  is actually warranted before running one, rather than running it unconditionally. */
+    static long estimateTokens(final List<ChatMessage> msgs) {
+        long total = 0;
+        for (final ChatMessage m : msgs) total += estimateTokens(m);
+        return total;
+    }
+
     private static long estimateTokens(final ChatMessage m) {
         final StringBuilder sb = new StringBuilder();
         if (m instanceof AiMessage ai) {
