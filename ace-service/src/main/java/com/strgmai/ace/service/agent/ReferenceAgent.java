@@ -394,7 +394,18 @@ public class ReferenceAgent {
         int preloadCompactions = 0;
         if (continueSession && session.exists()) {
             msgs = session.loadMessages();
-            if (compactOnLoadKeepRecentTurns != null) {
+            // #580-followup: compactOnLoadKeepRecentTurns used to fire unconditionally on every
+            // resume regardless of how small the reloaded history actually was - a resume sitting
+            // at a few thousand tokens got trimmed down to the last N turns just as aggressively
+            // as one genuinely near the context ceiling, making the operator's own
+            // --compaction-trigger budget irrelevant for a harness where resuming (verify-and-retry,
+            // judge hand-off, length-cutoff continuation) is the common case, not the rare one #300/
+            // #580 anticipated. Only attempt it when the just-reloaded history's own estimated size
+            // already warrants it - compactionTrigger <= 0 means the operator disabled token-based
+            // compaction entirely (this codebase's usual "0 = no budget" convention), so the safety
+            // net stays off too rather than silently re-enabling a budget the operator turned off.
+            if (compactOnLoadKeepRecentTurns != null && compactionTrigger > 0
+                    && AgentSession.estimateTokens(msgs) > compactionTrigger) {
                 preloadCompactions = AgentSession.compact(msgs, compactOnLoadKeepRecentTurns, 0, compactionStrategies.contains(CompactionStrategies.TOOL_OUTPUT_RECALL));
                 // compacted proactively on load, not reactively at an observed over-threshold prompt
                 // in THIS invocation's own in-memory lastPrompt (which starts at 0 for every fresh

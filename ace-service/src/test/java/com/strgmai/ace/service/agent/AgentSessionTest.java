@@ -63,6 +63,24 @@ class AgentSessionTest {
         assertTrue(((ToolExecutionResultMessage) msgs.get(msgs.size() - 1)).text().startsWith("output"));
     }
 
+    /** #580-followup: ReferenceAgent.run() uses this to decide WHETHER a preload compaction is
+     *  warranted on a resumed session at all, rather than running one unconditionally on every
+     *  resume regardless of how small the reloaded history actually is - sums the same per-message
+     *  estimate compact()'s own effectiveCut() already uses, just across the whole list. */
+    @Test
+    void estimateTokensSumsAcrossTheWholeMessageList() {
+        final var msgs = sixTurns();
+        long expected = 0;
+        for (final ChatMessage m : msgs) expected += AgentSession.estimateTokens(List.of(m));
+        assertEquals(expected, AgentSession.estimateTokens(msgs));
+        assertTrue(AgentSession.estimateTokens(msgs) > 0, "six real turns must not estimate to zero");
+    }
+
+    @Test
+    void estimateTokensOfAnEmptyListIsZero() {
+        assertEquals(0, AgentSession.estimateTokens(List.of()));
+    }
+
     /** #423/#424: with the recall strategy disabled, a masked result's stub must point the model at
      *  re-running the command, never at a tool (recall_tool_output) this session doesn't offer. */
     @Test
