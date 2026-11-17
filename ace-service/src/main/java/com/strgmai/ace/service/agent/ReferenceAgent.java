@@ -1042,16 +1042,24 @@ public class ReferenceAgent {
         return false;
     }
 
-    /** the recording proxy's own 400: it estimates the next request's prompt size BEFORE sending
-     *  it and refuses proactively rather than letting the model server fail on an overshoot however
-     *  it sees fit to (see RecordingProxy's own comment on that check) - same "our own proxy, so
-     *  the marker is its exact literal" reasoning isBudgetRefusal() above already applies, since a
-     *  plain 400 status alone means nothing on its own. */
+    /** #721-followup: the proxy's own proactive context-window guard (estimating the next
+     *  request's prompt size before sending it) was removed - it was miscalibrated against
+     *  --max-output-fraction and refused requests the real model server would have handled fine.
+     *  This now recognizes the REAL upstream server's own refusal instead: llama.cpp's server
+     *  returns a 400 with a structured {"error":{"type":"exceed_context_size_error",...}} body on
+     *  a genuine overflow (confirmed live: a deliberately oversized request got back
+     *  `{"code":400,"message":"request (400010 tokens) exceeds the available context size (65536
+     *  tokens), try increasing it","type":"exceed_context_size_error","n_prompt_tokens":400010,
+     *  "n_ctx":65536}`) - a stable, structured signal, not a free-text message that could vary by
+     *  server version. Matching the exact "type" value rather than the whole message, same reason
+     *  isBudgetRefusal() above matches an exact literal rather than just the status code: a plain
+     *  400 alone means nothing on its own. */
+    static final String UPSTREAM_CONTEXT_WINDOW_REFUSAL_TYPE = "exceed_context_size_error";
     static boolean isContextWindowRefusal(final Throwable e) {
         final Integer status = httpStatus(e);
         if (status != null && status != 400) return false;
         for (Throwable t = e; t != null && t != t.getCause(); t = t.getCause())
-            if (t.getMessage() != null && t.getMessage().contains(com.strgmai.ace.service.proxy.RecordingProxy.CONTEXT_WINDOW_REFUSAL_MARKER)) return true;
+            if (t.getMessage() != null && t.getMessage().contains(UPSTREAM_CONTEXT_WINDOW_REFUSAL_TYPE)) return true;
         return false;
     }
 

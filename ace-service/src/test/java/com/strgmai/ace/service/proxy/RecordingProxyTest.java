@@ -337,44 +337,6 @@ class RecordingProxyTest {
         client.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
-    /** Nothing upstream validated max_tokens against the run's context window - oMLX was left to
-     *  fail on an overshoot however it saw fit. This refuses it here instead, the same way the
-     *  budget check refuses rather than forwards. */
-    @Test
-    void maxTokensPlusEstimatedPromptExceedingTheContextWindowIsRefused() throws Exception {
-        final var upstreamCalled = new AtomicReference<>(false);
-        final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        upstream.createContext("/", ex -> {
-            upstreamCalled.set(true);
-            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(StandardCharsets.UTF_8);
-            ex.sendResponseHeaders(200, resp.length);
-            try (var os = ex.getResponseBody()) { os.write(resp); }
-        });
-        upstream.start();
-        final var journal = Files.createTempFile("proxy-test", ".jsonl");
-        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
-        try {
-            // maxOutputTokens=9000 alone already exceeds a 8000-token window, whatever the prompt is
-            final var proxyBase = proxy.start(journal, 1000L, null,
-                    new RecordingProxy.SamplerOverrides(null, null, null, null, 9000, null, null, 8000, null, null));
-            final var client = HttpClient.newHttpClient();
-            final var request = HttpRequest.newBuilder(URI.create(proxyBase + "/chat/completions"))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":false}"))
-                    .build();
-            final var response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            assertEquals(400, response.statusCode(), response.body());
-            assertTrue(response.body().contains("context_window_exceeded"), response.body());
-            assertFalse(upstreamCalled.get(), "an overshooting request must never reach upstream");
-
-            final var rec = new ObjectMapper().readTree(awaitJournalLines(journal).get(0));
-            assertTrue(rec.path("context_window_exceeded").asBoolean(false));
-        } finally {
-            proxy.stop();
-            upstream.stop(0);
-        }
-    }
-
     @Test
     void maxTokensWellWithinTheContextWindowIsForwardedNormally() throws Exception {
         final AtomicReference<Integer> upstreamSawMaxTokens = new AtomicReference<>();

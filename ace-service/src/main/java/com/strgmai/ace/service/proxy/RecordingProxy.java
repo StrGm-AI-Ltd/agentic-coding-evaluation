@@ -119,11 +119,6 @@ public class RecordingProxy {
      *  is the only signal). Referenced directly from ReferenceAgent instead of being re-declared
      *  there as its own separate literal, so a future wording edit can't silently desync the two. */
     public static final String BUDGET_REFUSAL_MARKER = "ace-service: phase output-token budget exhausted";
-    /** #299-adjacent: the prefix ReferenceAgent.isContextWindowRefusal() matches on to recognize
-     *  THIS proxy's own 400 context-window refusal below (a 400 can otherwise mean anything, same
-     *  "the message body is the only signal" reasoning BUDGET_REFUSAL_MARKER already states) -
-     *  same reason to reference it directly rather than re-declare the literal there. */
-    public static final String CONTEXT_WINDOW_REFUSAL_MARKER = "ace-service: context window would be exceeded";
 
     public RecordingProxy(BenchProperties props) { this.props = props; }
 
@@ -240,23 +235,6 @@ public class RecordingProxy {
             if (r.path("stream").asBoolean(false))   // ask the server to append a usage chunk (transparent to the client)
                 ((ObjectNode) r.with("stream_options")).put("include_usage", true);
             body = json.writeValueAsBytes(r);
-            // nothing upstream validates max_tokens against the window - left alone, oMLX is the
-            // one that fails on an overshoot, however it sees fit to. Refuse it here instead, the
-            // same way the budget check below refuses rather than forwards: a config mistake the
-            // harness can name clearly, not a confusing failure surfacing three hops away.
-            if (overrides.contextWindow() != null && maxTokens != null) {
-                final long promptEstimate = promptTokensEstimate(r);
-                if (promptEstimate + maxTokens > overrides.contextWindow()) {
-                    final byte[] out = json.writeValueAsBytes(json.createObjectNode().set("error",
-                            json.createObjectNode().put("message", CONTEXT_WINDOW_REFUSAL_MARKER + " (max_tokens " + maxTokens
-                                    + " + estimated prompt " + promptEstimate + " > context window " + overrides.contextWindow() + ")")
-                                    .put("type", "context_window_exceeded")));
-                    reply(x, 400, out);
-                    journalRecord(rec.put("status", 400).put("context_window_exceeded", true)
-                            .put("latency_sec", 0.0), req, null);
-                    return;
-                }
-            }
             // a budget of exactly 0 means unlimited (never enforced), not "already exhausted" -
             // spent.get() >= 0 would otherwise refuse the very first request of every "unlimited" run
             if (tokenBudget != null && tokenBudget > 0 && spent.get() >= tokenBudget) {
@@ -410,16 +388,6 @@ public class RecordingProxy {
         // #260: forward()'s own finally now owns inflight.remove(up) uniformly for both the SSE
         // and non-SSE branches (it covers an exception thrown from inside THIS method too) - a
         // second remove() call here would just be a harmless but redundant no-op.
-    }
-
-    /** Best-effort prompt size in tokens, same chars-per-token estimate as estimatedUsage() below -
-     *  exact tokenization would need the model's own tokenizer, which this proxy has no access to.
-     *  Covers messages and tool definitions (both consume real prompt tokens); good enough to catch
-     *  an obvious overshoot before forwarding, not meant to be precise. */
-    private static long promptTokensEstimate(final JsonNode req) {
-        long chars = req.path("messages").toString().length();
-        if (req.hasNonNull("tools")) chars += req.path("tools").toString().length();
-        return (long) (chars / CHARS_PER_TOKEN);
     }
 
     private ObjectNode estimatedUsage(final SseAssembler.Assembled asm) {

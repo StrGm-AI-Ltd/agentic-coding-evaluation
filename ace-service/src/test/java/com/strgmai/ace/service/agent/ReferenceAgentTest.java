@@ -222,18 +222,23 @@ class ReferenceAgentTest {
         }
     }
 
-    /** #299-adjacent: the recording proxy's own proactive 400 refusal (RunBench's rescue step is
-     *  only rescue-eligible for THIS specific one, not any other client error) - same "our own
-     *  proxy, so the marker is its exact literal" reasoning isBudgetRefusal() already relies on,
-     *  mirrored for the context-window case. */
+    /** #721-followup: RunBench's rescue step is only rescue-eligible for a genuine upstream context-
+     *  window refusal, not any other client error - matches the REAL llama.cpp server's own 400
+     *  body now (the proxy's own proactive, miscalibrated guard was removed in #721), confirmed
+     *  live: `{"error":{"code":400,"message":"request (400010 tokens) exceeds the available
+     *  context size (65536 tokens), try increasing it","type":"exceed_context_size_error",
+     *  "n_prompt_tokens":400010,"n_ctx":65536}}`. HttpException's own message is the complete raw
+     *  response body (confirmed from langchain4j-http-client-jdk's JdkHttpClient bytecode: `new
+     *  String(response.body(), UTF_8)`), so matching a substring of that raw body is exactly what
+     *  a real refusal looks like, not a synthetic approximation of one. */
     @Test
     void isContextWindowRefusalMatchesOnlyThe400WithTheExactMarker() {
         assertTrue(ReferenceAgent.isContextWindowRefusal(
-                new dev.langchain4j.exception.HttpException(400, com.strgmai.ace.service.proxy.RecordingProxy.CONTEXT_WINDOW_REFUSAL_MARKER + " (details)")));
+                new dev.langchain4j.exception.HttpException(400, "{\"error\":{\"code\":400,\"message\":\"request (400010 tokens) exceeds the available context size (65536 tokens), try increasing it\",\"type\":\"" + ReferenceAgent.UPSTREAM_CONTEXT_WINDOW_REFUSAL_TYPE + "\",\"n_prompt_tokens\":400010,\"n_ctx\":65536}}")));
         assertFalse(ReferenceAgent.isContextWindowRefusal(
                 new dev.langchain4j.exception.HttpException(400, "some other, unrelated 400")), "a 400 alone means nothing without the marker");
         assertFalse(ReferenceAgent.isContextWindowRefusal(
-                new dev.langchain4j.exception.HttpException(429, com.strgmai.ace.service.proxy.RecordingProxy.CONTEXT_WINDOW_REFUSAL_MARKER)), "wrong status code - this marker is only ever sent on a 400");
+                new dev.langchain4j.exception.HttpException(429, ReferenceAgent.UPSTREAM_CONTEXT_WINDOW_REFUSAL_TYPE)), "wrong status code - this marker is only ever sent on a 400");
         assertFalse(ReferenceAgent.isContextWindowRefusal(new RuntimeException("no HTTP status at all")));
     }
 
