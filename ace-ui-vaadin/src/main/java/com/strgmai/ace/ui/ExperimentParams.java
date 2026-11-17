@@ -56,6 +56,7 @@ public final class ExperimentParams {
         putIfPresent(params, raw, "top_k", Integer.class);
         putIfPresent(params, raw, "repetition_penalty", Double.class);
         putIfPresent(params, raw, "max_tokens", Integer.class);
+        putIfPresent(params, raw, "max_output_fraction", Double.class);
         putIfPresent(params, raw, "reasoning_effort", String.class);
         // PARALLEL_PLAN/handoff/wrap-up walls (found live 2026-09-25): were fixed literals in
         // RunBench.java with no run-level control at all

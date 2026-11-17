@@ -88,6 +88,10 @@ final class JobCfgFactory {
         if (WorkerService.flag(argv, "--top-k") != null) cfg.put("top_k", Integer.parseInt(WorkerService.flag(argv, "--top-k")));
         if (WorkerService.flag(argv, "--repetition-penalty") != null) cfg.put("repetition_penalty", Double.parseDouble(WorkerService.flag(argv, "--repetition-penalty")));
         if (WorkerService.flag(argv, "--max-tokens") != null) cfg.put("max_tokens_override", Integer.parseInt(WorkerService.flag(argv, "--max-tokens")));
+        // the fraction of the (derived or pinned) context window reserved for a single model call's
+        // own output - RunBench.runOnce() reads this back for both its probe and no-probe branches;
+        // unset means "use ContextProbe.DEFAULTS' own default (0.5)"
+        if (WorkerService.flag(argv, "--max-output-fraction") != null) cfg.put("max_output_fraction", Double.parseDouble(WorkerService.flag(argv, "--max-output-fraction")));
         if (WorkerService.flag(argv, "--reasoning-effort") != null) cfg.put("reasoning_effort", WorkerService.flag(argv, "--reasoning-effort"));
         // PARALLEL_PLAN/handoff/wrap-up walls (found live 2026-09-25): were fixed literals
         // in RunBench.java (600/300/300*scale) with no run-level control at all

@@ -35,24 +35,41 @@ class ContextProbeTest {
                 "decode_tps_short", 15.0, "cap_max_model_len", 262144,
                 "curve", List.of(Map.of("status", "200", "prompt_tokens", 40000, "decode_tps", 15.0),
                         Map.of("status", "200", "prompt_tokens", 80000, "decode_tps", 3.0)));
-        final Map<String, Object> d = ContextProbe.derive(rec, props(65536), 3600);
+        final Map<String, Object> d = ContextProbe.derive(rec, props(65536), 3600, 0.5);
         // memory = 80000 - 4096 floored to 2048s; performance: decode >= 0.5x15=7.5 only at 40000 -> 40000/2048*2048; operator cap 65536
         assertEquals(38912, d.get("usable_context"), "the performance window (40000, 2048-floored to 38912) binds");
         assertEquals("performance", d.get("window_limited_by"));
         assertTrue((Boolean) d.get("safety_applied"), "a memory-bound window gets the safety margin");
         assertEquals(75776, d.get("memory_window"));   // (80000-4096)//2048*2048 = 37x2048
         assertEquals(9.0, d.get("min_decode_tps"));    // 0.6 x 15
-        // every knob follows the EFFECTIVE window (38912), not the raw candidates
-        assertEquals((int) (38912 * 0.125) / 512 * 512, d.get("max_output_tokens"));
+        // every knob follows the EFFECTIVE window (38912), not the raw candidates - at 0.5 this
+        // would be 19456, but props(65536)'s own maxOutputTokens (8192) caps it first
+        assertEquals(Math.min(8192, (int) (38912 * 0.5) / 512 * 512), d.get("max_output_tokens"));
         assertEquals((int) (38912 * 0.43) / 256 * 256, d.get("compaction_trigger_tokens"));
         final int expectTaskTokens = Math.min((int) (38912 * 1.25) / 1000 * 1000, Math.max((int) (3600 * 15 * 0.8) / 1000 * 1000, 10000));
         assertEquals(expectTaskTokens, d.get("task_tokens"), "the window budget is capped by what the wall can generate");
     }
 
     @Test
+    void maxOutputFractionOverridesTheDerivedOutputCap() {
+        Map<String, Object> rec = Map.of("max_ok_prompt_tokens", 80000, "binding", "memory_or_server",
+                "decode_tps_short", 15.0, "cap_max_model_len", 262144,
+                "curve", List.of(Map.of("status", "200", "prompt_tokens", 40000, "decode_tps", 15.0),
+                        Map.of("status", "200", "prompt_tokens", 80000, "decode_tps", 3.0)));
+        // kept below props(65536)'s own maxOutputTokens cap (8192) so the fraction's own effect is
+        // visible rather than clipped away by that unrelated ceiling
+        final Map<String, Object> bigger = ContextProbe.derive(rec, props(65536), 3600, 0.2);
+        final Map<String, Object> smaller = ContextProbe.derive(rec, props(65536), 3600, 0.1);
+        assertEquals((int) (38912 * 0.2) / 512 * 512, bigger.get("max_output_tokens"));
+        assertEquals((int) (38912 * 0.1) / 512 * 512, smaller.get("max_output_tokens"));
+        assertTrue((Integer) bigger.get("max_output_tokens") > (Integer) smaller.get("max_output_tokens"),
+                "a larger fraction must yield a larger output cap, not a fixed value regardless of the argument");
+    }
+
+    @Test
     void aCapBoundProbeTrustsTheCapExactly() {
         final var rec = Map.of("max_ok_prompt_tokens", 131000, "binding", "cap", "cap_max_model_len", 131072, "decode_tps_short", 15.0, "curve", List.of());
-        final Map<String, Object> d = ContextProbe.derive(rec, props(null), null);
+        final Map<String, Object> d = ContextProbe.derive(rec, props(null), null, 0.5);
         assertEquals(131072, d.get("memory_window"), "a cap is exact: no safety margin (after prepare_cap it is the positional limit)");
         assertEquals("positional/cap", d.get("window_limited_by"));
         assertTrue((Boolean) d.get("safety_applied") == false);
@@ -70,7 +87,7 @@ class ContextProbeTest {
     @Test
     void aWindowBelowMinUsableIsRefused() {
         final var rec = Map.of("max_ok_prompt_tokens", 10000, "binding", "memory_or_server", "decode_tps_short", 15.0, "curve", List.of());
-        final Map<String, Object> d = ContextProbe.derive(rec, props(null), null);
+        final Map<String, Object> d = ContextProbe.derive(rec, props(null), null, 0.5);
         assertTrue((Boolean) d.get("too_small"), "a window that cannot hold the packs is not benchmarkable");
     }
 

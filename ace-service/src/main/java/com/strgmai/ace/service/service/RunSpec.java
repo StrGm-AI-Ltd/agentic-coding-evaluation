@@ -15,7 +15,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                       Integer contextWindow, Integer firstTokenTimeout, Integer compactionTrigger, String compactionStrategies, Integer reviewWallSec,
                       boolean reviewBlind, String trajectoryReviewerModel, Double reviewWeight, Double trajectoryWeight,
                       String trajectoryUse, String javaHome, String runId,
-                      Double temperature, Double topP, Integer topK, Double repetitionPenalty, Integer maxTokens, String reasoningEffort,
+                      Double temperature, Double topP, Integer topK, Double repetitionPenalty, Integer maxTokens, Double maxOutputFraction, String reasoningEffort,
                       Integer parallelPlanWall, Integer handoffWall, Integer wrapupWall, Integer maxTurns, Integer reviewTokens,
                       Integer fixWall, Integer fixTokens, Integer parallelPlanTokens, Integer handoffTokens, Integer wrapupTokens,
                       Double efficiencyWeight,
@@ -120,6 +120,12 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (repetitionPenalty != null && repetitionPenalty < 0) throw new IllegalArgumentException("repetitionPenalty must be >= 0: " + repetitionPenalty);
         if (reasoningEffort != null && !reasoningEffort.isBlank() && !REASONING_EFFORTS.contains(reasoningEffort))
             throw new IllegalArgumentException("reasoningEffort must be one of " + REASONING_EFFORTS + ": " + reasoningEffort);
+        // the fraction of the (derived or pinned) context window reserved for a single model call's
+        // own output - see ContextProbe.DEFAULTS' "max_output_fraction" and RunBench.runOnce()'s
+        // no-probe branch, both of which this overrides. 0 would mean "no room to ever respond", not
+        // a legitimate "unlimited" value like this codebase's other budget knobs.
+        if (maxOutputFraction != null && (maxOutputFraction <= 0 || maxOutputFraction > 1))
+            throw new IllegalArgumentException("maxOutputFraction must be within (0, 1]: " + maxOutputFraction);
     }
 
     private static Integer positive(Integer v) { return v == null || v > 0 ? v : failPositive(v); }
@@ -173,6 +179,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         if (topK != null) args.add("--top-k=" + topK);
         if (repetitionPenalty != null) args.add("--repetition-penalty=" + repetitionPenalty);
         if (maxTokens != null) args.add("--max-tokens=" + maxTokens);
+        if (maxOutputFraction != null) args.add("--max-output-fraction=" + maxOutputFraction);
         if (reasoningEffort != null && !reasoningEffort.isBlank()) args.add("--reasoning-effort=" + reasoningEffort);
         if (parallelPlanWall != null) args.add("--parallel-plan-wall=" + parallelPlanWall);
         if (handoffWall != null) args.add("--handoff-wall=" + handoffWall);
@@ -225,7 +232,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 rescueWallSec, rescueTokens, rescueKeepRecentTurns;
         private boolean systemRules, selfReview, trajectoryReview, handoffNotes,
                 noContextProbe, contextProbeFresh, reviewBlind, judgeEnabled, budgetRescueEnabled, lessonRecordingEnabled;
-        private Double reviewWeight, trajectoryWeight, parallelWeight, efficiencyWeight, temperature, topP, repetitionPenalty;
+        private Double reviewWeight, trajectoryWeight, parallelWeight, efficiencyWeight, temperature, topP, repetitionPenalty, maxOutputFraction;
 
         public Builder task(final String v) { task = v; return this; }
         public Builder model(final String v) { model = v; return this; }
@@ -268,6 +275,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
         public Builder topK(final Integer v) { topK = v; return this; }
         public Builder repetitionPenalty(final Double v) { repetitionPenalty = v; return this; }
         public Builder maxTokens(final Integer v) { maxTokens = v; return this; }
+        public Builder maxOutputFraction(final Double v) { maxOutputFraction = v; return this; }
         public Builder reasoningEffort(final String v) { reasoningEffort = v; return this; }
         public Builder parallelPlanWall(final Integer v) { parallelPlanWall = v; return this; }
         public Builder handoffWall(final Integer v) { handoffWall = v; return this; }
@@ -296,7 +304,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                     planWall, planTokens, wallBudget, parallel, parallelPlan, parallelWeight, systemRules, selfReview, trajectoryReview, reviewerModel, handoffNotes,
                     noContextProbe, contextProbeFresh, contextWindow, firstTokenTimeout, compactionTrigger, compactionStrategies, reviewWallSec,
                     reviewBlind, trajectoryReviewerModel, reviewWeight, trajectoryWeight, trajectoryUse, javaHome, runId,
-                    temperature, topP, topK, repetitionPenalty, maxTokens, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
+                    temperature, topP, topK, repetitionPenalty, maxTokens, maxOutputFraction, reasoningEffort, parallelPlanWall, handoffWall, wrapupWall, maxTurns, reviewTokens,
                     fixWall, fixTokens, parallelPlanTokens, handoffTokens, wrapupTokens, efficiencyWeight,
                     judgeEnabled, judgeEveryNTurns, judgeModel, judgeWallSec, judgeTokens,
                     budgetRescueEnabled, rescueWallSec, rescueTokens, rescueKeepRecentTurns, taskGranularity, lessonRecordingEnabled);
@@ -328,7 +336,7 @@ public record RunSpec(String task, String model, String harness, String mode, St
                 .trajectoryUse(str(spec, "trajectory_use")).javaHome(str(spec, "java_home")).runId(str(spec, "run_id"))
                 .temperature(doubleOf(spec, "temperature")).topP(doubleOf(spec, "top_p"))
                 .topK(intOf(spec, "top_k")).repetitionPenalty(doubleOf(spec, "repetition_penalty"))
-                .maxTokens(intOf(spec, "max_tokens")).reasoningEffort(str(spec, "reasoning_effort"))
+                .maxTokens(intOf(spec, "max_tokens")).maxOutputFraction(doubleOf(spec, "max_output_fraction")).reasoningEffort(str(spec, "reasoning_effort"))
                 .parallelPlanWall(intOf(spec, "parallel_plan_wall")).handoffWall(intOf(spec, "handoff_wall"))
                 .wrapupWall(intOf(spec, "wrapup_wall")).maxTurns(intOf(spec, "max_turns"))
                 .fixWall(intOf(spec, "fix_wall")).fixTokens(intOf(spec, "fix_tokens"))
