@@ -597,8 +597,13 @@ public class RunBench {
             Map<String, Object> probeRec = null, derived = Map.of();
             Map<String, Object> probeSansCurve;
             if (Boolean.TRUE.equals(cfg.get("context_probe"))) {
+                // a job's own --max-output-fraction (JobCfgFactory -> cfg) wins over
+                // ContextProbe.DEFAULTS' own default - the same per-run-overrides-the-operator-wide-
+                // default convention every other probe-derived knob here already follows
+                final Map<String, Object> probeOverrides = cfg.get("max_output_fraction") instanceof Number mof
+                        ? Map.of("max_output_fraction", mof.doubleValue()) : null;
                 Map<String, Object> ensured = probe.ensure(props, Boolean.TRUE.equals(cfg.get("context_probe_fresh")),
-                        cfg.get("task_wall_sec") instanceof Number n ? n.intValue() : null, null);
+                        cfg.get("task_wall_sec") instanceof Number n ? n.intValue() : null, probeOverrides);
                 probeRec = (Map<String, Object>) ensured.get("probe");
                 derived = (Map<String, Object>) ensured.get("derived");
                 capInfo = (Map<String, Object>) ensured.get("cap_info");
@@ -633,7 +638,10 @@ public class RunBench {
                 final Map<String, Object> derivedNoProbe = new LinkedHashMap<>();
                 derivedNoProbe.put("usable_context", window);
                 derivedNoProbe.put("pack_scale", Math.max(0.25, Math.min(1.0, window / 65536.0)));
-                derivedNoProbe.put("max_output_tokens", Math.min(props.maxOutputTokens(), (int) (window * 0.125)));
+                // same operator/job-override-wins convention as the probe branch above; 0.5 matches
+                // ContextProbe.DEFAULTS' own "max_output_fraction" default
+                final double maxOutputFraction = cfg.get("max_output_fraction") instanceof Number mof ? mof.doubleValue() : 0.5;
+                derivedNoProbe.put("max_output_tokens", Math.min(props.maxOutputTokens(), (int) (window * maxOutputFraction)));
                 derivedNoProbe.put("compaction_trigger_tokens", (int) (window * 0.43));
                 derivedNoProbe.put("task_tokens", (int) (window * 1.25 / 1000) * 1000);
                 derivedNoProbe.put("min_decode_tps", null);

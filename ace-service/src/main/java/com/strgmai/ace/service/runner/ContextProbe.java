@@ -54,7 +54,7 @@ public final class ContextProbe {
             Map.entry("safety_tokens", 4096), Map.entry("min_usable", 16384), Map.entry("probe_max_tokens", 64),
             Map.entry("decode_samples", List.of(List.of(2000, 256), List.of(6000, 256), List.of(12000, 256))),
             Map.entry("retry_pause_sec", 8), Map.entry("request_timeout_sec", 1800), Map.entry("trigger_fraction", 0.43),
-            Map.entry("keep_recent_fraction", 0.12), Map.entry("max_output_fraction", 0.125),
+            Map.entry("keep_recent_fraction", 0.12), Map.entry("max_output_fraction", 0.5),
             Map.entry("task_budget_windows", 1.25), Map.entry("plan_budget_windows", 0.9),
             Map.entry("impl_budget_windows_l7", 6.1), Map.entry("impl_budget_windows", 3.05),
             Map.entry("decode_floor_fraction", 0.6), Map.entry("perf_fraction", 0.5), Map.entry("max_parallel_probe", 4),
@@ -446,8 +446,11 @@ public final class ContextProbe {
     /** every context-dependent knob from the measured window (the `derived` manifest block).
      *  The EFFECTIVE window = min(memory, performance, operator cap) drives checkpoints, packs and
      *  output; token budgets in windows are additionally capped by what can be GENERATED in the
-     *  wall budget (wall x short-context decode x 0.8). */
-    public static Map<String, Object> derive(Map<String, Object> rec, final BenchProperties props, final Integer taskWallSec) {
+     *  wall budget (wall x short-context decode x 0.8). `maxOutputFraction` is the caller's already-
+     *  resolved value (an operator/job override, or DEFAULTS' own "max_output_fraction" when neither
+     *  set one) - passed in rather than read from DEFAULTS directly so a per-job override (RunSpec's
+     *  --max-output-fraction, via ensure()'s own overrides map) actually reaches this calculation. */
+    public static Map<String, Object> derive(Map<String, Object> rec, final BenchProperties props, final Integer taskWallSec, final double maxOutputFraction) {
         final Map<String, Object> o = DEFAULTS;
         final int maxOk = rec.get("max_ok_prompt_tokens") instanceof Number n ? n.intValue() : 0;
         int memoryWindow;
@@ -474,7 +477,7 @@ public final class ContextProbe {
         if ("cap".equals(rec.get("binding")) && "memory".equals(limitedBy)) limitedBy = "positional/cap";
         final int usable = Math.max(limited == null ? 2048 : limited.getValue(), 2048);
         final double scale = Math.max(((Number) o.get("pack_scale_min")).doubleValue(), Math.min(1.0, usable / (double) (int) o.get("pack_reference_window")));
-        final int maxOut = Math.min(props.maxOutputTokens() == null ? 8192 : props.maxOutputTokens(), (int) (usable * ((Number) o.get("max_output_fraction")).doubleValue()) / 512 * 512);
+        final int maxOut = Math.min(props.maxOutputTokens() == null ? 8192 : props.maxOutputTokens(), (int) (usable * maxOutputFraction) / 512 * 512);
         final int trigger = (int) (usable * ((Number) o.get("trigger_fraction")).doubleValue()) / 256 * 256;
         Integer genCap = null;
         if (taskWallSec != null && dps != null) genCap = (int) (taskWallSec * dps * 0.8) / 1000 * 1000;
@@ -549,7 +552,7 @@ public final class ContextProbe {
                         rec.get("tokens_per_line") instanceof Number n ? n.doubleValue() : 31.0));
             }
             if (Boolean.TRUE.equals(rec.get("ok")) && !"probe_limit".equals(rec.get("binding"))) {
-                final Map<String, Object> d0 = derive(rec, props, taskWallSec);
+                final Map<String, Object> d0 = derive(rec, props, taskWallSec, ((Number) o.get("max_output_fraction")).doubleValue());
                 rec.put("cap_after", finalizeCap(props.model(), props.endpoint(), props.apiKey() == null ? "" : props.apiKey(), (Integer) d0.get("memory_window"), o));
             }
             if (Boolean.TRUE.equals(rec.get("ok")) && Boolean.TRUE.equals(rec.get("cacheable")))
@@ -557,7 +560,7 @@ public final class ContextProbe {
         }
         final Map<String, Object> out = new LinkedHashMap<>();
         out.put("probe", rec);
-        out.put("derived", Boolean.TRUE.equals(rec.get("ok")) ? derive(rec, props, taskWallSec) : null);
+        out.put("derived", Boolean.TRUE.equals(rec.get("ok")) ? derive(rec, props, taskWallSec, ((Number) o.get("max_output_fraction")).doubleValue()) : null);
         out.put("cache_path", path.toString());
         // #340: only set on a FRESH probe this call actually ran (never on a cache hit) - a past
         // invocation's own raise, if any, was already restored by that past invocation's own

@@ -63,6 +63,7 @@ public class ExperimentNewView extends VerticalLayout {
     private final IntegerField topK = new IntegerField("Top-k");
     private final NumberField repetitionPenalty = new NumberField("Repetition penalty");
     private final IntegerField maxTokens = new IntegerField("Max tokens");
+    private final NumberField maxOutputFraction = new NumberField("Max output fraction");
     private final Select<String> reasoningEffort = new Select<>();
     private final IntegerField parallelPlanWall = new IntegerField("Parallel-plan wall-clock budget");
     private final IntegerField handoffWall = new IntegerField("Handoff wall-clock budget");
@@ -210,6 +211,10 @@ public class ExperimentNewView extends VerticalLayout {
         maxTokens.setMin(1);
         maxTokens.setPlaceholder("blank = context-probe-derived cap");
         maxTokens.setTooltipText(Tooltips.MAX_TOKENS);
+        maxOutputFraction.setMin(0);
+        maxOutputFraction.setMax(1);
+        maxOutputFraction.setPlaceholder("blank = default (0.5)");
+        maxOutputFraction.setTooltipText(Tooltips.MAX_OUTPUT_FRACTION);
         reasoningEffort.setLabel("Reasoning effort");
         reasoningEffort.setItems("", "none", "low", "medium", "high");
         reasoningEffort.setValue("");
@@ -298,7 +303,7 @@ public class ExperimentNewView extends VerticalLayout {
 
         add(Forms.section("Sampler (all templates, all arms)",
                 Forms.row(temperature, topP, topK, repetitionPenalty),
-                Forms.row(maxTokens, reasoningEffort)));
+                Forms.row(maxTokens, maxOutputFraction, reasoningEffort)));
 
         updateVisibility();
         template.addValueChangeListener(e -> updateVisibility());
@@ -366,6 +371,7 @@ public class ExperimentNewView extends VerticalLayout {
         raw.put("top_k", topK.getValue());
         raw.put("repetition_penalty", repetitionPenalty.getValue());
         raw.put("max_tokens", maxTokens.getValue());
+        raw.put("max_output_fraction", maxOutputFraction.getValue());
         raw.put("reasoning_effort", reasoningEffort.getValue());
         raw.put("parallel_plan_wall", parallelPlanWall.getValue());
         raw.put("handoff_wall", handoffWall.getValue());
@@ -418,6 +424,7 @@ public class ExperimentNewView extends VerticalLayout {
                 Map.entry("review_weight", reviewWeight), Map.entry("trajectory_weight", trajectoryWeight),
                 Map.entry("temperature", temperature), Map.entry("top_p", topP), Map.entry("top_k", topK),
                 Map.entry("repetition_penalty", repetitionPenalty), Map.entry("max_tokens", maxTokens),
+                Map.entry("max_output_fraction", maxOutputFraction),
                 Map.entry("parallel_plan_wall", parallelPlanWall), Map.entry("handoff_wall", handoffWall),
                 Map.entry("wrapup_wall", wrapupWall),
                 Map.entry("parallel_plan_tokens", parallelPlanTokens), Map.entry("handoff_tokens", handoffTokens),

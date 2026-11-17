@@ -78,6 +78,7 @@ public class JobNewView extends VerticalLayout {
     private final IntegerField topK = new IntegerField("Top-k");
     private final NumberField repetitionPenalty = new NumberField("Repetition penalty");
     private final IntegerField maxTokens = new IntegerField("Max tokens");
+    private final NumberField maxOutputFraction = new NumberField("Max output fraction");
     private final IntegerField parallelPlanWall = new IntegerField("Parallel-plan wall-clock budget");
     private final IntegerField handoffWall = new IntegerField("Handoff wall-clock budget");
     private final IntegerField wrapupWall = new IntegerField("Wrap-up wall-clock budget");
@@ -248,6 +249,10 @@ public class JobNewView extends VerticalLayout {
         maxTokens.setMin(1);
         maxTokens.setHelperText("blank = context-probe-derived cap");
         maxTokens.setTooltipText(Tooltips.MAX_TOKENS);
+        maxOutputFraction.setMin(0);
+        maxOutputFraction.setMax(1);
+        maxOutputFraction.setHelperText("blank = default (0.5)");
+        maxOutputFraction.setTooltipText(Tooltips.MAX_OUTPUT_FRACTION);
         parallelPlanWall.setMin(1);
         parallelPlanWall.setHelperText("blank = default (600s)");
         parallelPlanWall.setTooltipText(Tooltips.PARALLEL_PLAN_WALL);
@@ -321,7 +326,7 @@ public class JobNewView extends VerticalLayout {
                 Forms.row(lessonRecordingEnabled)));
         add(Forms.collapsibleSection("Sampler",
                 Forms.row(temperature, topP, topK, repetitionPenalty),
-                Forms.row(maxTokens, reasoningEffort)));
+                Forms.row(maxTokens, maxOutputFraction, reasoningEffort)));
         add(Forms.collapsibleSection("Reviewers",
                 Forms.row(reviewerModel, reviewWeight),
                 Forms.row(trajectoryReviewerModel, trajectoryWeight, trajectoryUse),
@@ -406,6 +411,7 @@ public class JobNewView extends VerticalLayout {
         raw.put("top_k", topK.getValue());
         raw.put("repetition_penalty", repetitionPenalty.getValue());
         raw.put("max_tokens", maxTokens.getValue());
+        raw.put("max_output_fraction", maxOutputFraction.getValue());
         raw.put("parallel_plan_wall", parallelPlanWall.getValue());
         raw.put("handoff_wall", handoffWall.getValue());
         raw.put("wrapup_wall", wrapupWall.getValue());

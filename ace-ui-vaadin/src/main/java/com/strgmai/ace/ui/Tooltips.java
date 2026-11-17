@@ -230,6 +230,11 @@ final class Tooltips {
     static final String MAX_TOKENS = "Hard cap on completion tokens per model request, independent of "
             + "any phase/task token budget. Must be >= 1. Blank = derived from the step-0 context probe.";
 
+    static final String MAX_OUTPUT_FRACTION = "Fraction of the context window reserved for a single model "
+            + "call's own output (a turn that reasons past this gets cut off mid-thought, with one automatic "
+            + "retry before the task is told to wrap up). Must be within (0, 1]. Blank = default (0.5). "
+            + "Overridden by Max tokens above when that is also set.";
+
     static final String REASONING_EFFORT = "Reasoning-effort hint sent to the model for every phase. "
             + "'none' explicitly disables thinking; 'low'/'medium'/'high' request progressively more. "
             + "Blank = the operator's own per-phase default.";
