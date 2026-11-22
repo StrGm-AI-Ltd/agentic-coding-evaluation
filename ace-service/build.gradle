@@ -24,7 +24,7 @@ java {
 repositories { mavenCentral() }
 
 dependencies {
-    implementation platform('dev.langchain4j:langchain4j-bom:1.20.0')
+    implementation platform('dev.langchain4j:langchain4j-bom:1.24.0')
     implementation platform("org.springframework.boot:spring-boot-dependencies:${libs.versions.springBoot.get()}")
     implementation 'org.springframework.boot:spring-boot-starter-web'
     // starter-jooq pulls jOOQ + spring-boot-starter-jdbc and auto-configures a DSLContext from the
