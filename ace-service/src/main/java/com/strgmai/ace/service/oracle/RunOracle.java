@@ -14,6 +14,8 @@ import java.nio.file.*;
 import java.time.Instant;
 import java.util.*;
 
+import static java.lang.Math.min;
+
 /** Port of oracle/run_oracle.py: runs the checkers over a workspace with the FIXED-denominator
  *  invariants. Rung-aware (tasks/ladder.json restricts the check set). Docker-gated scripts run at
  *  full scope when the daemon is reachable: the build checks (B1/B2/B3) in the PINNED CONTAINER
@@ -187,7 +189,7 @@ public class RunOracle {
                 .filter(l -> !l.endsWith(".md") && !l.endsWith(".txt")).toList();
         return new CheckResult(CheckId.P3, code.isEmpty() ? CheckStatus.PASS : CheckStatus.FAIL,
                 code.isEmpty() ? "no source written during phases 0/1"
-                        : "code written during planning: " + code.subList(0, Math.min(5, code.size())));
+                        : "code written during planning: " + code.subList(0, min(5, code.size())));
     }
 
     private CheckResult p3Scan(final Path ws) {

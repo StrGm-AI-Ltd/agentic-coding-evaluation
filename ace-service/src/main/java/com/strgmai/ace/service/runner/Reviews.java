@@ -17,6 +17,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 
+import static java.lang.Math.min;
+
 /** Port of run_bench.py's self_review + trajectory_review: end-of-run reviews by a reviewer model
  *  (the run's own model by default, or any provider/model LangChain4j can reach). The reviewer's
  *  opinion is scored for CALIBRATION against the oracle — it never replaces it. The code is
@@ -124,7 +126,7 @@ public class Reviews {
         }
         out.put("parse_ok", parsed != null);
         out.put("modified_code", !changed.isEmpty());
-        out.put("modified_paths", changed.subList(0, Math.min(10, changed.size())));
+        out.put("modified_paths", changed.subList(0, min(10, changed.size())));
         out.put("md_present", Files.isRegularFile(ws.resolve("review/SELF_REVIEW.md")));
         if (parsed != null) out.putAll(parsed);
         manifestCompute(manifest, "review_windows").add(List.of(rec.start().toString(), rec.end().toString()));
@@ -168,7 +170,7 @@ public class Reviews {
         }
         out.put("parse_ok", parsed != null);
         out.put("modified_code", !changed.isEmpty());
-        out.put("modified_paths", changed.subList(0, Math.min(10, changed.size())));
+        out.put("modified_paths", changed.subList(0, min(10, changed.size())));
         out.put("md_present", Files.isRegularFile(ws.resolve("review/SELF_REVIEW.md")));
         if (parsed != null) out.putAll(parsed);
         if (span != null) manifestCompute(manifest, "review_windows").add(List.of(span.start().toString(), span.end().toString()));

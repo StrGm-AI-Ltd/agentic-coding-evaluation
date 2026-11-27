@@ -12,6 +12,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 
+import static java.util.Comparator.comparing;
+
 /** Port of service/progress.py (WITH the byte-exact offset fix from the Python review): live
  *  progress inferred from the files a run already writes. Stateless across connections: each caller
  *  owns one Tailer and keeps polling it. Offsets stay in BYTES — advancing by the re-encoded length
@@ -52,7 +54,7 @@ public final class Tailer {
         if (!Files.isDirectory(dir)) return;
         List<Path> paths;
         try (java.util.stream.Stream<Path> stream = Files.list(dir)) {   // the stream holds a directory FD - it must be closed
-            paths = stream.filter(Files::isRegularFile).sorted(Comparator.comparing(p -> p.getFileName().toString())).toList();
+            paths = stream.filter(Files::isRegularFile).sorted(comparing(p -> p.getFileName().toString())).toList();
         } catch (IOException e) { log.debug("could not list {}: {}", dir, e.toString()); return; }
         for (Path p : paths) {
             final String key = "rescue/" + p.getFileName();
@@ -92,7 +94,7 @@ public final class Tailer {
         List<Path> paths;
         try (java.util.stream.Stream<Path> stream = Files.list(dir)) {   // the stream holds a directory FD - it must be closed
             paths = stream.filter(Files::isRegularFile)
-                    .sorted(Comparator.comparing(p -> {
+                    .sorted(comparing(p -> {
                         try { return Files.getLastModifiedTime(p).toMillis(); }
                         catch (IOException e) { log.debug("could not read mtime of {}, sorting first: {}", p, e.toString()); return 0L; }
                     })).toList();
@@ -125,7 +127,7 @@ public final class Tailer {
         if (!Files.isDirectory(dir)) return;
         List<Path> paths;
         try (java.util.stream.Stream<Path> stream = Files.list(dir)) {   // the stream holds a directory FD - it must be closed
-            paths = stream.filter(Files::isRegularFile).sorted(Comparator.comparing(p -> p.getFileName().toString())).toList();
+            paths = stream.filter(Files::isRegularFile).sorted(comparing(p -> p.getFileName().toString())).toList();
         } catch (IOException e) { log.debug("could not list session dir {}: {}", dir, e.toString()); return; }
         for (Path p : paths) {
             final String key = p.getFileName().toString();

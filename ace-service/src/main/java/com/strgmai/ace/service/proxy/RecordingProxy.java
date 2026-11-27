@@ -22,6 +22,10 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static java.lang.Math.max;
+import static java.lang.Math.round;
+import static java.lang.System.nanoTime;
+
 /** Port of runner/record_proxy.py: transparent recording proxy, agent -> :PORT -> upstream.
  *  Journals EVERY interaction as JSONL (ts, method, path, request as forwarded, response, status,
  *  latency): the run's ground truth for metrics and validity. Pins the sampler params onto every
@@ -246,7 +250,7 @@ public class RecordingProxy {
                 return;
             }
         }
-        final long t0 = System.nanoTime();
+        final long t0 = nanoTime();
         // relay to an external provider's own base URL instead of the local model server when this
         // run's model resolved to one (ProviderStore.route()) - every other behavior here (budget
         // enforcement, sampler injection, the context-window check, journaling) is unchanged.
@@ -329,8 +333,8 @@ public class RecordingProxy {
         try (InputStream in = up.body(); OutputStream out = x.getResponseBody()) {
             final byte[] buf = new byte[8192]; int n; StringBuilder line = new StringBuilder();
             while ((n = in.read(buf)) >= 0) {
-                final long now = System.nanoTime();
-                maxReadGapMs = Math.max(maxReadGapMs, (now - lastReadAt) / 1_000_000);
+                final long now = nanoTime();
+                maxReadGapMs = max(maxReadGapMs, (now - lastReadAt) / 1_000_000);
                 if (firstByteMs < 0) firstByteMs = (now - t0) / 1_000_000;
                 lastReadAt = now; reads++;
                 final var s = new String(buf, 0, n, StandardCharsets.UTF_8);
@@ -399,7 +403,7 @@ public class RecordingProxy {
         return u;
     }
 
-    private static double elapsed(long t0) { return Math.round((System.nanoTime() - t0) / 1e7) / 100.0; }
+    private static double elapsed(long t0) { return round((nanoTime() - t0) / 1e7) / 100.0; }
 
     private void reply(final com.sun.net.httpserver.HttpExchange x, final int status, final byte[] out) throws Exception {
         try {

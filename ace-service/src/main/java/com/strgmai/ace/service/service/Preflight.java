@@ -12,6 +12,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
+import static java.lang.Math.min;
+
 /** Port of runner/preflight.py: prerequisite check before a run spends its budget. Every probe is
  *  timeout-guarded (a hung daemon must never hang the benchmark). FATAL = the run cannot start;
  *  degraded = dependent oracle checks will SKIP, not fail. */
@@ -105,7 +107,7 @@ public class Preflight {
             add(out, "model server", true, models.size() + " models", true);
             add(out, "target model served", models.contains(target), models.contains(target) ? target : target + " not in " + models.stream().limit(3).toList(), true);
         } catch (Exception e) {
-            add(out, "model server", false, String.valueOf(e).substring(0, Math.min(70, String.valueOf(e).length())), true);
+            add(out, "model server", false, String.valueOf(e).substring(0, min(70, String.valueOf(e).length())), true);
         }
         final boolean blocked = out.stream().anyMatch(x -> x.fatal() && !x.ok());
         return new Report(out, blocked);

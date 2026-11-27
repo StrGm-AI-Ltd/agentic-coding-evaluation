@@ -11,6 +11,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import static java.lang.System.nanoTime;
+import static java.lang.Thread.currentThread;
+
 /** #696, found live: ace-service mounts the HOST's real /var/run/docker.sock (Docker-outside-of-
  *  Docker) so the agent's own bash tool can use `docker` at all - but that gives the agent's own
  *  `docker ps`/`docker rm` ambient authority over EVERY container on the host, including
@@ -96,10 +99,10 @@ public class JobDockerSidecar {
     }
 
     private static void waitUntilReady(final String name, final String ip) {
-        final long deadline = System.nanoTime() + READY_TIMEOUT_SEC * 1_000_000_000L;
-        while (System.nanoTime() < deadline) {
+        final long deadline = nanoTime() + READY_TIMEOUT_SEC * 1_000_000_000L;
+        while (nanoTime() < deadline) {
             if (DockerService.portInUse(DOCKER_PORT, ip)) return;
-            try { Thread.sleep(1000); } catch (final InterruptedException e) { Thread.currentThread().interrupt(); return; }
+            try { Thread.sleep(1000); } catch (final InterruptedException e) { currentThread().interrupt(); return; }
         }
         log.warn("docker sidecar {} did not answer on port {} within {}s - proceeding anyway, the agent's first docker call will surface the real error", name, DOCKER_PORT, READY_TIMEOUT_SEC);
     }

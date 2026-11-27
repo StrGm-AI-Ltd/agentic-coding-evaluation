@@ -8,6 +8,9 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+
 /** Port of agent_loop.py's tools: read/write/edit/bash with EXACT-match edits, ranged reads and
  *  mechanical output hygiene (ANSI stripped, head+tail caps) so context is spent on what the model
  *  needs, not on what a command happened to print. */
@@ -80,10 +83,10 @@ public final class AgentTools {
         try { lines = Files.readAllLines(p, StandardCharsets.UTF_8); }
         catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
         // clamp the lower bound: a 0/negative start_line would index lines.get(-1) and throw
-        final int s = Math.max(1, a.get("start_line") instanceof Number n ? n.intValue() : 1);
+        final int s = max(1, a.get("start_line") instanceof Number n ? n.intValue() : 1);
         if (!lines.isEmpty() && s > lines.size())
             return new Outcome("error: start_line " + s + " is past the end of the file (" + lines.size() + " lines)", FailureCategory.MALFORMED_ARGS);
-        int e = a.get("end_line") instanceof Number n ? Math.min(n.intValue(), lines.size()) : lines.size();
+        int e = a.get("end_line") instanceof Number n ? min(n.intValue(), lines.size()) : lines.size();
         if (e - s + 1 > READ_MAX_LINES && !a.containsKey("end_line")) e = s + READ_MAX_LINES - 1;
         final var out = new StringBuilder();
         for (int i = s; i <= e && i <= lines.size(); i++) out.append(String.format("%5d: %s%n", i, lines.get(i - 1)));
@@ -146,7 +149,7 @@ public final class AgentTools {
     public static Outcome bash(final String cwd, final Map<String, Object> a, final Map<String, String> env, final boolean errorLineExtractionEnabled) {
         final String cmd = String.valueOf(a.getOrDefault("command", ""));
         int to = 600;
-        if (a.get("timeout_sec") instanceof Number n) to = Math.min(1800, Math.max(5, n.intValue()));
+        if (a.get("timeout_sec") instanceof Number n) to = min(1800, max(5, n.intValue()));
         if (cmd.isBlank()) return new Outcome("error: empty command", FailureCategory.MALFORMED_ARGS);
         String out; int rc;
         try {
@@ -251,5 +254,5 @@ public final class AgentTools {
         return String.join("\n", out);
     }
 
-    public static Duration bashTimeout(int requested) { return Duration.ofSeconds(Math.min(1800, Math.max(5, requested))); }
+    public static Duration bashTimeout(int requested) { return Duration.ofSeconds(min(1800, max(5, requested))); }
 }

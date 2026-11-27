@@ -10,6 +10,9 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.regex.*;
 
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+
 /** Port of oracle/checks/02_money_safety.py (M1-M4). Regex lint over source — a cheap early signal,
  *  NOT the correctness oracle (the black-box suite is). Hardened ports kept: multi-line declarations,
  *  Kotlin, SQL column types, test-source-set skipping only, comment stripping, Objects.equals/getter
@@ -55,7 +58,7 @@ public final class MoneySafetyChecks {
         for (Path p : sql)
             for (var m : SQL_BAD.matcher(read(p)).results().toList()) bad.add(rel(p, ws) + ":" + m.group(1) + " " + m.group(2));
         out.add(new CheckResult(CheckId.M1, bad.isEmpty() ? CheckStatus.PASS : CheckStatus.FAIL,
-                bad.isEmpty() ? java.size() + " src + " + sql.size() + " sql scanned" : String.join("; ", bad.subList(0, Math.min(6, bad.size())))));
+                bad.isEmpty() ? java.size() + " src + " + sql.size() + " sql scanned" : String.join("; ", bad.subList(0, min(6, bad.size())))));
 
         // ---- M2: BigDecimal actually IMPORTED where money is handled (not merely mentioned in a comment)
         final List<Path> moneyFiles = new ArrayList<>(), withBd = new ArrayList<>();
@@ -67,7 +70,7 @@ public final class MoneySafetyChecks {
             }
         }
         if (moneyFiles.isEmpty()) out.add(CheckResult.notAttempted(CheckId.M2, "no source handles money-named fields"));
-        else out.add(new CheckResult(CheckId.M2, withBd.size() >= Math.max(1, moneyFiles.size() / 2) ? CheckStatus.PASS : CheckStatus.FAIL,
+        else out.add(new CheckResult(CheckId.M2, withBd.size() >= max(1, moneyFiles.size() / 2) ? CheckStatus.PASS : CheckStatus.FAIL,
                 withBd.size() + "/" + moneyFiles.size() + " money-handling files import BigDecimal"));
 
         // ---- M3: equals() on money (scale trap)
@@ -80,7 +83,7 @@ public final class MoneySafetyChecks {
                 while (m.find() && n[0] < 5) { eq.add(rel(p, ws) + ":" + m.group(0)); n[0]++; }
             }
             out.add(new CheckResult(CheckId.M3, eq.isEmpty() ? CheckStatus.PASS : CheckStatus.FAIL,
-                    eq.isEmpty() ? withBd.size() + " files clean" : String.join("; ", eq.subList(0, Math.min(5, eq.size())))));
+                    eq.isEmpty() ? withBd.size() + " files clean" : String.join("; ", eq.subList(0, min(5, eq.size())))));
         }
 
         // ---- M4: point-in-time replay subtracts sells, per METHOD DEFINITION; NOT_ATTEMPTED if absent
@@ -104,12 +107,12 @@ public final class MoneySafetyChecks {
             if (Pattern.compile("@Query|createQuery|nativeQuery").matcher(read(p)).find() && SQL_PIT.matcher(read(p)).find()) pitMethods[0]++;
         if (pitMethods[0] == 0) out.add(CheckResult.notAttempted(CheckId.M4, "no point-in-time method found (holdingsAt/asOf/... definition)"));
         else out.add(new CheckResult(CheckId.M4, findings.isEmpty() ? CheckStatus.PASS : CheckStatus.FAIL,
-                findings.isEmpty() ? pitMethods[0] + " pit method(s) subtract sells" : String.join("; ", findings.subList(0, Math.min(4, findings.size())))));
+                findings.isEmpty() ? pitMethods[0] + " pit method(s) subtract sells" : String.join("; ", findings.subList(0, min(4, findings.size())))));
         return out;
     }
 
     static String methodBody(final String s, final int start) {
-        final String body = s.substring(start, Math.min(s.length(), start + 4000));
+        final String body = s.substring(start, min(s.length(), start + 4000));
         int depth = 0; boolean opened = false;
         for (int i = 0; i < body.length(); i++) {
             final char ch = body.charAt(i);

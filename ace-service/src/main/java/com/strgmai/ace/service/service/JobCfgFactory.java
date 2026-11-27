@@ -6,6 +6,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import static java.lang.Double.parseDouble;
+import static java.lang.Integer.parseInt;
+import static java.lang.Long.parseLong;
+import static java.lang.System.getenv;
+
 /** #82: the argv -> cfg translation WorkerService.poll() used to build inline (~30 lines, growing
  *  with every new run flag), extracted so it's directly unit-testable without a live job/worker/DB
  *  and so poll() itself stays orchestration, not parsing. */
@@ -40,9 +45,9 @@ final class JobCfgFactory {
         if (WorkerService.flag(argv, "--phases") != null) cfg.put("phases", WorkerService.flag(argv, "--phases"));
         // #228: 8 more RunSpec flags collected by the UI and emitted by RunSpec.argv() with nothing
         // downstream ever reading them back out of argv into cfg either, same class of bug as --phases
-        if (WorkerService.flag(argv, "--plan-wall") != null) cfg.put("plan_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--plan-wall")));
-        if (WorkerService.flag(argv, "--plan-tokens") != null) cfg.put("plan_tokens", Long.parseLong(WorkerService.flag(argv, "--plan-tokens")));
-        if (WorkerService.flag(argv, "--wall-budget") != null) cfg.put("wall_budget_override", Integer.parseInt(WorkerService.flag(argv, "--wall-budget")));
+        if (WorkerService.flag(argv, "--plan-wall") != null) cfg.put("plan_wall_sec", parseInt(WorkerService.flag(argv, "--plan-wall")));
+        if (WorkerService.flag(argv, "--plan-tokens") != null) cfg.put("plan_tokens", parseLong(WorkerService.flag(argv, "--plan-tokens")));
+        if (WorkerService.flag(argv, "--wall-budget") != null) cfg.put("wall_budget_override", parseInt(WorkerService.flag(argv, "--wall-budget")));
         // #581, found live: this used to be set ONLY from an explicit --java-home flag, which
         // nothing in the New Job form ever emits - so cfg's own "java_home" key was absent for the
         // overwhelming majority of jobs, and RunBenchSupport.scrubbedEnv() (fed by this cfg) never
@@ -60,19 +65,19 @@ final class JobCfgFactory {
             cfg.put("parallel_plan_enabled", "on".equals(WorkerService.flag(argv, "--parallel-plan")));
         if (WorkerService.flag(argv, "--parallel-weight") != null) {
             final Map<String, Object> parallelPlan = new LinkedHashMap<>();
-            parallelPlan.put("weight", Double.parseDouble(WorkerService.flag(argv, "--parallel-weight")));
+            parallelPlan.put("weight", parseDouble(WorkerService.flag(argv, "--parallel-weight")));
             cfg.put("parallel_plan", parallelPlan);
         }
-        if (WorkerService.flag(argv, "--task-wall") != null) cfg.put("task_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--task-wall")));
-        if (WorkerService.flag(argv, "--task-tokens") != null) cfg.put("task_tokens", Long.parseLong(WorkerService.flag(argv, "--task-tokens")));
+        if (WorkerService.flag(argv, "--task-wall") != null) cfg.put("task_wall_sec", parseInt(WorkerService.flag(argv, "--task-wall")));
+        if (WorkerService.flag(argv, "--task-tokens") != null) cfg.put("task_tokens", parseLong(WorkerService.flag(argv, "--task-tokens")));
         // #173: an experiment matches a monolithic arm's single implementation-phase budget to an
         // orchestrated arm's N-tasks x per-task budget (design rule 10) by computing --impl-wall/
         // --impl-tokens (ExperimentsService) and passing them on the job's own argv (RunSpec) - but
         // nothing downstream ever read them back out of argv into cfg, so they were silently dropped
-        if (WorkerService.flag(argv, "--impl-wall") != null) cfg.put("impl_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--impl-wall")));
-        if (WorkerService.flag(argv, "--impl-tokens") != null) cfg.put("impl_tokens", Long.parseLong(WorkerService.flag(argv, "--impl-tokens")));
-        if (WorkerService.flag(argv, "--first-token-timeout") != null) cfg.put("first_token_timeout_sec", Integer.parseInt(WorkerService.flag(argv, "--first-token-timeout")));
-        if (WorkerService.flag(argv, "--compaction-trigger") != null) cfg.put("compaction_trigger", Integer.parseInt(WorkerService.flag(argv, "--compaction-trigger")));
+        if (WorkerService.flag(argv, "--impl-wall") != null) cfg.put("impl_wall_sec", parseInt(WorkerService.flag(argv, "--impl-wall")));
+        if (WorkerService.flag(argv, "--impl-tokens") != null) cfg.put("impl_tokens", parseLong(WorkerService.flag(argv, "--impl-tokens")));
+        if (WorkerService.flag(argv, "--first-token-timeout") != null) cfg.put("first_token_timeout_sec", parseInt(WorkerService.flag(argv, "--first-token-timeout")));
+        if (WorkerService.flag(argv, "--compaction-trigger") != null) cfg.put("compaction_trigger", parseInt(WorkerService.flag(argv, "--compaction-trigger")));
         // #417: same comma-separated-string shape as --phases above
         if (WorkerService.flag(argv, "--compaction-strategies") != null) cfg.put("compaction_strategies", WorkerService.flag(argv, "--compaction-strategies"));
         // #398: only read back when present - blank/absent means "no explicit guidance," which the
@@ -80,47 +85,47 @@ final class JobCfgFactory {
         if (WorkerService.flag(argv, "--task-granularity") != null) cfg.put("task_granularity", WorkerService.flag(argv, "--task-granularity"));
         // #95: unlike every other phase/session budget, the turn cap used to be a hardcoded
         // ReferenceAgent-local constant with no run-level override at all
-        if (WorkerService.flag(argv, "--max-turns") != null) cfg.put("max_turns", Integer.parseInt(WorkerService.flag(argv, "--max-turns")));
+        if (WorkerService.flag(argv, "--max-turns") != null) cfg.put("max_turns", parseInt(WorkerService.flag(argv, "--max-turns")));
         // sampler knobs (#72) - RunBench folds these into a SamplerOverrides pinned onto
         // every request by RecordingProxy; unset means "use the operator-wide default"
-        if (WorkerService.flag(argv, "--temperature") != null) cfg.put("temperature", Double.parseDouble(WorkerService.flag(argv, "--temperature")));
-        if (WorkerService.flag(argv, "--top-p") != null) cfg.put("top_p", Double.parseDouble(WorkerService.flag(argv, "--top-p")));
-        if (WorkerService.flag(argv, "--top-k") != null) cfg.put("top_k", Integer.parseInt(WorkerService.flag(argv, "--top-k")));
-        if (WorkerService.flag(argv, "--repetition-penalty") != null) cfg.put("repetition_penalty", Double.parseDouble(WorkerService.flag(argv, "--repetition-penalty")));
-        if (WorkerService.flag(argv, "--max-tokens") != null) cfg.put("max_tokens_override", Integer.parseInt(WorkerService.flag(argv, "--max-tokens")));
+        if (WorkerService.flag(argv, "--temperature") != null) cfg.put("temperature", parseDouble(WorkerService.flag(argv, "--temperature")));
+        if (WorkerService.flag(argv, "--top-p") != null) cfg.put("top_p", parseDouble(WorkerService.flag(argv, "--top-p")));
+        if (WorkerService.flag(argv, "--top-k") != null) cfg.put("top_k", parseInt(WorkerService.flag(argv, "--top-k")));
+        if (WorkerService.flag(argv, "--repetition-penalty") != null) cfg.put("repetition_penalty", parseDouble(WorkerService.flag(argv, "--repetition-penalty")));
+        if (WorkerService.flag(argv, "--max-tokens") != null) cfg.put("max_tokens_override", parseInt(WorkerService.flag(argv, "--max-tokens")));
         // the fraction of the (derived or pinned) context window reserved for a single model call's
         // own output - RunBench.runOnce() reads this back for both its probe and no-probe branches;
         // unset means "use ContextProbe.DEFAULTS' own default (0.5)"
-        if (WorkerService.flag(argv, "--max-output-fraction") != null) cfg.put("max_output_fraction", Double.parseDouble(WorkerService.flag(argv, "--max-output-fraction")));
+        if (WorkerService.flag(argv, "--max-output-fraction") != null) cfg.put("max_output_fraction", parseDouble(WorkerService.flag(argv, "--max-output-fraction")));
         if (WorkerService.flag(argv, "--reasoning-effort") != null) cfg.put("reasoning_effort", WorkerService.flag(argv, "--reasoning-effort"));
         // PARALLEL_PLAN/handoff/wrap-up walls (found live 2026-09-25): were fixed literals
         // in RunBench.java (600/300/300*scale) with no run-level control at all
-        if (WorkerService.flag(argv, "--parallel-plan-wall") != null) cfg.put("parallel_plan_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--parallel-plan-wall")));
-        if (WorkerService.flag(argv, "--handoff-wall") != null) cfg.put("handoff_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--handoff-wall")));
-        if (WorkerService.flag(argv, "--wrapup-wall") != null) cfg.put("wrapup_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--wrapup-wall")));
+        if (WorkerService.flag(argv, "--parallel-plan-wall") != null) cfg.put("parallel_plan_wall_sec", parseInt(WorkerService.flag(argv, "--parallel-plan-wall")));
+        if (WorkerService.flag(argv, "--handoff-wall") != null) cfg.put("handoff_wall_sec", parseInt(WorkerService.flag(argv, "--handoff-wall")));
+        if (WorkerService.flag(argv, "--wrapup-wall") != null) cfg.put("wrapup_wall_sec", parseInt(WorkerService.flag(argv, "--wrapup-wall")));
         // the FIX step (merge-conflict repair after a broken parallel wave): was a fixed literal
         // (900s/20000 tokens) with no run-level control at all
-        if (WorkerService.flag(argv, "--fix-wall") != null) cfg.put("fix_wall_sec", Integer.parseInt(WorkerService.flag(argv, "--fix-wall")));
-        if (WorkerService.flag(argv, "--fix-tokens") != null) cfg.put("fix_tokens", Integer.parseInt(WorkerService.flag(argv, "--fix-tokens")));
+        if (WorkerService.flag(argv, "--fix-wall") != null) cfg.put("fix_wall_sec", parseInt(WorkerService.flag(argv, "--fix-wall")));
+        if (WorkerService.flag(argv, "--fix-tokens") != null) cfg.put("fix_tokens", parseInt(WorkerService.flag(argv, "--fix-tokens")));
         // PARALLEL_PLAN/handoff/wrap-up TOKEN budgets (found live 2026-09-27): were fixed literals
         // (8000/3000/2000) with no run-level control, same class of bug as their walls above
-        if (WorkerService.flag(argv, "--parallel-plan-tokens") != null) cfg.put("parallel_plan_tokens", Integer.parseInt(WorkerService.flag(argv, "--parallel-plan-tokens")));
-        if (WorkerService.flag(argv, "--handoff-tokens") != null) cfg.put("handoff_tokens", Integer.parseInt(WorkerService.flag(argv, "--handoff-tokens")));
-        if (WorkerService.flag(argv, "--wrapup-tokens") != null) cfg.put("wrapup_tokens", Integer.parseInt(WorkerService.flag(argv, "--wrapup-tokens")));
+        if (WorkerService.flag(argv, "--parallel-plan-tokens") != null) cfg.put("parallel_plan_tokens", parseInt(WorkerService.flag(argv, "--parallel-plan-tokens")));
+        if (WorkerService.flag(argv, "--handoff-tokens") != null) cfg.put("handoff_tokens", parseInt(WorkerService.flag(argv, "--handoff-tokens")));
+        if (WorkerService.flag(argv, "--wrapup-tokens") != null) cfg.put("wrapup_tokens", parseInt(WorkerService.flag(argv, "--wrapup-tokens")));
         // a pinned --context-window IS the window: it skips step 0, whose whole job is to measure one
         final String window = WorkerService.flag(argv, "--context-window");
-        if (window != null) cfg.put("context_window", Integer.parseInt(window));
+        if (window != null) cfg.put("context_window", parseInt(window));
         // the context probe (step 0) is the default for direct runs; queue runs opt in via ACE_JLS_CONTEXT_PROBE;
         // --no-context-probe is a per-run override that skips it even when nothing is pinned
         cfg.put("context_probe", !argv.contains("--no-context-probe") && window == null
-                && Boolean.parseBoolean(System.getenv().getOrDefault("ACE_JLS_CONTEXT_PROBE", "true")));   // Python default: the probe runs
+                && Boolean.parseBoolean(getenv().getOrDefault("ACE_JLS_CONTEXT_PROBE", "true")));   // Python default: the probe runs
         cfg.put("context_probe_fresh", argv.contains("--context-probe-fresh"));
         if (WorkerService.flag(argv, "--parallel") != null) {
             if ("auto".equals(WorkerService.flag(argv, "--parallel"))) cfg.put("parallel_auto", true);
-            else cfg.put("parallel", Integer.parseInt(WorkerService.flag(argv, "--parallel")));
+            else cfg.put("parallel", parseInt(WorkerService.flag(argv, "--parallel")));
         }
         // opt-in control over how much budget efficiency counts toward agent_result_pct (Collect.java)
-        if (WorkerService.flag(argv, "--efficiency-weight") != null) cfg.put("efficiency_weight", Double.parseDouble(WorkerService.flag(argv, "--efficiency-weight")));
+        if (WorkerService.flag(argv, "--efficiency-weight") != null) cfg.put("efficiency_weight", parseDouble(WorkerService.flag(argv, "--efficiency-weight")));
         // Map.of() rejects a null value outright - "model" IS null whenever review is enabled
         // without an explicit --reviewer-model (self-review alone still needs a reviewer picked
         // downstream, but that is RunBench's decision to make, not a reason to crash the worker)
@@ -130,15 +135,15 @@ final class JobCfgFactory {
         review.put("blind", argv.contains("--review-blind"));
         // shared by both self-review and trajectory-review (Reviews.runReviewerSession reads
         // this same "review" map's wall_sec/tokens for either kind of reviewer session)
-        if (WorkerService.flag(argv, "--review-wall-sec") != null) review.put("wall_sec", Integer.parseInt(WorkerService.flag(argv, "--review-wall-sec")));
-        if (WorkerService.flag(argv, "--review-tokens") != null) review.put("tokens", Integer.parseInt(WorkerService.flag(argv, "--review-tokens")));
+        if (WorkerService.flag(argv, "--review-wall-sec") != null) review.put("wall_sec", parseInt(WorkerService.flag(argv, "--review-wall-sec")));
+        if (WorkerService.flag(argv, "--review-tokens") != null) review.put("tokens", parseInt(WorkerService.flag(argv, "--review-tokens")));
         // unset -> Collect's own 0.1 default; only set when the run actually pinned one
-        if (WorkerService.flag(argv, "--review-weight") != null) review.put("weight", Double.parseDouble(WorkerService.flag(argv, "--review-weight")));
+        if (WorkerService.flag(argv, "--review-weight") != null) review.put("weight", parseDouble(WorkerService.flag(argv, "--review-weight")));
         cfg.put("review", review);
         final Map<String, Object> trajectoryReview = new LinkedHashMap<>();
         trajectoryReview.put("enabled", argv.contains("--trajectory-review"));
         trajectoryReview.put("model", WorkerService.flag(argv, "--trajectory-reviewer-model"));
-        if (WorkerService.flag(argv, "--trajectory-weight") != null) trajectoryReview.put("weight", Double.parseDouble(WorkerService.flag(argv, "--trajectory-weight")));
+        if (WorkerService.flag(argv, "--trajectory-weight") != null) trajectoryReview.put("weight", parseDouble(WorkerService.flag(argv, "--trajectory-weight")));
         trajectoryReview.put("use", WorkerService.flag(argv, "--trajectory-use"));
         cfg.put("trajectory_review", trajectoryReview);
         // #265: a mid-task trajectory judge - same nested-map shape as "review" above, but read
@@ -149,18 +154,18 @@ final class JobCfgFactory {
         // explicitly, so only a raw/hand-built argv list missing both falls back to enabled here
         judge.put("enabled", !argv.contains("--no-judge"));
         judge.put("every_n_turns", WorkerService.flag(argv, "--judge-every-n-turns") != null
-                ? Integer.parseInt(WorkerService.flag(argv, "--judge-every-n-turns")) : 10);
+                ? parseInt(WorkerService.flag(argv, "--judge-every-n-turns")) : 10);
         judge.put("model", WorkerService.flag(argv, "--judge-model"));
-        if (WorkerService.flag(argv, "--judge-wall-sec") != null) judge.put("wall_sec", Integer.parseInt(WorkerService.flag(argv, "--judge-wall-sec")));
-        if (WorkerService.flag(argv, "--judge-tokens") != null) judge.put("tokens", Integer.parseInt(WorkerService.flag(argv, "--judge-tokens")));
+        if (WorkerService.flag(argv, "--judge-wall-sec") != null) judge.put("wall_sec", parseInt(WorkerService.flag(argv, "--judge-wall-sec")));
+        if (WorkerService.flag(argv, "--judge-tokens") != null) judge.put("tokens", parseInt(WorkerService.flag(argv, "--judge-tokens")));
         cfg.put("judge", judge);
         // #307: the budget-exhaustion rescue step - same nested-map shape as "judge" above, read
         // only at the task loop's own call site in RunBench (rescueStep()), never anywhere else
         final Map<String, Object> budgetRescue = new LinkedHashMap<>();
         budgetRescue.put("enabled", argv.contains("--budget-rescue"));
-        if (WorkerService.flag(argv, "--rescue-wall-sec") != null) budgetRescue.put("wall_sec", Integer.parseInt(WorkerService.flag(argv, "--rescue-wall-sec")));
-        if (WorkerService.flag(argv, "--rescue-tokens") != null) budgetRescue.put("tokens", Integer.parseInt(WorkerService.flag(argv, "--rescue-tokens")));
-        if (WorkerService.flag(argv, "--rescue-keep-recent-turns") != null) budgetRescue.put("keep_recent_turns", Integer.parseInt(WorkerService.flag(argv, "--rescue-keep-recent-turns")));
+        if (WorkerService.flag(argv, "--rescue-wall-sec") != null) budgetRescue.put("wall_sec", parseInt(WorkerService.flag(argv, "--rescue-wall-sec")));
+        if (WorkerService.flag(argv, "--rescue-tokens") != null) budgetRescue.put("tokens", parseInt(WorkerService.flag(argv, "--rescue-tokens")));
+        if (WorkerService.flag(argv, "--rescue-keep-recent-turns") != null) budgetRescue.put("keep_recent_turns", parseInt(WorkerService.flag(argv, "--rescue-keep-recent-turns")));
         cfg.put("budget_rescue", budgetRescue);
         // #332: defaults to ON now - RunSpec.argv() always emits either --lesson-recording or
         // --no-lesson-recording explicitly, same convention as judge above

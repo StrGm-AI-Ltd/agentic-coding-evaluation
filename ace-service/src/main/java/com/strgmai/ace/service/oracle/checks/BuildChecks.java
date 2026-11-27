@@ -14,6 +14,12 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.*;
 
+import static java.lang.Integer.parseInt;
+import static java.lang.Math.abs;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.util.Comparator.comparingInt;
+
 /** Port of oracle/checks/03_build.py: build checks made EVIDENTIAL. gradle always runs from the
  *  PINNED IMAGE (the agent's wrapper is never executed); every Gradle root is built; B1 = all
  *  roots assemble, B2 = XML-verified tests (executed>0, failed==0, no neutered test task), B3 =
@@ -51,7 +57,7 @@ public final class BuildChecks {
     public static String infraReason(final String text) {
         if (text == null) return "";
         final Matcher m = Pattern.compile(INFRA_RE, Pattern.CASE_INSENSITIVE).matcher(text);
-        return m.find() ? m.group(0).substring(0, Math.min(80, m.group(0).length())) : "";
+        return m.find() ? m.group(0).substring(0, min(80, m.group(0).length())) : "";
     }
 
     // ---- the PostgreSQL sidecar on a private network
@@ -104,10 +110,10 @@ public final class BuildChecks {
     public static String firstError(String out) {
         for (String line : out.split("\n")) {
             if (Pattern.compile(": error:|^e: |error: |Could not find|What went wrong|Unresolved reference|cannot find symbol|FAILURE:").matcher(line).find())
-                return line.strip().substring(0, Math.min(160, line.strip().length()));
+                return line.strip().substring(0, min(160, line.strip().length()));
         }
         final String[] lines = Arrays.stream(out.strip().split("\n")).filter(s -> !s.isBlank()).toArray(String[]::new);
-        return (lines.length == 0 ? "" : String.join(" ", Arrays.copyOfRange(lines, Math.max(0, lines.length - 2), lines.length))).substring(0, Math.min(160, Math.max(1, lines.length * 80)));
+        return (lines.length == 0 ? "" : String.join(" ", Arrays.copyOfRange(lines, max(0, lines.length - 2), lines.length))).substring(0, min(160, max(1, lines.length * 80)));
     }
 
     public static int[] testStats(Path root) {   // {executed, failed} from JUnit-style XML under build/test-results
@@ -116,9 +122,9 @@ public final class BuildChecks {
             try {
                 final Element r = javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(x.toFile()).getDocumentElement();
                 if (r.getTagName().equals("testsuite")) {
-                    ex += Integer.parseInt(r.getAttribute("tests").isEmpty() ? "0" : r.getAttribute("tests"));
-                    fl += Integer.parseInt(r.getAttribute("failures").isEmpty() ? "0" : r.getAttribute("failures"))
-                            + Integer.parseInt(r.getAttribute("errors").isEmpty() ? "0" : r.getAttribute("errors"));
+                    ex += parseInt(r.getAttribute("tests").isEmpty() ? "0" : r.getAttribute("tests"));
+                    fl += parseInt(r.getAttribute("failures").isEmpty() ? "0" : r.getAttribute("failures"))
+                            + parseInt(r.getAttribute("errors").isEmpty() ? "0" : r.getAttribute("errors"));
                 }
             } catch (Exception e) {
                 // silently dropping this file's counts from the B2 check's evidence can flip the
@@ -143,13 +149,13 @@ public final class BuildChecks {
                 Arrays.fill(out, i, j, ' '); i = j;
             } else if (src.startsWith("\"\"\"", i)) {                      // Java text block
                 int j = src.indexOf("\"\"\"", i + 3); j = j < 0 ? n : j;
-                if (strings) Arrays.fill(out, i + 3, Math.min(j, n), ' ');
-                i = Math.min(j + 3, n);
+                if (strings) Arrays.fill(out, i + 3, min(j, n), ' ');
+                i = min(j + 3, n);
             } else if (src.charAt(i) == '"' || src.charAt(i) == '\'') {
                 final char q = src.charAt(i); int j = i + 1;
                 while (j < n && src.charAt(j) != q) { if (src.charAt(j) == '\\' && j + 1 < n) j++; j++; }
-                if (strings) Arrays.fill(out, i + 1, Math.min(j, n), ' ');
-                i = Math.min(j + 1, n);
+                if (strings) Arrays.fill(out, i + 1, min(j, n), ' ');
+                i = min(j + 1, n);
             } else i++;
         }
         return new String(out);
@@ -215,7 +221,7 @@ public final class BuildChecks {
                         if (!MONEY_LINE.matcher(line).find()) continue;
                     }
                     int bestDist = Integer.MAX_VALUE; int bestLab = -1;
-                    for (int[] an : anchors) { int d = Math.abs(x.start() - an[0]); if (d < bestDist) { bestDist = d; bestLab = an[1]; } }
+                    for (int[] an : anchors) { int d = abs(x.start() - an[0]); if (d < bestDist) { bestDist = d; bestLab = an[1]; } }
                     if (bestLab >= 0 && bestDist <= ANCHOR_DISTANCE)
                         cands.add(new Cand(bestDist, jf, mu.name(), x.start(), x.end(), mu.replacement(), labels.get(bestLab) + "@" + bestDist));
                     else if (hint != null)
@@ -223,9 +229,9 @@ public final class BuildChecks {
                 }
             }
         }
-        cands.sort(Comparator.comparingInt((Cand c) -> c.dist).thenComparing(c -> c.name).thenComparing(c -> c.file.toString()));
+        cands.sort(comparingInt((Cand c) -> c.dist).thenComparing(c -> c.name).thenComparing(c -> c.file.toString()));
         final List<Candidate> out = new ArrayList<>();
-        for (Cand c : cands.subList(0, Math.min(limit, cands.size())))
+        for (Cand c : cands.subList(0, min(limit, cands.size())))
             out.add(new Candidate(c.file(), c.name(), c.start(), c.end(), c.rep(), c.anchor()));
         return out;
     }
@@ -282,7 +288,7 @@ public final class BuildChecks {
             final List<String> fails = new ArrayList<>(), infraHits = new ArrayList<>();
             for (int i = 0; i < croots.size(); i++) {
                 final String[] res = gradle(croots.get(i), image, "assemble", infra, GRADLE_TIMEOUT).split("\n", 2);
-                final int rc = Integer.parseInt(res[0]);
+                final int rc = parseInt(res[0]);
                 final String output = res.length > 1 ? res[1] : "";
                 if (rc != 0) {
                     final String reason = infraReason(output);
@@ -294,7 +300,7 @@ public final class BuildChecks {
                 return out;
             }
             out.add(new CheckResult(CheckId.B1, fails.isEmpty() ? CheckStatus.PASS : CheckStatus.FAIL,
-                    fails.isEmpty() ? roots.size() + " root(s) " + names.subList(0, Math.min(4, names.size())) + " assemble" : head(String.join("; ", fails), 250)));
+                    fails.isEmpty() ? roots.size() + " root(s) " + names.subList(0, min(4, names.size())) + " assemble" : head(String.join("; ", fails), 250)));
             if (!fails.isEmpty()) {
                 out.add(CheckResult.fail(CheckId.B2, "build did not compile"));
                 out.add(CheckResult.fail(CheckId.B3, "build did not compile"));
@@ -312,7 +318,7 @@ public final class BuildChecks {
             for (int i = 0; i < croots.size(); i++) {
                 infra.resetDb();
                 final String[] res = gradle(croots.get(i), image, "test", infra, GRADLE_TIMEOUT).split("\n", 2);
-                final int rc = Integer.parseInt(res[0]);
+                final int rc = parseInt(res[0]);
                 final String output = res.length > 1 ? res[1] : "";
                 rcs.add(rc);
                 if (rc != 0 && !infraReason(output).isEmpty()) infraHits.add(names.get(i) + ": " + infraReason(output));
@@ -333,7 +339,7 @@ public final class BuildChecks {
                 return out;
             }
             CheckStatus b2;
-            if (!neut.isEmpty()) { b2 = CheckStatus.FAIL; out.add(CheckResult.fail(CheckId.B2, "test task neutered in " + neut.subList(0, Math.min(2, neut.size())))); }
+            if (!neut.isEmpty()) { b2 = CheckStatus.FAIL; out.add(CheckResult.fail(CheckId.B2, "test task neutered in " + neut.subList(0, min(2, neut.size())))); }
             else if (ex == 0) { b2 = CheckStatus.FAIL; out.add(CheckResult.fail(CheckId.B2, "0 tests executed (gradle test exit 0 with no tests is not evidence)")); }
             else {
                 b2 = (rcs.stream().allMatch(r -> r == 0) && fl == 0) ? CheckStatus.PASS : CheckStatus.FAIL;
@@ -355,7 +361,7 @@ public final class BuildChecks {
                 for (Path x : StructureChecks.glob(rootOf, "**/build/test-results/**/*.xml")) Files.deleteIfExists(x);
                 infra.resetDb();
                 final String[] res = gradle(rootOf, image, "test", infra, GRADLE_TIMEOUT).split("\n", 2);
-                int rc = Integer.parseInt(res[0]);
+                int rc = parseInt(res[0]);
                 final String output = res.length > 1 ? res[1] : "";
                 final int[] st = testStats(rootOf);
                 Files.writeString(c.file(), src);   // restore for the next candidate
@@ -368,7 +374,7 @@ public final class BuildChecks {
                                 + (tried.isEmpty() ? "" : "; skipped " + tried)));
                 return out;
             }
-            out.add(CheckResult.notAttempted(CheckId.B3, "every candidate mutant failed to compile: " + tried.subList(0, Math.min(3, tried.size()))));
+            out.add(CheckResult.notAttempted(CheckId.B3, "every candidate mutant failed to compile: " + tried.subList(0, min(3, tried.size()))));
             return out;
         } finally {
             infra.down();
@@ -389,6 +395,6 @@ public final class BuildChecks {
         } catch (final Exception ignored) { /* best-effort cleanup of a scratch temp dir */ }
     }
 
-    static String head(String s, int n) { return s == null ? "" : s.substring(0, Math.min(n, s.length())); }
-    static String tail(String s, int n) { return s == null ? "" : s.substring(Math.max(0, s.length() - n)); }
+    static String head(String s, int n) { return s == null ? "" : s.substring(0, min(n, s.length())); }
+    static String tail(String s, int n) { return s == null ? "" : s.substring(max(0, s.length() - n)); }
 }

@@ -19,6 +19,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static java.lang.System.currentTimeMillis;
+import static java.util.stream.Collectors.toSet;
+
 /** Port of service/worker.py: runs queued benchmark jobs ONE AT A TIME (two would share the model
  *  server and fight over Docker), reconciles orphaned 'running' rows at startup, and imports the
  *  finished results. The Python original spawns run_bench.py as a subprocess; the Java port runs
@@ -87,7 +90,7 @@ public class WorkerService {
         // (ace-service itself being killed before its own cleanup ran is exactly how this started)
         // and is safe to remove. Paused jobs are deliberately kept alive here (not terminal).
         final Set<String> live = jobs.stream().filter(j -> !RunSpec.TERMINAL.contains(j.get("status")))
-                .map(j -> String.valueOf(j.get("run_id"))).collect(java.util.stream.Collectors.toSet());
+                .map(j -> String.valueOf(j.get("run_id"))).collect(toSet());
         for (String runId : dockerSidecar.orphaned(live)) dockerSidecar.destroy(runId);
     }
 
@@ -267,7 +270,7 @@ public class WorkerService {
                         try {
                             final java.nio.file.Path aborted = java.nio.file.Path.of(props.resultsDir(), "_aborted");
                             java.nio.file.Files.createDirectories(aborted);
-                            java.nio.file.Files.move(runDir, aborted.resolve(job.runId() + "-" + System.currentTimeMillis() / 1000));
+                            java.nio.file.Files.move(runDir, aborted.resolve(job.runId() + "-" + currentTimeMillis() / 1000));
                         } catch (Exception e) {
                             // a failed move here is exactly the "must never mix into a re-run" case
                             // this code exists to prevent - the run dir stays in place, unmoved

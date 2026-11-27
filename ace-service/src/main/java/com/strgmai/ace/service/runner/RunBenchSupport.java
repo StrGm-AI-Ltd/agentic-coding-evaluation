@@ -21,6 +21,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
+import static java.lang.System.getenv;
+import static java.util.Comparator.comparing;
+
 /** Ports of run_bench.py's process-level machinery: the single-run lock (two runs would share the
  *  model server and fight over Docker), git workspace snapshots (the commit SHAs live OUTSIDE the
  *  workspace; the bundle is P3's evidence) and the scrubbed environment (PATH/LANG/TMPDIR only, no
@@ -49,7 +52,7 @@ public final class RunBenchSupport {
     public static Map<String, String> scrubbedEnv(final String home, final String runId, final String javaHome, final String dockerHost) {
         final Map<String, String> env = new LinkedHashMap<>();
         for (String k : List.of("PATH", "LANG", "LC_ALL", "TERM", "TMPDIR", "SHELL")) {   // PATH/LANG/TMPDIR only - no operator tokens
-            final String v = System.getenv(k);
+            final String v = getenv(k);
             if (v != null) env.put(k, v);
         }
         env.put("HOME", home);
@@ -72,7 +75,7 @@ public final class RunBenchSupport {
         // not a per-run configurable knob the way javaHome is above - every task on this benchmark
         // family needs SOME working gradle, so there is nothing for a run to meaningfully override.
         // Read directly, same reasoning Preflight.java's own fatal gate for this uses.
-        final String gradleHome = System.getenv("ACE_GRADLE_HOME");
+        final String gradleHome = getenv("ACE_GRADLE_HOME");
         if (gradleHome != null && !gradleHome.isBlank()) {
             env.put("PATH", Paths.get(gradleHome).resolve("bin") + ":" + env.getOrDefault("PATH", ""));
         }
@@ -287,7 +290,7 @@ public final class RunBenchSupport {
     }
 
     public static Optional<String> javaHome() {
-        final String jh = System.getenv("AB_JAVA_HOME");
+        final String jh = getenv("AB_JAVA_HOME");
         if (jh != null && Files.isRegularFile(Paths.get(jh, "bin/java"))) return Optional.of(jh);
         return Optional.empty();
     }
@@ -356,7 +359,7 @@ public final class RunBenchSupport {
     static Path findSessionFile(final Path sessionDir, final String sessionId) {
         try (var s = Files.list(sessionDir)) {
             return s.filter(p -> p.getFileName().toString().contains(sessionId) && p.getFileName().toString().endsWith(".jsonl"))
-                    .max(Comparator.comparing(RunBenchSupport::lastModifiedOrEpoch))
+                    .max(comparing(RunBenchSupport::lastModifiedOrEpoch))
                     .orElse(null);
         } catch (IOException e) { return null; }
     }

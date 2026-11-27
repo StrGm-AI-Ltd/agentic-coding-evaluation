@@ -18,6 +18,8 @@ import java.util.Map;
 import java.util.ArrayList;
 import java.util.concurrent.Executors;
 
+import static java.lang.System.nanoTime;
+import static java.lang.Thread.currentThread;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -141,7 +143,7 @@ class ServiceClientWireTest {
                     try {
                         Thread.sleep(3000);
                     } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
+                        currentThread().interrupt();
                     }
                     respond(exchange, 200, "late");
                 }
@@ -534,7 +536,7 @@ class ServiceClientWireTest {
             try {
                 Thread.sleep(1500);   // longer than the 500ms ordinary readTimeout below
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                currentThread().interrupt();
             }
             respond(exchange, 200, PREFLIGHT_JSON);
         });
@@ -562,7 +564,7 @@ class ServiceClientWireTest {
             try {
                 Thread.sleep(1500);
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                currentThread().interrupt();
             }
             respond(exchange, 200, PREFLIGHT_JSON);
         });
@@ -610,9 +612,9 @@ class ServiceClientWireTest {
 
     @Test
     void readTimeout_failsFastWithinBudget() {
-        long start = System.nanoTime();
+        long start = nanoTime();
         assertThrows(ResourceAccessException.class, () -> client.runFileText("r1", "slow"));
-        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        long elapsedMs = (nanoTime() - start) / 1_000_000;
         assertTrue(elapsedMs < 2500, "must fail within the 1s read timeout, took " + elapsedMs + "ms");
     }
 

@@ -4,6 +4,12 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static java.lang.Integer.parseInt;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.lang.Math.round;
+import static java.util.Comparator.comparingInt;
+
 /** Port of runner/plan.py: parse an IMPLEMENTATION_PLAN.md into ordered tasks. Deterministic.
  *  A task is a heading/list item/table row carrying an id like T1 / ST-01 / Task 3; fields are
  *  labelled lines or table cells. Order = topological over declared dependencies, ties by id number.
@@ -41,7 +47,7 @@ public final class PlanParser {
     static final Pattern LIST_HEAD = Pattern.compile("^\\s*(?:[-*]|\\d+[.)])\\s+\\*{0,3}\\s*(?:T|ST|Task|Subtask)[- ]?\\d", Pattern.CASE_INSENSITIVE);
     static final Pattern NEW_LIST_ITEM = Pattern.compile("^\\s*(?:[-*]|\\d+[.)])\\s+");
 
-    public static String normId(String n) { return "T" + Integer.parseInt(n); }
+    public static String normId(String n) { return "T" + parseInt(n); }
 
     public static List<PlanTask> parseFile(final java.nio.file.Path path) {
         try {
@@ -131,7 +137,7 @@ public final class PlanParser {
                             // coincidental match is ignored instead of clobbering it.
                             case "deps" -> { if (t.deps == null) t.deps = parseDeps(val); }
                             case "checks" -> { if (t.checks == null) {
-                                var ids = new TreeSet<>(Comparator.<String>comparingInt(c -> Integer.parseInt(c.substring(1))));
+                                var ids = new TreeSet<>(comparingInt((String id) -> parseInt(id.substring(1))));
                                 for (var cm : CHECK_ID.matcher(val.toUpperCase()).results().toList()) ids.add(cm.group(1));
                                 t.checks = ids.isEmpty() ? null : List.copyOf(ids);
                             } }
@@ -146,11 +152,11 @@ public final class PlanParser {
             if (t.goal == null || t.goal.isBlank()) {
                 String body = String.join(" ", block.subList(1, block.size()).stream().map(String::strip)
                         .filter(s -> !s.isEmpty() && !s.startsWith("|")).toList());
-                t.goal = (body.isEmpty() ? t.title : body.substring(0, Math.min(body.length(), 300)));
+                t.goal = (body.isEmpty() ? t.title : body.substring(0, min(body.length(), 300)));
             }
             if (t.deps == null) {
                 final String body = String.join("\n", block.subList(1, block.size()));
-                final Set<String> mentioned = new TreeSet<>(Comparator.comparingInt(x -> Integer.parseInt(x.substring(1))));
+                final Set<String> mentioned = new TreeSet<>(comparingInt(x -> parseInt(x.substring(1))));
                 for (var dm : ID_RE.matcher(body).results().toList()) { String x = normId(dm.group(1)); if (!x.equals(tid)) mentioned.add(x); }
                 t.deps = (!mentioned.isEmpty() && Pattern.compile("\\b(depend|after|requires|prereq|blocked)", Pattern.CASE_INSENSITIVE).matcher(body).find())
                         ? List.copyOf(mentioned) : List.of();
@@ -168,7 +174,7 @@ public final class PlanParser {
     private static String titleOf(final String head, final String tid) {
         String s = head.replaceFirst("^[\\s#*|\\-.\\d)]+", "").strip().replaceFirst("^\\|", "").strip();
         s = s.replaceFirst("^(?:T|ST|Task|Subtask)[- ]?\\d+\\s*[—:\\-–.]*\\s*", "").strip();
-        return (s.isEmpty() ? tid : s).substring(0, Math.min(s.isEmpty() ? tid.length() : s.length(), 120));
+        return (s.isEmpty() ? tid : s).substring(0, min(s.isEmpty() ? tid.length() : s.length(), 120));
     }
 
     /** a line is a CONTINUATION of the previous inline field (not a new one, and not the end of the
@@ -185,7 +191,7 @@ public final class PlanParser {
     static List<String> parseDeps(final String s) {
         if (Pattern.compile("\\b(none|n/a|-|—|no dependencies|nothing)\\b", Pattern.CASE_INSENSITIVE).matcher(s.strip()).find() && !ID_RE.matcher(s).find())
             return List.of();
-        final Set<String> ids = new TreeSet<>(Comparator.comparingInt(x -> Integer.parseInt(x.substring(1))));
+        final Set<String> ids = new TreeSet<>(comparingInt(x -> parseInt(x.substring(1))));
         for (var m : ID_RE.matcher(s).results().toList()) ids.add(normId(m.group(1)));
         return List.copyOf(ids);
     }
@@ -211,7 +217,7 @@ public final class PlanParser {
     private static List<PlanTask> topological(final Map<String, PlanTask> tasks) {
         final List<PlanTask> order = new ArrayList<>();
         final Set<String> done = new HashSet<>(), visiting = new HashSet<>();
-        for (String tid : tasks.keySet().stream().sorted(Comparator.comparingInt(x -> Integer.parseInt(x.substring(1)))).toList())
+        for (String tid : tasks.keySet().stream().sorted(comparingInt(x -> parseInt(x.substring(1)))).toList())
             visit(tid, tasks, new ArrayDeque<>(), done, visiting, order);
         return order;
     }
@@ -263,14 +269,14 @@ public final class PlanParser {
             seen.addAll(planWaves.get(i));   // per-wave, exactly as the Python original: only earlier waves count as seen
         }
         final int n = ids.size(), wPlan = (int) planWaves.stream().filter(w -> !w.isEmpty()).count();
-        final double par = n <= minWaves ? 100.0 : Math.max(0, Math.min(100, 100.0 * (n - wPlan) / (n - minWaves)));
+        final double par = n <= minWaves ? 100.0 : max(0, min(100, 100.0 * (n - wPlan) / (n - minWaves)));
         final Map<String, Object> out = new LinkedHashMap<>();
         out.put("valid", errors.isEmpty());
         out.put("errors", errors);
         out.put("n_tasks", n);
         out.put("min_waves", minWaves);
         out.put("plan_waves", wPlan);
-        out.put("parallelism_pct", Math.round((errors.isEmpty() ? par : 0.0) * 10) / 10.0);
+        out.put("parallelism_pct", round((errors.isEmpty() ? par : 0.0) * 10) / 10.0);
         out.put("max_wave_width", planWaves.stream().mapToInt(List::size).max().orElse(1));
         return out;
     }

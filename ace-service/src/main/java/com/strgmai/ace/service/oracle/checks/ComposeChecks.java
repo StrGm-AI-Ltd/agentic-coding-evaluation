@@ -17,6 +17,9 @@ import java.time.Duration;
 import java.util.*;
 import java.util.regex.Pattern;
 
+import static java.lang.Math.min;
+import static java.lang.System.currentTimeMillis;
+
 /** Port of oracle/checks/04_compose.py: runtime lifecycle. sweep stale stacks -> compose build ->
  *  up -> C1/C2 health -> black-box suite (F*) -> down.
  *  - compose file = the ROOT-most one (a per-service compose never shadows the stack)
@@ -190,7 +193,7 @@ public final class ComposeChecks {
             return out;
         }
         final var tmp = Files.createTempDirectory("ab-compose-");
-        final String proj = "ab" + (System.currentTimeMillis() / 1000);
+        final String proj = "ab" + (currentTimeMillis() / 1000);
         Path ws = BuildChecks.scratchCopy(wsOrig, tmp);   // source-only copy (R4 C-1)
         final Path cf = StructureChecks.findCompose(ws);
         try {
@@ -258,9 +261,9 @@ public final class ComposeChecks {
             }
             // a rung without C1 (L2/L3/L3p: one service) must not idle for the whole budget (C-9)
             final int need = wanted.test(CheckId.C1) ? 3 : 1;
-            final long deadline = System.currentTimeMillis() + healthTimeout * 1000L;
+            final long deadline = currentTimeMillis() + healthTimeout * 1000L;
             List<Map<String, Object>> rows = List.of();
-            while (System.currentTimeMillis() < deadline) {
+            while (currentTimeMillis() < deadline) {
                 rows = ps(proj, cf);
                 final Classified c = classify(rows);
                 if ((c.healthy().size() >= need || (!c.svc().isEmpty() && c.healthy().size() == c.svc().size())) && c.bad().isEmpty()) break;
@@ -321,7 +324,7 @@ public final class ComposeChecks {
         for (CheckId c : IDS) if (wanted.test(c) && emitted.add(c)) out.add(new CheckResult(c, status, detail));
     }
 
-    static String head(String s, int n) { return s == null ? "" : s.substring(0, Math.min(n, s.length())); }
+    static String head(String s, int n) { return s == null ? "" : s.substring(0, min(n, s.length())); }
     static String lastLine(final String txt, final int n) {
         final String[] lines = Arrays.stream(txt.split("\n")).filter(l -> !l.isBlank()).toArray(String[]::new);
         return lines.length == 0 ? "" : head(lines[lines.length - 1], n);

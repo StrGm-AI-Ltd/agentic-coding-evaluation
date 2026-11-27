@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.DockerClientFactory;
 
+import static java.lang.System.nanoTime;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -30,7 +31,7 @@ class DockerGcTest {
     void pruneRemovesAnExitedContainerAndItsOwnAnonymousVolume() {
         Assumptions.assumeTrue(DockerClientFactory.instance().isDockerAvailable(), "Docker is not available on this host");
 
-        final String name = "ace-gc-test-" + System.nanoTime();
+        final String name = "ace-gc-test-" + nanoTime();
         // -v /data with no source: an ANONYMOUS volume, auto-named by the daemon - the same shape
         // postgres's own `VOLUME /var/lib/postgresql/data` Dockerfile directive produces. No --rm:
         // the container itself stays around exited, same as every leaked `revpg`/`revapp` instance.

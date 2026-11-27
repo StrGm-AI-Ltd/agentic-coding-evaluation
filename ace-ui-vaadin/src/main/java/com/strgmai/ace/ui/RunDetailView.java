@@ -31,8 +31,10 @@ import org.springframework.web.client.RestClientResponseException;
 import tools.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
+
+import static java.lang.Math.round;
+import static java.util.stream.Collectors.joining;
 
 /** Run detail — the UI twin of GET /api/runs/{id}: scores, badges, checks, plan tasks,
  * per-step scores, provenance, and the embedded file browser. */
@@ -463,8 +465,8 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
      * fields are relied on; series names are the two literal names this chart's own withSeries(...)
      * calls use, not read from the chart at all. */
     static String speedByContextTooltipJs(final List<SpeedBucketRow> rows) {
-        final var labels = rows.stream().map(r -> "\"" + r.label().replace("\"", "\\\"") + "\"").collect(java.util.stream.Collectors.joining(","));
-        final var reqCounts = rows.stream().map(r -> String.valueOf(r.requests())).collect(java.util.stream.Collectors.joining(","));
+        final var labels = rows.stream().map(r -> "\"" + r.label().replace("\"", "\\\"") + "\"").collect(joining(","));
+        final var reqCounts = rows.stream().map(r -> String.valueOf(r.requests())).collect(joining(","));
         return """
                 function(struct) {
                   var labels = [%s];
@@ -518,7 +520,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         final List<CompactionOverheadPoint> out = new ArrayList<>(maxPoints);
         final double stride = (points.size() - 1) / (double) (maxPoints - 1);
         for (int i = 0; i < maxPoints; i++) {
-            out.add(points.get((int) Math.round(i * stride)));
+            out.add(points.get((int) round(i * stride)));
         }
         return out;
     }

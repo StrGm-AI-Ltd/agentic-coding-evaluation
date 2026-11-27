@@ -28,6 +28,14 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.lang.Math.round;
+import static java.lang.System.currentTimeMillis;
+import static java.lang.System.getenv;
+import static java.lang.System.nanoTime;
+import static java.lang.Thread.currentThread;
+
 /** Port of runner/agent_loop.py, the reference agent, on LangChain4j. The harness owns every part
  *  of the loop: four tools (read/write/edit/bash with mechanical output hygiene), structural
  *  compaction (not an LLM summary), retries with backoff on transient errors, the proxy's 429
@@ -386,7 +394,7 @@ public class ReferenceAgent {
     public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
                              Path sessionDir, String sessionId, boolean continueSession,
                              String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, int maxTurns, String model, Map<String, String> extraEnv, JudgeCheckpoint judge, boolean advisoryOnly, FinalTurn finalTurn, Integer compactOnLoadKeepRecentTurns, List<String> compactionStrategies, LessonRecorder lessonRecorder) throws Exception {
-        final long t0 = System.nanoTime();
+        final long t0 = nanoTime();
         final var start = Instant.now();
         final String reasoningEffort = DEFAULT_REASONING.getOrDefault(reasoningKind(name), "medium");
         final var session = new AgentSession(sessionDir, sessionId, continueSession);
@@ -519,7 +527,7 @@ public class ReferenceAgent {
         // that - see its javadoc); deadline here only clamps chatWithRetry's exponential backoff
         // sleep, so it must stay far in the future rather than collapsing to "now" (which would
         // hammer the model server with ~100ms retries instead of a real backoff).
-        final long deadline = wallSec > 0 ? System.currentTimeMillis() + wallSec * 1000 : Long.MAX_VALUE;
+        final long deadline = wallSec > 0 ? currentTimeMillis() + wallSec * 1000 : Long.MAX_VALUE;
         while (turns < maxTurns) {
             if (compactionTrigger > 0 && lastPrompt > 0 && lastPrompt > compactionTrigger) {
                 // #417: the protected window's own ceiling is half of whatever triggers compaction
@@ -691,8 +699,8 @@ public class ReferenceAgent {
     }
 
     private SessionResult result(final String id, final int rc, final long t0, final String finish, final String lastText, final int turns, final int toolErrors, final int compactions, final AgentSession s, final Instant start) {
-        final double secs = (System.nanoTime() - t0) / 1e9;
-        return new SessionResult(id, rc, Math.round(secs * 10) / 10.0, finish, lastText, turns, toolErrors, compactions, s.path(), start, Instant.now());
+        final double secs = (nanoTime() - t0) / 1e9;
+        return new SessionResult(id, rc, round(secs * 10) / 10.0, finish, lastText, turns, toolErrors, compactions, s.path(), start, Instant.now());
     }
 
     /** #417 follow-up review (C12): bounds how many times the SAME archived tool-call id may be
@@ -856,9 +864,9 @@ public class ReferenceAgent {
                     log.warn("chatWithRetry attempt {}/4 got an empty model response (no content, "
                             + "no tool_calls, no finish_reason) - retrying as transient", attempt + 1);
                     last = new RuntimeException("empty model response (no content, no tool_calls, no finish_reason)");
-                    try { Thread.sleep(Math.min(delay, Math.max(100, deadline - System.currentTimeMillis()))); }
+                    try { Thread.sleep(min(delay, max(100, deadline - currentTimeMillis()))); }
                     catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
+                        currentThread().interrupt();
                         throw new TransientError(ie);
                     }
                     delay = (long) (delay * 2.5);
@@ -870,7 +878,7 @@ public class ReferenceAgent {
                 // a cancelled job interrupts this thread (WorkerService.Future.cancel(true)) - restoring
                 // the flag and retrying anyway would absorb the cancellation as just one more transient
                 // failure and keep going for up to 3 more attempts; terminal, not classified below
-                Thread.currentThread().interrupt();
+                currentThread().interrupt();
                 abortProxy.accept("interrupted (job cancelled, or the task-wall budget was reached)");
                 throw new TransientError(ie);
             }
@@ -883,9 +891,9 @@ public class ReferenceAgent {
                 boolean clientError = status != null ? status >= 400 && status < 500 && status != 429
                         : hasCause(e, dev.langchain4j.exception.NonRetriableException.class);
                 if (clientError) throw new TransientError(e);   // final client errors
-                try { Thread.sleep(Math.min(delay, Math.max(100, deadline - System.currentTimeMillis()))); }
+                try { Thread.sleep(min(delay, max(100, deadline - currentTimeMillis()))); }
                 catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
+                    currentThread().interrupt();
                     throw new TransientError(ie);
                 }
                 delay = (long) (delay * 2.5);
@@ -944,7 +952,7 @@ public class ReferenceAgent {
         final Map<String, String> env = extraEnv != null ? new LinkedHashMap<>(extraEnv) : new LinkedHashMap<>();
         env.keySet().removeAll(CREDENTIAL_ENV_KEYS);
         env.putIfAbsent("HOME", Path.of(cwd, ".ace-tool-home").toString());
-        env.putIfAbsent("PATH", System.getenv().getOrDefault("PATH", "/usr/bin:/bin"));
+        env.putIfAbsent("PATH", getenv().getOrDefault("PATH", "/usr/bin:/bin"));
         env.putIfAbsent("LANG", "en_US.UTF-8");
         env.putIfAbsent("CI", "1");
         env.putIfAbsent("NO_COLOR", "1");
@@ -966,7 +974,7 @@ public class ReferenceAgent {
             try {
                 return collector.future.get(POLL_MS, TimeUnit.MILLISECONDS);
             } catch (java.util.concurrent.TimeoutException pollTimeout) {
-                final long idleMs = System.currentTimeMillis() - collector.lastActivityMs;
+                final long idleMs = currentTimeMillis() - collector.lastActivityMs;
                 // firstTokenTimeoutMs <= 0 means unlimited (the system-wide "0 = no budget"
                 // convention) - never time out waiting for a first token in that case
                 if (firstTokenTimeoutMs > 0 && !collector.gotFirstToken && idleMs > firstTokenTimeoutMs) {
@@ -999,7 +1007,7 @@ public class ReferenceAgent {
      *  returned, so nothing downstream of chatWithRetry needed to change for that part. */
     private static final class StreamCollector implements StreamingChatResponseHandler {
         private final CompletableFuture<ChatResponse> future = new CompletableFuture<>();
-        private volatile long lastActivityMs = System.currentTimeMillis();
+        private volatile long lastActivityMs = currentTimeMillis();
         private volatile boolean gotFirstToken = false;
         private volatile StreamingHandle handle;
 
@@ -1016,7 +1024,7 @@ public class ReferenceAgent {
         @Override public void onError(final Throwable error) { future.completeExceptionally(error); }
 
         private void touch(final StreamingHandle h) {
-            lastActivityMs = System.currentTimeMillis();
+            lastActivityMs = currentTimeMillis();
             gotFirstToken = true;
             if (handle == null) handle = h;
         }

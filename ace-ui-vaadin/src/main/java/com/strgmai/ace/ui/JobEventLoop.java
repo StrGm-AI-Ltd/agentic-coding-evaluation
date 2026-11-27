@@ -6,6 +6,8 @@ import org.slf4j.LoggerFactory;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
+import static java.lang.Thread.currentThread;
+
 /**
  * The job page's SSE loop: streams /jobs/{id}/events until the server ends the stream
  * (terminal job), retrying dropped connections up to {@link #MAX_ATTEMPTS} times; a
@@ -60,7 +62,7 @@ final class JobEventLoop implements Runnable {
                 });
                 return; // the server ends the stream when the job is terminal
             } catch (final InterruptedException e) {
-                Thread.currentThread().interrupt();
+                currentThread().interrupt();
                 return;
             } catch (final Exception e) {
                 if (stopped.get()) {
@@ -74,7 +76,7 @@ final class JobEventLoop implements Runnable {
                 try {
                     Thread.sleep(backoffMs);
                 } catch (final InterruptedException ie) {
-                    Thread.currentThread().interrupt();
+                    currentThread().interrupt();
                     return;
                 }
             }

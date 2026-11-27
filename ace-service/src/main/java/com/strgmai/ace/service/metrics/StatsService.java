@@ -8,6 +8,11 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.*;
 import java.util.*;
 
+import static java.lang.Math.abs;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.lang.Math.round;
+
 /** Port of metrics/stats.py (the statistical core): a single run is one draw from a distribution
  *  of unknown variance. Bootstrap 90% CIs, an UNPAIRED one-sided permutation test for "A > B", and
  *  comparability ENFORCED: runs are pooled only if they share the task, the oracle, the contract,
@@ -137,8 +142,8 @@ public final class StatsService {
     /** port of the harness-effect budget matching: the total WORK budget must be matched (P-1) */
     public static void requireMatchedBudgets(final RunSummary a, final RunSummary b, final boolean allowMismatch) {
         final String msg = "implementation budgets A=" + a.implWall() + "s/" + a.implTokens() + " tok vs B=" + b.implWall() + "s/" + b.implTokens() + " tok";
-        if (Math.abs(a.implWall() - b.implWall()) > 0.02 * Math.max(a.implWall(), b.implWall())
-                || Math.abs(a.implTokens() - b.implTokens()) > 0.02 * Math.max(a.implTokens(), b.implTokens())) {
+        if (abs(a.implWall() - b.implWall()) > 0.02 * max(a.implWall(), b.implWall())
+                || abs(a.implTokens() - b.implTokens()) > 0.02 * max(a.implTokens(), b.implTokens())) {
             if (!allowMismatch) throw new IllegalArgumentException("harness-effect comparison refused: " + msg + " are not matched (pass allow-budget-mismatch to compare anyway, confounded)");
             log.warn("{} are NOT matched; the harness effect is confounded with budget", msg);
         } else log.info("matched budgets: {}", msg);
@@ -172,7 +177,7 @@ public final class StatsService {
             final List<String> col = runs.stream().map(r -> r.checkStatus().get(id)).toList();
             final long passes = col.stream().filter(s -> "PASS".equals(s)).count();
             final Map<String, Object> cell = new LinkedHashMap<>();
-            cell.put("pass_rate", Math.round(100.0 * passes / col.size()) / 100.0);
+            cell.put("pass_rate", round(100.0 * passes / col.size()) / 100.0);
             cell.put("pass_k", passes == col.size());
             cell.put("col", col);
             matrix.put(id, cell);
@@ -202,18 +207,18 @@ public final class StatsService {
         // ciWidth is the actual, data-driven uncertainty in THIS comparison's own diff estimate
         // (already computed above for ci90) - reported alongside the rule of thumb, not instead of
         // it, so the warning reflects the comparison actually being asked about.
-        final int mdd = Math.min(a.size(), b.size()) < 6 ? 20 : 12;
+        final int mdd = min(a.size(), b.size()) < 6 ? 20 : 12;
         final double ciWidth = round1(hi - lo);
         final Map<String, Object> out = new LinkedHashMap<>();
         out.put("metric", metric);
         out.put("diff", round1(obs));
         out.put("ci90", List.of(lo, hi));
         out.put("ci90_width", ciWidth);
-        out.put("p", Math.round(p * 1000) / 1000.0);
+        out.put("p", round(p * 1000) / 1000.0);
         out.put("one_sided", true);
         out.put("verdict", p < 0.10 ? "A > B is supported (p<0.10)" : "NOT supported at alpha=0.10");
         out.put("note", "this comparison's own 90% CI is " + ciWidth + " points wide - a difference smaller than "
-                + "that is within its noise; as a coarser rule of thumb for k=" + Math.min(a.size(), b.size())
+                + "that is within its noise; as a coarser rule of thumb for k=" + min(a.size(), b.size())
                 + " per side, differences under ~" + mdd + " points should generally not be claimed");
         return out;
     }
@@ -250,7 +255,7 @@ public final class StatsService {
             final var cells = new ArrayList<String>();
             for (var e : matrix.entrySet()) {
                 final var cell = (Map<String, Object>) e.getValue();
-                cells.add(e.getKey() + ": " + Math.round(100 * (double) (Double) cell.get("pass_rate")) + "%"
+                cells.add(e.getKey() + ": " + round(100 * (double) (Double) cell.get("pass_rate")) + "%"
                         + (Boolean.TRUE.equals(cell.get("pass_k")) ? " pass_k" : ""));
             }
             lines.add(String.join(", ", cells));
@@ -259,5 +264,5 @@ public final class StatsService {
     }
 
     static double mean(double[] xs) { double s = 0; for (double x : xs) s += x; return s / xs.length; }
-    static double round1(double x) { return Math.round(x * 10) / 10.0; }
+    static double round1(double x) { return round(x * 10) / 10.0; }
 }

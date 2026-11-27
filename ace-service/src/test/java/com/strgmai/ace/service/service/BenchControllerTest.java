@@ -28,14 +28,15 @@ import java.util.UUID;
 
 import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
 import static com.strgmai.ace.service.jooq.Tables.RUNS;
+import static java.util.UUID.randomUUID;
 import static org.hamcrest.Matchers.closeTo;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.emptyString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
-import static org.hamcrest.Matchers.emptyString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -113,7 +114,7 @@ class BenchControllerTest {
     @Test
     void jsonbObjectColumnAlsoComesBackNestedOnExperimentsList() throws Exception {
         dsl.insertInto(EXPERIMENTS)
-                .set(EXPERIMENTS.ID, UUID.randomUUID())   // no AUTOINCREMENT on a UUID PK - the real service always assigns one
+                .set(EXPERIMENTS.ID, randomUUID())   // no AUTOINCREMENT on a UUID PK - the real service always assigns one
                 .set(EXPERIMENTS.NAME, "exp").set(EXPERIMENTS.TAG, "t").set(EXPERIMENTS.TEMPLATE, "harness_effect")
                 .set(EXPERIMENTS.PARAMS, "{\"model\":\"m\",\"nested\":{\"a\":1}}").set(EXPERIMENTS.K, 1)
                 .execute();
@@ -315,7 +316,7 @@ class BenchControllerTest {
 
     @Test
     void providerModelsOnAnUnknownIdReturnsAnError() throws Exception {
-        mvc.perform(get("/api/providers/" + UUID.randomUUID() + "/models"))
+        mvc.perform(get("/api/providers/" + randomUUID() + "/models"))
                 .andExpect(status().is4xxClientError());
     }
 

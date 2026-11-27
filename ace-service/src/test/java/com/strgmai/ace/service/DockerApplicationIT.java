@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import static java.lang.System.getenv;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -64,7 +65,7 @@ class DockerApplicationIT {
     static void startContainers() throws Exception {
         Assumptions.assumeTrue(DockerClientFactory.instance().isDockerAvailable(), "Docker is not available on this host");
 
-        final String apiKey = System.getenv().getOrDefault("OMLX_API_KEY", "");
+        final String apiKey = getenv().getOrDefault("OMLX_API_KEY", "");
         modelServerConfigured = !apiKey.isBlank();
 
         // ace-service is a Gradle subproject: the Dockerfile needs the repo root as build context

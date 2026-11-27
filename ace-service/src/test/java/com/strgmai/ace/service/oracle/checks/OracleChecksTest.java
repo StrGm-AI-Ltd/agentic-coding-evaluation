@@ -9,8 +9,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
+import static java.util.stream.Collectors.toMap;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Ports of the check suites against fixture workspaces: money as double is caught (M1), the
@@ -19,11 +19,11 @@ import static org.junit.jupiter.api.Assertions.*;
 class OracleChecksTest {
 
     private static Map<CheckId, CheckResult> runStructure(Path ws) {
-        return StructureChecks.run(ws).stream().collect(Collectors.toMap(CheckResult::id, r -> r));
+        return StructureChecks.run(ws).stream().collect(toMap(CheckResult::id, r -> r));
     }
 
     private static Map<CheckId, CheckResult> runMoney(Path ws) {
-        return MoneySafetyChecks.run(ws).stream().collect(Collectors.toMap(CheckResult::id, r -> r));
+        return MoneySafetyChecks.run(ws).stream().collect(toMap(CheckResult::id, r -> r));
     }
 
     @Test

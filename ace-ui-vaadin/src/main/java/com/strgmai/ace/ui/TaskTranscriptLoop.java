@@ -6,6 +6,8 @@ import org.slf4j.LoggerFactory;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
+import static java.lang.Thread.currentThread;
+
 /**
  * The task dialog's "Live" tab SSE loop: streams /jobs/{id}/tasks/{taskId}/transcript until the
  * server ends the stream (terminal job), retrying dropped connections up to {@link #MAX_ATTEMPTS}
@@ -65,7 +67,7 @@ final class TaskTranscriptLoop implements Runnable {
                 });
                 return; // the server ends the stream when the job is terminal
             } catch (final InterruptedException e) {
-                Thread.currentThread().interrupt();
+                currentThread().interrupt();
                 return;
             } catch (final Exception e) {
                 if (stopped.get()) {
@@ -78,7 +80,7 @@ final class TaskTranscriptLoop implements Runnable {
                 try {
                     Thread.sleep(backoffMs);
                 } catch (final InterruptedException ie) {
-                    Thread.currentThread().interrupt();
+                    currentThread().interrupt();
                     return;
                 }
             }

@@ -11,6 +11,10 @@ import java.util.Comparator;
 import java.util.Locale;
 import java.util.function.Function;
 
+import static java.lang.Math.floor;
+import static java.lang.Math.round;
+import static java.util.Comparator.comparing;
+
 /** Small formatting helpers mirroring the Jinja2 macros in the original UI (_macros.html). */
 public final class Fmt {
     private static final Logger log = LoggerFactory.getLogger(Fmt.class);
@@ -94,10 +98,10 @@ public final class Fmt {
         if (value == null) {
             return "–";
         }
-        if (value == Math.floor(value)) {
+        if (value == floor(value)) {
             return String.valueOf(value.longValue());
         }
-        return String.valueOf(Math.round(value * 100) / 100.0);
+        return String.valueOf(round(value * 100) / 100.0);
     }
 
     public static String json(final JsonNode node) {
@@ -148,12 +152,12 @@ public final class Fmt {
 
     /** Sort comparator for a timestamp column: chronological across the service's formats, absent last. */
     public static <T> Comparator<T> comparingTime(final Function<T, String> timeGetter) {
-        return Comparator.comparing(timeGetter.andThen(Fmt::parseTime),
+        return comparing(timeGetter.andThen(Fmt::parseTime),
                 Comparator.nullsLast(Comparator.naturalOrder()));
     }
 
     /** Sort comparator for any nullable comparable column value; absent values last. */
     public static <T, V extends Comparable<? super V>> Comparator<T> nullsLast(final Function<T, V> valueGetter) {
-        return Comparator.comparing(valueGetter, Comparator.nullsLast(Comparator.naturalOrder()));
+        return comparing(valueGetter, Comparator.nullsLast(Comparator.naturalOrder()));
     }
 }

@@ -19,6 +19,9 @@ import java.util.*;
 import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
 import static com.strgmai.ace.service.jooq.Tables.JOBS;
 import static com.strgmai.ace.service.jooq.Tables.RUNS;
+import static java.lang.Double.parseDouble;
+import static java.lang.Integer.parseInt;
+import static java.util.UUID.randomUUID;
 
 /** Port of service/experiments.py: arm -> argv construction for the batch experiment templates.
  *  The model_ab run ids carry the arm suffix — the fix from the Python review: two models whose
@@ -489,8 +492,8 @@ public class ExperimentsService {
         }
     }
     static String str(Object o) { return o == null ? null : String.valueOf(o); }
-    static int num(Object o) { return o instanceof Number n ? n.intValue() : Integer.parseInt(String.valueOf(o)); }
-    static double numD(Object o) { return o instanceof Number n ? n.doubleValue() : Double.parseDouble(String.valueOf(o)); }
+    static int num(Object o) { return o instanceof Number n ? n.intValue() : parseInt(String.valueOf(o)); }
+    static double numD(Object o) { return o instanceof Number n ? n.doubleValue() : parseDouble(String.valueOf(o)); }
 
     /** the experiment row and its arms are one unit: an arm that fails to enqueue (a colliding run id,
      *  a results dir already on disk) must not leave an experiment behind that can never finish, so the
@@ -499,7 +502,7 @@ public class ExperimentsService {
         final List<ArmSpec> specs = plan(template, params, k);
         return tx.execute(status -> {
             ExperimentsRecord rec = dsl.insertInto(EXPERIMENTS)
-                    .set(EXPERIMENTS.ID, UUID.randomUUID())   // no AUTOINCREMENT on a UUID PK - assigned here
+                    .set(EXPERIMENTS.ID, randomUUID())   // no AUTOINCREMENT on a UUID PK - assigned here
                     .set(EXPERIMENTS.NAME, name)
                     .set(EXPERIMENTS.TAG, defaultTag())
                     .set(EXPERIMENTS.TEMPLATE, template)

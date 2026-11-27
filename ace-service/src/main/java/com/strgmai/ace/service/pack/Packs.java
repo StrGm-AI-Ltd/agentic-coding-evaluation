@@ -12,6 +12,11 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static java.lang.Double.parseDouble;
+import static java.lang.Integer.parseInt;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+
 /** Port of runner/pack.py: deterministic context packs for the orchestrated harness mode.
  *  Two parts, kept apart on purpose: stable_pack(...) is byte-identical for every task of a run
  *  and goes into the SYSTEM prompt so the prefix cache serves it; task_pack(...) is the task
@@ -37,10 +42,10 @@ public final class Packs {
      *  scales with it (floor pack_scale_min); `floors` gives sections that must never be truncated
      *  (the contract: R5 C-25) their real size as a minimum. */
     public static Map<String, Integer> setScale(final double scale, final Map<String, Integer> floors) {
-        final double s = Math.max(0.25, Math.min(1.0, scale));
+        final double s = max(0.25, min(1.0, scale));
         for (Map.Entry<String, Integer> e : BASE_CAPS.entrySet())
-            CAPS.put(e.getKey(), Math.max("tree diffstat test_tail".contains(e.getKey()) ? 10 : 200,
-                    Math.max((int) (e.getValue() * s), floors.getOrDefault(e.getKey(), 0))));
+            CAPS.put(e.getKey(), max("tree diffstat test_tail".contains(e.getKey()) ? 10 : 200,
+                    max((int) (e.getValue() * s), floors.getOrDefault(e.getKey(), 0))));
         return CAPS;
     }
 
@@ -60,7 +65,7 @@ public final class Packs {
 
     /** the working rules name the run's measured window (R5 C-16); byte-stable within a run. */
     public static String setWindow(final int usableContext) {
-        HYGIENE = HYGIENE_TEMPLATE.replace("{window}", String.valueOf(Math.max(1, usableContext / 1000)));
+        HYGIENE = HYGIENE_TEMPLATE.replace("{window}", String.valueOf(max(1, usableContext / 1000)));
         return HYGIENE;
     }
     public static String hygiene() { return HYGIENE; }
@@ -98,7 +103,7 @@ public final class Packs {
 
     static String linesCap(final String text, final int n) {
         final String[] ls = text.split("\n", -1);
-        return String.join("\n", Arrays.asList(ls).subList(0, Math.min(n, ls.length)))
+        return String.join("\n", Arrays.asList(ls).subList(0, min(n, ls.length)))
                 + (ls.length > n ? "\n… [" + (ls.length - n) + " more lines]" : "");
     }
 
@@ -120,7 +125,7 @@ public final class Packs {
         final var b = new StringBuilder();
         for (PlanTask t : tasks) {
             b.append("- ").append(t.id).append(" — ").append(t.title).append(": ")
-                    .append(t.goal == null ? "" : t.goal.substring(0, Math.min(160, t.goal.length())));
+                    .append(t.goal == null ? "" : t.goal.substring(0, min(160, t.goal.length())));
             if (t.deps != null && !t.deps.isEmpty()) b.append(" (after ").append(String.join(", ", t.deps)).append(")");
             b.append('\n');
         }
@@ -166,7 +171,7 @@ public final class Packs {
             for (String l : text.split("\n"))
                 if (Pattern.compile("plugins|id ['\"]|implementation|runtimeOnly|testImplementation|version|include|rootProject|server:|port:|datasource|url:|flyway|distributionUrl").matcher(l).find())
                     keep.add(l.stripTrailing());
-            return cap(String.join("\n", keep.subList(0, Math.min(40, keep.size()))), CAPS.get("iface_file") / 4);
+            return cap(String.join("\n", keep.subList(0, min(40, keep.size()))), CAPS.get("iface_file") / 4);
         }
         final List<String> keep = new ArrayList<>();
         for (String line : text.split("\n")) {
@@ -626,13 +631,13 @@ public final class Packs {
         double x;
         if (v.isNumber()) x = v.asDouble();
         else if (v.isTextual()) {
-            try { x = Double.parseDouble(v.asText().strip().replaceAll("%$", "")); }
+            try { x = parseDouble(v.asText().strip().replaceAll("%$", "")); }
             catch (NumberFormatException e) { log.debug("could not parse '{}' as a number: {}", v.asText(), e.toString()); return null; }
         }
         else return null;
-        return Math.max(lo, Math.min(hi, x));
+        return max(lo, min(hi, x));
     }
-    static String head(String s, int n) { return s == null ? "" : s.substring(0, Math.min(n, s.length())); }
+    static String head(String s, int n) { return s == null ? "" : s.substring(0, min(n, s.length())); }
 
     // ---------------------------------------------------------------- trajectory review (end-of-run)
     public static final String TRAJ_ROLE = """
@@ -666,7 +671,7 @@ public final class Packs {
         catch (Exception e) { log.warn("could not serialize the trajectory summary for the review pack: {}", e.toString()); json = "{}"; }
         return String.join("\n\n", List.of(
                 "# Trajectory under review",
-                "## Measured summary (trajectory/summary.json)\n```json\n" + json.substring(0, Math.min(6000, json.length())) + "\n```",
+                "## Measured summary (trajectory/summary.json)\n```json\n" + json.substring(0, min(6000, json.length())) + "\n```",
                 "## Transcript (the first " + CAPS.get("transcript_head") + " characters; the COMPLETE transcript with a per-task turn index is trajectory/TRAJECTORY.md - read the rest with grep/sed by turn number before judging)\n"
                         + cap(transcriptHead == null ? "" : transcriptHead, CAPS.get("transcript_head"))));
     }
@@ -714,7 +719,7 @@ public final class Packs {
             final List<String> wv = new ArrayList<>();
             for (JsonNode t : (w.isArray() ? w : List.of(w))) {   // a bare task id counts as a one-task wave
                 final Matcher m = idNorm.matcher(t.asText().strip());
-                wv.add(m.find() ? "T" + Integer.parseInt(m.group(1)) : t.asText().strip());
+                wv.add(m.find() ? "T" + parseInt(m.group(1)) : t.asText().strip());
             }
             waves.add(wv);
         }
@@ -722,7 +727,7 @@ public final class Packs {
         d.path("ownership").fields().forEachRemaining(e -> {
             if (e.getKey() != null) {
                 final Matcher m = idNorm.matcher(e.getKey().strip());
-                final String k = m.find() ? "T" + Integer.parseInt(m.group(1)) : e.getKey();
+                final String k = m.find() ? "T" + parseInt(m.group(1)) : e.getKey();
                 final List<String> globs = new ArrayList<>();
                 if (e.getValue().isArray()) e.getValue().forEach(g -> globs.add(g.asText()));
                 else if (e.getValue().isTextual()) globs.add(e.getValue().asText());   // a bare glob is a one-glob list
@@ -734,7 +739,7 @@ public final class Packs {
         final Map<String, Object> out = new LinkedHashMap<>();
         out.put("waves", waves);
         out.put("ownership", own);
-        out.put("shared_files", shared.subList(0, Math.min(50, shared.size())));
+        out.put("shared_files", shared.subList(0, min(50, shared.size())));
         out.put("rationale", head(d.path("rationale").asText(""), 1000));
         return out;
     }

@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static java.lang.System.currentTimeMillis;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -254,8 +255,8 @@ class WorkerServiceTest {
         // masking exactly the bug this test exists to catch. Long enough to observe more than one
         // 2-second cancel-watch poll cycle once cancellation is requested mid-run.
         when(runBench.runOnce(any(), any(), any(), any(), any())).thenAnswer(inv -> {
-            final long deadline = System.currentTimeMillis() + 7000;
-            while (System.currentTimeMillis() < deadline) {
+            final long deadline = currentTimeMillis() + 7000;
+            while (currentTimeMillis() < deadline) {
                 try { Thread.sleep(200); } catch (InterruptedException ignored) { /* uninterruptible, like the real stuck read */ }
             }
             return Map.of();

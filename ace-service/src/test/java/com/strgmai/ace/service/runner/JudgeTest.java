@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
 
+import static java.lang.System.currentTimeMillis;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -204,7 +205,7 @@ class JudgeTest {
         // a couple of seconds rather than hanging the test - belt and suspenders alongside the
         // forced-exception path this test is actually targeting.
         final var checkpoint = judge.checkpoint(Map.of("model", "m"), "run-1", ws, rdAsAFile,
-                new RecordingProxyFactory(props), "T1", "goal", 0L, 0L, System.currentTimeMillis(),
+                new RecordingProxyFactory(props), "T1", "goal", 0L, 0L, currentTimeMillis(),
                 Map.of("model", "unrecognised-provider/m", "wall_sec", 2));
 
         final String rec = org.junit.jupiter.api.Assertions.assertDoesNotThrow(

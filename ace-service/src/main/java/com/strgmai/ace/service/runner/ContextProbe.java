@@ -19,6 +19,14 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import com.strgmai.ace.service.docker.DockerService;
 
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.lang.Math.round;
+import static java.lang.System.currentTimeMillis;
+import static java.lang.System.nanoTime;
+import static java.lang.Thread.currentThread;
+import static java.util.Comparator.comparingDouble;
+
 /** Port of runner/context_probe.py, step 0 of a benchmark run: measure the context window this
  *  SETUP actually offers, then derive every context-dependent knob from it.
  *
@@ -88,7 +96,7 @@ public final class ContextProbe {
         body = new HashMap<>(body);
         body.put("stream", true);
         body.put("stream_options", Map.of("include_usage", true));
-        final long t0 = System.nanoTime(); Double ttft = null; JsonNode usage = null; String finish = null; int chars = 0;
+        final long t0 = nanoTime(); Double ttft = null; JsonNode usage = null; String finish = null; int chars = 0;
         HttpResponse<java.io.InputStream> r = null;
         try {
             HttpRequest req = HttpRequest.newBuilder(URI.create(endpoint + "/chat/completions"))
@@ -127,18 +135,18 @@ public final class ContextProbe {
             final double lat = elapsed(t0);
             final ObjectNode nu = usage == null || !usage.isObject() ? JSON.createObjectNode() : (ObjectNode) usage.deepCopy();
             if (nu.hasNonNull("completion_tokens") && ttft != null && lat - ttft > 0.05 && !nu.hasNonNull("generation_tokens_per_second"))
-                nu.put("generation_tokens_per_second", Math.round(nu.get("completion_tokens").asDouble() / (lat - ttft) * 100) / 100.0);
+                nu.put("generation_tokens_per_second", round(nu.get("completion_tokens").asDouble() / (lat - ttft) * 100) / 100.0);
             if (nu.hasNonNull("prompt_tokens") && ttft != null && ttft > 0)
-                nu.put("prompt_tokens_per_second", Math.round(nu.get("prompt_tokens").asDouble() / ttft * 10) / 10.0);
-            return new Post(r.statusCode(), nu, finish, ttft == null ? null : Math.round(ttft * 100) / 100.0, chars, null, Math.round(lat * 100) / 100.0);
+                nu.put("prompt_tokens_per_second", round(nu.get("prompt_tokens").asDouble() / ttft * 10) / 10.0);
+            return new Post(r.statusCode(), nu, finish, ttft == null ? null : round(ttft * 100) / 100.0, chars, null, round(lat * 100) / 100.0);
         } catch (Exception e) {
-            return new Post(599, null, null, null, 0, String.valueOf(e).substring(0, Math.min(200, String.valueOf(e).length())), elapsed(t0));
+            return new Post(599, null, null, null, 0, String.valueOf(e).substring(0, min(200, String.valueOf(e).length())), elapsed(t0));
         } finally {
             if (r != null) inflight.remove(r);
         }
     }
 
-    private static double elapsed(long t0) { return (System.nanoTime() - t0) / 1e9; }
+    private static double elapsed(long t0) { return (nanoTime() - t0) / 1e9; }
 
     public Map<String, JsonNode> models(final String endpoint, final String key) {
         try {
@@ -269,7 +277,7 @@ public final class ContextProbe {
     Step askRetry(String endpoint, String key, String model, Map<String, Object> o, int nLines, int maxTokens, boolean generate) {
         final Step r = ask(endpoint, key, model, o, nLines, maxTokens, generate);
         if (List.of("400", "413", "200").contains(r.status())) return r;
-        try { Thread.sleep((Integer) o.get("retry_pause_sec") * 1000L); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        try { Thread.sleep((Integer) o.get("retry_pause_sec") * 1000L); } catch (InterruptedException e) { currentThread().interrupt(); }
         return ask(endpoint, key, model, o, nLines, maxTokens, generate);
     }
 
@@ -284,7 +292,7 @@ public final class ContextProbe {
         return samples;
     }
 
-    static int linesFor(int tokens, double tpl, double overhead) { return Math.max(1, (int) ((tokens - overhead) / tpl)); }
+    static int linesFor(int tokens, double tpl, double overhead) { return max(1, (int) ((tokens - overhead) / tpl)); }
 
     /** the probe: ascending prompt lengths up to the server cap; binary refinement at the first
      *  failure. Returns the probe record (Map, JSON-shape). */
@@ -300,7 +308,7 @@ public final class ContextProbe {
         final double overhead = (a.promptTokens() instanceof Number an ? an.doubleValue() : 0) - 10 * tpl;
         final List<Step> samples = decodeSamples(endpoint, key, model, o, tpl, overhead);
         int hardMax = cap == null ? 262144 : cap;
-        if (o.containsKey("up_to")) hardMax = Math.min(hardMax, (Integer) o.get("up_to"));   // --up-to: measure the working range only
+        if (o.containsKey("up_to")) hardMax = min(hardMax, (Integer) o.get("up_to"));   // --up-to: measure the working range only
         final int top = hardMax - (Integer) o.get("probe_max_tokens") - 8;
         final List<Integer> targets = new ArrayList<>();
         for (int t = (Integer) o.get("step_tokens"); t < top; t += (Integer) o.get("step_tokens")) targets.add(t);
@@ -319,7 +327,7 @@ public final class ContextProbe {
                 final int mid = (lo + hi) / 2;
                 final Step r = askRetry(endpoint, key, model, o, linesFor(mid, tpl, overhead), (Integer) o.get("probe_max_tokens"), false);
                 curve.add(r);
-                if ("200".equals(r.status())) { lo = r.promptTokens() instanceof Number n ? n.intValue() : lo; lastOk = Math.max(lastOk, lo); }
+                if ("200".equals(r.status())) { lo = r.promptTokens() instanceof Number n ? n.intValue() : lo; lastOk = max(lastOk, lo); }
                 else hi = mid;
             }
         }
@@ -346,9 +354,9 @@ public final class ContextProbe {
         rec.put("max_ok_prompt_tokens", lastOk);
         rec.put("first_fail_tokens", firstFail > 0 ? firstFail : null);
         rec.put("binding", binding);
-        rec.put("decode_tps_short", shortMedian == null ? null : Math.round(shortMedian * 10) / 10.0);
+        rec.put("decode_tps_short", shortMedian == null ? null : round(shortMedian * 10) / 10.0);
         rec.put("memory_guard", backend.memoryGuardFacts(tStart).orElse(null));
-        rec.put("tokens_per_line", Math.round(tpl * 1000) / 1000.0);
+        rec.put("tokens_per_line", round(tpl * 1000) / 1000.0);
         rec.put("curve", curve.stream().map(s -> Map.of("status", s.status(), "prompt_tokens", s.promptTokens(), "decode_tps", s.decodeTps())).toList());
         return rec;
     }
@@ -360,7 +368,7 @@ public final class ContextProbe {
         final double tpl = rec.get("tokens_per_line") instanceof Number n ? n.doubleValue() : 31.0;
         List<Double> dps = decodeSamples(endpoint, key, model, o, tpl, 35).stream()
                 .filter(s -> "200".equals(s.status()) && s.decodeTps() instanceof Double).map(s -> (Double) s.decodeTps()).toList();
-        if (!dps.isEmpty()) rec.put("decode_tps_short", Math.round(median(dps) * 10) / 10.0);
+        if (!dps.isEmpty()) rec.put("decode_tps_short", round(median(dps) * 10) / 10.0);
         return rec;
     }
 
@@ -370,14 +378,14 @@ public final class ContextProbe {
     public Map<String, Object> parallelCapacity(final String model, final String endpoint, final String key, Map<String, Object> o, Double floor, final double tpl) throws Exception {
         final int overhead = 35;
         final var shared = new StringBuilder();
-        for (int i = 1; i <= Math.max(1, (int) ((8000 - overhead) / tpl)); i++) shared.append(String.format(java.util.Locale.ROOT, LINE, i));
-        final int tailLines = Math.max(1, (int) ((((Integer) o.get("parallel_prompt_tokens")) - 8000) / tpl));
-        final int nonce = (int) (System.currentTimeMillis() / 1000) % 100000;
+        for (int i = 1; i <= max(1, (int) ((8000 - overhead) / tpl)); i++) shared.append(String.format(java.util.Locale.ROOT, LINE, i));
+        final int tailLines = max(1, (int) ((((Integer) o.get("parallel_prompt_tokens")) - 8000) / tpl));
+        final int nonce = (int) (currentTimeMillis() / 1000) % 100000;
         final List<Map<String, Object>> levels = new ArrayList<>();
         double wall1 = 0; int best = 1;
         for (int K = 1; K <= (Integer) o.get("max_parallel_probe"); K++) {
             final Post[] res = new Post[K];
-            final long t0 = System.nanoTime();
+            final long t0 = nanoTime();
             final Thread[] ths = new Thread[K];
             for (int k = 0; k < K; k++) {
                 final int idx = k;
@@ -392,13 +400,13 @@ public final class ContextProbe {
                 ths[k].start();
             }
             for (Thread t : ths) t.join();
-            final double wall = (System.nanoTime() - t0) / 1e9;
+            final double wall = (nanoTime() - t0) / 1e9;
             final List<Post> ok = Arrays.stream(res).filter(r -> r != null && r.status() == 200 && r.usage() != null && r.usage().hasNonNull("completion_tokens")).toList();
             if (K == 1 && !ok.isEmpty()) wall1 = wall;
-            final Double speedup = wall1 > 0 ? Math.round(K * wall1 / wall * 100) / 100.0 : null;
+            final Double speedup = wall1 > 0 ? round(K * wall1 / wall * 100) / 100.0 : null;
             final List<Double> per = ok.stream().map(r -> r.usage().path("generation_tokens_per_second").asDouble(0)).filter(d -> d > 0).sorted().toList();
             final Double perMed = per.isEmpty() ? null : per.get(per.size() / 2);
-            levels.add(Map.of("K", K, "ok", ok.size(), "wall_sec", Math.round(wall * 10) / 10.0,
+            levels.add(Map.of("K", K, "ok", ok.size(), "wall_sec", round(wall * 10) / 10.0,
                     "speedup_work_per_wall", speedup == null ? "" : speedup, "per_stream_decode_median", perMed == null ? "" : perMed));
             final boolean gaining = speedup != null && speedup >= 1 + ((Number) o.get("parallel_gain_per_agent")).doubleValue() * (K - 1);
             final boolean fastEnough = perMed != null && (floor == null || perMed >= floor);
@@ -414,7 +422,7 @@ public final class ContextProbe {
         final int[][] pts = curvePoints(rec);
         if (pts.length == 0 || floor == null) return null;
         int lastOk = -1;
-        for (int[] p : pts) if (p[1] >= floor) lastOk = Math.max(lastOk, p[0]);
+        for (int[] p : pts) if (p[1] >= floor) lastOk = max(lastOk, p[0]);
         return lastOk < 0 ? pts[0][0] : lastOk;
     }
 
@@ -423,7 +431,7 @@ public final class ContextProbe {
         final List<int[]> pts = new ArrayList<>();
         for (Map<String, Object> c : (List<Map<String, Object>>) rec.getOrDefault("curve", List.of()))
             if ("200".equals(String.valueOf(c.get("status"))) && c.get("decode_tps") instanceof Double && c.get("prompt_tokens") instanceof Integer)
-                pts.add(new int[]{(Integer) c.get("prompt_tokens"), (int) Math.round((Double) c.get("decode_tps"))});
+                pts.add(new int[]{(Integer) c.get("prompt_tokens"), (int) round((Double) c.get("decode_tps"))});
         return pts.toArray(new int[0][]);
     }
 
@@ -431,14 +439,14 @@ public final class ContextProbe {
     public static Double decodeAt(final List<double[]> curve, final double n) {
         if (curve == null || curve.isEmpty()) return null;
         final List<double[]> pts = new ArrayList<>(curve);
-        pts.sort(Comparator.comparingDouble(p -> p[0]));
+        pts.sort(comparingDouble(p -> p[0]));
         if (n <= pts.get(0)[0]) return pts.get(0)[1];
         if (n >= pts.get(pts.size() - 1)[0]) return pts.get(pts.size() - 1)[1];
         for (int i = 1; i < pts.size(); i++)
             if (pts.get(i - 1)[0] <= n && n <= pts.get(i)[0]) {
                 final double x0 = pts.get(i - 1)[0], y0 = pts.get(i - 1)[1], x1 = pts.get(i)[0], y1 = pts.get(i)[1];
-                double interp = y0 + (y1 - y0) * (n - x0) / Math.max(1, x1 - x0);   // the WHOLE expression, then round (Python: round(expr, 2))
-                return Math.round(interp * 100) / 100.0;
+                double interp = y0 + (y1 - y0) * (n - x0) / max(1, x1 - x0);   // the WHOLE expression, then round (Python: round(expr, 2))
+                return round(interp * 100) / 100.0;
             }
         return pts.get(pts.size() - 1)[1];
     }
@@ -459,11 +467,11 @@ public final class ContextProbe {
         else
             memoryWindow = (maxOk - (int) o.get("safety_tokens")) / 2048 * 2048;   // a memory-bound limit gets the safety margin
         final Double dps = rec.get("decode_tps_short") instanceof Number n ? n.doubleValue() : null;
-        final Double floor = dps == null ? null : Math.round(dps * ((Number) o.get("decode_floor_fraction")).doubleValue() * 10) / 10.0;
-        final Double perfFloor = dps == null ? null : Math.round(dps * ((Number) o.get("perf_fraction")).doubleValue() * 10) / 10.0;
+        final Double floor = dps == null ? null : round(dps * ((Number) o.get("decode_floor_fraction")).doubleValue() * 10) / 10.0;
+        final Double perfFloor = dps == null ? null : round(dps * ((Number) o.get("perf_fraction")).doubleValue() * 10) / 10.0;
         final Integer perf = performanceWindow(rec, perfFloor);
         final Map<String, Integer> candidates = new LinkedHashMap<>();
-        candidates.put("memory", Math.max(memoryWindow, 0));
+        candidates.put("memory", max(memoryWindow, 0));
         if (perf != null) candidates.put("performance", perf / 2048 * 2048);
         // #298, found live: the raw accessor let an operator's `ace.context-window: 0` - following
         // this codebase's own pervasive "0 = unlimited" convention for every other budget knob -
@@ -475,14 +483,14 @@ public final class ContextProbe {
         final Map.Entry<String, Integer> limited = candidates.entrySet().stream().min(Map.Entry.comparingByValue()).orElse(null);
         String limitedBy = limited == null ? "memory" : limited.getKey();
         if ("cap".equals(rec.get("binding")) && "memory".equals(limitedBy)) limitedBy = "positional/cap";
-        final int usable = Math.max(limited == null ? 2048 : limited.getValue(), 2048);
-        final double scale = Math.max(((Number) o.get("pack_scale_min")).doubleValue(), Math.min(1.0, usable / (double) (int) o.get("pack_reference_window")));
-        final int maxOut = Math.min(props.maxOutputTokens() == null ? 8192 : props.maxOutputTokens(), (int) (usable * maxOutputFraction) / 512 * 512);
+        final int usable = max(limited == null ? 2048 : limited.getValue(), 2048);
+        final double scale = max(((Number) o.get("pack_scale_min")).doubleValue(), min(1.0, usable / (double) (int) o.get("pack_reference_window")));
+        final int maxOut = min(props.maxOutputTokens() == null ? 8192 : props.maxOutputTokens(), (int) (usable * maxOutputFraction) / 512 * 512);
         final int trigger = (int) (usable * ((Number) o.get("trigger_fraction")).doubleValue()) / 256 * 256;
         Integer genCap = null;
         if (taskWallSec != null && dps != null) genCap = (int) (taskWallSec * dps * 0.8) / 1000 * 1000;
         int taskTokens = (int) (usable * ((Number) o.get("task_budget_windows")).doubleValue()) / 1000 * 1000;
-        if (genCap != null) taskTokens = Math.min(taskTokens, Math.max(genCap, 10000));
+        if (genCap != null) taskTokens = min(taskTokens, max(genCap, 10000));
         final Map<String, Object> d = new LinkedHashMap<>();
         d.put("usable_context", usable);
         d.put("memory_window", memoryWindow);
@@ -491,9 +499,9 @@ public final class ContextProbe {
         d.put("window_limited_by", limitedBy);
         d.put("max_output_tokens", maxOut);
         d.put("compaction_trigger_tokens", trigger);
-        d.put("compaction", Map.of("reserveTokens", Math.max(4096, usable - trigger),
+        d.put("compaction", Map.of("reserveTokens", max(4096, usable - trigger),
                 "keepRecentTokens", (int) (usable * ((Number) o.get("keep_recent_fraction")).doubleValue()) / 256 * 256));
-        d.put("pack_scale", Math.round(scale * 1000) / 1000.0);
+        d.put("pack_scale", round(scale * 1000) / 1000.0);
         d.put("task_tokens", taskTokens);
         d.put("task_tokens_generation_cap", genCap);
         d.put("plan_tokens", (int) (usable * ((Number) o.get("plan_budget_windows")).doubleValue()) / 1000 * 1000);
@@ -520,12 +528,12 @@ public final class ContextProbe {
         if (!fresh && Files.exists(path)) {
             try {
                 rec = JSON.readValue(Files.readString(path), Map.class);
-                final double ageDays = (System.currentTimeMillis() - Files.getLastModifiedTime(path).toMillis()) / 86400_000.0;
+                final double ageDays = (currentTimeMillis() - Files.getLastModifiedTime(path).toMillis()) / 86400_000.0;
                 if (ageDays > (int) o.get("cache_max_age_days") || !Boolean.TRUE.equals(rec.get("ok"))) rec = null;
                 else if (rec.get("decode_tps_short") == null && !Boolean.TRUE.equals(setup.facts().get("docker_up")))
                     rec = refreshDecode(props.model(), props.endpoint(), props.apiKey() == null ? "" : props.apiKey(), rec, o);
                 else if (rec.get("parallel_capacity") == null && !Boolean.TRUE.equals(setup.facts().get("docker_up")) && (int) o.get("max_parallel_probe") > 0) {
-                    final Double fl = rec.get("decode_tps_short") instanceof Number n ? Math.round(n.doubleValue() * ((Number) o.get("decode_floor_fraction")).doubleValue() * 10) / 10.0 : null;
+                    final Double fl = rec.get("decode_tps_short") instanceof Number n ? round(n.doubleValue() * ((Number) o.get("decode_floor_fraction")).doubleValue() * 10) / 10.0 : null;
                     rec.put("parallel_capacity", parallelCapacity(props.model(), props.endpoint(), props.apiKey() == null ? "" : props.apiKey(), o, fl,
                             rec.get("tokens_per_line") instanceof Number n ? n.doubleValue() : 31.0));
                 }
@@ -547,7 +555,7 @@ public final class ContextProbe {
             rec.put("setup_key", setup.key());
             rec.put("cap", capInfo);
             if (Boolean.TRUE.equals(rec.get("ok")) && (int) o.get("max_parallel_probe") > 0) {
-                final Double fl = rec.get("decode_tps_short") instanceof Number n ? Math.round(n.doubleValue() * ((Number) o.get("decode_floor_fraction")).doubleValue() * 10) / 10.0 : null;
+                final Double fl = rec.get("decode_tps_short") instanceof Number n ? round(n.doubleValue() * ((Number) o.get("decode_floor_fraction")).doubleValue() * 10) / 10.0 : null;
                 rec.put("parallel_capacity", parallelCapacity(props.model(), props.endpoint(), props.apiKey() == null ? "" : props.apiKey(), o, fl,
                         rec.get("tokens_per_line") instanceof Number n ? n.doubleValue() : 31.0));
             }

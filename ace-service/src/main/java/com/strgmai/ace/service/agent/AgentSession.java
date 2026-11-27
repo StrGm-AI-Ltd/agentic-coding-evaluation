@@ -15,6 +15,10 @@ import java.nio.file.*;
 import java.time.Instant;
 import java.util.*;
 
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.util.Comparator.comparing;
+
 /** Port of agent_loop.py's session store + structural compaction. The session file is JSONL in the
  *  SAME record shape the Python harness consumes: session header, user/assistant/toolResult
  *  messages (assistant messages carry toolCall parts and usage), compaction and end records.
@@ -40,7 +44,7 @@ public final class AgentSession {
                 // operation touching several files' mtimes to the same instant has already been
                 // observed live, drifting mtime away from actual write order.
                 found = s.filter(p -> p.getFileName().toString().contains(sessionId) && p.getFileName().toString().endsWith(".jsonl"))
-                        .max(Comparator.comparing(p -> p.getFileName().toString())).orElse(null);
+                        .max(comparing(p -> p.getFileName().toString())).orElse(null);
             } catch (IOException e) {
                 // found stays null below, so --continue silently starts a NEW session instead of
                 // resuming the existing one - a real correctness issue, not just a display glitch
@@ -432,7 +436,7 @@ public final class AgentSession {
      *  a sub-range as its OWN standalone request (CompactionStrategies' structured_eviction). */
     public static int cutIndex(final List<ChatMessage> msgs, final int keepRecentTurns) {
         if (keepRecentTurns < 0) log.warn("keepRecentTurns={} is negative - clamping to 0 (\"keep nothing verbatim\")", keepRecentTurns);
-        final int keep = Math.max(0, keepRecentTurns);
+        final int keep = max(0, keepRecentTurns);
         final List<Integer> idxAssist = new ArrayList<>();
         for (int i = 0; i < msgs.size(); i++) if (msgs.get(i) instanceof AiMessage) idxAssist.add(i);
         return idxAssist.size() <= keep ? 0 : (keep == 0 ? msgs.size() : idxAssist.get(idxAssist.size() - keep));
@@ -470,11 +474,11 @@ public final class AgentSession {
         int lastAssistantIdx = -1;
         for (int i = msgs.size() - 1; i >= 0; i--) if (msgs.get(i) instanceof AiMessage) { lastAssistantIdx = i; break; }
         long tokens = 0;
-        for (int i = msgs.size() - 1; i >= Math.max(cut, 2); i--) {
+        for (int i = msgs.size() - 1; i >= max(cut, 2); i--) {
             tokens += estimateTokens(msgs.get(i));
             if (tokens > keepTokenBudget) { cut = i + 1; break; }
         }
-        return lastAssistantIdx < 0 ? cut : Math.min(cut, lastAssistantIdx);
+        return lastAssistantIdx < 0 ? cut : min(cut, lastAssistantIdx);
     }
 
     /** #417 follow-up review (found live on a real task, 2026-10-19/T21): masking a tool RESULT's

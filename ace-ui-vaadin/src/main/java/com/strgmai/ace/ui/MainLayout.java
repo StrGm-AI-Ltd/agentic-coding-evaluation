@@ -25,6 +25,8 @@ import com.vaadin.flow.component.splitlayout.SplitLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static java.lang.Thread.currentThread;
+
 /** App chrome: brand + left sidebar nav - mirrors the Aura "Night operator" reference's own
  *  layout (#476 PR 2/2; PR 1 shipped the dark palette/typography this sidebar now wears). The
  *  drawer replaces the old top AppLayout/Tabs navbar: a standalone "Overview" item, then two
@@ -237,7 +239,7 @@ public class MainLayout extends AppLayout {
                 try {
                     Thread.sleep(20_000);
                 } catch (final InterruptedException e) {
-                    Thread.currentThread().interrupt();
+                    currentThread().interrupt();
                     return;
                 }
                 if (chromeRefreshStopped) {

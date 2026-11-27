@@ -41,6 +41,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
+import static java.lang.Math.round;
+
 /**
  * Job detail — the Vaadin twin of the Jinja2 SSE live page. The page chrome is built
  * once per navigation; the 2 s poll of GET /api/jobs/{id} and the /jobs/{id}/events
@@ -543,7 +545,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var calls = bash.path("count").asInt(0);
         final var errors = bash.path("errors").asInt(0);
         if (calls == 0) return String.valueOf(errors);
-        return errors + " · " + Math.round(100.0 * errors / calls) + "% of bash calls";
+        return errors + " · " + round(100.0 * errors / calls) + "% of bash calls";
     }
 
     private static JobLiveState.SessionRow lastMatchingSession(final List<JobLiveState.SessionRow> sessions, final String taskId) {
@@ -683,7 +685,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             fields.add(new StatField("Model turns", stats.path("turns").asText("0")));
         } else {
             fields.add(new StatField("Outcome", "still running"));
-            fields.add(new StatField("Wall time", Math.round(liveWallTime.wallSec()) + "s so far"));
+            fields.add(new StatField("Wall time", round(liveWallTime.wallSec()) + "s so far"));
             fields.add(new StatField("Model turns", stats.path("turns").asText("0") + " so far"));
         }
         fields.add(new StatField("Context compactions", stats.path("compactions").asText("0")));

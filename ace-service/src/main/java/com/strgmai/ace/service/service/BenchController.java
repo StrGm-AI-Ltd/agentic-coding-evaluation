@@ -27,12 +27,21 @@ import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 import static com.strgmai.ace.service.jooq.Tables.CHECK_RESULTS;
 import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
 import static com.strgmai.ace.service.jooq.Tables.JOBS;
 import static com.strgmai.ace.service.jooq.Tables.RUNS;
+import static java.lang.Integer.parseInt;
+import static java.lang.Math.abs;
+import static java.lang.Math.min;
+import static java.lang.System.currentTimeMillis;
+import static java.util.Comparator.comparing;
+import static java.util.Comparator.comparingDouble;
+import static java.util.Comparator.comparingInt;
+import static java.util.Comparator.comparingLong;
+import static java.util.stream.Collectors.toCollection;
+import static java.util.stream.Collectors.toSet;
 
 /** Security: files are confined to the run's own results directory (resolve + verified
  *  containment); workspace/ — the agent's live tree — is never served by raw path. taskDiff()
@@ -111,7 +120,7 @@ public class BenchController {
             final Set<CheckId> ids = rung.get("checks").isTextual() && rung.get("checks").asText().equals("all")
                     ? EnumSet.allOf(CheckId.class)
                     : java.util.stream.StreamSupport.stream(rung.get("checks").spliterator(), false)
-                            .map(c -> CheckId.valueOf(c.asText())).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+                            .map(c -> CheckId.valueOf(c.asText())).collect(toCollection(LinkedHashSet::new));
             final List<Map<String, Object>> checks = ids.stream()
                     .map(id -> Map.<String, Object>of("check_id", id.name(), "category", id.category, "weight", id.weight, "description", id.description))
                     .toList();
@@ -528,7 +537,7 @@ public class BenchController {
         final var unknown = overrides.keySet().stream().filter(k -> !RESTART_OVERRIDE_KEYS.contains(k)).toList();
         if (!unknown.isEmpty()) throw new IllegalArgumentException("unknown override field(s): " + unknown + "; allowed: " + RESTART_OVERRIDE_KEYS);
 
-        com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "tag", "backup/" + overrideKey + "-" + (System.currentTimeMillis() / 1000), "HEAD");
+        com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "tag", "backup/" + overrideKey + "-" + (currentTimeMillis() / 1000), "HEAD");
         final String before = com.strgmai.ace.service.runner.RunBenchSupport.nearestPhaseTagSha(ws, ownTag + "^");
         com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "reset", "--hard", before);
 
@@ -735,7 +744,7 @@ public class BenchController {
         }
         if (attempts.isEmpty()) return SessionCounts.NOT_FOUND;
         // chronological: oldest attempt first, so "Attempt 1" in the UI really is the earliest one
-        attempts.sort(Comparator.comparing(a -> a.startedIso() == null ? "" : a.startedIso()));
+        attempts.sort(comparing(a -> a.startedIso() == null ? "" : a.startedIso()));
         int turns = 0, compactions = 0, toolErrorsTotal = 0;
         double wallSec = 0.0;
         final Map<String, int[]> toolCounts = new LinkedHashMap<>();   // toolName -> [total, errors], summed across every attempt
@@ -839,10 +848,10 @@ public class BenchController {
                 if (!(records.get(ri).get("attempt_started") instanceof String s)) continue;
                 final Instant recStart = parseInstantOrNull(s);
                 if (recStart == null) continue;
-                candidates.add(new long[]{ai, ri, Math.abs(Duration.between(sessionStart, recStart).toMillis())});
+                candidates.add(new long[]{ai, ri, abs(Duration.between(sessionStart, recStart).toMillis())});
             }
         }
-        candidates.sort(Comparator.comparingLong(c -> c[2]));
+        candidates.sort(comparingLong(c -> c[2]));
         final boolean[] recordConsumed = new boolean[records.size()];
         for (final long[] c : candidates) {
             if (c[2] > 300_000) break;   // 5 minutes - generous given a true match should be near-instant
@@ -900,7 +909,7 @@ public class BenchController {
             final List<JudgeCheckpoint> checkpoints = new ArrayList<>();
             for (final String stamp : judgeStampsInAttemptWindow(judgeByStamp.keySet(), a))
                 checkpoints.addAll(judgeByStamp.getOrDefault(stamp, List.of()));
-            checkpoints.sort(Comparator.comparingInt(JudgeCheckpoint::turn));
+            checkpoints.sort(comparingInt(JudgeCheckpoint::turn));
             final List<Integer> judgeOnTrack = new ArrayList<>();
             final List<Integer> judgeOffTrack = new ArrayList<>();
             for (final JudgeCheckpoint c : checkpoints) (c.offTrack() ? judgeOffTrack : judgeOnTrack).add(c.turn());
@@ -950,7 +959,7 @@ public class BenchController {
                 if (entry != null) bySession.computeIfAbsent((String) entry.remove("session_id"), k -> new ArrayList<>()).add(entry);
             }
         } catch (final Exception e) { return bySession; }
-        bySession.values().forEach(list -> list.sort(Comparator.comparingLong(e -> ((Number) e.get("seq")).longValue())));
+        bySession.values().forEach(list -> list.sort(comparingLong(e -> ((Number) e.get("seq")).longValue())));
         return bySession;
     }
 
@@ -991,7 +1000,7 @@ public class BenchController {
 
     private List<List<Map<String, Object>>> requestSpeedsPerAttempt(final Path base, final List<AttemptCounts> attempts) {
         final Map<String, List<Map<String, Object>>> bySession = requestSpeedsBySession(base,
-                attempts.stream().map(AttemptCounts::sessionUuid).filter(Objects::nonNull).collect(Collectors.toSet()));
+                attempts.stream().map(AttemptCounts::sessionUuid).filter(Objects::nonNull).collect(toSet()));
         final List<List<Map<String, Object>>> perAttempt = new ArrayList<>();
         for (int i = 0; i < attempts.size(); i++) perAttempt.add(new ArrayList<>());
         final Map<String, List<Integer>> indicesBySessionUuid = new LinkedHashMap<>();
@@ -1027,14 +1036,14 @@ public class BenchController {
                     final Instant end = parseInstantOrNull(att.endedIso());
                     if (start == null || end == null) continue;
                     final long dist = !reqTs.isBefore(start) && !reqTs.isAfter(end) ? 0
-                            : Math.min(Math.abs(Duration.between(start, reqTs).toMillis()), Math.abs(Duration.between(end, reqTs).toMillis()));
+                            : min(abs(Duration.between(start, reqTs).toMillis()), abs(Duration.between(end, reqTs).toMillis()));
                     if (dist < bestDist) { bestDist = dist; bestIdx = idx; }
                 }
                 if (bestIdx >= 0 && bestDist <= REQUEST_SPEED_WINDOW_TOLERANCE.toMillis()) perAttempt.get(bestIdx).add(reqEntry);
             }
         }
         for (final List<Map<String, Object>> list : perAttempt) {
-            list.sort(Comparator.comparingLong(e -> ((Number) e.get("seq")).longValue()));
+            list.sort(comparingLong(e -> ((Number) e.get("seq")).longValue()));
             for (final Map<String, Object> e : list) { e.remove("ts"); e.remove("session_id"); }
         }
         return perAttempt;
@@ -1283,7 +1292,7 @@ public class BenchController {
                 for (final Path f : byAttempt.getOrDefault(stamp, List.of())) {
                     final var m = pattern.matcher(f.getFileName().toString());
                     m.matches();
-                    final int turn = Integer.parseInt(m.group(2));
+                    final int turn = parseInt(m.group(2));
                     final String content = Files.readString(f);
                     final int promptIdx = content.indexOf("## Prompt");
                     final int recIdx = content.indexOf("## Recommendation");
@@ -1297,7 +1306,7 @@ public class BenchController {
             // two reconnects of the same task can each independently reach "turn 5" (the judge's own
             // interval state resets per reconnect, same root cause as the missing-checkpoints bug
             // this fixes), so a plain turn-only sort would interleave them confusingly
-            entries.sort(Comparator.comparing(Entry::stamp).thenComparingInt(Entry::turn));
+            entries.sort(comparing(Entry::stamp).thenComparingInt(Entry::turn));
             return entries.stream().map(e -> Map.<String, Object>of(
                     "turn", e.turn(), "prompt", e.prompt(), "recommendation", e.recommendation())).toList();
         } catch (final Exception e) { return List.of(); }
@@ -1368,7 +1377,7 @@ public class BenchController {
                 if (!m.matches()) continue;
                 final String stamp = m.group(1);
                 if (stamp == null || stamp.isEmpty()) continue;
-                final int turn = Integer.parseInt(m.group(2));
+                final int turn = parseInt(m.group(2));
                 final String content = Files.readString(f);
                 final int recIdx = content.indexOf("## Recommendation");
                 final String recommendation = recIdx >= 0 ? content.substring(recIdx + "## Recommendation".length()).strip() : null;
@@ -1377,7 +1386,7 @@ public class BenchController {
                 byStamp.computeIfAbsent(stamp, k -> new ArrayList<>()).add(new JudgeCheckpoint(turn, offTrack));
             }
         } catch (final Exception e) { return Map.of(); }
-        byStamp.values().forEach(list -> list.sort(Comparator.comparingInt(JudgeCheckpoint::turn)));
+        byStamp.values().forEach(list -> list.sort(comparingInt(JudgeCheckpoint::turn)));
         return byStamp;
     }
 
@@ -1762,7 +1771,7 @@ public class BenchController {
             final int k = kValue instanceof Number n ? n.intValue() : 0;
             (k >= 5 ? ranked : indicative).add(group);
         }
-        ranked.sort(Comparator.comparingDouble(BenchController::functionalMean).reversed());
+        ranked.sort(comparingDouble(BenchController::functionalMean).reversed());
         return Map.of("ranked", ranked, "indicative", indicative);
     }
 

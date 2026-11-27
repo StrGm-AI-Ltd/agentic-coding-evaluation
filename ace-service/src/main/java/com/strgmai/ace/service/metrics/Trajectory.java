@@ -13,6 +13,11 @@ import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.regex.Pattern;
 
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.lang.Math.round;
+import static java.util.stream.Collectors.toMap;
+
 /** Port of metrics/trajectory.py: trajectory analysis from the recorded interactions.
  *  Input: interactions.jsonl (the proxy journal — the ground truth of what the model saw and said).
  *  Output: a per-turn trace and an effectiveness summary: context growth, tool profile, thrash
@@ -92,7 +97,7 @@ public final class Trajectory {
             // derived estimate below when the backend doesn't report it (or no backend is given)
             Object genTps = backend == null ? null : u.get(backend.speedFieldNames().decodeTpsField());
             if (genTps == null && u.get("completion_tokens") instanceof Number ct && r.get("latency_sec") instanceof Number lat && r.get("ttft_sec") instanceof Number ttft)
-                genTps = Math.round(ct.doubleValue() / Math.max(0.1, lat.doubleValue() - ttft.doubleValue()) * 100) / 100.0;
+                genTps = round(ct.doubleValue() / max(0.1, lat.doubleValue() - ttft.doubleValue()) * 100) / 100.0;
             final Map<String, Object> pd = u.get("prompt_tokens_details") instanceof Map<?, ?> p ? (Map<String, Object>) p : Map.of();
             final String reasoning = String.valueOf(resp.getOrDefault("reasoning", ""));
             final String content = String.valueOf(resp.getOrDefault("content", ""));
@@ -119,10 +124,10 @@ public final class Trajectory {
             final JsonNode a = JSON.readTree(args);
             final String p = a.path("path").asText(a.path("file_path").asText(a.path("filePath").asText("")));
             if (!p.isEmpty()) return p;
-            return a.path("command").asText("").substring(0, Math.min(60, a.path("command").asText("").length()));
+            return a.path("command").asText("").substring(0, min(60, a.path("command").asText("").length()));
         } catch (Exception e) {
             log.debug("could not parse tool args as JSON, falling back to the raw text: {}", e.toString());
-            return args.substring(0, Math.min(60, args.length()));
+            return args.substring(0, min(60, args.length()));
         }
     }
 
@@ -168,12 +173,12 @@ public final class Trajectory {
         int drops = 0;
         for (int i = 1; i < pt.size(); i++) if (pt.get(i) < pt.get(i - 1) * 0.7) drops++;
         s.put("context_drops_gt30pct", drops);   // compaction / new-phase events
-        if (pt.size() > 1) s.put("growth_tokens_per_turn", Math.round((pt.get(pt.size() - 1) - pt.get(0)) * 10.0 / Math.max(1, pt.size() - 1)) / 10.0);
+        if (pt.size() > 1) s.put("growth_tokens_per_turn", round((pt.get(pt.size() - 1) - pt.get(0)) * 10.0 / max(1, pt.size() - 1)) / 10.0);
         final List<Double> lat = turns.stream().filter(t -> t.latency() instanceof Number).map(t -> ((Number) t.latency()).doubleValue()).toList();
-        if (!lat.isEmpty()) s.put("latency_mean_sec", Math.round(lat.stream().mapToDouble(Double::doubleValue).average().orElse(0) * 10) / 10.0);
+        if (!lat.isEmpty()) s.put("latency_mean_sec", round(lat.stream().mapToDouble(Double::doubleValue).average().orElse(0) * 10) / 10.0);
         s.put("latency_max_sec", lat.isEmpty() ? null : Collections.max(lat));
         final List<Double> ttft = turns.stream().filter(t -> t.ttft() instanceof Number).map(t -> ((Number) t.ttft()).doubleValue()).toList();
-        if (!ttft.isEmpty()) s.put("ttft_mean_sec", Math.round(ttft.stream().mapToDouble(Double::doubleValue).average().orElse(0) * 100) / 100.0);
+        if (!ttft.isEmpty()) s.put("ttft_mean_sec", round(ttft.stream().mapToDouble(Double::doubleValue).average().orElse(0) * 100) / 100.0);
         final List<Double> g = turns.stream().filter(t -> t.genTps() instanceof Number).map(t -> ((Number) t.genTps()).doubleValue()).toList();
         s.put("decode_tps_median", g.isEmpty() ? null : median(g));
         s.put("decode_tps_min", g.isEmpty() ? null : Collections.min(g));
@@ -199,7 +204,7 @@ public final class Trajectory {
         }
         s.put("prefix_cache_hit_turns", turns.stream().filter(t -> t.cachedTokens() != null && ((Number) t.cachedTokens()).intValue() > 0).count());
         final int rc = turns.stream().mapToInt(Turn::reasoningChars).sum(), cc = turns.stream().mapToInt(Turn::contentChars).sum();
-        s.put("reasoning_share_pct", rc + cc > 0 ? Math.round(1000.0 * rc / (rc + cc)) / 10.0 : null);
+        s.put("reasoning_share_pct", rc + cc > 0 ? round(1000.0 * rc / (rc + cc)) / 10.0 : null);
         final Map<String, Integer> finishes = new LinkedHashMap<>();
         turns.forEach(t -> finishes.merge(t.finish() == null ? "none" : t.finish(), 1, Integer::sum));
         s.put("finish_reasons", finishes);
@@ -229,7 +234,7 @@ public final class Trajectory {
         for (Object[] c : calls)
             if (List.of("edit", "write", "read").contains(c[1])) perFile.merge(argPath((String) c[2]), 1, Integer::sum);
         s.put("hot_files", perFile.entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed()).limit(5)
-                .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> a, LinkedHashMap::new)));
+                .collect(toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> a, LinkedHashMap::new)));
         // ping-pong: same file touched >= 3 alternating consecutive times
         final List<Object[]> seqf = calls.stream().filter(c -> List.of("edit", "write", "read").contains(c[1])).toList();
         int pp = 0;
@@ -354,8 +359,8 @@ public final class Trajectory {
         }
         for (int i = 0; i < turns.size(); i++) {
             final Turn t = turns.get(i);
-            lines.add("## turn " + (i + 1) + "  [seq " + t.seq() + "  " + (t.ts() == null ? "" : t.ts().substring(Math.min(11, t.ts().length()), Math.min(19, t.ts().length()))) + "Z  prompt "
-                    + t.promptTokens() + " tok  out " + t.completionTokens() + " tok  " + (t.latency() instanceof Number n ? Math.round(n.doubleValue()) : 0) + "s  finish=" + t.finish() + "]");
+            lines.add("## turn " + (i + 1) + "  [seq " + t.seq() + "  " + (t.ts() == null ? "" : t.ts().substring(min(11, t.ts().length()), min(19, t.ts().length()))) + "Z  prompt "
+                    + t.promptTokens() + " tok  out " + t.completionTokens() + " tok  " + (t.latency() instanceof Number n ? round(n.doubleValue()) : 0) + "s  finish=" + t.finish() + "]");
             if (t.reasoningChars() > 0) lines.add("- thinking: " + t.reasoningChars() + " chars");
             for (ToolCall c : t.toolCalls()) {
                 String arg;
@@ -366,11 +371,11 @@ public final class Trajectory {
                     log.debug("could not parse tool call args for the transcript, using the raw text: {}", e.toString());
                     arg = c.args();
                 }
-                lines.add("- " + c.name() + ": " + arg.substring(0, Math.min(220, arg.length())).replace("\n", " "));
+                lines.add("- " + c.name() + ": " + arg.substring(0, min(220, arg.length())).replace("\n", " "));
             }
             if (t.toolCalls().isEmpty() && t.contentChars() > 0) lines.add("- says (" + t.contentChars() + " chars)");
-            for (String rtxt : results.getOrDefault(t.seq(), List.of()).subList(0, Math.min(4, results.getOrDefault(t.seq(), List.of()).size())))
-                lines.add("  -> " + rtxt.substring(0, Math.min(300, rtxt.length())).replace("\n", " | "));
+            for (String rtxt : results.getOrDefault(t.seq(), List.of()).subList(0, min(4, results.getOrDefault(t.seq(), List.of()).size())))
+                lines.add("  -> " + rtxt.substring(0, min(300, rtxt.length())).replace("\n", " | "));
             lines.add("");
         }
         return String.join("\n", lines);
@@ -383,14 +388,14 @@ public final class Trajectory {
      *  each, cap 30). Not penalised (R4 C-13): test re-runs, budget refusals, proxy 502s, stalls. */
     public static Map.Entry<Integer, Map<String, Integer>> objectiveIndex(final Map<String, Object> s, final Map<String, Object> manifest) {
         final Map<String, Integer> pen = new LinkedHashMap<>();
-        pen.put("thrash", Math.min(20, 2 * ((Number) s.getOrDefault("identical_calls_repeated", 0)).intValue()));
-        pen.put("pingpong", Math.min(10, 2 * ((Number) s.getOrDefault("edit_read_pingpong", 0)).intValue()));
-        pen.put("errors", Math.min(10, ((Number) s.getOrDefault("agent_http_errors", 0)).intValue()));
+        pen.put("thrash", min(20, 2 * ((Number) s.getOrDefault("identical_calls_repeated", 0)).intValue()));
+        pen.put("pingpong", min(10, 2 * ((Number) s.getOrDefault("edit_read_pingpong", 0)).intValue()));
+        pen.put("errors", min(10, ((Number) s.getOrDefault("agent_http_errors", 0)).intValue()));
         final List<Map<String, Object>> tasks = manifest.get("tasks") instanceof List<?> l ? (List<Map<String, Object>>) l : List.of();
-        pen.put("over_budget_tasks", Math.min(30, 10 * (int) tasks.stream().filter(t -> Boolean.TRUE.equals(t.get("over_budget"))).count()));
-        pen.put("unverified_done", Math.min(30, 10 * (int) tasks.stream().filter(t -> "done".equals(t.get("reported")) && conclusiveRed(t.get("verification"))).count()));
+        pen.put("over_budget_tasks", min(30, 10 * (int) tasks.stream().filter(t -> Boolean.TRUE.equals(t.get("over_budget"))).count()));
+        pen.put("unverified_done", min(30, 10 * (int) tasks.stream().filter(t -> "done".equals(t.get("reported")) && conclusiveRed(t.get("verification"))).count()));
         final int total = pen.values().stream().mapToInt(Integer::intValue).sum();
-        return Map.entry(Math.max(0, 100 - total), pen);
+        return Map.entry(max(0, 100 - total), pen);
     }
 
     /** green is None when the verification could not run (inconclusive is never the agent's fault — R4 C-2) */

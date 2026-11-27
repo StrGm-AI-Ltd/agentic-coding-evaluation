@@ -26,6 +26,9 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.function.Consumer;
 
+import static java.lang.Math.round;
+import static java.lang.System.currentTimeMillis;
+
 /** #265: a mid-task trajectory checkpoint - every N turns of a task's own main implementation
  *  session, a SEPARATE LLM session reads the task's goal/budget, what's actually been produced so
  *  far, and a capped tail of the running trajectory, and returns plain-text guidance that gets
@@ -107,7 +110,7 @@ public class Judge {
             final RecordingProxyFactory proxies, final String taskId, final String goal,
             final long taskWallSec, final long taskTokens, final long taskStartMs, final Map<String, Object> judgeCfg,
             final int turn, final List<ChatMessage> trajectory) throws Exception {
-        final long elapsedSec = (System.currentTimeMillis() - taskStartMs) / 1000;
+        final long elapsedSec = (currentTimeMillis() - taskStartMs) / 1000;
         final String prompt = buildPrompt(ws, rd, taskId, goal, taskWallSec, taskTokens, elapsedSec, trajectory);
 
         final String rawModel = judgeCfg.get("model") instanceof String m && !m.isBlank() ? m : null;
@@ -229,7 +232,7 @@ public class Judge {
 
     static String withTriageNotice(final String recommendation, final long elapsedSec, final long taskWallSec) {
         if (taskWallSec <= 0 || elapsedSec < (long) (taskWallSec * (1 - TRIAGE_REMAINING_FRACTION))) return recommendation;
-        final String notice = "TRIAGE MODE: under " + Math.round(TRIAGE_REMAINING_FRACTION * 100) + "% of this task's own wall-clock budget "
+        final String notice = "TRIAGE MODE: under " + round(TRIAGE_REMAINING_FRACTION * 100) + "% of this task's own wall-clock budget "
                 + "remains. Stop refining, polishing, or exploring alternative designs - focus ONLY on making the acceptance criterion's own "
                 + "tests pass with the simplest correct change you can make right now. Write the docs/PROGRESS.md status line as soon as it "
                 + "passes, or as soon as you accept it will not, rather than continuing to iterate.";

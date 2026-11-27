@@ -14,6 +14,8 @@ import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.regex.Pattern;
 
+import static java.lang.Math.round;
+
 /** Port of run_bench.py's journal_facts (WITH the parse-once-per-version cache from the Python fix):
  *  what was ACTUALLY sent — request counts, error classes, budget refusals, completion tokens,
  *  reasoning efforts, the first in-window request's sampler/system-prompt facts — within a window,
@@ -157,8 +159,8 @@ public final class JournalFacts {
                 f.put("first_prompt_tokens", e.pt());
             }
         }
-        if (latencyN > 0) f.put("avg_latency_sec", Math.round(latencySum / latencyN * 100) / 100.0);
-        if (ttftN > 0) f.put("avg_first_byte_ms", Math.round((double) ttftSum / ttftN));
+        if (latencyN > 0) f.put("avg_latency_sec", round(latencySum / latencyN * 100) / 100.0);
+        if (ttftN > 0) f.put("avg_first_byte_ms", round((double) ttftSum / ttftN));
         if (maxPromptTokens > 0) f.put("max_prompt_tokens", maxPromptTokens);
         if (!bucketRequests.isEmpty()) {
             final List<Map<String, Object>> buckets = new ArrayList<>();
@@ -169,9 +171,9 @@ public final class JournalFacts {
                 row.put("context_hi", range[1]);
                 row.put("requests", b.getValue()[0]);
                 final double[] pfx = bucketPrefill.get(b.getKey());
-                row.put("avg_prefill_tok_per_sec", pfx == null ? null : Math.round(pfx[0] / pfx[1] * 100) / 100.0);
+                row.put("avg_prefill_tok_per_sec", pfx == null ? null : round(pfx[0] / pfx[1] * 100) / 100.0);
                 final double[] dec = bucketDecode.get(b.getKey());
-                row.put("avg_decode_tok_per_sec", dec == null ? null : Math.round(dec[0] / dec[1] * 100) / 100.0);
+                row.put("avg_decode_tok_per_sec", dec == null ? null : round(dec[0] / dec[1] * 100) / 100.0);
                 buckets.add(row);
             }
             f.put("speed_by_context", buckets);

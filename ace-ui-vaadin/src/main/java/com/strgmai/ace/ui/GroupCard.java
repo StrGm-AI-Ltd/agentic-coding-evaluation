@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static java.lang.Math.min;
+
 /**
  * One leaderboard card — the Vaadin twin of the group_card macro in the Jinja2 UI:
  * k, mean ± 90 % CI, pass-k matrix chips, run links, collapsible stats.py output.
@@ -36,7 +38,7 @@ public class GroupCard extends VerticalLayout {
             head.add(Badges.text("#" + rank, Badges.PRIMARY));
         }
         final var key = new Span("key " + (group.key_hash() == null ? "" : group.key_hash().substring(0,
-                Math.min(10, group.key_hash().length()))));
+                min(10, group.key_hash().length()))));
         key.getStyle()
                 .set("font-family", "ui-monospace, 'SF Mono', Menlo, monospace").set("font-size", "12px");
         head.add(key);

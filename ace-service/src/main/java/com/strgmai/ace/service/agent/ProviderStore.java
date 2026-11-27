@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static com.strgmai.ace.service.jooq.Tables.PROVIDERS;
+import static java.util.UUID.randomUUID;
 
 /** The "LLM Providers" registry — replaces the old hardcoded `ProviderConfig` enum with a real,
  *  operator-editable table (see migration V7). `byBaseUrl()`/`byKey()`/`allCredentials()` are the
@@ -115,7 +116,7 @@ public class ProviderStore {
 
     public Provider create(final String name, final String providerKey, final String baseUrl, final String apiKey, final String defaultModel) {
         final var rec = dsl.insertInto(PROVIDERS)
-                .set(PROVIDERS.ID, UUID.randomUUID())
+                .set(PROVIDERS.ID, randomUUID())
                 .set(PROVIDERS.NAME, name)
                 .set(PROVIDERS.PROVIDER_KEY, providerKey)
                 .set(PROVIDERS.BASE_URL, baseUrl)

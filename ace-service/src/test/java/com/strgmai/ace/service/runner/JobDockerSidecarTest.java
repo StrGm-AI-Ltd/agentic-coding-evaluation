@@ -6,6 +6,7 @@ import org.testcontainers.DockerClientFactory;
 
 import java.util.Set;
 
+import static java.lang.System.currentTimeMillis;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** #696: real, not mocked - no abstraction exists to mock DockerService.sh() against, same style
@@ -16,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class JobDockerSidecarTest {
 
-    private static final String RUN_ID = "jds-test-" + System.currentTimeMillis();
+    private static final String RUN_ID = "jds-test-" + currentTimeMillis();
     private static final JobDockerSidecar sidecar = new JobDockerSidecar();
     private static String firstDockerHost;
 

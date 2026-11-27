@@ -10,6 +10,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
+import static java.lang.System.getenv;
+import static java.lang.Thread.currentThread;
+
 /** Port of run_bench.py's Docker machinery, minus the on-demand lifecycle (R7): ACE no longer
  *  starts or stops Docker Desktop itself - the operator owns that entirely. This only probes
  *  whether it happens to be running and mirrors the agent's Docker CLI tooling into a fresh HOME. */
@@ -107,7 +110,7 @@ public final class DockerService {
             // shell convention) keeps this distinguishable from a genuine 1 "went wrong" exit.
             if (p != null) p.destroyForcibly();
             try { if (t1 != null) t1.join(1000); if (t2 != null) t2.join(1000); } catch (InterruptedException ignore) { /* already interrupted; restored below regardless */ }
-            Thread.currentThread().interrupt();
+            currentThread().interrupt();
             return new Proc(130, "", "interrupted");
         } catch (Exception e) { return new Proc(1, "", String.valueOf(e)); }
     }
@@ -129,7 +132,7 @@ public final class DockerService {
         return new Sh(r.rc(), r.out() + r.err());
     }
 
-    public static void sleep(int sec) { try { TimeUnit.SECONDS.sleep(sec); } catch (InterruptedException e) { Thread.currentThread().interrupt(); } }
+    public static void sleep(int sec) { try { TimeUnit.SECONDS.sleep(sec); } catch (InterruptedException e) { currentThread().interrupt(); } }
     public static String nowIso() { return DateTimeFormatter.ISO_INSTANT.format(Instant.now()); }
 
     // #612, found live: when ace-service itself runs as a container (Docker-outside-of-Docker, the
@@ -153,7 +156,7 @@ public final class DockerService {
         if (m != null) return m;
         synchronized (DockerService.class) {
             if (ownMounts != null) return ownMounts;
-            final String id = System.getenv("HOSTNAME");
+            final String id = getenv("HOSTNAME");
             final List<Map.Entry<String, String>> out = new ArrayList<>();
             if (id != null && !id.isBlank()) {
                 final Sh r = sh(15, "docker", "inspect", id, "--format",

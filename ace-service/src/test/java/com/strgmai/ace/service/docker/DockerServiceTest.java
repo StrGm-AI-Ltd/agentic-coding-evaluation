@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
+import static java.lang.Thread.currentThread;
 import static org.junit.jupiter.api.Assertions.*;
 
 class DockerServiceTest {
@@ -21,7 +22,7 @@ class DockerServiceTest {
         final boolean[] interruptedFlagRestored = {false};
         final Thread worker = new Thread(() -> {
             result[0] = DockerService.proc(30, null, null, "sleep", "30");
-            interruptedFlagRestored[0] = Thread.currentThread().isInterrupted();
+            interruptedFlagRestored[0] = currentThread().isInterrupted();
         });
         worker.start();
         Thread.sleep(500);   // let the subprocess actually start before interrupting

@@ -23,7 +23,7 @@ import java.util.UUID;
 import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
 import static com.strgmai.ace.service.jooq.Tables.JOBS;
 import static com.strgmai.ace.service.jooq.Tables.RUNS;
-
+import static java.util.UUID.randomUUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Golden tests for ExperimentsService.plan() (the exact RunSpec each template's arms construct,
@@ -510,7 +510,7 @@ class ExperimentsServiceTest {
     }
 
     private static void job(final DSLContext db, final UUID experimentId, final String arm, final String status) {
-        db.insertInto(JOBS).set(JOBS.ID, UUID.randomUUID()).set(JOBS.EXPERIMENT_ID, experimentId).set(JOBS.ARM, arm)
+        db.insertInto(JOBS).set(JOBS.ID, randomUUID()).set(JOBS.EXPERIMENT_ID, experimentId).set(JOBS.ARM, arm)
                 .set(JOBS.KIND, "run").set(JOBS.RUN_ID, "run-" + arm).set(JOBS.ARGV, "[]").set(JOBS.STATUS, status)
                 .execute();
     }
@@ -519,7 +519,7 @@ class ExperimentsServiceTest {
     void finalizeIfDoneMarksTheExperimentCancelledWhenEveryJobWasCancelled() throws Exception {
         final DSLContext db = freshDb("ace-experiments-allcancelled-test");
         final var svc = new ExperimentsService(db, null, props("http://127.0.0.1:1/v1"), null, probe());
-        final UUID experimentId = UUID.randomUUID();
+        final UUID experimentId = randomUUID();
         db.insertInto(EXPERIMENTS).set(EXPERIMENTS.ID, experimentId).set(EXPERIMENTS.NAME, "exp").set(EXPERIMENTS.TAG, "t")
                 .set(EXPERIMENTS.TEMPLATE, "harness_effect").set(EXPERIMENTS.PARAMS, "{}").set(EXPERIMENTS.K, 1).execute();
         job(db, experimentId, "orch", "cancelled");
@@ -536,7 +536,7 @@ class ExperimentsServiceTest {
     void finalizeIfDoneLeavesTheExperimentQueuedWhileAJobIsStillPending() throws Exception {
         final DSLContext db = freshDb("ace-experiments-pending-test");
         final var svc = new ExperimentsService(db, null, props("http://127.0.0.1:1/v1"), null, probe());
-        final UUID experimentId = UUID.randomUUID();
+        final UUID experimentId = randomUUID();
         db.insertInto(EXPERIMENTS).set(EXPERIMENTS.ID, experimentId).set(EXPERIMENTS.NAME, "exp").set(EXPERIMENTS.TAG, "t")
                 .set(EXPERIMENTS.TEMPLATE, "harness_effect").set(EXPERIMENTS.PARAMS, "{}").set(EXPERIMENTS.K, 1).execute();
         job(db, experimentId, "orch", "cancelled");
@@ -553,7 +553,7 @@ class ExperimentsServiceTest {
     private static void succeededRunWithResults(final DSLContext db, final UUID experimentId, final String arm,
                                                  final Path resultsDir, final double functionalPct, final Double avgLatencySec) throws Exception {
         final var runId = "run-" + arm;
-        db.insertInto(JOBS).set(JOBS.ID, UUID.randomUUID()).set(JOBS.EXPERIMENT_ID, experimentId).set(JOBS.ARM, arm)
+        db.insertInto(JOBS).set(JOBS.ID, randomUUID()).set(JOBS.EXPERIMENT_ID, experimentId).set(JOBS.ARM, arm)
                 .set(JOBS.KIND, "run").set(JOBS.RUN_ID, runId).set(JOBS.ARGV, "[]").set(JOBS.STATUS, "succeeded").execute();
         db.insertInto(RUNS).set(RUNS.RUN_ID, runId).set(RUNS.RESULTS_DIR, resultsDir.toString())
                 .set(RUNS.POOLABLE, true).set(RUNS.ORACLE, "{}").execute();
@@ -566,7 +566,7 @@ class ExperimentsServiceTest {
     void finalizeIfDoneComparesSpeedMetricsAlongsideFunctionalScore(@TempDir final Path tmp) throws Exception {
         final DSLContext db = freshDb("ace-experiments-speed-test");
         final var svc = new ExperimentsService(db, null, props("http://127.0.0.1:1/v1"), null, probe());
-        final UUID experimentId = UUID.randomUUID();
+        final UUID experimentId = randomUUID();
         db.insertInto(EXPERIMENTS).set(EXPERIMENTS.ID, experimentId).set(EXPERIMENTS.NAME, "exp").set(EXPERIMENTS.TAG, "t")
                 .set(EXPERIMENTS.TEMPLATE, "model_ab").set(EXPERIMENTS.PARAMS, "{}").set(EXPERIMENTS.K, 1).execute();
         final var dirA = Files.createDirectory(tmp.resolve("a"));
@@ -593,7 +593,7 @@ class ExperimentsServiceTest {
     void finalizeIfDoneSkipsASpeedMetricMissingOnOneSide(@TempDir final Path tmp) throws Exception {
         final DSLContext db = freshDb("ace-experiments-speed-missing-test");
         final var svc = new ExperimentsService(db, null, props("http://127.0.0.1:1/v1"), null, probe());
-        final UUID experimentId = UUID.randomUUID();
+        final UUID experimentId = randomUUID();
         db.insertInto(EXPERIMENTS).set(EXPERIMENTS.ID, experimentId).set(EXPERIMENTS.NAME, "exp").set(EXPERIMENTS.TAG, "t")
                 .set(EXPERIMENTS.TEMPLATE, "model_ab").set(EXPERIMENTS.PARAMS, "{}").set(EXPERIMENTS.K, 1).execute();
         final var dirA = Files.createDirectory(tmp.resolve("a"));
