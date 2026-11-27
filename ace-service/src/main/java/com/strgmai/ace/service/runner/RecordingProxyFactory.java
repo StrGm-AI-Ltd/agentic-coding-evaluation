@@ -1,6 +1,7 @@
 package com.strgmai.ace.service.runner;
 
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.config.OperationsProperties;
 import com.strgmai.ace.service.proxy.RecordingProxy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,7 +27,12 @@ public class RecordingProxyFactory {
     // Set, not a single field: a parallel wave can have more than one session running at once.
     private final Set<Consumer<String>> active = ConcurrentHashMap.newKeySet();
 
-    public RecordingProxyFactory(BenchProperties props) { this.props = props; }
+    private final OperationsProperties operations;
+
+    public RecordingProxyFactory(BenchProperties props, OperationsProperties operations) {
+        this.props = props;
+        this.operations = operations;
+    }
 
     /** one proxy session: base() is the model endpoint to point the agent at; abort(reason) closes
      *  whatever is currently relaying through it WITHOUT stopping the listening server - for
@@ -41,7 +47,7 @@ public class RecordingProxyFactory {
     }
 
     public ProxySession start(final Path journal, final Long tokenBudget, final String tag, final RecordingProxy.SamplerOverrides overrides) {
-        final var proxy = new RecordingProxy(props);
+        final var proxy = new RecordingProxy(props, operations);
         final String[] base = new String[1];
         try { base[0] = proxy.start(journal, tokenBudget, tag, overrides); }
         catch (Exception e) {

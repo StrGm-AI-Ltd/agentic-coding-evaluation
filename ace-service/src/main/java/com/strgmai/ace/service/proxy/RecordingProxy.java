@@ -4,6 +4,7 @@ import com.strgmai.ace.service.config.BenchProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.strgmai.ace.service.config.OperationsProperties;
 import com.sun.net.httpserver.HttpServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -78,11 +79,10 @@ public class RecordingProxy {
         public static final SamplerOverrides NONE = new SamplerOverrides(null, null, null, null, null, null, null, null, null, null);
     }
 
-    /** the proxy's own upstream connect wait is kept a little more generous than the run's
-     *  first-token timeout, never tighter - it must never be the reason a request the operator
+    /* the margin (ace.operations.proxy-timeout-margin-sec) keeps the proxy's own upstream connect wait a little more
+     *  generous than the run's first-token timeout, never tighter - it must never be the reason a request the operator
      *  configured a longer wait for gets cut off first (#92: used to be a hardcoded 290s regardless
      *  of what --first-token-timeout was actually set to). */
-    static final int UPSTREAM_TIMEOUT_MARGIN_SEC = 30;
 
     /** #92: the proxy's own upstream connect wait, derived from the run's first-token-timeout
      *  setting (plus a margin) instead of a hardcoded value disconnected from it - used to be a
@@ -92,10 +92,10 @@ public class RecordingProxy {
      *  caller skips HttpRequest.Builder.timeout(...) entirely rather than passing a degenerate
      *  near-zero duration (Duration.ofSeconds(0) is rejected outright, and margin-only wouldn't be
      *  "unlimited" at all). */
-    static Integer upstreamTimeoutSec(final SamplerOverrides overrides) {
+    static Integer upstreamTimeoutSec(final SamplerOverrides overrides, final int marginSec) {
         final Integer firstTokenTimeoutSec = overrides.firstTokenTimeoutSec();
         if (firstTokenTimeoutSec == null || firstTokenTimeoutSec <= 0) return null;
-        return firstTokenTimeoutSec + UPSTREAM_TIMEOUT_MARGIN_SEC;
+        return firstTokenTimeoutSec + marginSec;
     }
     private volatile boolean stopping;
     private final Set<HttpResponse<InputStream>> inflight = ConcurrentHashMap.newKeySet();
@@ -124,7 +124,12 @@ public class RecordingProxy {
      *  there as its own separate literal, so a future wording edit can't silently desync the two. */
     public static final String BUDGET_REFUSAL_MARKER = "ace-service: phase output-token budget exhausted";
 
-    public RecordingProxy(BenchProperties props) { this.props = props; }
+    private final int proxyTimeoutMarginSec;   // ace.operations.proxy-timeout-margin-sec
+
+    public RecordingProxy(BenchProperties props, OperationsProperties operations) {
+        this.props = props;
+        this.proxyTimeoutMarginSec = operations.proxyTimeoutMarginSec();
+    }
 
     /** start on a free port; the journal is APPENDED across restarts (one proxy per phase/task, like the Python original) */
     public synchronized String start(Path journal, Long tokenBudget, String tag) throws Exception {
@@ -262,7 +267,7 @@ public class RecordingProxy {
         // class of bug as ReferenceAgent's chatModel timeout (see its comment). null = unlimited
         // (the run's first-token-timeout is 0): HttpRequest.Builder rejects a zero/negative
         // Duration outright, so the timeout is omitted entirely rather than passed as one.
-        final Integer upstreamTimeoutSec = upstreamTimeoutSec(overrides);
+        final Integer upstreamTimeoutSec = upstreamTimeoutSec(overrides, proxyTimeoutMarginSec);
         if (upstreamTimeoutSec != null) ub.timeout(java.time.Duration.ofSeconds(upstreamTimeoutSec));
         // java.net.http.HttpRequest.Builder throws IllegalArgumentException on these - the JDK
         // manages them itself. Matched case-insensitively: com.sun.net.httpserver.Headers presents

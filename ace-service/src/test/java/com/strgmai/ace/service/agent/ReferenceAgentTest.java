@@ -1,6 +1,7 @@
 package com.strgmai.ace.service.agent;
 
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.config.TestOperations;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.response.ChatResponse;
@@ -200,7 +201,7 @@ class ReferenceAgentTest {
     void apiKeyForRecognisesProviderUrlVariantsConsistently() throws Exception {
         final var agent = new ReferenceAgent(new BenchProperties(
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null),
-                new ProviderStore(freshDb("reference-agent-apikey-test")));
+                new ProviderStore(freshDb("reference-agent-apikey-test")), TestOperations.defaults());
         // extraEnv is keyed by the provider's own providerKey now (ProviderStore.allCredentials()'s
         // own shape), not an env-var name - see ProviderStore's javadoc for why that indirection
         // was dropped once a provider's credential became a real stored value, not a name to re-read.

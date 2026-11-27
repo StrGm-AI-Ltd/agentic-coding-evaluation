@@ -1,6 +1,7 @@
 package com.strgmai.ace.service.runner;
 
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.config.TestOperations;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
@@ -48,7 +49,7 @@ class RecordingProxyFactoryTest {
         });
         upstream.start();
         final var journal = Files.createTempFile("proxy-factory-test", ".jsonl");
-        final var factory = new RecordingProxyFactory(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        final var factory = new RecordingProxyFactory(props("http://127.0.0.1:" + upstream.getAddress().getPort()), TestOperations.defaults());
         final var session = factory.start(journal, 1000L, null);
         try {
             final var client = HttpClient.newHttpClient();
@@ -77,7 +78,7 @@ class RecordingProxyFactoryTest {
         final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         upstream.start();
         final var journal = Files.createTempFile("proxy-factory-test", ".jsonl");
-        final var factory = new RecordingProxyFactory(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        final var factory = new RecordingProxyFactory(props("http://127.0.0.1:" + upstream.getAddress().getPort()), TestOperations.defaults());
         final var session = factory.start(journal, 1000L, null);
         session.stop().run();
         upstream.stop(0);
@@ -88,7 +89,7 @@ class RecordingProxyFactoryTest {
 
     @Test
     void abortAllInflightWithNoActiveSessionsIsANoOp() {
-        final var factory = new RecordingProxyFactory(props("http://127.0.0.1:1"));
+        final var factory = new RecordingProxyFactory(props("http://127.0.0.1:1"), TestOperations.defaults());
         assertDoesNotThrow(() -> factory.abortAllInflight("cancelled"));
     }
 }

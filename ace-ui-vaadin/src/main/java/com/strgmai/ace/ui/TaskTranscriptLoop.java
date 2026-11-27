@@ -20,6 +20,7 @@ import static java.lang.Thread.currentThread;
 final class TaskTranscriptLoop implements Runnable {
     private static final Logger log = LoggerFactory.getLogger(TaskTranscriptLoop.class);
 
+    // TODO(#729): a setting under ace.ui, passed in from the job views
     static final int MAX_ATTEMPTS = 3;
 
     private final ServiceClient client;

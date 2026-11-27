@@ -1,5 +1,6 @@
 package com.strgmai.ace.service.oracle;
 
+import com.strgmai.ace.service.config.OperationsProperties;
 import com.strgmai.ace.service.docker.DockerService;
 import com.strgmai.ace.service.oracle.checks.BlackboxScenarios;
 import com.strgmai.ace.service.oracle.checks.BuildChecks;
@@ -27,6 +28,11 @@ import static java.lang.Math.min;
 @Component
 public class RunOracle {
     private final ObjectMapper json = new ObjectMapper();
+    private final int gradleTimeoutSec;
+
+    public RunOracle(final OperationsProperties operations) {
+        this.gradleTimeoutSec = operations.gradleTimeoutSec();
+    }
     public static final String BUILD_IMAGE = BuildChecks.DEFAULT_IMAGE;
 
     public Map<String, Object> score(final Path ws, final String task, final String systemBaseUrl) throws Exception {
@@ -81,7 +87,7 @@ public class RunOracle {
         final boolean dockerOk = DockerService.sh(15, "docker", "info", "--format", "{{.ServerVersion}}").rc() == 0;
         if (dockerOk) {
             try {   // 03_build.py: the pinned container, the sidecar, the mutation
-                for (CheckResult r : BuildChecks.run(ws, BUILD_IMAGE))
+                for (CheckResult r : BuildChecks.run(ws, BUILD_IMAGE, gradleTimeoutSec))
                     if (wanted.contains(r.id())) got.put(r.id(), r);
             } catch (Exception e) {
                 for (CheckId id : gated)

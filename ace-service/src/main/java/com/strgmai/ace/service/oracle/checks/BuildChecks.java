@@ -32,7 +32,6 @@ public final class BuildChecks {
 
     private static final Logger log = LoggerFactory.getLogger(BuildChecks.class);
 
-    public static final int GRADLE_TIMEOUT = 2400;
     public static final String DEFAULT_IMAGE = "gradle:8.14-jdk21";
     static final String DB_IMAGE = "postgres:16-alpine";
     public static final Path CACHE = Path.of(System.getProperty("user.home"), ".cache/ace-service/gradle");
@@ -256,7 +255,7 @@ public final class BuildChecks {
         return copy;
     }
 
-    public static List<CheckResult> run(final Path ws, final String image) throws Exception {
+    public static List<CheckResult> run(final Path ws, final String image, final int gradleTimeoutSec) throws Exception {
         final List<CheckResult> out = new ArrayList<>();
         final List<Path> roots = StructureChecks.gradleRoots(ws);
         if (roots.isEmpty()) {
@@ -294,7 +293,7 @@ public final class BuildChecks {
             // ---- B1: every root assembles
             final List<String> fails = new ArrayList<>(), infraHits = new ArrayList<>();
             for (int i = 0; i < croots.size(); i++) {
-                final String[] res = gradle(croots.get(i), image, "assemble", infra, GRADLE_TIMEOUT).split("\n", 2);
+                final String[] res = gradle(croots.get(i), image, "assemble", infra, gradleTimeoutSec).split("\n", 2);
                 final int rc = parseInt(res[0]);
                 final String output = res.length > 1 ? res[1] : "";
                 if (rc != 0) {
@@ -324,7 +323,7 @@ public final class BuildChecks {
             final List<Integer> rcs = new ArrayList<>(); infraHits.clear();
             for (int i = 0; i < croots.size(); i++) {
                 infra.resetDb();
-                final String[] res = gradle(croots.get(i), image, "test", infra, GRADLE_TIMEOUT).split("\n", 2);
+                final String[] res = gradle(croots.get(i), image, "test", infra, gradleTimeoutSec).split("\n", 2);
                 final int rc = parseInt(res[0]);
                 final String output = res.length > 1 ? res[1] : "";
                 rcs.add(rc);
@@ -371,7 +370,7 @@ public final class BuildChecks {
                         .orElse(copy);
                 for (Path x : StructureChecks.glob(rootOf, "**/build/test-results/**/*.xml")) Files.deleteIfExists(x);
                 infra.resetDb();
-                final String[] res = gradle(rootOf, image, "test", infra, GRADLE_TIMEOUT).split("\n", 2);
+                final String[] res = gradle(rootOf, image, "test", infra, gradleTimeoutSec).split("\n", 2);
                 int rc = parseInt(res[0]);
                 final String output = res.length > 1 ? res[1] : "";
                 final int[] st = testStats(rootOf);

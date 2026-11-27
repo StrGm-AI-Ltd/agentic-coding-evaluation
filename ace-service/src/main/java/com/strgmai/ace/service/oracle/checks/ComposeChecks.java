@@ -230,7 +230,7 @@ public final class ComposeChecks {
             }
             // ---- up + health (its own budget) ----
             // found live (#653), investigated on svc-20261030-185444: the ONLY portInUse() guard ran
-            // once, above, before the (potentially long, GRADLE_TIMEOUT-scale) build step - a port
+            // once, above, before the (potentially long, Gradle-timeout-scale) build step - a port
             // taken DURING the build slipped past that early exit and surfaced below as a raw,
             // unhelpful "Error response from daemon" instead of the same clear, already-existing
             // message. Re-checking right before "up" (this second check) narrows that race but can

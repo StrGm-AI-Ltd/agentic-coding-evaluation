@@ -55,6 +55,7 @@ public final class JobLiveState implements Serializable {
      *  in the Vaadin session's JVM heap for as long as the job page stays open. requestCount() is
      *  never capped, so the UI can still say how many requests happened in total even once the grid
      *  itself only shows the most recent window of them. */
+    // TODO(#729): a setting under ace.ui, passed in from the job views
     static final int MAX_RECENT_REQUESTS = 500;
 
     private final List<String> steps = new ArrayList<>();

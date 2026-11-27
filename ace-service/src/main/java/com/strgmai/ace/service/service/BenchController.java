@@ -5,6 +5,7 @@ import com.strgmai.ace.service.agent.AgentSession;
 import com.strgmai.ace.service.backend.LocalModelBackend;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.config.JsonColumns;
+import com.strgmai.ace.service.config.OperationsProperties;
 import com.strgmai.ace.service.metrics.StatsService;
 import com.strgmai.ace.service.oracle.CheckId;
 import com.strgmai.ace.service.pack.Packs;
@@ -72,12 +73,19 @@ public class BenchController {
                            StatsService stats, WorkerService worker, BenchProperties props, Preflight preflight,
                            TreatmentPin pin, Intervene intervene, TaskMatcher taskMatcher, PauseAfterTask pauseAfterTask,
                            com.strgmai.ace.service.agent.ProviderStore providerStore, LocalModelBackend backend,
-                           ContextProbe contextProbe) {
+                           ContextProbe contextProbe, OperationsProperties operations) {
         this.dsl = dsl; this.queue = queue; this.importer = importer; this.experiments = experiments;
         this.stats = stats; this.worker = worker; this.props = props; this.preflight = preflight; this.pin = pin;
         this.intervene = intervene; this.taskMatcher = taskMatcher; this.pauseAfterTask = pauseAfterTask;
         this.providerStore = providerStore; this.backend = backend; this.contextProbe = contextProbe;
+        this.transcriptTailCapChars = operations.transcriptTailCapChars();
+        this.requestSpeedWindowTolerance = Duration.ofSeconds(operations.requestSpeedWindowToleranceSec());
+        this.judgeStampTolerance = Duration.ofSeconds(operations.judgeStampToleranceSec());
     }
+
+    private final int transcriptTailCapChars;   // ace.operations.transcript-tail-cap-chars
+    private final Duration requestSpeedWindowTolerance;   // ace.operations.request-speed-window-tolerance-sec
+    private final Duration judgeStampTolerance;   // ace.operations.judge-stamp-tolerance-sec
 
     @GetMapping("/api/preflight")
     public Map<String, Object> preflight(@RequestParam(required = false) String model) {
@@ -925,7 +933,7 @@ public class BenchController {
             am.put("compaction_distribution", compactionDistribution);
             am.put("compaction_reclaimed", compactionReclaimed);
             final List<JudgeCheckpoint> checkpoints = new ArrayList<>();
-            for (final String stamp : judgeStampsInAttemptWindow(judgeByStamp.keySet(), a))
+            for (final String stamp : judgeStampsInAttemptWindow(judgeByStamp.keySet(), a, judgeStampTolerance))
                 checkpoints.addAll(judgeByStamp.getOrDefault(stamp, List.of()));
             checkpoints.sort(comparingInt(JudgeCheckpoint::turn));
             final List<Integer> judgeOnTrack = new ArrayList<>();
@@ -1015,7 +1023,6 @@ public class BenchController {
      *  right spot. A missing "ts" (only ever a hand-written test fixture shape - every real
      *  interactions.jsonl line has one) still passes through unfiltered: there is no timestamp to
      *  test, and - in the single-sharer case - no second candidate to confuse it with either. */
-    private static final Duration REQUEST_SPEED_WINDOW_TOLERANCE = Duration.ofMinutes(30);
 
     private List<List<Map<String, Object>>> requestSpeedsPerAttempt(final Path base, final List<AttemptCounts> attempts) {
         final Map<String, List<Map<String, Object>>> bySession = requestSpeedsBySession(base,
@@ -1036,9 +1043,9 @@ public class BenchController {
             if (sharingIndices.size() == 1) {
                 final int idx = sharingIndices.get(0);
                 final Instant start = parseInstantOrNull(attempts.get(idx).startedIso());
-                final Instant windowStart = start == null ? null : start.minus(REQUEST_SPEED_WINDOW_TOLERANCE);
+                final Instant windowStart = start == null ? null : start.minus(requestSpeedWindowTolerance);
                 final Instant end = parseInstantOrNull(attempts.get(idx).endedIso());
-                final Instant windowEnd = end == null ? null : end.plus(REQUEST_SPEED_WINDOW_TOLERANCE);
+                final Instant windowEnd = end == null ? null : end.plus(requestSpeedWindowTolerance);
                 for (final Map<String, Object> reqEntry : sessionEntries) {
                     final Instant reqTs = parseInstantOrNull((String) reqEntry.get("ts"));
                     final boolean inWindow = reqTs == null || windowStart == null
@@ -1061,7 +1068,7 @@ public class BenchController {
                             : min(abs(Duration.between(start, reqTs).toMillis()), abs(Duration.between(end, reqTs).toMillis()));
                     if (dist < bestDist) { bestDist = dist; bestIdx = idx; }
                 }
-                if (bestIdx >= 0 && bestDist <= REQUEST_SPEED_WINDOW_TOLERANCE.toMillis()) perAttempt.get(bestIdx).add(reqEntry);
+                if (bestIdx >= 0 && bestDist <= requestSpeedWindowTolerance.toMillis()) perAttempt.get(bestIdx).add(reqEntry);
             }
         }
         for (final List<Map<String, Object>> list : perAttempt) {
@@ -1305,7 +1312,7 @@ public class BenchController {
             // judgeStampsInAttemptWindow()'s own javadoc for why.
             final var attempts = sessionCounts(base, taskId).attempts();
             final Set<String> wanted = new LinkedHashSet<>();
-            for (final AttemptCounts a : attempts) wanted.addAll(judgeStampsInAttemptWindow(byAttempt.keySet(), a));
+            for (final AttemptCounts a : attempts) wanted.addAll(judgeStampsInAttemptWindow(byAttempt.keySet(), a, judgeStampTolerance));
             if (wanted.isEmpty()) wanted.add(byAttempt.keySet().stream()
                     .max(Comparator.naturalOrder())
                     .orElseThrow());
@@ -1352,14 +1359,13 @@ public class BenchController {
      *  task's real progress) is continuous, so more than one stamp can legitimately belong to the
      *  SAME one real attempt. Still correctly excludes a genuinely abandoned pre-Restart attempt's
      *  stale checkpoints, since a real Restart's new attempt starts well outside their tolerance. */
-    private static final Duration JUDGE_STAMP_TOLERANCE = Duration.ofMinutes(5);
 
-    private static List<String> judgeStampsInAttemptWindow(final Collection<String> stamps, final AttemptCounts a) {
+    private static List<String> judgeStampsInAttemptWindow(final Collection<String> stamps, final AttemptCounts a, final Duration tolerance) {
         final Instant start = parseInstantOrNull(a.startedIso());
         if (start == null) return List.of();
-        final Instant windowStart = start.minus(JUDGE_STAMP_TOLERANCE);
+        final Instant windowStart = start.minus(tolerance);
         final Instant end = parseInstantOrNull(a.endedIso());   // null (still running): window stays open-ended
-        final Instant windowEnd = end == null ? null : end.plus(JUDGE_STAMP_TOLERANCE);
+        final Instant windowEnd = end == null ? null : end.plus(tolerance);
         final List<String> out = new ArrayList<>();
         for (final String stamp : stamps) {
             if (stamp.isEmpty()) continue;   // the legacy, unstamped shape has no timestamp to test
@@ -1967,7 +1973,6 @@ public class BenchController {
      *  thinking). Same SSE shape as events() above - a tail-capped catch-up batch on first
      *  connecting (or whenever the task's own session file changes, e.g. a restart), small
      *  incremental text after that - but scoped to one task's own session, not the whole job. */
-    private static final int TRANSCRIPT_TAIL_CAP_CHARS = 20_000;
 
     @GetMapping("/api/jobs/{id}/tasks/{taskId}/transcript")
     public SseEmitter taskTranscript(final @PathVariable UUID id, final @PathVariable String taskId) {
@@ -1979,7 +1984,7 @@ public class BenchController {
                 while (true) {
                     final Map<String, Object> job = queue.get(id);
                     final var sessionsDir = Path.of(props.resultsDir(), String.valueOf(job.get("run_id")), "sessions");
-                    final String block = transcript.poll(sessionsDir, taskId, TRANSCRIPT_TAIL_CAP_CHARS);
+                    final String block = transcript.poll(sessionsDir, taskId, transcriptTailCapChars);
                     // sent as a JSON object (never a raw multi-line String - every block here IS
                     // multi-line) for the same reason every other event on this stream already is:
                     // a raw string with embedded newlines breaks SSE's own line-oriented framing
@@ -2009,7 +2014,7 @@ public class BenchController {
     @GetMapping("/api/runs/{runId}/tasks/{taskId}/transcript")
     public Map<String, Object> taskTranscriptForRun(@PathVariable String runId, @PathVariable String taskId) {
         final var sessionsDir = Path.of(props.resultsDir(), runId, "sessions");
-        final String block = new TaskTranscript().poll(sessionsDir, taskId, TRANSCRIPT_TAIL_CAP_CHARS);
+        final String block = new TaskTranscript().poll(sessionsDir, taskId, transcriptTailCapChars);
         return Map.of("text", block == null ? "" : block);
     }
 

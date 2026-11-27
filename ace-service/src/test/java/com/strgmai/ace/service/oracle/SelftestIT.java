@@ -1,5 +1,6 @@
 package com.strgmai.ace.service.oracle;
 
+import com.strgmai.ace.service.config.TestOperations;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
@@ -65,7 +66,7 @@ class SelftestIT {
     void positiveControlPassesEveryRequiredCheck() throws Exception {
         final Path ws = copyFixture("positive");
         try {
-            final Map<String, Object> rep = new RunOracle().score(ws, "L7_full_platform", null);
+            final Map<String, Object> rep = new RunOracle(TestOperations.defaults()).score(ws, "L7_full_platform", null);
             final Map<String, CheckStatus> status = statusById(rep);
             // offline must_pass (EXPECTATIONS.json positive_control.must_pass)
             for (CheckId id : new CheckId[]{CheckId.S1, CheckId.S2, CheckId.S3, CheckId.S4, CheckId.S5, CheckId.S6, CheckId.S7,
@@ -106,7 +107,7 @@ class SelftestIT {
     void cheatDirNamedJavaDoesNotCrashTheCheckerOrFalselyPass() throws Exception {
         final Path ws = copyFixture("adversarial/cheatD_dir_named_java");
         try {
-            final Map<String, Object> rep = new RunOracle().score(ws, "L7_full_platform", null);
+            final Map<String, Object> rep = new RunOracle(TestOperations.defaults()).score(ws, "L7_full_platform", null);
             final Map<String, CheckStatus> status = statusById(rep);
             assertNotEquals(CheckStatus.PASS, status.get("M1"), "M1 must not silently PASS on this fixture: " + detailOf(rep, CheckId.M1));
             assertLowScore(rep);
@@ -117,7 +118,7 @@ class SelftestIT {
     void cheatPrebuiltJarFailsComposeOnHostBuiltArtifact() throws Exception {
         final Path ws = copyFixture("adversarial/cheatF_prebuilt_jar");
         try {
-            final Map<String, Object> rep = new RunOracle().score(ws, "L6_compose_health", null);
+            final Map<String, Object> rep = new RunOracle(TestOperations.defaults()).score(ws, "L6_compose_health", null);
             final Map<String, CheckStatus> status = statusById(rep);
             assertEquals(CheckStatus.FAIL, status.get("C2"), "C2 should FAIL a compose build that ships a host-built jar: " + detailOf(rep, CheckId.C2));
             final String detail = detailOf(rep, CheckId.C2);
@@ -128,7 +129,7 @@ class SelftestIT {
     private static void assertCheatFails(final String fixture, final String task, final Map<CheckId, CheckStatus> mustHave) throws Exception {
         final Path ws = copyFixture(fixture);
         try {
-            final Map<String, Object> rep = new RunOracle().score(ws, task, null);
+            final Map<String, Object> rep = new RunOracle(TestOperations.defaults()).score(ws, task, null);
             final Map<String, CheckStatus> status = statusById(rep);
             mustHave.forEach((id, expected) -> assertEquals(expected, status.get(id.name()), id + ": " + detailOf(rep, id)));
             assertLowScore(rep);

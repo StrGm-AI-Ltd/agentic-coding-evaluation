@@ -1,6 +1,7 @@
 package com.strgmai.ace.service.agent;
 
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.config.OperationsProperties;
 import com.strgmai.ace.service.pack.Packs;
 import com.strgmai.ace.service.proxy.RecordingProxy;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
@@ -188,7 +189,12 @@ public class ReferenceAgent {
     private final BenchProperties props;
     private final ProviderStore providerStore;
 
-    public ReferenceAgent(BenchProperties props, ProviderStore providerStore) { this.props = props; this.providerStore = providerStore; }
+    public ReferenceAgent(BenchProperties props, ProviderStore providerStore, OperationsProperties operations) {
+        this.props = props;
+        this.providerStore = providerStore;
+        this.streamIdleTimeoutMs = operations.streamIdleTimeoutSec() * 1000L;
+        this.streamPollMs = operations.streamPollMs();
+    }
 
     /** #424: `recallEnabled=false` leaves recall_tool_output out of the offered tools entirely -
      *  the model structurally cannot call a tool it was never told exists, matching
@@ -849,14 +855,14 @@ public class ReferenceAgent {
      *  harness's own task-wall timeout both just look like Thread.interrupt()); the harness's own
      *  runBounded names the more specific "task-wall budget exceeded" reason itself when that is
      *  the actual cause, which may race harmlessly with this generic one (both diagnostic only). */
-    static ChatResponse chatWithRetry(final StreamingChatModel model, final ChatRequest req, final long deadline, final Consumer<String> abortProxy, final long firstTokenTimeoutMs) {
+    ChatResponse chatWithRetry(final StreamingChatModel model, final ChatRequest req, final long deadline, final Consumer<String> abortProxy, final long firstTokenTimeoutMs) {
         RuntimeException last = null;
         long delay = 2000;
         for (int attempt = 0; attempt < 4; attempt++) {
             final StreamCollector collector = new StreamCollector();
             try {
                 model.chat(req, collector);
-                final ChatResponse resp = awaitStream(collector, firstTokenTimeoutMs);
+                final ChatResponse resp = awaitStream(collector, firstTokenTimeoutMs, streamIdleTimeoutMs, streamPollMs);
                 if (isEmptyModelResponse(resp)) {
                     // the stream itself completed (onCompleteResponse fired, not onError) - nothing
                     // is stuck on the proxy<->oMLX hop to abort here, unlike the RuntimeException/
@@ -904,7 +910,7 @@ public class ReferenceAgent {
 
     /** default cap on time-to-FIRST-token, before any chunk has arrived at all: a cold model server
      *  (loading weights, queued behind another request, prefill on a long prompt) stalls for a
-     *  structurally different reason than a mid-response stall does (see MID_STREAM_IDLE_TIMEOUT_MS
+     *  structurally different reason than a mid-response stall does (see streamIdleTimeoutMs
      *  below for that one) - a request that never starts producing anything has no other signal to
      *  wait on. Per-run override: RunSpec.firstTokenTimeout / --first-token-timeout. 0 means
      *  unlimited (the system-wide "0 = no budget" convention). */
@@ -922,8 +928,8 @@ public class ReferenceAgent {
      *  dead stream produces none at all, ever. Unconditional (not gated behind firstTokenTimeoutMs>0
      *  the way the first-token check is) - a dead connection should never be allowed to run out the
      *  clock regardless of whether the operator wants an unlimited time-to-first-token. */
-    private static final long MID_STREAM_IDLE_TIMEOUT_MS = 30 * 60 * 1000L;
-    private static final long POLL_MS = 2_000;
+    private final long streamIdleTimeoutMs;   // ace.operations.stream-idle-timeout-sec (default 30 minutes)
+    private final long streamPollMs;          // ace.operations.stream-poll-ms
 
     /** provider API keys that may reach {@code extraEnv} (an external reviewer's own credential, or a
      *  provider key from the operator's environment) - never let one of these into the tool-execution
@@ -962,17 +968,18 @@ public class ReferenceAgent {
 
     /** Waits for one streaming attempt by polling instead of blocking on it, so an interrupt
      *  (cancellation, or the harness's own task-wall timeout - see RunBench.sessionWithPolicy) is
-     *  noticed within POLL_MS instead of depending on the HTTP call itself honoring
+     *  noticed within streamPollMs instead of depending on the HTTP call itself honoring
      *  Thread.interrupt() - which the old synchronous client did not (see the chatModel comment
      *  above). Two independent idle ceilings, both measured off the same collector.lastActivityMs:
      *  firstTokenTimeoutMs (only before anything has arrived - see its own comment) and
-     *  MID_STREAM_IDLE_TIMEOUT_MS (only after - see its own comment on why 30 minutes doesn't repeat
+     *  streamIdleTimeoutMs (only after - see its own comment on why 30 minutes doesn't repeat
      *  2026-09-25's false-positive). Past both, only the harness's task-wall timeout (an external
      *  interrupt) bounds this further. */
-    private static ChatResponse awaitStream(final StreamCollector collector, final long firstTokenTimeoutMs) throws InterruptedException {
+    private static ChatResponse awaitStream(final StreamCollector collector, final long firstTokenTimeoutMs, final long streamIdleTimeoutMs,
+            final long streamPollMs) throws InterruptedException {
         while (true) {
             try {
-                return collector.future.get(POLL_MS, TimeUnit.MILLISECONDS);
+                return collector.future.get(streamPollMs, TimeUnit.MILLISECONDS);
             } catch (java.util.concurrent.TimeoutException pollTimeout) {
                 final long idleMs = currentTimeMillis() - collector.lastActivityMs;
                 // firstTokenTimeoutMs <= 0 means unlimited (the system-wide "0 = no budget"
@@ -981,9 +988,9 @@ public class ReferenceAgent {
                     collector.cancelIfPossible();   // real abort now (R10), not just walking away
                     throw new RuntimeException("no first token from the model in " + (firstTokenTimeoutMs / 1000) + "s");
                 }
-                if (collector.gotFirstToken && idleMs > MID_STREAM_IDLE_TIMEOUT_MS) {
+                if (collector.gotFirstToken && idleMs > streamIdleTimeoutMs) {
                     collector.cancelIfPossible();
-                    throw new RuntimeException("no new output from the model in " + (MID_STREAM_IDLE_TIMEOUT_MS / 1000) + "s - stream appears dead");
+                    throw new RuntimeException("no new output from the model in " + (streamIdleTimeoutMs / 1000) + "s - stream appears dead");
                 }
                 // still within both budgets
             } catch (ExecutionException ee) {

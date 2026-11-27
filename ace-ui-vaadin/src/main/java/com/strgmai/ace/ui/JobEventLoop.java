@@ -17,6 +17,7 @@ import static java.lang.Thread.currentThread;
 final class JobEventLoop implements Runnable {
     private static final Logger log = LoggerFactory.getLogger(JobEventLoop.class);
 
+    // TODO(#729): a setting under ace.ui, passed in from the job views
     static final int MAX_ATTEMPTS = 3;
 
     private final ServiceClient client;

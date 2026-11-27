@@ -3,6 +3,7 @@ package com.strgmai.ace.service.proxy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.config.TestOperations;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
@@ -65,7 +66,7 @@ class RecordingProxyTest {
         });
         upstream.start();
         final var journal = Files.createTempFile("proxy-test", ".jsonl");
-        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()), TestOperations.defaults());
         try {
             final var proxyBase = proxy.start(journal, 0L, null);   // 0 = unlimited
             final var client = HttpClient.newHttpClient();
@@ -96,7 +97,7 @@ class RecordingProxyTest {
         });
         upstream.start();
         final var journal = Files.createTempFile("proxy-test", ".jsonl");
-        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()), TestOperations.defaults());
         try {
             final var proxyBase = proxy.start(journal, 1000L, null);
             final var client = HttpClient.newHttpClient();
@@ -133,7 +134,7 @@ class RecordingProxyTest {
         });
         upstream.start();
         final var journal = Files.createTempFile("proxy-test", ".jsonl");
-        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()), TestOperations.defaults());
         try {
             final var proxyBase = proxy.start(journal, 1000L, null);
             final var client = HttpClient.newHttpClient();
@@ -171,7 +172,7 @@ class RecordingProxyTest {
         });
         upstream.start();
         final var journal = Files.createTempFile("proxy-test", ".jsonl");
-        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()), TestOperations.defaults());
         try {
             final var proxyBase = proxy.start(journal, 1000L, null);
             final var client = HttpClient.newHttpClient();
@@ -210,7 +211,7 @@ class RecordingProxyTest {
         final HttpServer upstream = upstreamCapturingMaxTokens(upstreamSawMaxTokens);
         upstream.start();
         final var journal = Files.createTempFile("proxy-test", ".jsonl");
-        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()), TestOperations.defaults());
         try {
             final var proxyBase = proxy.start(journal, 1000L, null,
                     new RecordingProxy.SamplerOverrides(null, null, null, null, 555, null, null, null, null, null));
@@ -228,7 +229,7 @@ class RecordingProxyTest {
         final HttpServer upstream = upstreamCapturingMaxTokens(upstreamSawMaxTokens);
         upstream.start();
         final var journal = Files.createTempFile("proxy-test", ".jsonl");
-        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));   // props(...) sets maxOutputTokens=100
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()), TestOperations.defaults());   // props(...) sets maxOutputTokens=100
         try {
             final var proxyBase = proxy.start(journal, 1000L, null);   // no per-run override (the pre-2026-09-25 call shape)
             sendPlainChatRequest(proxyBase);
@@ -261,7 +262,7 @@ class RecordingProxyTest {
         final HttpServer upstream = upstreamCapturingBody(sawBody);
         upstream.start();
         final var journal = Files.createTempFile("proxy-test", ".jsonl");
-        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()), TestOperations.defaults());
         try {
             final var proxyBase = proxy.start(journal, 1000L, null,
                     new RecordingProxy.SamplerOverrides(0.7, 0.9, 40, 1.1, null, "high", null, null, null, null));
@@ -286,14 +287,14 @@ class RecordingProxyTest {
     void upstreamTimeoutScalesWithTheRunsFirstTokenTimeout() {
         // 0/unset means unlimited (the system-wide "0 = no budget" convention): null, so the caller
         // omits HttpRequest.Builder.timeout(...) entirely rather than a degenerate near-zero duration
-        assertNull(RecordingProxy.upstreamTimeoutSec(RecordingProxy.SamplerOverrides.NONE));
+        assertNull(RecordingProxy.upstreamTimeoutSec(RecordingProxy.SamplerOverrides.NONE, 30));
         assertNull(RecordingProxy.upstreamTimeoutSec(
-                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 0, null, null, null)));
+                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 0, null, null, null), 30));
         assertEquals(600 + 30, RecordingProxy.upstreamTimeoutSec(
-                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 600, null, null, null)),
+                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 600, null, null, null), 30),
                 "an operator-configured value well above the old hardcoded 290s ceiling must actually apply");
         assertEquals(60 + 30, RecordingProxy.upstreamTimeoutSec(
-                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 60, null, null, null)));
+                new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, 60, null, null, null), 30));
     }
 
     @Test
@@ -302,7 +303,7 @@ class RecordingProxyTest {
         final HttpServer upstream = upstreamCapturingBody(sawBody);
         upstream.start();
         final var journal = Files.createTempFile("proxy-test", ".jsonl");
-        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()), TestOperations.defaults());
         try {
             final var proxyBase = proxy.start(journal, 1000L, null);   // SamplerOverrides.NONE
             sendPlainChatRequest(proxyBase);
@@ -343,7 +344,7 @@ class RecordingProxyTest {
         final HttpServer upstream = upstreamCapturingMaxTokens(upstreamSawMaxTokens);
         upstream.start();
         final var journal = Files.createTempFile("proxy-test", ".jsonl");
-        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()), TestOperations.defaults());
         try {
             final var proxyBase = proxy.start(journal, 1000L, null,
                     new RecordingProxy.SamplerOverrides(null, null, null, null, 100, null, null, 65536, null, null));
@@ -361,7 +362,7 @@ class RecordingProxyTest {
         final HttpServer upstream = upstreamCapturingMaxTokens(upstreamSawMaxTokens);
         upstream.start();
         final var journal = Files.createTempFile("proxy-test", ".jsonl");
-        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()), TestOperations.defaults());
         try {
             // a huge max_tokens with no contextWindow set (null) - nothing to check against, must not refuse
             final var proxyBase = proxy.start(journal, 1000L, null,
@@ -388,7 +389,7 @@ class RecordingProxyTest {
         });
         upstream.start();
         final var journal = Files.createTempFile("proxy-test", ".jsonl");
-        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()), TestOperations.defaults());
         try {
             final var proxyBase = proxy.start(journal, 1000L, null);
             final var client = HttpClient.newHttpClient();
@@ -439,7 +440,7 @@ class RecordingProxyTest {
         local.start();
         final var journal = Files.createTempFile("proxy-test", ".jsonl");
         // props() points at `local` - the override below must win instead
-        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + local.getAddress().getPort()));
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + local.getAddress().getPort()), TestOperations.defaults());
         try {
             final var proxyBase = proxy.start(journal, 1000L, null,
                     new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, null, null,
@@ -476,7 +477,7 @@ class RecordingProxyTest {
         });
         external.start();
         final var journal = Files.createTempFile("proxy-test", ".jsonl");
-        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + external.getAddress().getPort()));
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + external.getAddress().getPort()), TestOperations.defaults());
         try {
             final var proxyBase = proxy.start(journal, 1000L, null,
                     new RecordingProxy.SamplerOverrides(null, null, null, null, null, null, null, null,
@@ -504,7 +505,7 @@ class RecordingProxyTest {
         });
         upstream.start();
         final var journal = Files.createTempFile("proxy-test", ".jsonl");
-        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        final var proxy = new RecordingProxy(props("http://127.0.0.1:" + upstream.getAddress().getPort()), TestOperations.defaults());
         try {
             final var proxyBase = proxy.start(journal, 1000L, null);
             final var client = HttpClient.newHttpClient();

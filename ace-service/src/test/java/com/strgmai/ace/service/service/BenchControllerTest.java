@@ -2,6 +2,7 @@ package com.strgmai.ace.service.service;
 
 import com.strgmai.ace.service.backend.OmlxBackend;
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.config.TestOperations;
 import com.strgmai.ace.service.metrics.StatsService;
 import com.strgmai.ace.service.pack.Packs;
 import com.strgmai.ace.service.runner.Intervene;
@@ -88,7 +89,7 @@ class BenchControllerTest {
         providerStore = new com.strgmai.ace.service.agent.ProviderStore(dsl);
         final var localBackend = new OmlxBackend(Files.createTempDirectory("omlx-test"));
         final var controller = new BenchController(dsl, queue, importer, experiments, stats, worker, props, preflight, pin, intervene, taskMatcher, pauseAfterTask, providerStore,
-                localBackend, new com.strgmai.ace.service.runner.ContextProbe(localBackend));
+                localBackend, new com.strgmai.ace.service.runner.ContextProbe(localBackend), TestOperations.defaults());
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ApiExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter())

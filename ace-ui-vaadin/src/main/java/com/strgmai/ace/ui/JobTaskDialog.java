@@ -54,6 +54,7 @@ final class JobTaskDialog {
      *  enabled), just scoped to one task's dialog instead of the whole page. Capped client-side
      *  too (CLIENT_CAP_CHARS) - the server's own initial catch-up batch is already tail-capped,
      *  but a dialog left open for hours would otherwise still grow its own buffer unboundedly. */
+    // TODO(#729): a setting under ace.ui, passed in from the job views
     private static final int TRANSCRIPT_CLIENT_CAP_CHARS = 40_000;
 
     private JobTaskDialog() {

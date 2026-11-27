@@ -1,5 +1,6 @@
 package com.strgmai.ace.service.oracle;
 
+import com.strgmai.ace.service.config.TestOperations;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
@@ -20,7 +21,7 @@ class RunOracleTest {
     @Test
     void unknownTaskThrowsInsteadOfSilentlyScoringAgainstL7() throws Exception {
         final Path ws = Files.createTempDirectory("run-oracle-test");
-        final var ex = assertThrows(IllegalArgumentException.class, () -> new RunOracle().score(ws, "no_such_task_xyz", null));
+        final var ex = assertThrows(IllegalArgumentException.class, () -> new RunOracle(TestOperations.defaults()).score(ws, "no_such_task_xyz", null));
         assertTrue(ex.getMessage().contains("no_such_task_xyz"), "the bad task string must be named in the failure: " + ex.getMessage());
     }
 
@@ -33,7 +34,7 @@ class RunOracleTest {
     @Test
     void offlineChecksRunForRealWhileGatedOnesAreSkippedWithoutDocker() throws Exception {
         final Path ws = Files.createTempDirectory("run-oracle-test");
-        final Map<String, Object> rep = new RunOracle().score(ws, "L1_migration_entity", null);
+        final Map<String, Object> rep = new RunOracle(TestOperations.defaults()).score(ws, "L1_migration_entity", null);
 
         final boolean dockerAvailable = Boolean.TRUE.equals(rep.get("docker_available"));
         @SuppressWarnings("unchecked")
@@ -61,14 +62,14 @@ class RunOracleTest {
         // real path through the "missing => FAIL" fill-in loop's sibling SKIPPED-fill-in loop just
         // above it (RunOracle.java) - covered together since they're the same two lines of looping
         final Path ws = Files.createTempDirectory("run-oracle-test");
-        final Map<String, Object> rep = new RunOracle().score(ws, "L1_migration_entity", null);
+        final Map<String, Object> rep = new RunOracle(TestOperations.defaults()).score(ws, "L1_migration_entity", null);
         assertEquals(7, rep.get("checks_reported"), "no id is ever silently dropped from the report");
     }
 
     @Test
     void provenanceDigestIsNullRatherThanThrowingWhenTheBuildImageIsNotPulled() throws Exception {
         final Path ws = Files.createTempDirectory("run-oracle-test");
-        final Map<String, Object> rep = new RunOracle().score(ws, "L1_migration_entity", null);
+        final Map<String, Object> rep = new RunOracle(TestOperations.defaults()).score(ws, "L1_migration_entity", null);
         @SuppressWarnings("unchecked")
         final Map<String, Object> prov = (Map<String, Object>) rep.get("provenance");
         assertNotNull(prov, "the provenance map itself must always be present");

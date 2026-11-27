@@ -36,6 +36,7 @@ public final class JournalFacts {
      *  once, while still capping growth across many runs. accessOrder=true + removeEldestEntry is the
      *  standard bounded-LRU idiom; synchronizedMap makes it safe for the same concurrent (parallel
      *  wave) access ConcurrentHashMap was chosen for originally. */
+    // TODO(#729): a setting under ace.operations, once JournalFacts is a bean
     private static final int MAX_CACHED_JOURNALS = 64;
     private static final Map<String, Cache> CACHE = Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
         @Override protected boolean removeEldestEntry(final Map.Entry<String, Cache> eldest) { return size() > MAX_CACHED_JOURNALS; }
