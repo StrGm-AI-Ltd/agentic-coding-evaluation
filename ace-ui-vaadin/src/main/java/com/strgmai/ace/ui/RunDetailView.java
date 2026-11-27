@@ -31,8 +31,10 @@ import org.springframework.web.client.RestClientResponseException;
 import tools.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
+
+import static java.lang.Math.round;
+import static java.util.stream.Collectors.joining;
 
 /** Run detail — the UI twin of GET /api/runs/{id}: scores, badges, checks, plan tasks,
  * per-step scores, provenance, and the embedded file browser. */
@@ -132,7 +134,9 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         add(scores);
 
         if (Boolean.FALSE.equals(run.valid()) && run.validity_reasons() != null && !run.validity_reasons().isEmpty()) {
-            final var reasons = run.validity_reasons().stream().map(ListItem::new).toList();
+            final var reasons = run.validity_reasons().stream()
+                    .map(ListItem::new)
+                    .toList();
             add(Panels.callout(new Span("recorded, never ranked"), new UnorderedList(reasons.toArray(new ListItem[0]))));
         }
         if (Boolean.TRUE.equals(run.contended()) && run.manifest() != null) {
@@ -195,7 +199,10 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
 
     /** The run's job row (the runs table has none until import). */
     static Api.Job jobForRun(final List<Api.Job> jobs, final String runId) {
-        return jobs.stream().filter(job -> runId.equals(job.run_id())).findFirst().orElse(null);
+        return jobs.stream()
+                .filter(job -> runId.equals(job.run_id()))
+                .findFirst()
+                .orElse(null);
     }
 
     /**
@@ -311,19 +318,21 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         }
         // returned as List<PerTaskRow>; empty-diamond under var would infer <Object>
         final List<PerTaskRow> rows = new ArrayList<>();
-        perTask.propertyNames().stream().sorted().forEach(tid -> {
-            final var t = perTask.get(tid);
-            rows.add(new PerTaskRow(
-                    tid,
-                    Fmt.textOr(t.path("reported"), "–"),
-                    Fmt.textOr(t.path("done_verified"), "–"),
-                    longOrNull(t.path("requests")),
-                    longOrNull(t.path("completion_tokens")),
-                    longOrNull(t.path("max_prompt")),
-                    doubleOrNull(t.path("task_wall_sec")),
-                    t.path("files_changed").isNumber() ? String.valueOf(t.path("files_changed").intValue()) : "–",
-                    t.path("over_budget").asBoolean(false) ? "yes" : ""));
-        });
+        perTask.propertyNames().stream()
+                .sorted()
+                .forEach(tid -> {
+                    final var t = perTask.get(tid);
+                    rows.add(new PerTaskRow(
+                            tid,
+                            Fmt.textOr(t.path("reported"), "–"),
+                            Fmt.textOr(t.path("done_verified"), "–"),
+                            longOrNull(t.path("requests")),
+                            longOrNull(t.path("completion_tokens")),
+                            longOrNull(t.path("max_prompt")),
+                            doubleOrNull(t.path("task_wall_sec")),
+                            t.path("files_changed").isNumber() ? String.valueOf(t.path("files_changed").intValue()) : "–",
+                            t.path("over_budget").asBoolean(false) ? "yes" : ""));
+                });
         return rows;
     }
 
@@ -368,10 +377,12 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         }
         // returned as List<StepRow>; empty-diamond under var would infer <Object>
         final List<StepRow> rows = new ArrayList<>();
-        steps.propertyNames().stream().sorted().forEach(sid -> {
-            final var s = steps.get(sid);
-            rows.add(new StepRow(sid, doubleOrNull(s.path("score_pct")), s.path("measured").asBoolean(true)));
-        });
+        steps.propertyNames().stream()
+                .sorted()
+                .forEach(sid -> {
+                    final var s = steps.get(sid);
+                    rows.add(new StepRow(sid, doubleOrNull(s.path("score_pct")), s.path("measured").asBoolean(true)));
+                });
         return rows;
     }
 
@@ -434,7 +445,9 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
                 .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent").build())
                 .withTheme(ThemeBuilder.get().withMode(Mode.DARK).build())
                 .withXaxis(XAxisBuilder.get()
-                        .withCategories(rows.stream().map(SpeedBucketRow::label).toArray(String[]::new))
+                        .withCategories(rows.stream()
+                                .map(SpeedBucketRow::label)
+                                .toArray(String[]::new))
                         // labels are bare numbers (no "K", no range) - the title is the only place the unit lives
                         .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
                                 .withText("context (K tokens)").build())
@@ -445,9 +458,13 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
                 .withTooltip(TooltipBuilder.get().withCustom(speedByContextTooltipJs(rows)).build())
                 .withSeries(
                         SeriesBuilder.get().withName("prefill tok/s")
-                                .withData(rows.stream().map(SpeedBucketRow::avgPrefillTokPerSec).toArray(Double[]::new)).build(),
+                                .withData(rows.stream()
+                                        .map(SpeedBucketRow::avgPrefillTokPerSec)
+                                        .toArray(Double[]::new)).build(),
                         SeriesBuilder.get().withName("decode tok/s")
-                                .withData(rows.stream().map(SpeedBucketRow::avgDecodeTokPerSec).toArray(Double[]::new)).build())
+                                .withData(rows.stream()
+                                        .map(SpeedBucketRow::avgDecodeTokPerSec)
+                                        .toArray(Double[]::new)).build())
                 .build();
         chart.setHeight("300px");
         add(Panels.card("Speed vs context size", chart));
@@ -463,8 +480,12 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
      * fields are relied on; series names are the two literal names this chart's own withSeries(...)
      * calls use, not read from the chart at all. */
     static String speedByContextTooltipJs(final List<SpeedBucketRow> rows) {
-        final var labels = rows.stream().map(r -> "\"" + r.label().replace("\"", "\\\"") + "\"").collect(java.util.stream.Collectors.joining(","));
-        final var reqCounts = rows.stream().map(r -> String.valueOf(r.requests())).collect(java.util.stream.Collectors.joining(","));
+        final var labels = rows.stream()
+                .map(r -> "\"" + r.label().replace("\"", "\\\"") + "\"")
+                .collect(joining(","));
+        final var reqCounts = rows.stream()
+                .map(r -> String.valueOf(r.requests()))
+                .collect(joining(","));
         return """
                 function(struct) {
                   var labels = [%s];
@@ -518,7 +539,7 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
         final List<CompactionOverheadPoint> out = new ArrayList<>(maxPoints);
         final double stride = (points.size() - 1) / (double) (maxPoints - 1);
         for (int i = 0; i < maxPoints; i++) {
-            out.add(points.get((int) Math.round(i * stride)));
+            out.add(points.get((int) round(i * stride)));
         }
         return out;
     }
@@ -539,13 +560,17 @@ public class RunDetailView extends VerticalLayout implements BeforeEnterObserver
                 .withChart(ChartBuilder.get().withType(Type.LINE).withBackground("transparent").build())
                 .withTheme(ThemeBuilder.get().withMode(Mode.DARK).build())
                 .withXaxis(XAxisBuilder.get()
-                        .withCategories(points.stream().map(p -> String.valueOf(p.elapsedSec() / 60)).toArray(String[]::new))
+                        .withCategories(points.stream()
+                                .map(p -> String.valueOf(p.elapsedSec() / 60))
+                                .toArray(String[]::new))
                         .withTitle(com.github.appreciated.apexcharts.config.xaxis.builder.TitleBuilder.get()
                                 .withText("elapsed time (min)").build())
                         .build())
                 .withYaxis(YAxisBuilder.get().withTitle(TitleBuilder.get().withText("cumulative overhead (s)").build()).build())
                 .withSeries(SeriesBuilder.get().withName("cumulative overhead (s)")
-                        .withData(points.stream().map(CompactionOverheadPoint::cumulativeSec).toArray(Double[]::new)).build())
+                        .withData(points.stream()
+                                .map(CompactionOverheadPoint::cumulativeSec)
+                                .toArray(Double[]::new)).build())
                 .build();
         chart.setHeight("300px");
         add(Panels.card("Compaction overhead over time", chart));

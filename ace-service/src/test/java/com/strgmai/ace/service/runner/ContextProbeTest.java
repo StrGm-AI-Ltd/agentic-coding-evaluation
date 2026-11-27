@@ -6,11 +6,13 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
 
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** The context probe's pure derivations: the effective window is min(memory, performance, operator
@@ -44,9 +46,9 @@ class ContextProbeTest {
         assertEquals(9.0, d.get("min_decode_tps"));    // 0.6 x 15
         // every knob follows the EFFECTIVE window (38912), not the raw candidates - at 0.5 this
         // would be 19456, but props(65536)'s own maxOutputTokens (8192) caps it first
-        assertEquals(Math.min(8192, (int) (38912 * 0.5) / 512 * 512), d.get("max_output_tokens"));
+        assertEquals(min(8192, (int) (38912 * 0.5) / 512 * 512), d.get("max_output_tokens"));
         assertEquals((int) (38912 * 0.43) / 256 * 256, d.get("compaction_trigger_tokens"));
-        final int expectTaskTokens = Math.min((int) (38912 * 1.25) / 1000 * 1000, Math.max((int) (3600 * 15 * 0.8) / 1000 * 1000, 10000));
+        final int expectTaskTokens = min((int) (38912 * 1.25) / 1000 * 1000, max((int) (3600 * 15 * 0.8) / 1000 * 1000, 10000));
         assertEquals(expectTaskTokens, d.get("task_tokens"), "the window budget is capped by what the wall can generate");
     }
 
@@ -108,7 +110,7 @@ class ContextProbeTest {
     void postExtractsTheErrorMessageFromANonStreamingErrorResponse() throws Exception {
         final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         upstream.createContext("/chat/completions", ex -> {
-            final byte[] body = "{\"error\":{\"message\":\"This model's maximum context length is 65536 tokens\",\"type\":\"invalid_request_error\"}}".getBytes(StandardCharsets.UTF_8);
+            final byte[] body = "{\"error\":{\"message\":\"This model's maximum context length is 65536 tokens\",\"type\":\"invalid_request_error\"}}".getBytes(UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(400, body.length);
             try (var os = ex.getResponseBody()) { os.write(body); }
@@ -127,7 +129,7 @@ class ContextProbeTest {
     void postLeavesErrorNullWhenTheNonStreamingResponseHasNoErrorField() throws Exception {
         final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         upstream.createContext("/chat/completions", ex -> {
-            final byte[] body = "{\"choices\":[{\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5}}".getBytes(StandardCharsets.UTF_8);
+            final byte[] body = "{\"choices\":[{\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5}}".getBytes(UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(200, body.length);
             try (var os = ex.getResponseBody()) { os.write(body); }

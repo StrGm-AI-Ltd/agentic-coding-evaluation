@@ -16,10 +16,16 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static java.lang.Double.parseDouble;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.lang.System.currentTimeMillis;
+import static java.lang.Thread.currentThread;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 /** #65: the reference/default `LocalModelBackend` - oMLX, on this one machine. Every method here is
  *  a verbatim relocation of logic that used to live inline in `ContextProbe`; none of it is
@@ -66,24 +72,26 @@ public final class OmlxBackend implements LocalModelBackend {
     public void restart(final BooleanSupplier isHealthy) {
         if (!Files.exists(bin)) throw new IllegalStateException("~/.omlx/bin/omlx not present: cannot restart the server");
         final List<Long> old = pids();
-        try { new ProcessBuilder(bin.toString(), "restart").start().waitFor(180, TimeUnit.SECONDS); } catch (Exception e) { throw new IllegalStateException(e); }
-        final long t0 = System.currentTimeMillis();
+        try { new ProcessBuilder(bin.toString(), "restart").start().waitFor(180, SECONDS); } catch (Exception e) { throw new IllegalStateException(e); }
+        final long t0 = currentTimeMillis();
         boolean healthy = false;
-        while (System.currentTimeMillis() - t0 < 150_000) {
-            try { Thread.sleep(5000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
+        while (currentTimeMillis() - t0 < 150_000) {
+            try { Thread.sleep(5000); } catch (InterruptedException e) { currentThread().interrupt(); return; }
             if (isHealthy.getAsBoolean()) { healthy = true; break; }
         }
         final List<Long> now = pids();
-        final List<Long> survivors = old.stream().filter(now::contains).toList();
+        final List<Long> survivors = old.stream()
+                .filter(now::contains)
+                .toList();
         try {
             if (!survivors.isEmpty() && now.size() > survivors.size()) {   // the app started a new server but the old one still holds resources
                 for (long p : survivors) ProcessHandle.of(p).ifPresent(ProcessHandle::destroy);
             } else if (!survivors.isEmpty() && !healthy) {                   // nothing replaced the old server: kill it and start fresh
                 for (long p : survivors) ProcessHandle.of(p).ifPresent(ProcessHandle::destroy);
                 Thread.sleep(3000);
-                new ProcessBuilder(bin.toString(), "start").start().waitFor(180, TimeUnit.SECONDS);
-                final long t = System.currentTimeMillis();
-                while (System.currentTimeMillis() - t < 150_000) {
+                new ProcessBuilder(bin.toString(), "start").start().waitFor(180, SECONDS);
+                final long t = currentTimeMillis();
+                while (currentTimeMillis() - t < 150_000) {
                     Thread.sleep(5000);
                     if (isHealthy.getAsBoolean()) { healthy = true; break; }
                 }
@@ -137,14 +145,14 @@ public final class OmlxBackend implements LocalModelBackend {
         final List<Path> files = new ArrayList<>(List.of(logFile));
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(logFile.getParent(), logFile.getFileName() + ".*")) {
             final var all = new ArrayList<Path>(); ds.forEach(all::add);
-            files.addAll(all.subList(Math.max(0, all.size() - 2), all.size()));
+            files.addAll(all.subList(max(0, all.size() - 2), all.size()));
         } catch (Exception e) { log.debug("could not list rotated oMLX log files: {}", e.toString()); }
         for (Path f : files) {
             try {
                 for (String line : Files.readAllLines(f)) {
-                    if (line.length() >= 19 && line.substring(0, Math.min(19, line.length())).compareTo(since) < 0) continue;
+                    if (line.length() >= 19 && line.substring(0, min(19, line.length())).compareTo(since) < 0) continue;
                     final Matcher m = re.matcher(line);
-                    if (m.find()) { usage.add(Double.parseDouble(m.group(1))); target.add(Double.parseDouble(m.group(2))); ceiling.add(Double.parseDouble(m.group(3))); }
+                    if (m.find()) { usage.add(parseDouble(m.group(1))); target.add(parseDouble(m.group(2))); ceiling.add(parseDouble(m.group(3))); }
                 }
             } catch (IOException e) { log.debug("could not read oMLX log {}: {}", f, e.toString()); }
         }

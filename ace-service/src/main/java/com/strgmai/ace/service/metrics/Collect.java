@@ -8,6 +8,12 @@ import java.nio.file.*;
 import java.time.Instant;
 import java.util.*;
 
+import static java.lang.Math.abs;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.lang.Math.round;
+import static java.util.Comparator.comparingDouble;
+
 /** Port of metrics/collect.py: cost/efficiency metrics for ONE run, from the run's OWN journal.
  *  Leaderboard block: functional (primary), composite, wall, completion tokens, tokens/wall per
  *  FUNCTIONAL point - the last two only for full-denominator runs. agent_result_pct = composite x
@@ -37,7 +43,7 @@ public final class Collect {
             // - the run's real result was silently thrown away behind a "failed" status.
             final String a = Objects.toString(ph.get("start_iso"), null), b = Objects.toString(ph.get("end_iso"), null);
             final Map<String, Object> f = com.strgmai.ace.service.runner.JournalFacts.facts(journal.toString(), a, b, null, null, null);
-            final long sec = ph.get("seconds") instanceof Number n ? Math.round(n.doubleValue()) : 0;
+            final long sec = ph.get("seconds") instanceof Number n ? round(n.doubleValue()) : 0;
             totalSec += sec;
             phases.put(String.valueOf(ph.get("id")), Map.of("seconds", sec, "requests", f.get("requests"),
                     "completion_tokens", f.get("completion_tokens"), "over_budget", Boolean.TRUE.equals(ph.get("over_budget"))));
@@ -51,9 +57,9 @@ public final class Collect {
         // tasks run concurrently, so summing their individual durations would double-count real time.
         for (Map<String, Object> t : (List<Map<String, Object>>) manifest.getOrDefault("tasks", List.of()))
             if (!t.containsKey("parallel_wave"))
-                totalSec += t.get("seconds") instanceof Number n ? Math.round(n.doubleValue()) : 0;
+                totalSec += t.get("seconds") instanceof Number n ? round(n.doubleValue()) : 0;
         for (Map<String, Object> w : (List<Map<String, Object>>) manifest.getOrDefault("waves", List.of()))
-            totalSec += w.get("seconds") instanceof Number n ? Math.round(n.doubleValue()) : 0;
+            totalSec += w.get("seconds") instanceof Number n ? round(n.doubleValue()) : 0;
         leaderboard.put("total_wall_sec", totalSec);
         leaderboard.put("completion_tokens", jf.get("completion_tokens"));
         leaderboard.put("avg_latency_sec", jf.get("avg_latency_sec"));
@@ -112,7 +118,7 @@ public final class Collect {
             // LinkedHashMap: calibration_gap may legitimately be null (functional pct absent), and Map.of would NPE
             final Map<String, Object> e = new LinkedHashMap<>();
             e.put("score", s.doubleValue());
-            e.put("calibration_gap", functional == null ? null : round1(Math.abs(s.doubleValue() - functional)));
+            e.put("calibration_gap", functional == null ? null : round1(abs(s.doubleValue() - functional)));
             leaderboard.put("self_review", e);
         }
         if (tr.get("score") instanceof Number s) {
@@ -121,14 +127,14 @@ public final class Collect {
             final boolean hasObj = manifest.get("trajectory_review") instanceof Map<?, ?> tm && tm.get("objective_index_pct") instanceof Number oi;
             final Map<String, Object> e = new LinkedHashMap<>();
             e.put("score", s.doubleValue());
-            e.put("calibration_gap", hasObj ? round1(Math.abs(s.doubleValue() - ((Number) ((Map<?, ?>) manifest.get("trajectory_review")).get("objective_index_pct")).doubleValue())) : null);
+            e.put("calibration_gap", hasObj ? round1(abs(s.doubleValue() - ((Number) ((Map<?, ?>) manifest.get("trajectory_review")).get("objective_index_pct")).doubleValue())) : null);
             leaderboard.put("trajectory_review", e);
         }
         if (pp.get("evaluation") instanceof Map<?, ?> ev) leaderboard.put("parallel_plan", Map.of("term", parallelTerm(manifest)));
         if (composite != null) {
             final double base = composite * (1 - wc - wt - wp - we);
             double codeTerm = sr.get("score") instanceof Number s && functional != null
-                    ? wc * (100 - Math.abs(s.doubleValue() - functional)) : 0;   // a missing/unparseable review scores 0 at full weight
+                    ? wc * (100 - abs(s.doubleValue() - functional)) : 0;   // a missing/unparseable review scores 0 at full weight
             // "direct": the reviewer's own score IS the term (judged as a quality signal on its own
             // terms). "calibration" (default): rewarded for AGREEING with the harness's own objective
             // trajectory index, not for the raw score - guard with instanceof (a raw cast would CCE
@@ -137,7 +143,7 @@ public final class Collect {
             double trajTerm = 0;
             if (tr.get("score") instanceof Number s) {
                 if (trajDirect) trajTerm = wt * s.doubleValue();
-                else if (tr.get("objective_index_pct") instanceof Number oi) trajTerm = wt * (100 - Math.abs(s.doubleValue() - oi.doubleValue()));
+                else if (tr.get("objective_index_pct") instanceof Number oi) trajTerm = wt * (100 - abs(s.doubleValue() - oi.doubleValue()));
             }
             final double parTerm = wp * parallelTerm(manifest);
             final double effTerm = we * (efficiencyPct == null ? 0 : efficiencyPct);   // no budget_sec to compare against -> 0, same convention as the other terms above
@@ -293,8 +299,13 @@ public final class Collect {
                 final JsonNode e = JSON.readTree(line);
                 byTask.computeIfAbsent(e.path("task_id").asText(""), k -> new ArrayList<>()).add(e);
             }
-            final long withRetries = byTask.values().stream().filter(l -> l.size() > 1).count();
-            final long rescued = byTask.values().stream().filter(l -> l.stream().anyMatch(e -> e.path("rescue_succeeded").asBoolean(false))).count();
+            final long withRetries = byTask.values().stream()
+                    .filter(l -> l.size() > 1)
+                    .count();
+            final long rescued = byTask.values().stream()
+                    .filter(l -> l.stream()
+                            .anyMatch(e -> e.path("rescue_succeeded").asBoolean(false)))
+                    .count();
             return Map.of("tasks_with_retries", (int) withRetries, "tasks_rescued", (int) rescued);
         } catch (Exception e) { return Map.of("tasks_with_retries", 0, "tasks_rescued", 0); }
     }
@@ -377,13 +388,13 @@ public final class Collect {
                 }
             }
             if (events.isEmpty()) return empty;
-            events.sort(Comparator.comparingDouble(ev -> ev[0]));
+            events.sort(comparingDouble(ev -> ev[0]));
             final long startMs = (long) events.get(0)[0];
             final List<Map<String, Object>> timeline = new ArrayList<>();
             double cumulative = 0.0;
             for (final double[] ev : events) {
                 cumulative += ev[1];
-                timeline.add(Map.of("elapsed_sec", Math.round((ev[0] - startMs) / 1000.0), "cumulative_sec", round1(cumulative)));
+                timeline.add(Map.of("elapsed_sec", round((ev[0] - startMs) / 1000.0), "cumulative_sec", round1(cumulative)));
             }
             final Map<String, Object> tasks = new LinkedHashMap<>();
             taskAcc.forEach((label, acc) -> tasks.put(label, Map.of("overhead_sec", round1(acc[0]), "events", (int) acc[1])));
@@ -399,7 +410,7 @@ public final class Collect {
     static Double efficiencyPct(final Map<String, Object> manifest, final long totalSec) {
         final int budgetSec = budgetSecFor(String.valueOf(manifest.get("task")));
         if (budgetSec <= 0) return null;
-        return round1(100 * Math.max(0, Math.min(1, 1 - totalSec / (double) budgetSec)));
+        return round1(100 * max(0, min(1, 1 - totalSec / (double) budgetSec)));
     }
 
     private static int budgetSecFor(final String task) {
@@ -418,8 +429,12 @@ public final class Collect {
         if (ev == null || !Boolean.TRUE.equals(ev.get("valid"))) return 0;
         final double parallelism = num(ev.get("parallelism_pct"));
         final List<Map<String, Object>> waves = (List<Map<String, Object>>) manifest.getOrDefault("waves", List.of());
-        final double fixTokens = waves.stream().mapToDouble(w -> num(w.get("fix_tokens"))).sum();
-        final double allTokens = ((List<?>) manifest.getOrDefault("tasks", List.of())).stream().mapToDouble(t -> num(((Map<String, Object>) t).get("token_budget"))).sum();
+        final double fixTokens = waves.stream()
+                .mapToDouble(w -> num(w.get("fix_tokens")))
+                .sum();
+        final double allTokens = ((List<?>) manifest.getOrDefault("tasks", List.of())).stream()
+                .mapToDouble(t -> num(((Map<String, Object>) t).get("token_budget")))
+                .sum();
         final double friction = 0.4 * (allTokens > 0 ? fixTokens / allTokens : 0);
         // closed form of 0.3 x validity(=100, guaranteed by the valid check above) + 0.3 x parallelism + 0.4 x (100 x (1-friction))
         return 30 + 0.3 * parallelism + 0.4 * (100 * (1 - friction));
@@ -445,17 +460,28 @@ public final class Collect {
             final List<String> checks = (List<String>) t.get("checks");
             if (checks == null || checks.isEmpty()) continue;
             claimed.addAll(checks);
-            steps.put(String.valueOf(t.get("id")), Map.of("score_pct", round1(100.0 * checks.stream().filter(c -> byCheck.getOrDefault(c, 0.0) > 0).count() / checks.size()),
-                    "points", List.of(checks.stream().filter(c -> byCheck.getOrDefault(c, 0.0) > 0).count(), checks.size())));
+            steps.put(String.valueOf(t.get("id")), Map.of("score_pct", round1(100.0 * checks.stream()
+                    .filter(c -> byCheck.getOrDefault(c, 0.0) > 0)
+                    .count() / checks.size()),
+                    "points", List.of(checks.stream()
+                            .filter(c -> byCheck.getOrDefault(c, 0.0) > 0)
+                            .count(), checks.size())));
         }
-        final List<String> rest = byCheck.keySet().stream().filter(c -> c.matches("[SBM].*") && !claimed.contains(c)).toList();
-        if (!rest.isEmpty()) steps.put("INTEGRATION", Map.of("score_pct", round1(100.0 * rest.stream().filter(c -> byCheck.get(c) > 0).count() / rest.size()),
-                "points", List.of(rest.stream().filter(c -> byCheck.get(c) > 0).count(), rest.size())));
+        final List<String> rest = byCheck.keySet().stream()
+                .filter(c -> c.matches("[SBM].*") && !claimed.contains(c))
+                .toList();
+        if (!rest.isEmpty()) steps.put("INTEGRATION", Map.of("score_pct", round1(100.0 * rest.stream()
+                .filter(c -> byCheck.get(c) > 0)
+                .count() / rest.size()),
+                "points", List.of(rest.stream()
+                        .filter(c -> byCheck.get(c) > 0)
+                        .count(), rest.size())));
         return steps;
     }
 
     static boolean scoreOf(final Map<String, Double> byCheck, final List<String> ids) {
-        return ids.stream().allMatch(c -> byCheck.getOrDefault(c, 0.0) > 0);
+        return ids.stream()
+                .allMatch(c -> byCheck.getOrDefault(c, 0.0) > 0);
     }
 
     static double num(Object o) { return o instanceof Number n ? n.doubleValue() : 0; }

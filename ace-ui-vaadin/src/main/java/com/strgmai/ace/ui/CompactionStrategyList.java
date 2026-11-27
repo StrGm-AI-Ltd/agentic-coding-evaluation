@@ -99,7 +99,9 @@ public class CompactionStrategyList extends VerticalLayout {
 
     /** the enabled rows' names, in their current order - empty (never null) when nothing is enabled. */
     public List<String> getValue() {
-        return order.stream().filter(n -> checkboxes.get(n).getValue()).toList();
+        return order.stream()
+                .filter(n -> checkboxes.get(n).getValue())
+                .toList();
     }
 
     /** pre-fills from an existing enabled-and-ordered list (a task override, or a run's own

@@ -17,6 +17,10 @@ import java.time.Duration;
 import java.util.*;
 import java.util.regex.Pattern;
 
+import static java.lang.Math.min;
+import static java.lang.System.currentTimeMillis;
+import static java.util.regex.Pattern.CASE_INSENSITIVE;
+
 /** Port of oracle/checks/04_compose.py: runtime lifecycle. sweep stale stacks -> compose build ->
  *  up -> C1/C2 health -> black-box suite (F*) -> down.
  *  - compose file = the ROOT-most one (a per-service compose never shadows the stack)
@@ -91,13 +95,16 @@ public final class ComposeChecks {
 
     static boolean isDb(final Map<String, Object> row) {
         final String svc = String.valueOf(row.getOrDefault("Service", row.getOrDefault("Name", "")));
-        return DB_HINTS.stream().anyMatch(h -> svc.toLowerCase().contains(h));
+        return DB_HINTS.stream()
+                .anyMatch(h -> svc.toLowerCase().contains(h));
     }
 
     record Classified(List<Map<String, Object>> svc, List<Map<String, Object>> healthy, List<Map<String, Object>> bad) {}
 
     static Classified classify(List<Map<String, Object>> rows) {
-        final List<Map<String, Object>> svc = rows.stream().filter(r -> !isDb(r)).toList();
+        final List<Map<String, Object>> svc = rows.stream()
+                .filter(r -> !isDb(r))
+                .toList();
         final List<Map<String, Object>> bad = new ArrayList<>(), healthy = new ArrayList<>();
         for (Map<String, Object> r : svc) {   // database rows are never "bad" (C-12): a slow Postgres shows up as unhealthy services
             final String state = String.valueOf(r.getOrDefault("State", "")).toLowerCase();
@@ -167,9 +174,9 @@ public final class ComposeChecks {
         // local path (R5 C-19) - an empty result then reads as "clean", not "could not check"
         try { txt = Files.readString(composeFile); }
         catch (IOException e) { log.warn("could not read {} for the local-path check: {}", composeFile, e.toString()); return hits; }
-        for (var m : Pattern.compile("(?m)^\\s*(?:context|dockerfile)\\s*:\\s*(/\\S+)", Pattern.CASE_INSENSITIVE).matcher(txt).results().toList())
+        for (var m : Pattern.compile("(?m)^\\s*(?:context|dockerfile)\\s*:\\s*(/\\S+)", CASE_INSENSITIVE).matcher(txt).results().toList())
             hits.add(m.group(0).strip());
-        for (var m : Pattern.compile("(?m)^\\s*-\\s*['\"]?((?:\\.{1,2}/|/(?!dev/|proc/|sys/))[^:'\"\\s]+):", Pattern.CASE_INSENSITIVE).matcher(txt).results().toList())
+        for (var m : Pattern.compile("(?m)^\\s*-\\s*['\"]?((?:\\.{1,2}/|/(?!dev/|proc/|sys/))[^:'\"\\s]+):", CASE_INSENSITIVE).matcher(txt).results().toList())
             hits.add(m.group(0).strip());
         return hits;
     }
@@ -190,7 +197,7 @@ public final class ComposeChecks {
             return out;
         }
         final var tmp = Files.createTempDirectory("ab-compose-");
-        final String proj = "ab" + (System.currentTimeMillis() / 1000);
+        final String proj = "ab" + (currentTimeMillis() / 1000);
         Path ws = BuildChecks.scratchCopy(wsOrig, tmp);   // source-only copy (R4 C-1)
         final Path cf = StructureChecks.findCompose(ws);
         try {
@@ -224,7 +231,7 @@ public final class ComposeChecks {
             }
             // ---- up + health (its own budget) ----
             // found live (#653), investigated on svc-20261030-185444: the ONLY portInUse() guard ran
-            // once, above, before the (potentially long, GRADLE_TIMEOUT-scale) build step - a port
+            // once, above, before the (potentially long, Gradle-timeout-scale) build step - a port
             // taken DURING the build slipped past that early exit and surfaced below as a raw,
             // unhelpful "Error response from daemon" instead of the same clear, already-existing
             // message. Re-checking right before "up" (this second check) narrows that race but can
@@ -258,20 +265,26 @@ public final class ComposeChecks {
             }
             // a rung without C1 (L2/L3/L3p: one service) must not idle for the whole budget (C-9)
             final int need = wanted.test(CheckId.C1) ? 3 : 1;
-            final long deadline = System.currentTimeMillis() + healthTimeout * 1000L;
+            final long deadline = currentTimeMillis() + healthTimeout * 1000L;
             List<Map<String, Object>> rows = List.of();
-            while (System.currentTimeMillis() < deadline) {
+            while (currentTimeMillis() < deadline) {
                 rows = ps(proj, cf);
                 final Classified c = classify(rows);
                 if ((c.healthy().size() >= need || (!c.svc().isEmpty() && c.healthy().size() == c.svc().size())) && c.bad().isEmpty()) break;
                 Thread.sleep(10_000);
             }
             final Classified c = classify(rows);
-            List<String> nohc = c.svc().stream().filter(r -> String.valueOf(r.getOrDefault("Health", "")).isEmpty())
-                    .map(r -> String.valueOf(r.get("Service"))).limit(3).toList();
+            List<String> nohc = c.svc().stream()
+                    .filter(r -> String.valueOf(r.getOrDefault("Health", "")).isEmpty())
+                    .map(r -> String.valueOf(r.get("Service")))
+                    .limit(3)
+                    .toList();
             out.add(new CheckResult(CheckId.C1, emitted.add(CheckId.C1) && c.healthy().size() >= 3 && c.bad().isEmpty() ? CheckStatus.PASS : CheckStatus.FAIL,
                     c.healthy().size() + "/" + c.svc().size() + " non-db services healthy; bad="
-                            + c.bad().stream().limit(3).map(r -> "(" + r.get("Service") + "," + r.get("State") + "," + r.get("ExitCode") + ")").toList()
+                            + c.bad().stream()
+                                    .limit(3)
+                                    .map(r -> "(" + r.get("Service") + "," + r.get("State") + "," + r.get("ExitCode") + ")")
+                                    .toList()
                             + "; no-healthcheck=" + nohc));
             // ---- C2: readiness endpoint at the contract's base (status only) ----
             boolean ok2 = false; String det = "";
@@ -321,7 +334,7 @@ public final class ComposeChecks {
         for (CheckId c : IDS) if (wanted.test(c) && emitted.add(c)) out.add(new CheckResult(c, status, detail));
     }
 
-    static String head(String s, int n) { return s == null ? "" : s.substring(0, Math.min(n, s.length())); }
+    static String head(String s, int n) { return s == null ? "" : s.substring(0, min(n, s.length())); }
     static String lastLine(final String txt, final int n) {
         final String[] lines = Arrays.stream(txt.split("\n")).filter(l -> !l.isBlank()).toArray(String[]::new);
         return lines.length == 0 ? "" : head(lines[lines.length - 1], n);

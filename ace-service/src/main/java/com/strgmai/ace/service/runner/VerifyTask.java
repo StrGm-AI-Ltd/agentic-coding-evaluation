@@ -9,6 +9,14 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.regex.Pattern;
 
+import static java.lang.Integer.parseInt;
+import static java.lang.Math.min;
+import static java.lang.Math.round;
+import static java.lang.System.getenv;
+import static java.lang.System.nanoTime;
+import static java.nio.file.StandardOpenOption.APPEND;
+import static java.nio.file.StandardOpenOption.CREATE;
+
 /** Port of run_bench.py's verify_task (M-1): the harness runs the tests itself after every task —
  *  the truthful record of where the code stands, independent of what the model wrote in
  *  PROGRESS.md. Uses the agent's wrapper when present, else the host gradle; no Docker needed.
@@ -40,7 +48,7 @@ public final class VerifyTask {
         res.put("rc", new ArrayList<Integer>());
         res.put("seconds", 0.0);
         res.put("first_error", "");
-        final long t0 = System.nanoTime();
+        final long t0 = nanoTime();
         boolean ioAborted = false;
         try {
             java.io.Writer verifyLog = null;
@@ -56,7 +64,7 @@ public final class VerifyTask {
                 // run" instead of ever executing the real test suite - for every task, for the whole
                 // run, with no crash to signal it. Creating it HERE, once, covers every caller.
                 if (logPath != null) Files.createDirectories(logPath.getParent());
-                verifyLog = logPath == null ? null : Files.newBufferedWriter(logPath, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                verifyLog = logPath == null ? null : Files.newBufferedWriter(logPath, CREATE, APPEND);
                 // one factory for the whole glob: newInstance() per XML file re-ran security/feature setup every time
                 final var docFactory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
                 for (Path r : roots) {
@@ -91,7 +99,7 @@ public final class VerifyTask {
                         // never to the raw operator environment).
                         Map<String, String> env = cfg.get("_agent_env") instanceof Map<?, ?> ae
                                 ? new java.util.LinkedHashMap<>((Map<String, String>) ae) : new java.util.LinkedHashMap<>();
-                        env.putIfAbsent("PATH", System.getenv().getOrDefault("PATH", "/usr/bin:/bin"));
+                        env.putIfAbsent("PATH", getenv().getOrDefault("PATH", "/usr/bin:/bin"));
                         env.put("CI", "1");
                         env.put("GRADLE_OPTS", "-Dorg.gradle.daemon=false");
                         if (cfg.get("java_home") != null) { env.put("JAVA_HOME", String.valueOf(cfg.get("java_home"))); env.put("PATH", cfg.get("java_home") + "/bin:" + env.getOrDefault("PATH", "")); }
@@ -109,9 +117,9 @@ public final class VerifyTask {
                             final var doc = docFactory.newDocumentBuilder().parse(x.toFile());
                             final var root = doc.getDocumentElement();
                             if (root.getTagName().equals("testsuite")) {
-                                res.merge("executed", Integer.parseInt(root.getAttribute("tests").isEmpty() ? "0" : root.getAttribute("tests")), (a, b) -> (int) a + (int) b);
-                                res.merge("failed", Integer.parseInt(root.getAttribute("failures").isEmpty() ? "0" : root.getAttribute("failures"))
-                                                + Integer.parseInt(root.getAttribute("errors").isEmpty() ? "0" : root.getAttribute("errors")), (a, b) -> (int) a + (int) b);
+                                res.merge("executed", parseInt(root.getAttribute("tests").isEmpty() ? "0" : root.getAttribute("tests")), (a, b) -> (int) a + (int) b);
+                                res.merge("failed", parseInt(root.getAttribute("failures").isEmpty() ? "0" : root.getAttribute("failures"))
+                                                + parseInt(root.getAttribute("errors").isEmpty() ? "0" : root.getAttribute("errors")), (a, b) -> (int) a + (int) b);
                             }
                         } catch (Exception e) {
                             // silently dropping this file's counts from executed/failed can flip a
@@ -132,7 +140,7 @@ public final class VerifyTask {
             log.warn("verify() aborted by an I/O failure, treating as could-not-run: {}", e.toString());
             ioAborted = true;
         }
-        res.put("seconds", Math.round((System.nanoTime() - t0) / 1e8) / 10.0);
+        res.put("seconds", round((nanoTime() - t0) / 1e8) / 10.0);
         final List<Integer> rcs = (List<Integer>) res.get("rc");
         // #680-followup3, found live (job d6d9868c, T2): the class's OWN javadoc defines FALSE as
         // "tests ran AND failed" - that requires executed>0, same as TRUE does. This used to only
@@ -149,7 +157,8 @@ public final class VerifyTask {
             res.put("green", null);   // inconclusive: nothing was executed, win or lose
             res.put("could_not_run", true);
         } else {
-            res.put("green", rcs.stream().allMatch(rc -> rc == 0) && ((int) res.get("failed")) == 0);
+            res.put("green", rcs.stream()
+                    .allMatch(rc -> rc == 0) && ((int) res.get("failed")) == 0);
         }
         return res;
     }
@@ -158,10 +167,10 @@ public final class VerifyTask {
         for (String line : out.split("\n")) {
             final String l = line.strip();
             if (ERROR_PATTERN.matcher(l).find())
-                return l.substring(0, Math.min(160, l.length()));
+                return l.substring(0, min(160, l.length()));
         }
         final String[] lines = Arrays.stream(out.split("\n")).filter(x -> !x.isBlank()).toArray(String[]::new);
-        return lines.length == 0 ? "" : lines[lines.length - 1].substring(0, Math.min(160, lines[lines.length - 1].length()));
+        return lines.length == 0 ? "" : lines[lines.length - 1].substring(0, min(160, lines[lines.length - 1].length()));
     }
 
     public static String verifyText(final Map<String, Object> v) {
@@ -198,7 +207,8 @@ public final class VerifyTask {
         final Object g = v.get("green");
         final List<Integer> rcs = v.get("rc") instanceof List<?> l ? (List<Integer>) l : List.of(1);
         final int executed = v.get("executed") instanceof Number n ? n.intValue() : 0;
-        if (g == null || (Boolean.FALSE.equals(g) && executed == 0 && rcs.stream().anyMatch(rc -> rc != 0))) return null;
+        if (g == null || (Boolean.FALSE.equals(g) && executed == 0 && rcs.stream()
+                .anyMatch(rc -> rc != 0))) return null;
         return (Boolean) g;
     }
 }

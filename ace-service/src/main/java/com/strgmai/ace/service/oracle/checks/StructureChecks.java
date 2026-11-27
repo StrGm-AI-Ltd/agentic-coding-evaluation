@@ -12,6 +12,11 @@ import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
+import static java.lang.Math.min;
+import static java.util.Comparator.comparingInt;
+import static java.util.regex.Pattern.CASE_INSENSITIVE;
+import static java.util.regex.Pattern.DOTALL;
+
 /** Port of oracle/checks/01_structure.py (S1-S9). Always applicable. Hardened ports kept:
  *  S5 counts only build files that apply Spring Boot AND have src/main; S6 wants a real wrapper
  *  (script > 1 KB + properties) in ANY Gradle root; S7 requires the spec to look like OpenAPI
@@ -28,7 +33,8 @@ public final class StructureChecks {
 
     public static boolean skip(Path p) {
         final String s = p.toString() + "/";
-        return SKIP_DIRS.stream().anyMatch(s::contains);
+        return SKIP_DIRS.stream()
+                .anyMatch(s::contains);
     }
 
     public static List<CheckResult> run(final Path ws) {
@@ -54,7 +60,7 @@ public final class StructureChecks {
             if (real) svcs.add(ws.relativize(bf.getParent()).toString());
         }
         out.add(new CheckResult(CheckId.S5, svcs.size() >= 3 ? CheckStatus.PASS : CheckStatus.FAIL,
-                svcs.size() + " real services: " + svcs.subList(0, Math.min(5, svcs.size()))));
+                svcs.size() + " real services: " + svcs.subList(0, min(5, svcs.size()))));
 
         // S6: a REAL wrapper (script + properties) in at least one Gradle root
         List<Path> roots = gradleRoots(ws);
@@ -73,12 +79,12 @@ public final class StructureChecks {
         for (Path p : glob(ws, "**/*.yml")) if (isSpecName(p) && !skip(p)) specs.add(p);
         for (Path p : glob(ws, "**/*.yaml")) if (isSpecName(p) && !skip(p)) specs.add(p);
         for (Path p : glob(ws, "**/*.json")) if (isSpecName(p) && !skip(p)) specs.add(p);
-        specs.sort(Comparator.comparingInt((Path p) -> ws.relativize(p).getNameCount()).thenComparing(Path::toString));
+        specs.sort(comparingInt((Path p) -> ws.relativize(p).getNameCount()).thenComparing(Path::toString));
         boolean ok7 = false; String det7 = "none found";
-        for (Path p : specs.subList(0, Math.min(5, specs.size()))) {
+        for (Path p : specs.subList(0, min(5, specs.size()))) {
             final String src = read(p);
-            if (Pattern.compile("(?m)^\\s*openapi\\s*:", Pattern.CASE_INSENSITIVE).matcher(src).find()
-                    && Pattern.compile("(?m)^\\s*paths\\s*:", Pattern.CASE_INSENSITIVE).matcher(src).find()) {
+            if (Pattern.compile("(?m)^\\s*openapi\\s*:", CASE_INSENSITIVE).matcher(src).find()
+                    && Pattern.compile("(?m)^\\s*paths\\s*:", CASE_INSENSITIVE).matcher(src).find()) {
                 ok7 = true; det7 = ws.relativize(p) + " (openapi+paths keys)"; break;
             }
             det7 = ws.relativize(p) + ": no openapi/paths";
@@ -90,14 +96,15 @@ public final class StructureChecks {
         for (Path p : glob(ws, "**/package.json")) {
             if (skip(p)) continue;
             final String src = read(p);
-            if (Pattern.compile("\"dependencies\"\\s*:\\s*\\{[^}]*\"react\"\\s*:", Pattern.DOTALL).matcher(src).find()) {
+            if (Pattern.compile("\"dependencies\"\\s*:\\s*\\{[^}]*\"react\"\\s*:", DOTALL).matcher(src).find()) {
                 ok8 = true; det8 = ws.relativize(p).toString(); break;
             }
         }
         out.add(new CheckResult(CheckId.S8, ok8 ? CheckStatus.PASS : CheckStatus.FAIL, det8));
 
         long mig = Stream.concat(glob(ws, "**/db/migration/*.sql").stream(), glob(ws, "**/*changelog*.*").stream())
-                .filter(p -> !skip(p) && fileSize(p) > 20).count();
+                .filter(p -> !skip(p) && fileSize(p) > 20)
+                .count();
         out.add(new CheckResult(CheckId.S9, mig > 0 ? CheckStatus.PASS : CheckStatus.FAIL, mig + " migration files"));
         return out;
     }
@@ -114,7 +121,9 @@ public final class StructureChecks {
             all.addAll(glob(ws, pat));
         for (String pat : List.of("**/docker-compose.y*ml", "**/compose.y*ml"))
             for (Path p : glob(ws, pat)) if (!p.getParent().equals(ws) && !skip(p)) all.add(p);
-        return all.stream().min(Comparator.comparingInt(p -> ws.relativize(p).getNameCount())).orElse(null);
+        return all.stream()
+                .min(comparingInt(p -> ws.relativize(p).getNameCount()))
+                .orElse(null);
     }
 
     /** every directory that is a Gradle project root: settings.gradle dirs, else build.gradle dirs with src/ */
@@ -124,15 +133,22 @@ public final class StructureChecks {
             for (Path s : glob(ws, pat)) if (!skip(s)) out.add(s.getParent());
         if (!out.isEmpty()) {
             // settings.gradle* dirs ARE the roots; drop any root nested inside another returned root
-            final List<Path> roots = out.stream().distinct().sorted(Comparator.comparingInt(p -> ws.relativize(p).getNameCount())).toList();
+            final List<Path> roots = out.stream()
+                    .distinct()
+                    .sorted(comparingInt(p -> ws.relativize(p).getNameCount()))
+                    .toList();
             final List<Path> top = new ArrayList<>();
-            for (Path r : roots) if (top.stream().noneMatch(t -> r.startsWith(t))) top.add(r);
+            for (Path r : roots) if (top.stream()
+                    .noneMatch(t -> r.startsWith(t))) top.add(r);
             return top;
         }
         // no settings: every build.gradle* dir with src/ counts, INCLUDING the workspace root itself
         for (Path b : glob(ws, "**/build.gradle*"))
             if (!skip(b) && Files.isDirectory(b.getParent().resolve("src"))) out.add(b.getParent());
-        return out.stream().distinct().sorted(Comparator.comparingInt(p -> ws.relativize(p).getNameCount())).toList();
+        return out.stream()
+                .distinct()
+                .sorted(comparingInt(p -> ws.relativize(p).getNameCount()))
+                .toList();
     }
 
     public static List<Path> glob(final Path root, final String pattern) {
@@ -155,7 +171,8 @@ public final class StructureChecks {
         // "exactly at the cap" apart from "truncated" without materializing/sorting an unbounded
         // walk just to count it.
         try (Stream<Path> s = Files.walk(root)) {
-            final List<Path> matched = s.filter(Files::isRegularFile).filter(p -> matchers.stream().anyMatch(m -> m.matches(p))).limit(max + 1).sorted().toList();
+            final List<Path> matched = s.filter(Files::isRegularFile).filter(p -> matchers.stream()
+                    .anyMatch(m -> m.matches(p))).limit(max + 1).sorted().toList();
             if (matched.size() > max) {
                 log.warn("glob({}) under {} matched more than {} files - truncating; a broad pattern that hit this cap may silently miss real files behind a large directory walked first (e.g. node_modules)", pattern, root, max);
                 return matched.subList(0, max);

@@ -4,6 +4,7 @@ import com.strgmai.ace.service.agent.ProviderStore;
 import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.backend.OmlxBackend;
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.config.TestOperations;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -14,6 +15,7 @@ import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
 
+import static java.lang.System.currentTimeMillis;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,7 +42,7 @@ class JudgeTest {
         providerStore = new ProviderStore(freshDb("judge-test"));
         judge = new Judge(props,
                 new ReferenceAgent(new BenchProperties(null, null, null, null, null, null, null, null, null, null,
-                        null, null, null, null, null, null, null, null), providerStore),
+                        null, null, null, null, null, null, null, null), providerStore, TestOperations.defaults()),
                 providerStore, new OmlxBackend(Files.createTempDirectory("omlx-test")));
     }
 
@@ -204,7 +206,7 @@ class JudgeTest {
         // a couple of seconds rather than hanging the test - belt and suspenders alongside the
         // forced-exception path this test is actually targeting.
         final var checkpoint = judge.checkpoint(Map.of("model", "m"), "run-1", ws, rdAsAFile,
-                new RecordingProxyFactory(props), "T1", "goal", 0L, 0L, System.currentTimeMillis(),
+                new RecordingProxyFactory(props, TestOperations.defaults()), "T1", "goal", 0L, 0L, currentTimeMillis(),
                 Map.of("model", "unrecognised-provider/m", "wall_sec", 2));
 
         final String rec = org.junit.jupiter.api.Assertions.assertDoesNotThrow(

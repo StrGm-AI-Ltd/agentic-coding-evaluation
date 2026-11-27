@@ -26,7 +26,9 @@ class PlanParserTest {
                 Acceptance: /orders returns 201
                 """;
         final List<PlanTask> tasks = PlanParser.parse(md);
-        assertEquals(List.of("T1", "T2"), tasks.stream().map(t -> t.id).toList());
+        assertEquals(List.of("T1", "T2"), tasks.stream()
+                .map(t -> t.id)
+                .toList());
         assertEquals("create the entities", tasks.get(0).goal);
         assertEquals(List.of("T1"), tasks.get(1).deps);
         assertEquals("the REST endpoints", tasks.get(1).goal);
@@ -65,9 +67,15 @@ class PlanParserTest {
     @Test
     void orderIsTopologicalTiesByIdNumber() {
         final List<PlanTask> tasks = PlanParser.parse("## T10 depends on T2\n- Goal: a\n- Dependencies: T2\n## T2\n- Goal: b\n- Dependencies: T1\n## T1\n- Goal: c\n");
-        assertEquals(List.of("T1", "T2", "T10"), tasks.stream().map(t -> t.id).toList());
+        assertEquals(List.of("T1", "T2", "T10"), tasks.stream()
+                .map(t -> t.id)
+                .toList());
         assertEquals(List.of(List.of("T1"), List.of("T2"), List.of("T10")),
-                PlanParser.waves(tasks).stream().map(w -> w.stream().map(t -> t.id).toList()).toList());
+                PlanParser.waves(tasks).stream()
+                        .map(w -> w.stream()
+                                .map(t -> t.id)
+                                .toList())
+                        .toList());
     }
 
     @Test
@@ -157,7 +165,9 @@ class PlanParserTest {
                 ### S6 — unrelated notes about a check, not a task
                 some prose that must stay inside T1's own block
                 """);
-        assertEquals(List.of("T1"), tasks.stream().map(t -> t.id).toList(), "a bare S-heading must never be read as introducing task T6");
+        assertEquals(List.of("T1"), tasks.stream()
+                .map(t -> t.id)
+                .toList(), "a bare S-heading must never be read as introducing task T6");
     }
 
     /** #322, found live on a real agent-generated plan: T21's own Acceptance criterion read
@@ -182,7 +192,10 @@ class PlanParserTest {
                 - Dependencies: T20, T19, T17, T18
                 - Acceptance criterion: fails before the whole system is wired, passes after — this closes the definition of done.
                 """);
-        final PlanTask t21 = tasks.stream().filter(t -> t.id.equals("T21")).findFirst().orElseThrow();
+        final PlanTask t21 = tasks.stream()
+                .filter(t -> t.id.equals("T21"))
+                .findFirst()
+                .orElseThrow();
         assertEquals(List.of("T17", "T18", "T19", "T20"), t21.deps);
     }
 

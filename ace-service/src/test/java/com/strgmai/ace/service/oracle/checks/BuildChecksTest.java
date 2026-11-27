@@ -55,7 +55,8 @@ class BuildChecksTest {
         assertFalse(cands.isEmpty(), "the SELL-anchored .subtract must be found");
         assertEquals("subtract->add", cands.get(0).name());
         assertTrue(cands.get(0).anchor().contains("holdingsAt"), "the PIT method anchors it: " + cands.get(0).anchor());
-        assertTrue(cands.stream().noneMatch(c -> c.file().endsWith("Far.java")), "unanchored, unhinted files are not mutated");
+        assertTrue(cands.stream()
+                .noneMatch(c -> c.file().endsWith("Far.java")), "unanchored, unhinted files are not mutated");
         // applying the candidate to the ORIGINAL text must produce the mutated source
         final BuildChecks.Candidate c = cands.get(0);
         final String original = Files.readString(c.file());

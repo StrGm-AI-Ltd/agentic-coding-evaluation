@@ -25,6 +25,8 @@ import com.vaadin.flow.component.splitlayout.SplitLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static java.lang.Thread.currentThread;
+
 /** App chrome: brand + left sidebar nav - mirrors the Aura "Night operator" reference's own
  *  layout (#476 PR 2/2; PR 1 shipped the dark palette/typography this sidebar now wears). The
  *  drawer replaces the old top AppLayout/Tabs navbar: a standalone "Overview" item, then two
@@ -237,7 +239,7 @@ public class MainLayout extends AppLayout {
                 try {
                     Thread.sleep(20_000);
                 } catch (final InterruptedException e) {
-                    Thread.currentThread().interrupt();
+                    currentThread().interrupt();
                     return;
                 }
                 if (chromeRefreshStopped) {
@@ -260,7 +262,9 @@ public class MainLayout extends AppLayout {
     private void refreshLiveChrome() {
         try {
             final var jobs = client.jobs();
-            final long active = jobs.stream().filter(j -> !JobStatuses.isTerminal(j.status())).count();
+            final long active = jobs.stream()
+                    .filter(j -> !JobStatuses.isTerminal(j.status()))
+                    .count();
             queueNavItem.setSuffixComponent(active == 0 ? null : Badges.text(String.valueOf(active), Badges.PRIMARY));
         } catch (final Exception e) {
             log.debug("could not refresh the Queue nav badge: {}", e.toString());
@@ -270,7 +274,9 @@ public class MainLayout extends AppLayout {
             final var providers = client.providers();
             // the local/oMLX row's own missing key is not a misconfiguration (#65: it may need none at
             // all) - only a REMOTE provider missing one is actually something an operator must fix.
-            final long misconfigured = providers.stream().filter(p -> !p.has_api_key() && !p.is_local()).count();
+            final long misconfigured = providers.stream()
+                    .filter(p -> !p.has_api_key() && !p.is_local())
+                    .count();
             providersNavItem.setSuffixComponent(misconfigured == 0 ? null : Badges.text(String.valueOf(misconfigured), Badges.WARNING));
         } catch (final Exception e) {
             log.debug("could not refresh the LLM Providers nav badge: {}", e.toString());

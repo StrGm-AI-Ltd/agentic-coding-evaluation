@@ -162,7 +162,9 @@ public class ImporterService {
             log.warn("could not list {} to count earlier attempts: {}", sessionsDir, e.toString());
             return 0;
         }
-        return countBySessionId.values().stream().mapToInt(c -> c - 1).sum();
+        return countBySessionId.values().stream()
+                .mapToInt(c -> c - 1)
+                .sum();
     }
 
     static String keyHash(final Map<String, Object> oracle, final Map<String, Object> manifest) {

@@ -8,11 +8,14 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.regex.Pattern;
+
+import static java.lang.Math.round;
+import static java.nio.charset.StandardCharsets.ISO_8859_1;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /** Port of run_bench.py's journal_facts (WITH the parse-once-per-version cache from the Python fix):
  *  what was ACTUALLY sent — request counts, error classes, budget refusals, completion tokens,
@@ -34,6 +37,7 @@ public final class JournalFacts {
      *  once, while still capping growth across many runs. accessOrder=true + removeEldestEntry is the
      *  standard bounded-LRU idiom; synchronizedMap makes it safe for the same concurrent (parallel
      *  wave) access ConcurrentHashMap was chosen for originally. */
+    // TODO(#729): a setting under ace.operations, once JournalFacts is a bean
     private static final int MAX_CACHED_JOURNALS = 64;
     private static final Map<String, Cache> CACHE = Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
         @Override protected boolean removeEldestEntry(final Map.Entry<String, Cache> eldest) { return size() > MAX_CACHED_JOURNALS; }
@@ -81,7 +85,10 @@ public final class JournalFacts {
         final OffsetDateTime lo = sinceIso == null ? null : OffsetDateTime.parse(sinceIso);
         final OffsetDateTime hi = untilIso == null ? null : OffsetDateTime.parse(untilIso);
         final List<String[]> ex = exclude == null ? List.of() : exclude;
-        final String wsRoot = normalise == null ? null : normalise.stream().filter(n -> n != null && n.contains("agentbench-ws")).findFirst().orElse(null);
+        final String wsRoot = normalise == null ? null : normalise.stream()
+                .filter(n -> n != null && n.contains("agentbench-ws"))
+                .findFirst()
+                .orElse(null);
         final String own = wsRoot == null ? null : Path.of(wsRoot).getParent().getFileName().toString();
         final boolean window = lo != null || hi != null || !ex.isEmpty();
         double latencySum = 0; int latencyN = 0;
@@ -94,14 +101,16 @@ public final class JournalFacts {
             if (tag != null && !Objects.equals(e.task(), tag)) continue;          // a parallel task's own records
             if (window) {
                 if (e.ts() == null || (lo != null && e.ts().isBefore(lo)) || (hi != null && e.ts().isAfter(hi))
-                        || ex.stream().anyMatch(w -> { OffsetDateTime a = OffsetDateTime.parse(w[0]), b = OffsetDateTime.parse(w[1]);
-                            return !e.ts().isBefore(a) && !e.ts().isAfter(b); })) continue;
+                        || ex.stream()
+                                .anyMatch(w -> { OffsetDateTime a = OffsetDateTime.parse(w[0]), b = OffsetDateTime.parse(w[1]);
+                                    return !e.ts().isBefore(a) && !e.ts().isAfter(b); })) continue;
             }
             f.merge("requests", 1, (a, b) -> (int) a + 1);
             if (e.budget()) f.merge("budget_refusals", 1, (a, b) -> (int) a + 1);
             else if (e.upstream()) f.merge("upstream_errors", 1, (a, b) -> (int) a + 1);
             else if (e.status() >= 400) f.merge("errors", 1, (a, b) -> (int) a + 1);
-            if (wsRoot != null && e.ws() != null && e.ws().stream().anyMatch(x -> !x.equals(own)))
+            if (wsRoot != null && e.ws() != null && e.ws().stream()
+                    .anyMatch(x -> !x.equals(own)))
                 f.merge("foreign_workspace_refs", 1, (a, b) -> (int) a + 1);      // a reference to ANOTHER run's workspace
             if (e.clientAbort()) f.merge("client_aborts", 1, (a, b) -> (int) a + 1);
             if (e.drainAbort()) f.merge("drain_aborted", 1, (a, b) -> (int) a + 1);
@@ -157,8 +166,8 @@ public final class JournalFacts {
                 f.put("first_prompt_tokens", e.pt());
             }
         }
-        if (latencyN > 0) f.put("avg_latency_sec", Math.round(latencySum / latencyN * 100) / 100.0);
-        if (ttftN > 0) f.put("avg_first_byte_ms", Math.round((double) ttftSum / ttftN));
+        if (latencyN > 0) f.put("avg_latency_sec", round(latencySum / latencyN * 100) / 100.0);
+        if (ttftN > 0) f.put("avg_first_byte_ms", round((double) ttftSum / ttftN));
         if (maxPromptTokens > 0) f.put("max_prompt_tokens", maxPromptTokens);
         if (!bucketRequests.isEmpty()) {
             final List<Map<String, Object>> buckets = new ArrayList<>();
@@ -169,9 +178,9 @@ public final class JournalFacts {
                 row.put("context_hi", range[1]);
                 row.put("requests", b.getValue()[0]);
                 final double[] pfx = bucketPrefill.get(b.getKey());
-                row.put("avg_prefill_tok_per_sec", pfx == null ? null : Math.round(pfx[0] / pfx[1] * 100) / 100.0);
+                row.put("avg_prefill_tok_per_sec", pfx == null ? null : round(pfx[0] / pfx[1] * 100) / 100.0);
                 final double[] dec = bucketDecode.get(b.getKey());
-                row.put("avg_decode_tok_per_sec", dec == null ? null : Math.round(dec[0] / dec[1] * 100) / 100.0);
+                row.put("avg_decode_tok_per_sec", dec == null ? null : round(dec[0] / dec[1] * 100) / 100.0);
                 buckets.add(row);
             }
             f.put("speed_by_context", buckets);
@@ -215,7 +224,7 @@ public final class JournalFacts {
                             for (int i = 0; i <= lastNl; i++) {
                                 if (data[i] == '\n') {
                                     if (i > lineStart) {
-                                        final Entry e = parseEntry(new String(data, lineStart, i - lineStart, StandardCharsets.UTF_8), off, backend);
+                                        final Entry e = parseEntry(new String(data, lineStart, i - lineStart, UTF_8), off, backend);
                                         if (e != null) entries.add(e);
                                     }
                                     off += (i - lineStart) + 1;   // byte-exact: offsets stay in BYTES whatever the encoding
@@ -298,7 +307,7 @@ public final class JournalFacts {
         try (RandomAccessFile raf = new RandomAccessFile(p.toFile(), "r")) {
             raf.seek(off);
             final String line = raf.readLine();
-            final JsonNode r = JSON.readTree(new String(line.getBytes(StandardCharsets.ISO_8859_1), StandardCharsets.UTF_8));
+            final JsonNode r = JSON.readTree(new String(line.getBytes(ISO_8859_1), UTF_8));
             return r.path("request");
         } catch (Exception e) {
             // sampler_effective/system_prompt_sha silently end up uncomputed for this journal - a
@@ -345,7 +354,7 @@ public final class JournalFacts {
     static String jsonQuote(String t) { return "\"" + t.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""; }
 
     static String sha(final String s) {
-        try { return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8))).substring(0, 16); }
+        try { return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(s.getBytes(UTF_8))).substring(0, 16); }
         catch (Exception e) { log.debug("SHA-256 unavailable: {}", e.toString()); return null; }
     }
 }

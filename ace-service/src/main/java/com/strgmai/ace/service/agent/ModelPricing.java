@@ -3,6 +3,8 @@ package com.strgmai.ace.service.agent;
 import java.util.Locale;
 import java.util.Map;
 
+import static java.lang.Math.round;
+
 /** #328: hardcoded $/million-token input+output rates for models ACE's ReferenceAgent can call
  *  externally (a self-review or trajectory-review session against a real, paid API) - the schema
  *  PiAgent.java already anticipated (its own "cost" object, permanently zeroed) but never wired to
@@ -50,6 +52,6 @@ public final class ModelPricing {
         final Rate r = RATES.get(model.toLowerCase(Locale.ROOT));
         if (r == null) return null;
         final long input = usage.getOrDefault("input", 0L), output = usage.getOrDefault("output", 0L);
-        return Math.round((input / 1_000_000.0 * r.inputPerM() + output / 1_000_000.0 * r.outputPerM()) * 1_000_000) / 1_000_000.0;
+        return round((input / 1_000_000.0 * r.inputPerM() + output / 1_000_000.0 * r.outputPerM()) * 1_000_000) / 1_000_000.0;
     }
 }

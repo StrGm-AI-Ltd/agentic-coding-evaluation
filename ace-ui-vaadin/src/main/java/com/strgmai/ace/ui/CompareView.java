@@ -106,7 +106,11 @@ public class CompareView extends VerticalLayout {
             noPoolableRuns.setVisible(ids.isEmpty());
             // #339: every imported run, not just poolable ones - matching by content isn't a
             // statistical operation, so stats.py's own pooling rules don't apply here.
-            final var allIds = runs.stream().map(Api.Run::run_id).sorted().distinct().toList();
+            final var allIds = runs.stream()
+                    .map(Api.Run::run_id)
+                    .sorted()
+                    .distinct()
+                    .toList();
             matchRunA.setItems(allIds);
             matchRunB.setItems(allIds);
         } catch (final Exception e) {
@@ -138,7 +142,12 @@ public class CompareView extends VerticalLayout {
 
     /** Only poolable runs can be compared (stats.py pools them; the rest 404 — V-5). */
     static List<String> poolableRunIds(final List<Api.Run> runs) {
-        return runs.stream().filter(Api.Run::poolable).map(Api.Run::run_id).sorted().distinct().toList();
+        return runs.stream()
+                .filter(Api.Run::poolable)
+                .map(Api.Run::run_id)
+                .sorted()
+                .distinct()
+                .toList();
     }
 
     private void compare() {

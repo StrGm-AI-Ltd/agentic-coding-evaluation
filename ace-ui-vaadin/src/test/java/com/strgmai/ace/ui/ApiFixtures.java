@@ -3,9 +3,10 @@ package com.strgmai.ace.ui;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.client.RestClientResponseException;
 
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /** Shared test fixtures for the wire records and HTTP error wrappers. */
 final class ApiFixtures {
@@ -33,7 +34,7 @@ final class ApiFixtures {
 
     static RestClientResponseException http(final int code) {
         return new RestClientResponseException("boom", code, "status", new HttpHeaders(),
-                "{}".getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+                "{}".getBytes(UTF_8), UTF_8);
     }
 
     /** An experiment-arm job as the experiments API returns it (no blocked_reason there). Takes a

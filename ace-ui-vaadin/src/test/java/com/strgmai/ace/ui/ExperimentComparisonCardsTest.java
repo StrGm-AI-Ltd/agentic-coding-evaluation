@@ -79,7 +79,8 @@ class ExperimentComparisonCardsTest {
         final var cards = ExperimentDetailView.comparisonCards(comparison);
         assertEquals(1, cards.size());
         assertEquals("A vs B", cards.get(0).label());
-        assertTrue(cards.stream().noneMatch(c -> "arms".equals(c.label())));
+        assertTrue(cards.stream()
+                .noneMatch(c -> "arms".equals(c.label())));
     }
 
     @Test

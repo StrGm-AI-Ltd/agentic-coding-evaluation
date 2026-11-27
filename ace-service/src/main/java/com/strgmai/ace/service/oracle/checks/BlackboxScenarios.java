@@ -15,6 +15,11 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static java.lang.Math.abs;
+import static java.lang.Math.min;
+import static java.lang.System.currentTimeMillis;
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 /** Port of oracle/checks/06_blackbox.py: THE correctness score. Oracle-owned scenarios driven
  *  over HTTP against the frozen contract; the agent never sees them. Every scenario creates ITS
  *  OWN account, so scenarios are independent items (pass^k is meaningful). Time comes from the
@@ -68,7 +73,7 @@ public final class BlackboxScenarios {
     private String account(String deposit) {   // every scenario gets its OWN account: independence
         final Resp r = call("POST", "/accounts", "{\"currency\":\"USD\"}", null);
         if (r.status() != 201 || r.body().path("accountId").asText("").isEmpty())
-            throw new IllegalStateException("cannot create account: " + r.status() + " " + r.body().toString().substring(0, Math.min(80, r.body().toString().length())));
+            throw new IllegalStateException("cannot create account: " + r.status() + " " + r.body().toString().substring(0, min(80, r.body().toString().length())));
         final String aid = r.body().path("accountId").asText();
         if (deposit != null && call("POST", "/accounts/" + aid + "/deposits", "{\"amount\":\"" + deposit + "\"}", null).status() != 200)
             throw new IllegalStateException("deposit " + deposit + " rejected");
@@ -167,7 +172,7 @@ public final class BlackboxScenarios {
         final String aid = account("1000.00");
         final Resp o = order(aid, "BUY", "1", "AAPL", null);
         final String oid = o.body().path("orderId").asText("");
-        if (o.status() != 201 || oid.isEmpty()) return fail("F4", "buy -> " + o.status() + " " + o.body().toString().substring(0, Math.min(60, o.body().toString().length())));
+        if (o.status() != 201 || oid.isEmpty()) return fail("F4", "buy -> " + o.status() + " " + o.body().toString().substring(0, min(60, o.body().toString().length())));
         final Resp c = call("POST", "/orders/" + oid + "/cancel", "{}", null);
         final Resp o2 = call("GET", "/orders/" + oid, null, null);
         return check("F4", c.status() == 409 && "FILLED".equals(o2.body().path("status").asText()),
@@ -210,7 +215,7 @@ public final class BlackboxScenarios {
         final Hold h = holdings(aid, ex2);
         final OffsetDateTime echoed = parseTs(String.valueOf(h.raw().get("asOfApplied")));
         boolean ok = h.status() == 200 && h.qty().compareTo(BigDecimal.valueOf(3)) == 0
-                && echoed != null && Math.abs(Duration.between(echoed, t2).toMillis()) < 1
+                && echoed != null && abs(Duration.between(echoed, t2).toMillis()) < 1
                 && String.valueOf(h.raw().get("asOfApplied")).endsWith("Z");
         return check("F8", ok, "asOf=buy2.executedAt(" + ex2 + ") -> holdings " + h.qty() + " (exp 3: buy1 in, buy2 excluded); asOfApplied=" + h.raw().get("asOfApplied"));
     }
@@ -218,7 +223,7 @@ public final class BlackboxScenarios {
     /** F9: bespoke — Idempotency-Key repeat -> same orderId, 200, no second execution (the FIRST order did execute: C-1) */
     public boolean f9IdempotencyKeyRepeat() {
         final String aid = account("1000.00");
-        final String key = "k-" + System.currentTimeMillis();
+        final String key = "k-" + currentTimeMillis();
         final Resp first = order(aid, "BUY", "2", "AAPL", key);
         final BigDecimal b1 = balance(aid);
         final Resp repeat = order(aid, "BUY", "2", "AAPL", key);
@@ -348,7 +353,7 @@ public final class BlackboxScenarios {
         }
         Map<String, Map<String, List<String>>> contract;
         try (var in = getClass().getResourceAsStream("/contract/openapi.yaml")) {
-            contract = parseOpenApiPaths(new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+            contract = parseOpenApiPaths(new String(in.readAllBytes(), UTF_8));
         } catch (Exception e) { return fail("F6", "frozen contract unreadable: " + e); }
         final List<String> problems = new ArrayList<>();
         for (Object[] c : calls) {
@@ -389,8 +394,11 @@ public final class BlackboxScenarios {
                 if (tpl == null || !spec.get(tpl).get(m.toLowerCase()).contains(String.valueOf(st)))
                     problems.add("agent spec (" + where + ") does not declare " + m + " " + p + " -> " + st);
             }
-        final List<String> uniq = problems.stream().distinct().sorted().toList();
+        final List<String> uniq = problems.stream()
+                .distinct()
+                .sorted()
+                .toList();
         return check("F6", uniq.isEmpty(), calls.size() + " observed responses checked against contract+schemas+agent spec"
-                + (uniq.isEmpty() ? "" : "; problems: " + uniq.subList(0, Math.min(3, uniq.size()))));
+                + (uniq.isEmpty() ? "" : "; problems: " + uniq.subList(0, min(3, uniq.size()))));
     }
 }

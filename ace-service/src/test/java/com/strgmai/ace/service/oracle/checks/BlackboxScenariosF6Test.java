@@ -2,9 +2,9 @@ package com.strgmai.ace.service.oracle.checks;
 
 import org.junit.jupiter.api.Test;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** F6 (OpenAPI conformance) failed on every account-path call against this port's own frozen
@@ -17,7 +17,7 @@ class BlackboxScenariosF6Test {
     void parsesTheRealFrozenContractsFlowStylePaths() throws Exception {
         String yaml;
         try (var in = getClass().getResourceAsStream("/contract/openapi.yaml")) {
-            yaml = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            yaml = new String(in.readAllBytes(), UTF_8);
         }
         final Map<String, Map<String, java.util.List<String>>> paths = BlackboxScenarios.parseOpenApiPaths(yaml);
         assertTrue(paths.containsKey("/accounts/{id}"), "paths parsed: " + paths.keySet());

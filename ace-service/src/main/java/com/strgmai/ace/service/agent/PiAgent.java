@@ -16,8 +16,11 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+
+import static java.lang.Math.round;
+import static java.lang.Thread.currentThread;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 /** #236: the "pi" harness - a real, external coding-assistant CLI (confirmed installed:
  *  `pi --version`), NOT something this project reimplements. Sibling to ReferenceAgent, same
@@ -168,7 +171,7 @@ public class PiAgent {
         final long waitSec = wallSec > 0 ? wallSec : Long.MAX_VALUE;   // wallSec <= 0 means unlimited (the system-wide "0 = no budget" convention)
         int rc;
         try {
-            if (process.waitFor(waitSec, TimeUnit.SECONDS)) {
+            if (process.waitFor(waitSec, SECONDS)) {
                 rc = process.exitValue();
             } else {
                 log.warn("session {} exceeded its {}s wall budget - killing the pi process tree", name, wallSec);
@@ -186,7 +189,7 @@ public class PiAgent {
             log.warn("session {} was interrupted - killing the pi process tree", name);
             process.toHandle().descendants().forEach(ProcessHandle::destroyForcibly);
             process.destroyForcibly();
-            Thread.currentThread().interrupt();
+            currentThread().interrupt();
             throw ie;
         }
         // the journal lives at sessionDir's sibling (RunBench: sessionDir = rd.resolve("sessions"),
@@ -195,7 +198,7 @@ public class PiAgent {
         final Path journal = sessionDir.getParent().resolve("interactions.jsonl");
         final String finish = JournalFacts.lastFinish(journal.toString(), start.toString());
         final Instant end = Instant.now();
-        final double seconds = Math.round(java.time.Duration.between(start, end).toMillis() / 100.0) / 10.0;
+        final double seconds = round(java.time.Duration.between(start, end).toMillis() / 100.0) / 10.0;
         return new ReferenceAgent.SessionResult(name, rc, seconds, finish, null, NOT_OBSERVABLE, NOT_OBSERVABLE, NOT_OBSERVABLE, null, start, end);
     }
 }

@@ -12,6 +12,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.nio.file.StandardOpenOption.APPEND;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Port of the JournalFacts tests (including the parse-cache behaviours: windows, appends,
@@ -91,7 +93,7 @@ class JournalFactsTest {
         final Path j = track(Files.createTempFile("j", ".jsonl"));
         Files.writeString(j, chat("2026-09-14T10:00:00Z", "", "", REQ));
         assertEquals(1, ((Number) JournalFacts.facts(j.toString(), null, null, null, null, null).get("requests")).intValue());
-        Files.writeString(j, chat("2026-09-14T11:00:00Z", "", "", REQ), java.nio.file.StandardOpenOption.APPEND);
+        Files.writeString(j, chat("2026-09-14T11:00:00Z", "", "", REQ), APPEND);
         assertEquals(2, ((Number) JournalFacts.facts(j.toString(), null, null, null, null, null).get("requests")).intValue());
         Files.writeString(j, chat("2026-09-14T12:00:00Z", "", "", REQ));    // truncated + rewritten: the cache rebuilds
         assertEquals(1, ((Number) JournalFacts.facts(j.toString(), null, null, null, null, null).get("requests")).intValue());
@@ -111,10 +113,10 @@ class JournalFactsTest {
         final String first = chat("2026-09-14T10:00:00Z", "", "", REQ);
         Files.writeString(j, first);
         assertEquals(1, ((Number) JournalFacts.facts(j.toString(), null, null, null, null, null).get("requests")).intValue());
-        final byte[] garbage = new byte[first.getBytes(java.nio.charset.StandardCharsets.UTF_8).length];
+        final byte[] garbage = new byte[first.getBytes(UTF_8).length];
         java.util.Arrays.fill(garbage, (byte) 'x');
         try (var raf = new java.io.RandomAccessFile(j.toFile(), "rw")) { raf.seek(0); raf.write(garbage); }
-        Files.writeString(j, chat("2026-09-14T11:00:00Z", "", "", REQ), java.nio.file.StandardOpenOption.APPEND);
+        Files.writeString(j, chat("2026-09-14T11:00:00Z", "", "", REQ), APPEND);
         assertEquals(2, ((Number) JournalFacts.facts(j.toString(), null, null, null, null, null).get("requests")).intValue(),
                 "a reparse-from-scratch would hit the now-corrupted first line and lose it - incremental parsing never re-reads it");
     }
@@ -347,7 +349,8 @@ class JournalFactsTest {
         assertEquals(8, buckets.size());
         assertEquals(0L, buckets.get(0).get("context_lo"));
         assertEquals(7168L, buckets.get(7).get("context_lo"));
-        assertTrue(buckets.stream().allMatch(b -> ((Number) b.get("requests")).longValue() == 1));
+        assertTrue(buckets.stream()
+                .allMatch(b -> ((Number) b.get("requests")).longValue() == 1));
     }
 
     /** A request with no prompt_tokens at all (an error/refused request) is skipped entirely -

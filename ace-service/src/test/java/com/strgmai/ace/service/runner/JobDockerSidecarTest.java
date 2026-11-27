@@ -1,11 +1,13 @@
 package com.strgmai.ace.service.runner;
 
+import com.strgmai.ace.service.config.TestOperations;
 import com.strgmai.ace.service.docker.DockerService;
 import org.junit.jupiter.api.*;
 import org.testcontainers.DockerClientFactory;
 
 import java.util.Set;
 
+import static java.lang.System.currentTimeMillis;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** #696: real, not mocked - no abstraction exists to mock DockerService.sh() against, same style
@@ -16,8 +18,8 @@ import static org.junit.jupiter.api.Assertions.*;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class JobDockerSidecarTest {
 
-    private static final String RUN_ID = "jds-test-" + System.currentTimeMillis();
-    private static final JobDockerSidecar sidecar = new JobDockerSidecar();
+    private static final String RUN_ID = "jds-test-" + currentTimeMillis();
+    private static final JobDockerSidecar sidecar = new JobDockerSidecar(TestOperations.defaults());
     private static String firstDockerHost;
 
     @BeforeAll

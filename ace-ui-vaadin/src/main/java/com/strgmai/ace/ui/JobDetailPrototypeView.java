@@ -24,10 +24,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import static java.util.Comparator.comparing;
 
 /**
  * Job detail — the primary jobs/:jobId page. Started as a parallel, read-only UX-redesign
@@ -391,11 +392,15 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
      *  simpler full-rebuild costs nothing a reader would notice. */
     private FlexibleGridLayout statTileGrid(final Api.Job job, final List<Api.PlanTask> tasks,
             final Map<String, Api.TaskAttempt> lastAttempt) {
-        final var realTasks = tasks.stream().filter(t -> !t.stage()).toList();
-        final var done = realTasks.stream().filter(t -> {
-            final var a = lastAttempt.get(t.id());
-            return a != null && "done".equals(a.reported_status());
-        }).count();
+        final var realTasks = tasks.stream()
+                .filter(t -> !t.stage())
+                .toList();
+        final var done = realTasks.stream()
+                .filter(t -> {
+                    final var a = lastAttempt.get(t.id());
+                    return a != null && "done".equals(a.reported_status());
+                })
+                .count();
         final var grid = new FlexibleGridLayout()
                 .withColumns(Repeat.RepeatMode.AUTO_FIT, new MinMax(new Length("130px"), new Flex(1)))
                 .withAutoRows(new Length("auto"))
@@ -428,7 +433,8 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         if (argv.isEmpty()) {
             chips.add(new Span("–"));
         } else {
-            argv.stream().sorted(Comparator.comparing(JobDetailPrototypeView::paramKey))
+            argv.stream()
+                    .sorted(comparing(JobDetailPrototypeView::paramKey))
                     .forEach(a -> chips.add(paramBadge(a)));
         }
         final var tile = Panels.statTile("Params", chips);
@@ -490,7 +496,8 @@ public class JobDetailPrototypeView extends VerticalLayout implements BeforeEnte
         return job.argv().stream()
                 .filter(a -> a.startsWith("--model="))
                 .map(a -> a.substring("--model=".length()))
-                .findFirst().orElse("–");
+                .findFirst()
+                .orElse("–");
     }
 
     private static String durationOf(final Api.Job job) {

@@ -8,7 +8,11 @@ import java.nio.file.*;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
+
+import static java.lang.System.getenv;
+import static java.lang.Thread.currentThread;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 /** Port of run_bench.py's Docker machinery, minus the on-demand lifecycle (R7): ACE no longer
  *  starts or stops Docker Desktop itself - the operator owns that entirely. This only probes
@@ -88,7 +92,7 @@ public final class DockerService {
             p = pb.start();
             final StringBuilder out = new StringBuilder(), err = new StringBuilder();
             t1 = drain(p.getInputStream(), out); t2 = drain(p.getErrorStream(), err);
-            if (!p.waitFor(timeoutSec, TimeUnit.SECONDS)) {
+            if (!p.waitFor(timeoutSec, SECONDS)) {
                 p.destroyForcibly();
                 t1.join(1000); t2.join(1000);
                 return new Proc(124, out.toString(), err.toString() + "\n[timeout " + timeoutSec + "s]");
@@ -107,14 +111,14 @@ public final class DockerService {
             // shell convention) keeps this distinguishable from a genuine 1 "went wrong" exit.
             if (p != null) p.destroyForcibly();
             try { if (t1 != null) t1.join(1000); if (t2 != null) t2.join(1000); } catch (InterruptedException ignore) { /* already interrupted; restored below regardless */ }
-            Thread.currentThread().interrupt();
+            currentThread().interrupt();
             return new Proc(130, "", "interrupted");
         } catch (Exception e) { return new Proc(1, "", String.valueOf(e)); }
     }
 
     private static Thread drain(final java.io.InputStream in, final StringBuilder sb) {
         Thread t = new Thread(() -> {
-            try (var r = new java.io.BufferedReader(new java.io.InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8))) {
+            try (var r = new java.io.BufferedReader(new java.io.InputStreamReader(in, UTF_8))) {
                 for (String line; (line = r.readLine()) != null; ) sb.append(line).append('\n');
             } catch (Exception e) { log.debug("subprocess output stream drain ended: {}", e.toString()); }
         }, "proc-drain");
@@ -129,7 +133,7 @@ public final class DockerService {
         return new Sh(r.rc(), r.out() + r.err());
     }
 
-    public static void sleep(int sec) { try { TimeUnit.SECONDS.sleep(sec); } catch (InterruptedException e) { Thread.currentThread().interrupt(); } }
+    public static void sleep(int sec) { try { SECONDS.sleep(sec); } catch (InterruptedException e) { currentThread().interrupt(); } }
     public static String nowIso() { return DateTimeFormatter.ISO_INSTANT.format(Instant.now()); }
 
     // #612, found live: when ace-service itself runs as a container (Docker-outside-of-Docker, the
@@ -153,7 +157,7 @@ public final class DockerService {
         if (m != null) return m;
         synchronized (DockerService.class) {
             if (ownMounts != null) return ownMounts;
-            final String id = System.getenv("HOSTNAME");
+            final String id = getenv("HOSTNAME");
             final List<Map.Entry<String, String>> out = new ArrayList<>();
             if (id != null && !id.isBlank()) {
                 final Sh r = sh(15, "docker", "inspect", id, "--format",

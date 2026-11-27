@@ -27,19 +27,26 @@ class JobLiveSectionTest {
                 new JobLiveState.RequestRow("2026-09-15T02:00:00Z", 500, 1.5, 0.5, 10L, false, null),
                 new JobLiveState.RequestRow("2026-09-14T23:00:00+01:00", 404, null, null, null, true, "task-wall budget exceeded (900s)"));
         final java.util.function.Consumer<Comparator<JobLiveState.RequestRow>> sortAll =
-                by -> rows.stream().sorted(by).forEach(r -> r.status()); // any terminal op forces the sort
+                by -> rows.stream()
+                        .sorted(by)
+                        .forEach(r -> r.status()); // any terminal op forces the sort
         sortAll.accept(JobLiveSection.REQUESTS_BY_STATUS);
         sortAll.accept(JobLiveSection.REQUESTS_BY_LATENCY);
         sortAll.accept(JobLiveSection.REQUESTS_BY_TTFT);
         sortAll.accept(JobLiveSection.REQUESTS_BY_TOKENS);
 
-        final var byTs = rows.stream().sorted(JobLiveSection.REQUESTS_BY_TS)
-                .map(r -> r.ts() == null ? "null" : r.ts()).toList();
+        final var byTs = rows.stream()
+                .sorted(JobLiveSection.REQUESTS_BY_TS)
+                .map(r -> r.ts() == null ? "null" : r.ts())
+                .toList();
         assertEquals(List.of("2026-09-14T23:00:00+01:00", "2026-09-15T02:00:00Z", "null"),
                 byTs, "chronological across formats, absent last");
 
-        final var byStatusNullsLast = rows.stream().sorted(JobLiveSection.REQUESTS_BY_STATUS)
-                .map(JobLiveState.RequestRow::status).filter(Objects::nonNull).toList();
+        final var byStatusNullsLast = rows.stream()
+                .sorted(JobLiveSection.REQUESTS_BY_STATUS)
+                .map(JobLiveState.RequestRow::status)
+                .filter(Objects::nonNull)
+                .toList();
         assertEquals(List.of(404, 500), byStatusNullsLast);
     }
 
@@ -53,7 +60,9 @@ class JobLiveSectionTest {
                 new JobLiveState.SessionRow("a", "T1", "task T1", "stop", 90.0, 20.0, 120.0, 500L, 30.0, 90.0, "2026-09-15T02:00:00Z", "T1", null),
                 new JobLiveState.SessionRow("b", "T2", "task T2", null, null, null, null, null, null, null, "2026-09-14T23:00:00+01:00", "T2", null));
         final java.util.function.Consumer<Comparator<JobLiveState.SessionRow>> sortAll =
-                by -> rows.stream().sorted(by).forEach(JobLiveState.SessionRow::id); // any terminal op forces the sort
+                by -> rows.stream()
+                        .sorted(by)
+                        .forEach(JobLiveState.SessionRow::id); // any terminal op forces the sort
         sortAll.accept(JobLiveSection.SESSIONS_BY_LABEL);
         sortAll.accept(JobLiveSection.SESSIONS_BY_DESCRIPTION);
         sortAll.accept(JobLiveSection.SESSIONS_BY_ENDED_STAGE);
@@ -64,8 +73,10 @@ class JobLiveSectionTest {
         sortAll.accept(JobLiveSection.SESSIONS_BY_DECODE_TPS);
         sortAll.accept(JobLiveSection.SESSIONS_BY_TOTAL_TOKENS);
 
-        final var byTs = rows.stream().sorted(JobLiveSection.SESSIONS_BY_TS)
-                .map(r -> r.ts() == null ? "null" : r.ts()).toList();
+        final var byTs = rows.stream()
+                .sorted(JobLiveSection.SESSIONS_BY_TS)
+                .map(r -> r.ts() == null ? "null" : r.ts())
+                .toList();
         assertEquals(List.of("2026-09-14T23:00:00+01:00", "2026-09-15T02:00:00Z", "null"),
                 byTs, "chronological across formats, absent last");
     }

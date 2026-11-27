@@ -4,6 +4,7 @@ import com.strgmai.ace.service.agent.ProviderStore;
 import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.backend.OmlxBackend;
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.config.TestOperations;
 import com.strgmai.ace.service.plan.PlanTask;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -38,7 +39,7 @@ class TaskMatcherTest {
         final var providerStore = new ProviderStore(freshDb("task-matcher-test"));
         matcher = new TaskMatcher(props,
                 new ReferenceAgent(new BenchProperties(null, null, null, null, null, null, null, null, null, null,
-                        null, null, null, null, null, null, null, null), providerStore),
+                        null, null, null, null, null, null, null, null), providerStore, TestOperations.defaults()),
                 providerStore, new OmlxBackend(Files.createTempDirectory("omlx-test")));
     }
 
@@ -136,7 +137,7 @@ class TaskMatcherTest {
                 null, null, null, null, null, null, null, null);
         final var providerStore = new ProviderStore(freshDb("task-matcher-blank-endpoint-test"));
         final var blankEndpointMatcher = new TaskMatcher(blankEndpointProps,
-                new ReferenceAgent(blankEndpointProps, providerStore), providerStore, new OmlxBackend(Files.createTempDirectory("omlx-test")));
+                new ReferenceAgent(blankEndpointProps, providerStore, TestOperations.defaults()), providerStore, new OmlxBackend(Files.createTempDirectory("omlx-test")));
 
         assertEquals("http://127.0.0.1:9191/v1", blankEndpointMatcher.externalBase("omlx/some-local-model"));
     }

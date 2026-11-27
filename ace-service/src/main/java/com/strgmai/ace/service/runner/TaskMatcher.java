@@ -16,10 +16,12 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static java.lang.System.currentTimeMillis;
+import static java.util.UUID.randomUUID;
 
 /** #339: a standalone, post-hoc "match tasks between two already-finished runs" primitive for the
  *  Compare tab. Two independently-decomposed --plan-source=agent runs of the same task spec number
@@ -82,8 +84,8 @@ public class TaskMatcher {
         final String model = reviewer.startsWith(localPrefix) ? reviewer.substring(localPrefix.length()) : reviewer.substring(reviewer.indexOf('/') + 1);
         final Map<String, String> extraEnv = external ? externalCredentials() : null;
         final Consumer<String> abort = reason -> {};
-        final String name = "task-match-" + System.currentTimeMillis();
-        final String sid = UUID.randomUUID().toString();
+        final String name = "task-match-" + currentTimeMillis();
+        final String sid = randomUUID().toString();
         final ReferenceAgent.SessionResult res = RunBenchSupport.runBounded(0, name, rd.resolve("sessions"), sid, abort,
                 () -> agent.run(name, prompt, 0, 0L, rd.resolve("sessions"), sid, false, SYSTEM, rd.toString(),
                         externalBase(reviewer), abort, 0, props.compactionTrigger(), MAX_TURNS, model, extraEnv, null, true));

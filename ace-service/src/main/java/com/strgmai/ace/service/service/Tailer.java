@@ -8,9 +8,11 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Comparator.comparing;
 
 /** Port of service/progress.py (WITH the byte-exact offset fix from the Python review): live
  *  progress inferred from the files a run already writes. Stateless across connections: each caller
@@ -52,7 +54,7 @@ public final class Tailer {
         if (!Files.isDirectory(dir)) return;
         List<Path> paths;
         try (java.util.stream.Stream<Path> stream = Files.list(dir)) {   // the stream holds a directory FD - it must be closed
-            paths = stream.filter(Files::isRegularFile).sorted(Comparator.comparing(p -> p.getFileName().toString())).toList();
+            paths = stream.filter(Files::isRegularFile).sorted(comparing(p -> p.getFileName().toString())).toList();
         } catch (IOException e) { log.debug("could not list {}: {}", dir, e.toString()); return; }
         for (Path p : paths) {
             final String key = "rescue/" + p.getFileName();
@@ -62,7 +64,7 @@ public final class Tailer {
             if (name.endsWith(".start")) {
                 final String taskId = name.substring(0, name.length() - ".start".length());
                 String reason;
-                try { reason = Files.readString(p, StandardCharsets.UTF_8); } catch (IOException e) { reason = ""; }
+                try { reason = Files.readString(p, UTF_8); } catch (IOException e) { reason = ""; }
                 events.add(Map.of("type", "rescue_started", "task", taskId, "reason", reason));
             } else if (name.endsWith(".done")) {
                 final String taskId = name.substring(0, name.length() - ".done".length());
@@ -92,7 +94,7 @@ public final class Tailer {
         List<Path> paths;
         try (java.util.stream.Stream<Path> stream = Files.list(dir)) {   // the stream holds a directory FD - it must be closed
             paths = stream.filter(Files::isRegularFile)
-                    .sorted(Comparator.comparing(p -> {
+                    .sorted(comparing(p -> {
                         try { return Files.getLastModifiedTime(p).toMillis(); }
                         catch (IOException e) { log.debug("could not read mtime of {}, sorting first: {}", p, e.toString()); return 0L; }
                     })).toList();
@@ -125,13 +127,13 @@ public final class Tailer {
         if (!Files.isDirectory(dir)) return;
         List<Path> paths;
         try (java.util.stream.Stream<Path> stream = Files.list(dir)) {   // the stream holds a directory FD - it must be closed
-            paths = stream.filter(Files::isRegularFile).sorted(Comparator.comparing(p -> p.getFileName().toString())).toList();
+            paths = stream.filter(Files::isRegularFile).sorted(comparing(p -> p.getFileName().toString())).toList();
         } catch (IOException e) { log.debug("could not list session dir {}: {}", dir, e.toString()); return; }
         for (Path p : paths) {
             final String key = p.getFileName().toString();
             if (!sessionIds.contains(key)) {
                 try {
-                    final String first = Files.readString(p, StandardCharsets.UTF_8).split("\n", 2)[0];
+                    final String first = Files.readString(p, UTF_8).split("\n", 2)[0];
                     final JsonNode r = JSON.readTree(first);
                     if (!"session".equals(r.path("type").asText())) continue;
                     sessionIds.add(key);
@@ -174,7 +176,7 @@ public final class Tailer {
         final Path pack = sessionsDir.getParent().resolve("packs").resolve(baseId + ".md");
         if (!Files.isRegularFile(pack)) return null;
         final String prefix = "# Current task: " + baseId + " — ";
-        try (var reader = Files.newBufferedReader(pack, StandardCharsets.UTF_8)) {
+        try (var reader = Files.newBufferedReader(pack, UTF_8)) {
             final String firstLine = reader.readLine();
             return firstLine != null && firstLine.startsWith(prefix) ? firstLine.substring(prefix.length()) : null;
         } catch (IOException e) {
@@ -306,7 +308,7 @@ public final class Tailer {
                 final List<String> lines = new ArrayList<>();
                 int lineStart = 0;
                 for (int i = 0; i <= lastNl; i++)
-                    if (data[i] == '\n') { lines.add(new String(data, lineStart, i - lineStart, StandardCharsets.UTF_8)); lineStart = i + 1; }
+                    if (data[i] == '\n') { lines.add(new String(data, lineStart, i - lineStart, UTF_8)); lineStart = i + 1; }
                 offsets.put(path.toString(), start + lastNl + 1);      // byte-exact: valid multi-byte UTF-8 never drifts
                 return lines;
             }

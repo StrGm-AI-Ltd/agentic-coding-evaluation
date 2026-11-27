@@ -4,6 +4,9 @@ import com.strgmai.ace.service.agent.CompactionStrategies;
 
 import java.util.*;
 
+import static java.lang.Double.parseDouble;
+import static java.lang.Integer.parseInt;
+
 /** Port of service/queue.py's RunSpec: the flags a queued run may carry, in argv order, with the
  *  same validation (known rung, positive budgets, bounded patterns). argv() rebuilds the CLI
  *  record stored on the job. */
@@ -362,13 +365,13 @@ public record RunSpec(String task, String model, String harness, String mode, St
     private static Integer intOf(final Map<String, Object> spec, final String key) {
         final Object o = spec.get(key);
         if (o instanceof Number n) return n.intValue();
-        try { return o == null || String.valueOf(o).isBlank() ? null : Integer.parseInt(String.valueOf(o)); }
+        try { return o == null || String.valueOf(o).isBlank() ? null : parseInt(String.valueOf(o)); }
         catch (NumberFormatException e) { throw new IllegalArgumentException("not a number: " + key + "=" + o); }
     }
     private static Double doubleOf(final Map<String, Object> spec, final String key) {
         final Object o = spec.get(key);
         if (o instanceof Number n) return n.doubleValue();
-        try { return o == null || String.valueOf(o).isBlank() ? null : Double.parseDouble(String.valueOf(o)); }
+        try { return o == null || String.valueOf(o).isBlank() ? null : parseDouble(String.valueOf(o)); }
         catch (NumberFormatException e) { throw new IllegalArgumentException("not a number: " + key + "=" + o); }
     }
 }

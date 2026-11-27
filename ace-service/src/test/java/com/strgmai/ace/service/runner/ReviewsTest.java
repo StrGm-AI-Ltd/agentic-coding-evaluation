@@ -4,6 +4,7 @@ import com.strgmai.ace.service.agent.ProviderStore;
 import com.strgmai.ace.service.agent.ReferenceAgent;
 import com.strgmai.ace.service.backend.OmlxBackend;
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.config.TestOperations;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -44,7 +45,7 @@ class ReviewsTest {
                 new BenchProperties(null, "http://127.0.0.1:9191/v1", null, null, null, null, null, null, null, null,
                         null, null, null, null, null, null, null, null),
                 new ReferenceAgent(new BenchProperties(null, null, null, null, null, null, null, null, null, null,
-                        null, null, null, null, null, null, null, null), providerStore),
+                        null, null, null, null, null, null, null, null), providerStore, TestOperations.defaults()),
                 new Intervene(), providerStore, new OmlxBackend(Files.createTempDirectory("omlx-test")));
     }
 
@@ -114,7 +115,7 @@ class ReviewsTest {
 
         final Map<String, Object> out = reviews.selfReview(Map.of(), ws, rd, manifest, List.of(), "a prompt",
                 new RecordingProxyFactory(new BenchProperties(null, "http://127.0.0.1:9191/v1", null, null, null, null, null, null, null, null,
-                        null, null, null, null, null, null, null, null)), null, false);
+                        null, null, null, null, null, null, null, null), TestOperations.defaults()), null, false);
 
         assertEquals(true, out.get("parse_ok"));
         assertEquals(80.0, out.get("score"), "the already-written self_review.json must be re-parsed, not lost");
@@ -143,7 +144,7 @@ class ReviewsTest {
 
         final Map<String, Object> out = reviews.trajectoryReview(Map.of(), ws, rd, manifest, null,
                 new RecordingProxyFactory(new BenchProperties(null, "http://127.0.0.1:9191/v1", null, null, null, null, null, null, null, null,
-                        null, null, null, null, null, null, null, null)));
+                        null, null, null, null, null, null, null, null), TestOperations.defaults()));
 
         assertEquals(true, out.get("parse_ok"));
         assertEquals(70.0, out.get("score"), "the already-written trajectory_review.json must be re-parsed, not lost");

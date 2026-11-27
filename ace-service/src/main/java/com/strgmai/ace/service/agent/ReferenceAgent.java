@@ -1,6 +1,7 @@
 package com.strgmai.ace.service.agent;
 
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.config.OperationsProperties;
 import com.strgmai.ace.service.pack.Packs;
 import com.strgmai.ace.service.proxy.RecordingProxy;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
@@ -25,8 +26,16 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.lang.Math.round;
+import static java.lang.System.currentTimeMillis;
+import static java.lang.System.getenv;
+import static java.lang.System.nanoTime;
+import static java.lang.Thread.currentThread;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 /** Port of runner/agent_loop.py, the reference agent, on LangChain4j. The harness owns every part
  *  of the loop: four tools (read/write/edit/bash with mechanical output hygiene), structural
@@ -180,7 +189,12 @@ public class ReferenceAgent {
     private final BenchProperties props;
     private final ProviderStore providerStore;
 
-    public ReferenceAgent(BenchProperties props, ProviderStore providerStore) { this.props = props; this.providerStore = providerStore; }
+    public ReferenceAgent(BenchProperties props, ProviderStore providerStore, OperationsProperties operations) {
+        this.props = props;
+        this.providerStore = providerStore;
+        this.streamIdleTimeoutMs = operations.streamIdleTimeoutSec() * 1000L;
+        this.streamPollMs = operations.streamPollMs();
+    }
 
     /** #424: `recallEnabled=false` leaves recall_tool_output out of the offered tools entirely -
      *  the model structurally cannot call a tool it was never told exists, matching
@@ -386,7 +400,7 @@ public class ReferenceAgent {
     public SessionResult run(String name, String instruction, long wallSec, Long tokenBudget,
                              Path sessionDir, String sessionId, boolean continueSession,
                              String appendSystem, String cwd, String proxyBase, Consumer<String> abortProxy, long firstTokenTimeoutMs, int compactionTrigger, int maxTurns, String model, Map<String, String> extraEnv, JudgeCheckpoint judge, boolean advisoryOnly, FinalTurn finalTurn, Integer compactOnLoadKeepRecentTurns, List<String> compactionStrategies, LessonRecorder lessonRecorder) throws Exception {
-        final long t0 = System.nanoTime();
+        final long t0 = nanoTime();
         final var start = Instant.now();
         final String reasoningEffort = DEFAULT_REASONING.getOrDefault(reasoningKind(name), "medium");
         final var session = new AgentSession(sessionDir, sessionId, continueSession);
@@ -519,7 +533,7 @@ public class ReferenceAgent {
         // that - see its javadoc); deadline here only clamps chatWithRetry's exponential backoff
         // sleep, so it must stay far in the future rather than collapsing to "now" (which would
         // hammer the model server with ~100ms retries instead of a real backoff).
-        final long deadline = wallSec > 0 ? System.currentTimeMillis() + wallSec * 1000 : Long.MAX_VALUE;
+        final long deadline = wallSec > 0 ? currentTimeMillis() + wallSec * 1000 : Long.MAX_VALUE;
         while (turns < maxTurns) {
             if (compactionTrigger > 0 && lastPrompt > 0 && lastPrompt > compactionTrigger) {
                 // #417: the protected window's own ceiling is half of whatever triggers compaction
@@ -691,8 +705,8 @@ public class ReferenceAgent {
     }
 
     private SessionResult result(final String id, final int rc, final long t0, final String finish, final String lastText, final int turns, final int toolErrors, final int compactions, final AgentSession s, final Instant start) {
-        final double secs = (System.nanoTime() - t0) / 1e9;
-        return new SessionResult(id, rc, Math.round(secs * 10) / 10.0, finish, lastText, turns, toolErrors, compactions, s.path(), start, Instant.now());
+        final double secs = (nanoTime() - t0) / 1e9;
+        return new SessionResult(id, rc, round(secs * 10) / 10.0, finish, lastText, turns, toolErrors, compactions, s.path(), start, Instant.now());
     }
 
     /** #417 follow-up review (C12): bounds how many times the SAME archived tool-call id may be
@@ -841,14 +855,14 @@ public class ReferenceAgent {
      *  harness's own task-wall timeout both just look like Thread.interrupt()); the harness's own
      *  runBounded names the more specific "task-wall budget exceeded" reason itself when that is
      *  the actual cause, which may race harmlessly with this generic one (both diagnostic only). */
-    static ChatResponse chatWithRetry(final StreamingChatModel model, final ChatRequest req, final long deadline, final Consumer<String> abortProxy, final long firstTokenTimeoutMs) {
+    ChatResponse chatWithRetry(final StreamingChatModel model, final ChatRequest req, final long deadline, final Consumer<String> abortProxy, final long firstTokenTimeoutMs) {
         RuntimeException last = null;
         long delay = 2000;
         for (int attempt = 0; attempt < 4; attempt++) {
             final StreamCollector collector = new StreamCollector();
             try {
                 model.chat(req, collector);
-                final ChatResponse resp = awaitStream(collector, firstTokenTimeoutMs);
+                final ChatResponse resp = awaitStream(collector, firstTokenTimeoutMs, streamIdleTimeoutMs, streamPollMs);
                 if (isEmptyModelResponse(resp)) {
                     // the stream itself completed (onCompleteResponse fired, not onError) - nothing
                     // is stuck on the proxy<->oMLX hop to abort here, unlike the RuntimeException/
@@ -856,9 +870,9 @@ public class ReferenceAgent {
                     log.warn("chatWithRetry attempt {}/4 got an empty model response (no content, "
                             + "no tool_calls, no finish_reason) - retrying as transient", attempt + 1);
                     last = new RuntimeException("empty model response (no content, no tool_calls, no finish_reason)");
-                    try { Thread.sleep(Math.min(delay, Math.max(100, deadline - System.currentTimeMillis()))); }
+                    try { Thread.sleep(min(delay, max(100, deadline - currentTimeMillis()))); }
                     catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
+                        currentThread().interrupt();
                         throw new TransientError(ie);
                     }
                     delay = (long) (delay * 2.5);
@@ -870,7 +884,7 @@ public class ReferenceAgent {
                 // a cancelled job interrupts this thread (WorkerService.Future.cancel(true)) - restoring
                 // the flag and retrying anyway would absorb the cancellation as just one more transient
                 // failure and keep going for up to 3 more attempts; terminal, not classified below
-                Thread.currentThread().interrupt();
+                currentThread().interrupt();
                 abortProxy.accept("interrupted (job cancelled, or the task-wall budget was reached)");
                 throw new TransientError(ie);
             }
@@ -883,9 +897,9 @@ public class ReferenceAgent {
                 boolean clientError = status != null ? status >= 400 && status < 500 && status != 429
                         : hasCause(e, dev.langchain4j.exception.NonRetriableException.class);
                 if (clientError) throw new TransientError(e);   // final client errors
-                try { Thread.sleep(Math.min(delay, Math.max(100, deadline - System.currentTimeMillis()))); }
+                try { Thread.sleep(min(delay, max(100, deadline - currentTimeMillis()))); }
                 catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
+                    currentThread().interrupt();
                     throw new TransientError(ie);
                 }
                 delay = (long) (delay * 2.5);
@@ -896,7 +910,7 @@ public class ReferenceAgent {
 
     /** default cap on time-to-FIRST-token, before any chunk has arrived at all: a cold model server
      *  (loading weights, queued behind another request, prefill on a long prompt) stalls for a
-     *  structurally different reason than a mid-response stall does (see MID_STREAM_IDLE_TIMEOUT_MS
+     *  structurally different reason than a mid-response stall does (see streamIdleTimeoutMs
      *  below for that one) - a request that never starts producing anything has no other signal to
      *  wait on. Per-run override: RunSpec.firstTokenTimeout / --first-token-timeout. 0 means
      *  unlimited (the system-wide "0 = no budget" convention). */
@@ -914,8 +928,8 @@ public class ReferenceAgent {
      *  dead stream produces none at all, ever. Unconditional (not gated behind firstTokenTimeoutMs>0
      *  the way the first-token check is) - a dead connection should never be allowed to run out the
      *  clock regardless of whether the operator wants an unlimited time-to-first-token. */
-    private static final long MID_STREAM_IDLE_TIMEOUT_MS = 30 * 60 * 1000L;
-    private static final long POLL_MS = 2_000;
+    private final long streamIdleTimeoutMs;   // ace.operations.stream-idle-timeout-sec (default 30 minutes)
+    private final long streamPollMs;          // ace.operations.stream-poll-ms
 
     /** provider API keys that may reach {@code extraEnv} (an external reviewer's own credential, or a
      *  provider key from the operator's environment) - never let one of these into the tool-execution
@@ -944,7 +958,7 @@ public class ReferenceAgent {
         final Map<String, String> env = extraEnv != null ? new LinkedHashMap<>(extraEnv) : new LinkedHashMap<>();
         env.keySet().removeAll(CREDENTIAL_ENV_KEYS);
         env.putIfAbsent("HOME", Path.of(cwd, ".ace-tool-home").toString());
-        env.putIfAbsent("PATH", System.getenv().getOrDefault("PATH", "/usr/bin:/bin"));
+        env.putIfAbsent("PATH", getenv().getOrDefault("PATH", "/usr/bin:/bin"));
         env.putIfAbsent("LANG", "en_US.UTF-8");
         env.putIfAbsent("CI", "1");
         env.putIfAbsent("NO_COLOR", "1");
@@ -954,28 +968,29 @@ public class ReferenceAgent {
 
     /** Waits for one streaming attempt by polling instead of blocking on it, so an interrupt
      *  (cancellation, or the harness's own task-wall timeout - see RunBench.sessionWithPolicy) is
-     *  noticed within POLL_MS instead of depending on the HTTP call itself honoring
+     *  noticed within streamPollMs instead of depending on the HTTP call itself honoring
      *  Thread.interrupt() - which the old synchronous client did not (see the chatModel comment
      *  above). Two independent idle ceilings, both measured off the same collector.lastActivityMs:
      *  firstTokenTimeoutMs (only before anything has arrived - see its own comment) and
-     *  MID_STREAM_IDLE_TIMEOUT_MS (only after - see its own comment on why 30 minutes doesn't repeat
+     *  streamIdleTimeoutMs (only after - see its own comment on why 30 minutes doesn't repeat
      *  2026-09-25's false-positive). Past both, only the harness's task-wall timeout (an external
      *  interrupt) bounds this further. */
-    private static ChatResponse awaitStream(final StreamCollector collector, final long firstTokenTimeoutMs) throws InterruptedException {
+    private static ChatResponse awaitStream(final StreamCollector collector, final long firstTokenTimeoutMs, final long streamIdleTimeoutMs,
+            final long streamPollMs) throws InterruptedException {
         while (true) {
             try {
-                return collector.future.get(POLL_MS, TimeUnit.MILLISECONDS);
+                return collector.future.get(streamPollMs, MILLISECONDS);
             } catch (java.util.concurrent.TimeoutException pollTimeout) {
-                final long idleMs = System.currentTimeMillis() - collector.lastActivityMs;
+                final long idleMs = currentTimeMillis() - collector.lastActivityMs;
                 // firstTokenTimeoutMs <= 0 means unlimited (the system-wide "0 = no budget"
                 // convention) - never time out waiting for a first token in that case
                 if (firstTokenTimeoutMs > 0 && !collector.gotFirstToken && idleMs > firstTokenTimeoutMs) {
                     collector.cancelIfPossible();   // real abort now (R10), not just walking away
                     throw new RuntimeException("no first token from the model in " + (firstTokenTimeoutMs / 1000) + "s");
                 }
-                if (collector.gotFirstToken && idleMs > MID_STREAM_IDLE_TIMEOUT_MS) {
+                if (collector.gotFirstToken && idleMs > streamIdleTimeoutMs) {
                     collector.cancelIfPossible();
-                    throw new RuntimeException("no new output from the model in " + (MID_STREAM_IDLE_TIMEOUT_MS / 1000) + "s - stream appears dead");
+                    throw new RuntimeException("no new output from the model in " + (streamIdleTimeoutMs / 1000) + "s - stream appears dead");
                 }
                 // still within both budgets
             } catch (ExecutionException ee) {
@@ -999,7 +1014,7 @@ public class ReferenceAgent {
      *  returned, so nothing downstream of chatWithRetry needed to change for that part. */
     private static final class StreamCollector implements StreamingChatResponseHandler {
         private final CompletableFuture<ChatResponse> future = new CompletableFuture<>();
-        private volatile long lastActivityMs = System.currentTimeMillis();
+        private volatile long lastActivityMs = currentTimeMillis();
         private volatile boolean gotFirstToken = false;
         private volatile StreamingHandle handle;
 
@@ -1016,7 +1031,7 @@ public class ReferenceAgent {
         @Override public void onError(final Throwable error) { future.completeExceptionally(error); }
 
         private void touch(final StreamingHandle h) {
-            lastActivityMs = System.currentTimeMillis();
+            lastActivityMs = currentTimeMillis();
             gotFirstToken = true;
             if (handle == null) handle = h;
         }

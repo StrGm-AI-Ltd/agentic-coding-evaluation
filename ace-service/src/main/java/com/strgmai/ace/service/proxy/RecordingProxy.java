@@ -4,6 +4,7 @@ import com.strgmai.ace.service.config.BenchProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.strgmai.ace.service.config.OperationsProperties;
 import com.sun.net.httpserver.HttpServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,7 +14,6 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.*;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Instant;
 import java.util.List;
@@ -21,6 +21,13 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+
+import static java.lang.Math.max;
+import static java.lang.Math.round;
+import static java.lang.System.nanoTime;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.nio.file.StandardOpenOption.APPEND;
+import static java.nio.file.StandardOpenOption.CREATE;
 
 /** Port of runner/record_proxy.py: transparent recording proxy, agent -> :PORT -> upstream.
  *  Journals EVERY interaction as JSONL (ts, method, path, request as forwarded, response, status,
@@ -74,11 +81,10 @@ public class RecordingProxy {
         public static final SamplerOverrides NONE = new SamplerOverrides(null, null, null, null, null, null, null, null, null, null);
     }
 
-    /** the proxy's own upstream connect wait is kept a little more generous than the run's
-     *  first-token timeout, never tighter - it must never be the reason a request the operator
+    /* the margin (ace.operations.proxy-timeout-margin-sec) keeps the proxy's own upstream connect wait a little more
+     *  generous than the run's first-token timeout, never tighter - it must never be the reason a request the operator
      *  configured a longer wait for gets cut off first (#92: used to be a hardcoded 290s regardless
      *  of what --first-token-timeout was actually set to). */
-    static final int UPSTREAM_TIMEOUT_MARGIN_SEC = 30;
 
     /** #92: the proxy's own upstream connect wait, derived from the run's first-token-timeout
      *  setting (plus a margin) instead of a hardcoded value disconnected from it - used to be a
@@ -88,10 +94,10 @@ public class RecordingProxy {
      *  caller skips HttpRequest.Builder.timeout(...) entirely rather than passing a degenerate
      *  near-zero duration (Duration.ofSeconds(0) is rejected outright, and margin-only wouldn't be
      *  "unlimited" at all). */
-    static Integer upstreamTimeoutSec(final SamplerOverrides overrides) {
+    static Integer upstreamTimeoutSec(final SamplerOverrides overrides, final int marginSec) {
         final Integer firstTokenTimeoutSec = overrides.firstTokenTimeoutSec();
         if (firstTokenTimeoutSec == null || firstTokenTimeoutSec <= 0) return null;
-        return firstTokenTimeoutSec + UPSTREAM_TIMEOUT_MARGIN_SEC;
+        return firstTokenTimeoutSec + marginSec;
     }
     private volatile boolean stopping;
     private final Set<HttpResponse<InputStream>> inflight = ConcurrentHashMap.newKeySet();
@@ -120,7 +126,12 @@ public class RecordingProxy {
      *  there as its own separate literal, so a future wording edit can't silently desync the two. */
     public static final String BUDGET_REFUSAL_MARKER = "ace-service: phase output-token budget exhausted";
 
-    public RecordingProxy(BenchProperties props) { this.props = props; }
+    private final int proxyTimeoutMarginSec;   // ace.operations.proxy-timeout-margin-sec
+
+    public RecordingProxy(BenchProperties props, OperationsProperties operations) {
+        this.props = props;
+        this.proxyTimeoutMarginSec = operations.proxyTimeoutMarginSec();
+    }
 
     /** start on a free port; the journal is APPENDED across restarts (one proxy per phase/task, like the Python original) */
     public synchronized String start(Path journal, Long tokenBudget, String tag) throws Exception {
@@ -246,7 +257,7 @@ public class RecordingProxy {
                 return;
             }
         }
-        final long t0 = System.nanoTime();
+        final long t0 = nanoTime();
         // relay to an external provider's own base URL instead of the local model server when this
         // run's model resolved to one (ProviderStore.route()) - every other behavior here (budget
         // enforcement, sampler injection, the context-window check, journaling) is unchanged.
@@ -258,7 +269,7 @@ public class RecordingProxy {
         // class of bug as ReferenceAgent's chatModel timeout (see its comment). null = unlimited
         // (the run's first-token-timeout is 0): HttpRequest.Builder rejects a zero/negative
         // Duration outright, so the timeout is omitted entirely rather than passed as one.
-        final Integer upstreamTimeoutSec = upstreamTimeoutSec(overrides);
+        final Integer upstreamTimeoutSec = upstreamTimeoutSec(overrides, proxyTimeoutMarginSec);
         if (upstreamTimeoutSec != null) ub.timeout(java.time.Duration.ofSeconds(upstreamTimeoutSec));
         // java.net.http.HttpRequest.Builder throws IllegalArgumentException on these - the JDK
         // manages them itself. Matched case-insensitively: com.sun.net.httpserver.Headers presents
@@ -329,17 +340,17 @@ public class RecordingProxy {
         try (InputStream in = up.body(); OutputStream out = x.getResponseBody()) {
             final byte[] buf = new byte[8192]; int n; StringBuilder line = new StringBuilder();
             while ((n = in.read(buf)) >= 0) {
-                final long now = System.nanoTime();
-                maxReadGapMs = Math.max(maxReadGapMs, (now - lastReadAt) / 1_000_000);
+                final long now = nanoTime();
+                maxReadGapMs = max(maxReadGapMs, (now - lastReadAt) / 1_000_000);
                 if (firstByteMs < 0) firstByteMs = (now - t0) / 1_000_000;
                 lastReadAt = now; reads++;
-                final var s = new String(buf, 0, n, StandardCharsets.UTF_8);
+                final var s = new String(buf, 0, n, UTF_8);
                 int start = 0;
                 while (start <= s.length()) {
                     final int nl = s.indexOf('\n', start);
                     if (nl < 0) { line.append(s, start, s.length()); break; }
                     line.append(s, start, nl + 1);
-                    final byte[] c = line.toString().getBytes(StandardCharsets.UTF_8);
+                    final byte[] c = line.toString().getBytes(UTF_8);
                     line.setLength(0);
                     chunks.add(c);
                     out.write(c); out.flush();
@@ -371,7 +382,9 @@ public class RecordingProxy {
             // come back empty" investigation finds it in interactions.jsonl, not just in oMLX's own
             // local server.log (see JournalFacts.lastUpstreamError, RunBench.fallbackTail/rescueReason)
             if (asm.error() != null) resp.put("error", asm.error());
-        } else resp.put("_bytes", chunks.stream().mapToLong(c -> c.length).sum());
+        } else resp.put("_bytes", chunks.stream()
+                .mapToLong(c -> c.length)
+                .sum());
         rec.put("status", up.statusCode()).put("streamed", true).put("latency_sec", elapsed(t0));
         rec.put("reads", reads).put("max_read_gap_ms", maxReadGapMs);
         if (firstByteMs >= 0) rec.put("first_byte_ms", firstByteMs);
@@ -399,7 +412,7 @@ public class RecordingProxy {
         return u;
     }
 
-    private static double elapsed(long t0) { return Math.round((System.nanoTime() - t0) / 1e7) / 100.0; }
+    private static double elapsed(long t0) { return round((nanoTime() - t0) / 1e7) / 100.0; }
 
     private void reply(final com.sun.net.httpserver.HttpExchange x, final int status, final byte[] out) throws Exception {
         try {
@@ -420,8 +433,8 @@ public class RecordingProxy {
             if (u != null && u.hasNonNull("completion_tokens")) spent.addAndGet(u.get("completion_tokens").asLong());
             rec.put("budget_spent_completion_tokens", spent.get());
             rec.put("seq", seq.incrementAndGet());
-            Files.write(journal, json.writeValueAsBytes(rec), StandardOpenOption.CREATE, StandardOpenOption.APPEND);   // APPEND: a journal is never truncated
-            Files.writeString(journal, "\n", StandardOpenOption.APPEND);
+            Files.write(journal, json.writeValueAsBytes(rec), CREATE, APPEND);   // APPEND: a journal is never truncated
+            Files.writeString(journal, "\n", APPEND);
         } catch (Exception e) {
             // the journal must never break the proxy - but losing a journal record (the run's own
             // ground truth for metrics/validity) is worth knowing about, so log it rather than vanish it

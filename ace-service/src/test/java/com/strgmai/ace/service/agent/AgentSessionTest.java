@@ -11,11 +11,11 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import static java.nio.file.StandardOpenOption.APPEND;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** AgentSession's JSONL persistence (header/message/compaction/end), --continue resume via
@@ -263,7 +263,7 @@ class AgentSessionTest {
         final var dir = Files.createTempDirectory("session");
         final var session = new AgentSession(dir, "s2", false);
         session.user("the pack");
-        Files.writeString(session.path(), "not valid json\n", StandardOpenOption.APPEND);
+        Files.writeString(session.path(), "not valid json\n", APPEND);
         session.toolResult("c1", "bash", "after the corrupt line", null);
 
         final List<ChatMessage> msgs = session.loadMessages();
@@ -299,7 +299,9 @@ class AgentSessionTest {
         final var continuation = new AgentSession(dir, "shared-id", true);
         assertEquals("2030-01-01T00-00-00.000Z_shared-id.jsonl", continuation.path().getFileName().toString());
         assertEquals(List.of("the real, final attempt - a hundred real turns of work"),
-                continuation.loadMessages().stream().map(m -> ((UserMessage) m).singleText()).toList());
+                continuation.loadMessages().stream()
+                        .map(m -> ((UserMessage) m).singleText())
+                        .toList());
     }
 
     @Test
@@ -369,7 +371,9 @@ class AgentSessionTest {
 
         final var resumed = new AgentSession(dir, "s3b", true);
         assertEquals(List.of("the pack"), resumed.loadMessages().stream()
-                .filter(m -> m instanceof UserMessage).map(m -> ((UserMessage) m).singleText()).toList());
+                .filter(m -> m instanceof UserMessage)
+                .map(m -> ((UserMessage) m).singleText())
+                .toList());
     }
 
     /** #424: the tool-output archive is the session file itself - the (already AgentTools-capped)

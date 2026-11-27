@@ -5,6 +5,8 @@ import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.H4;
 import com.vaadin.flow.component.html.Span;
 
+import static java.lang.Math.min;
+
 /** Renders Api.TaskDiff as a read-only, colorized diff plus new-file panels. Every line goes
  *  through Vaadin's own setText() (never raw HTML), so nothing here needs its own escaping - agent
  *  -authored file content can contain anything, including literal HTML/script-looking text, and
@@ -53,7 +55,7 @@ final class DiffView {
     }
 
     private static String shortSha(final String sha) {
-        return sha == null || sha.isBlank() ? "?" : sha.substring(0, Math.min(7, sha.length()));
+        return sha == null || sha.isBlank() ? "?" : sha.substring(0, min(7, sha.length()));
     }
 
     private static Component diffBlock(final String diffText) {

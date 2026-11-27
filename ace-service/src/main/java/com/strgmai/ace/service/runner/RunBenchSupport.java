@@ -17,9 +17,14 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
+
+import static java.lang.System.getenv;
+import static java.nio.file.StandardOpenOption.CREATE;
+import static java.nio.file.StandardOpenOption.WRITE;
+import static java.util.Comparator.comparing;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 /** Ports of run_bench.py's process-level machinery: the single-run lock (two runs would share the
  *  model server and fight over Docker), git workspace snapshots (the commit SHAs live OUTSIDE the
@@ -37,7 +42,7 @@ public final class RunBenchSupport {
     public static FileChannel acquireLock(final Path lockPath) {
         try {
             Files.createDirectories(lockPath.toAbsolutePath().getParent());
-            final FileChannel ch = FileChannel.open(lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            final FileChannel ch = FileChannel.open(lockPath, CREATE, WRITE);
             if (ch.tryLock() == null) {
                 ch.close();
                 throw new IllegalStateException("another run holds " + lockPath + "; refusing to start a concurrent run");
@@ -49,7 +54,7 @@ public final class RunBenchSupport {
     public static Map<String, String> scrubbedEnv(final String home, final String runId, final String javaHome, final String dockerHost) {
         final Map<String, String> env = new LinkedHashMap<>();
         for (String k : List.of("PATH", "LANG", "LC_ALL", "TERM", "TMPDIR", "SHELL")) {   // PATH/LANG/TMPDIR only - no operator tokens
-            final String v = System.getenv(k);
+            final String v = getenv(k);
             if (v != null) env.put(k, v);
         }
         env.put("HOME", home);
@@ -72,7 +77,7 @@ public final class RunBenchSupport {
         // not a per-run configurable knob the way javaHome is above - every task on this benchmark
         // family needs SOME working gradle, so there is nothing for a run to meaningfully override.
         // Read directly, same reasoning Preflight.java's own fatal gate for this uses.
-        final String gradleHome = System.getenv("ACE_GRADLE_HOME");
+        final String gradleHome = getenv("ACE_GRADLE_HOME");
         if (gradleHome != null && !gradleHome.isBlank()) {
             env.put("PATH", Paths.get(gradleHome).resolve("bin") + ":" + env.getOrDefault("PATH", ""));
         }
@@ -134,7 +139,8 @@ public final class RunBenchSupport {
             for (Path p : walk.filter(q -> q.getFileName() != null && q.getFileName().toString().equals(".git")).toList()) {
                 if (p.equals(ws.resolve(".git"))) continue;   // the outer repo's own .git - never touch it
                 final Path rel = ws.relativize(p);
-                if (rel.getNameCount() > 1 && VENDORED_PATHS.stream().anyMatch(v -> rel.getName(0).toString().equals(v.replace("/", "")))) continue;
+                if (rel.getNameCount() > 1 && VENDORED_PATHS.stream()
+                        .anyMatch(v -> rel.getName(0).toString().equals(v.replace("/", "")))) continue;
                 try (var inner = Files.walk(p)) {
                     for (Path f : inner.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(f);
                     log.warn("stripped a stray nested git repo at {} before snapshotting {} - an agent scaffolding tool likely auto-initialized it", rel, ws);
@@ -213,7 +219,9 @@ public final class RunBenchSupport {
         final Path progress = ws.resolve("docs/PROGRESS.md");
         if (!Files.isRegularFile(progress)) return;
         final List<String> lines = Files.readAllLines(progress);
-        final List<String> kept = lines.stream().filter(l -> !l.startsWith(taskId + " | ")).toList();
+        final List<String> kept = lines.stream()
+                .filter(l -> !l.startsWith(taskId + " | "))
+                .toList();
         if (kept.size() != lines.size()) Files.write(progress, kept);
     }
 
@@ -287,7 +295,7 @@ public final class RunBenchSupport {
     }
 
     public static Optional<String> javaHome() {
-        final String jh = System.getenv("AB_JAVA_HOME");
+        final String jh = getenv("AB_JAVA_HOME");
         if (jh != null && Files.isRegularFile(Paths.get(jh, "bin/java"))) return Optional.of(jh);
         return Optional.empty();
     }
@@ -329,7 +337,7 @@ public final class RunBenchSupport {
             try {
                 // wallSec <= 0 means unlimited (the system-wide "0 = no budget" convention) -
                 // future.get(0, SECONDS) would mean "timeout immediately", the opposite of that
-                return wallSec > 0 ? future.get(wallSec, TimeUnit.SECONDS) : future.get();
+                return wallSec > 0 ? future.get(wallSec, SECONDS) : future.get();
             } catch (TimeoutException te) {
                 abortProxy.accept("task-wall budget exceeded (" + wallSec + "s)");
                 future.cancel(true);
@@ -356,7 +364,7 @@ public final class RunBenchSupport {
     static Path findSessionFile(final Path sessionDir, final String sessionId) {
         try (var s = Files.list(sessionDir)) {
             return s.filter(p -> p.getFileName().toString().contains(sessionId) && p.getFileName().toString().endsWith(".jsonl"))
-                    .max(Comparator.comparing(RunBenchSupport::lastModifiedOrEpoch))
+                    .max(comparing(RunBenchSupport::lastModifiedOrEpoch))
                     .orElse(null);
         } catch (IOException e) { return null; }
     }

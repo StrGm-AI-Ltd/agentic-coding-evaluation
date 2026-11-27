@@ -10,10 +10,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Instant;
 import java.util.*;
+
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.nio.file.StandardOpenOption.APPEND;
+import static java.nio.file.StandardOpenOption.CREATE;
+import static java.util.Comparator.comparing;
 
 /** Port of agent_loop.py's session store + structural compaction. The session file is JSONL in the
  *  SAME record shape the Python harness consumes: session header, user/assistant/toolResult
@@ -40,7 +46,7 @@ public final class AgentSession {
                 // operation touching several files' mtimes to the same instant has already been
                 // observed live, drifting mtime away from actual write order.
                 found = s.filter(p -> p.getFileName().toString().contains(sessionId) && p.getFileName().toString().endsWith(".jsonl"))
-                        .max(Comparator.comparing(p -> p.getFileName().toString())).orElse(null);
+                        .max(comparing(p -> p.getFileName().toString())).orElse(null);
             } catch (IOException e) {
                 // found stays null below, so --continue silently starts a NEW session instead of
                 // resuming the existing one - a real correctness issue, not just a display glitch
@@ -57,7 +63,7 @@ public final class AgentSession {
     }
 
     public void write(Map<String, Object> rec) throws IOException {
-        Files.writeString(file, JSON.writeValueAsString(rec) + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        Files.writeString(file, JSON.writeValueAsString(rec) + "\n", CREATE, APPEND);
     }
 
     public void header(final String agentVersion, final String model, final String cwd, final String reasoningEffort,
@@ -167,7 +173,7 @@ public final class AgentSession {
     public List<ChatMessage> loadMessages() throws IOException {
         final List<ChatMessage> msgs = new ArrayList<>();
         if (!Files.exists(file)) return msgs;
-        for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+        for (String line : Files.readAllLines(file, UTF_8)) {
             if (line.isBlank()) continue;
             JsonNode r;
             // a resumed session silently missing this turn from its conversation history is a real
@@ -228,7 +234,7 @@ public final class AgentSession {
         if (sessionFile == null || !Files.isRegularFile(sessionFile)) return null;
         Long last = null;
         try {
-            for (String line : Files.readAllLines(sessionFile, StandardCharsets.UTF_8)) {
+            for (String line : Files.readAllLines(sessionFile, UTF_8)) {
                 JsonNode r;
                 try { r = JSON.readTree(line); } catch (Exception e) { log.debug("could not parse session line while reading its last known prompt size, skipping it: {}", e.toString()); continue; }
                 if (!"message".equals(r.path("type").asText()) || !"assistant".equals(r.path("message").path("role").asText())) continue;
@@ -244,7 +250,7 @@ public final class AgentSession {
         final Map<String, Long> t = new LinkedHashMap<>(Map.of("input", 0L, "output", 0L, "turns", 0L));
         if (sessionFile == null || !Files.isRegularFile(sessionFile)) return t;
         try {
-            for (String line : Files.readAllLines(sessionFile, StandardCharsets.UTF_8)) {
+            for (String line : Files.readAllLines(sessionFile, UTF_8)) {
                 JsonNode r;
                 try { r = JSON.readTree(line); } catch (Exception e) { log.debug("could not parse session line for usage accounting, skipping it: {}", e.toString()); continue; }
                 if (!"message".equals(r.path("type").asText()) || !"assistant".equals(r.path("message").path("role").asText())) continue;
@@ -272,7 +278,7 @@ public final class AgentSession {
         if (sessionFile == null || !Files.isRegularFile(sessionFile)) return null;
         Instant first = null, last = null;
         try {
-            for (String line : Files.readAllLines(sessionFile, StandardCharsets.UTF_8)) {
+            for (String line : Files.readAllLines(sessionFile, UTF_8)) {
                 if (line.isBlank()) continue;
                 JsonNode r;
                 try { r = JSON.readTree(line); } catch (Exception e) { log.debug("could not parse session line while reading its span, skipping it: {}", e.toString()); continue; }
@@ -295,7 +301,7 @@ public final class AgentSession {
         final Map<String, Long> t = new LinkedHashMap<>(Map.of("input", 0L, "output", 0L));
         if (sessionFile == null || !Files.isRegularFile(sessionFile)) return t;
         try {
-            for (String line : Files.readAllLines(sessionFile, StandardCharsets.UTF_8)) {
+            for (String line : Files.readAllLines(sessionFile, UTF_8)) {
                 JsonNode r;
                 try { r = JSON.readTree(line); } catch (Exception e) { log.debug("could not parse session line for sidecar usage accounting, skipping it: {}", e.toString()); continue; }
                 if (!"sidecar_usage".equals(r.path("type").asText())) continue;
@@ -335,7 +341,7 @@ public final class AgentSession {
         try {
             int requestCount = 0;
             Integer previousRequestNumber = null;
-            for (String line : Files.readAllLines(sessionFile, StandardCharsets.UTF_8)) {
+            for (String line : Files.readAllLines(sessionFile, UTF_8)) {
                 if (line.isBlank()) continue;
                 JsonNode r;
                 try { r = JSON.readTree(line); } catch (Exception e) { log.debug("could not parse session line while computing compaction effectiveness, skipping it: {}", e.toString()); continue; }
@@ -384,7 +390,7 @@ public final class AgentSession {
         if (sessionFile == null || !Files.isRegularFile(sessionFile) || toolCallId == null || toolCallId.isBlank()) return null;
         String found = null;
         try {
-            for (String line : Files.readAllLines(sessionFile, StandardCharsets.UTF_8)) {
+            for (String line : Files.readAllLines(sessionFile, UTF_8)) {
                 if (line.isBlank()) continue;
                 JsonNode r;
                 try { r = JSON.readTree(line); } catch (Exception e) { log.debug("could not parse session line while recalling a tool output, skipping it: {}", e.toString()); continue; }
@@ -407,7 +413,7 @@ public final class AgentSession {
         if (sessionFile == null || !Files.isRegularFile(sessionFile)) return "";
         String last = "";
         try {
-            for (String line : Files.readAllLines(sessionFile, StandardCharsets.UTF_8)) {
+            for (String line : Files.readAllLines(sessionFile, UTF_8)) {
                 JsonNode r;
                 try { r = JSON.readTree(line); } catch (Exception e) { log.debug("could not parse session line looking for the last assistant text, skipping it: {}", e.toString()); continue; }
                 if (!"message".equals(r.path("type").asText()) || !"assistant".equals(r.path("message").path("role").asText())) continue;
@@ -432,7 +438,7 @@ public final class AgentSession {
      *  a sub-range as its OWN standalone request (CompactionStrategies' structured_eviction). */
     public static int cutIndex(final List<ChatMessage> msgs, final int keepRecentTurns) {
         if (keepRecentTurns < 0) log.warn("keepRecentTurns={} is negative - clamping to 0 (\"keep nothing verbatim\")", keepRecentTurns);
-        final int keep = Math.max(0, keepRecentTurns);
+        final int keep = max(0, keepRecentTurns);
         final List<Integer> idxAssist = new ArrayList<>();
         for (int i = 0; i < msgs.size(); i++) if (msgs.get(i) instanceof AiMessage) idxAssist.add(i);
         return idxAssist.size() <= keep ? 0 : (keep == 0 ? msgs.size() : idxAssist.get(idxAssist.size() - keep));
@@ -470,11 +476,11 @@ public final class AgentSession {
         int lastAssistantIdx = -1;
         for (int i = msgs.size() - 1; i >= 0; i--) if (msgs.get(i) instanceof AiMessage) { lastAssistantIdx = i; break; }
         long tokens = 0;
-        for (int i = msgs.size() - 1; i >= Math.max(cut, 2); i--) {
+        for (int i = msgs.size() - 1; i >= max(cut, 2); i--) {
             tokens += estimateTokens(msgs.get(i));
             if (tokens > keepTokenBudget) { cut = i + 1; break; }
         }
-        return lastAssistantIdx < 0 ? cut : Math.min(cut, lastAssistantIdx);
+        return lastAssistantIdx < 0 ? cut : min(cut, lastAssistantIdx);
     }
 
     /** #417 follow-up review (found live on a real task, 2026-10-19/T21): masking a tool RESULT's

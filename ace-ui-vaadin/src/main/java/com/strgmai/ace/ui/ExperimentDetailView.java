@@ -73,7 +73,9 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         // target type this infers to something other than List<Api.ExperimentJob> - keep explicit
         final List<Api.ExperimentJob> jobs = experiment.jobs() == null ? List.of() : experiment.jobs();
         final var effectiveStatus = ExperimentStatuses.effective(experiment.status(),
-                jobs.stream().map(Api.ExperimentJob::status).toList());
+                jobs.stream()
+                        .map(Api.ExperimentJob::status)
+                        .toList());
         final var statusLine = new HorizontalLayout(Badges.status(effectiveStatus));
         statusLine.setPadding(false);
         statusLine.setSpacing(true);
@@ -90,7 +92,9 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         add(Panels.mono(Fmt.json(experiment.params())));
 
         final var blockedReasons = blockedReasons(client, jobs);
-        final var blockedCount = jobs.stream().filter(j -> "blocked".equals(j.status())).count();
+        final var blockedCount = jobs.stream()
+                .filter(j -> "blocked".equals(j.status()))
+                .count();
         if (blockedCount > 0) {
             final var blockedPanel = new VerticalLayout();
             blockedPanel.setPadding(false);
@@ -221,40 +225,44 @@ public class ExperimentDetailView extends VerticalLayout implements BeforeEnterO
         if (comparison == null || !comparison.isObject()) {
             return cards;
         }
-        comparison.propertyNames().stream().sorted().forEach(label -> {
-            if ("arms".equals(label)) return;   // job-status metadata, not a per-pair comparison
-            final var c = comparison.get(label);
-            final var title = label.replace("_vs_", " vs ");
-            final var printed = Fmt.textOr(c.path("printed"), null);
-
-            final var error = c.path("error");
-            if (!error.isMissingNode() && !error.isNull()) {
-                cards.add(new ComparisonCard(title, "warn", Fmt.textOr(error, ""), printed, List.of()));
-                return;
-            }
-            final var refused = c.path("refused");
-            if (!refused.isMissingNode() && !refused.isNull()) {
-                cards.add(new ComparisonCard(title, "error", "StatsService refused: " + Fmt.textOr(refused, ""), printed, List.of()));
-                return;
-            }
-            final var cmp = c.path("result");
-            if (cmp.isObject()) {
-                final var diff = cmp.path("diff").asDouble(0);
-                final var p = cmp.path("p").asDouble(1);
-                final var text = "A − B = " + Fmt.num(diff) + " " + Fmt.textOr(cmp.path("metric"), "")
-                        + " points · 90% CI [" + Fmt.num(cmp.path("ci90").path(0).asDouble())
-                        + ", " + Fmt.num(cmp.path("ci90").path(1).asDouble()) + "] · p = "
-                        + String.format(Locale.ROOT, "%.3f", p) + " · "
-                        + (p < 0.10 ? "supported (p < 0.10)" : "not supported at α = 0.10");
-                final List<String> speedLines = new ArrayList<>();
-                final var speed = c.path("speed");
-                speed.propertyNames().stream().sorted().forEach(metric -> speedLines.add(formatSpeedLine(speed.get(metric))));
-                cards.add(new ComparisonCard(title, p < 0.10 ? "good" : "muted", text, printed, speedLines));
-                return;
-            }
-            cards.add(new ComparisonCard(title, "warn",
-                    "No comparison: one side had no comparable runs after exclusions.", printed, List.of()));
-        });
+        comparison.propertyNames().stream()
+                .sorted()
+                .forEach(label -> {
+                    if ("arms".equals(label)) return;   // job-status metadata, not a per-pair comparison
+                    final var c = comparison.get(label);
+                    final var title = label.replace("_vs_", " vs ");
+                    final var printed = Fmt.textOr(c.path("printed"), null);
+        
+                    final var error = c.path("error");
+                    if (!error.isMissingNode() && !error.isNull()) {
+                        cards.add(new ComparisonCard(title, "warn", Fmt.textOr(error, ""), printed, List.of()));
+                        return;
+                    }
+                    final var refused = c.path("refused");
+                    if (!refused.isMissingNode() && !refused.isNull()) {
+                        cards.add(new ComparisonCard(title, "error", "StatsService refused: " + Fmt.textOr(refused, ""), printed, List.of()));
+                        return;
+                    }
+                    final var cmp = c.path("result");
+                    if (cmp.isObject()) {
+                        final var diff = cmp.path("diff").asDouble(0);
+                        final var p = cmp.path("p").asDouble(1);
+                        final var text = "A − B = " + Fmt.num(diff) + " " + Fmt.textOr(cmp.path("metric"), "")
+                                + " points · 90% CI [" + Fmt.num(cmp.path("ci90").path(0).asDouble())
+                                + ", " + Fmt.num(cmp.path("ci90").path(1).asDouble()) + "] · p = "
+                                + String.format(Locale.ROOT, "%.3f", p) + " · "
+                                + (p < 0.10 ? "supported (p < 0.10)" : "not supported at α = 0.10");
+                        final List<String> speedLines = new ArrayList<>();
+                        final var speed = c.path("speed");
+                        speed.propertyNames().stream()
+                                .sorted()
+                                .forEach(metric -> speedLines.add(formatSpeedLine(speed.get(metric))));
+                        cards.add(new ComparisonCard(title, p < 0.10 ? "good" : "muted", text, printed, speedLines));
+                        return;
+                    }
+                    cards.add(new ComparisonCard(title, "warn",
+                            "No comparison: one side had no comparable runs after exclusions.", printed, List.of()));
+                });
         return cards;
     }
 

@@ -5,9 +5,9 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Port of the SSE reassembly: content, reasoning, tool_calls (arguments concatenated per index),
@@ -17,7 +17,7 @@ class SseAssemblerTest {
     private static final ObjectMapper M = new ObjectMapper();
 
     private static byte[] chunk(final String json) {
-        return ("data: " + json + "\n\n").getBytes(StandardCharsets.UTF_8);
+        return ("data: " + json + "\n\n").getBytes(UTF_8);
     }
 
     /** {"choices":[{"delta":{"tool_calls":[TC...]}}]} with the tool_calls pieces given as raw strings */

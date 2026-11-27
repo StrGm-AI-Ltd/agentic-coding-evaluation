@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
 
+import static java.util.UUID.randomUUID;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -28,7 +29,7 @@ class PauseAfterTaskTest {
     void checkAndPauseIfRequestedCallsTheExistingPauseOnceRequested() {
         final JobQueue queue = mock(JobQueue.class);
         final var pat = new PauseAfterTask(queue);
-        final UUID jobId = UUID.randomUUID();
+        final UUID jobId = randomUUID();
         pat.request("svc-20261013-opt", jobId);
         assertTrue(pat.isRequested("svc-20261013-opt"));
 
@@ -41,7 +42,7 @@ class PauseAfterTaskTest {
     void checkAndPauseIfRequestedConsumesTheRequestSoItOnlyFiresOnce() {
         final JobQueue queue = mock(JobQueue.class);
         final var pat = new PauseAfterTask(queue);
-        final UUID jobId = UUID.randomUUID();
+        final UUID jobId = randomUUID();
         pat.request("svc-20261013-opt", jobId);
 
         pat.checkAndPauseIfRequested("svc-20261013-opt");   // the task boundary that should trigger it
@@ -55,7 +56,7 @@ class PauseAfterTaskTest {
     void checkAndPauseIfRequestedIsScopedToItsOwnRunId() {
         final JobQueue queue = mock(JobQueue.class);
         final var pat = new PauseAfterTask(queue);
-        pat.request("svc-A", UUID.randomUUID());
+        pat.request("svc-A", randomUUID());
 
         pat.checkAndPauseIfRequested("svc-B");   // a different run - must not be affected
 
@@ -69,7 +70,7 @@ class PauseAfterTaskTest {
     @Test
     void checkAndPauseIfRequestedToleratesAFailedPauseCall() {
         final JobQueue queue = mock(JobQueue.class);
-        final UUID jobId = UUID.randomUUID();
+        final UUID jobId = randomUUID();
         org.mockito.Mockito.when(queue.pause(jobId)).thenThrow(new IllegalStateException("already terminal"));
         final var pat = new PauseAfterTask(queue);
         pat.request("svc-20261013-opt", jobId);

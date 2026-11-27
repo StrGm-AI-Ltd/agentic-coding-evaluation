@@ -1,7 +1,6 @@
 package com.strgmai.ace.ui;
 
 import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -23,6 +22,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.springframework.http.MediaType.APPLICATION_JSON;
 
 /**
  * Thin typed client for ace-service's JSON API. Blocking calls are
@@ -156,7 +158,7 @@ public class ServiceClient implements Serializable {
         body.put("api_key", apiKey);
         body.put("default_model", defaultModel);
         return http.post().uri("/api/providers")
-                .contentType(MediaType.APPLICATION_JSON)
+                .contentType(APPLICATION_JSON)
                 .body(body)
                 .retrieve()
                 .body(Api.Provider.class);
@@ -171,7 +173,7 @@ public class ServiceClient implements Serializable {
         if (apiKey != null) body.put("api_key", apiKey);   // omitted entirely, not just null, when unchanged
         body.put("default_model", defaultModel);
         return http.put().uri("/api/providers/{id}", id)
-                .contentType(MediaType.APPLICATION_JSON)
+                .contentType(APPLICATION_JSON)
                 .body(body)
                 .retrieve()
                 .body(Api.Provider.class);
@@ -194,7 +196,7 @@ public class ServiceClient implements Serializable {
 
     public Api.CompareResponse compare(final Api.CompareRequest request) {
         return http.post().uri("/api/compare")
-                .contentType(MediaType.APPLICATION_JSON)
+                .contentType(APPLICATION_JSON)
                 .body(request)
                 .retrieve()
                 .body(Api.CompareResponse.class);
@@ -202,7 +204,7 @@ public class ServiceClient implements Serializable {
 
     public Api.MatchTasksResponse matchTasks(final String a, final String b, final Api.MatchTasksRequest request) {
         return http.post().uri("/api/runs/{a}/compare/{b}/match-tasks", a, b)
-                .contentType(MediaType.APPLICATION_JSON)
+                .contentType(APPLICATION_JSON)
                 .body(request)
                 .retrieve()
                 .body(Api.MatchTasksResponse.class);
@@ -304,7 +306,7 @@ public class ServiceClient implements Serializable {
      *  own next turn boundary (see BenchController.intervene()/RunBench.buildJudgeCheckpoint()). */
     public void sendIntervention(final String jobId, final String taskId, final String text) {
         http.post().uri("/api/jobs/{id}/tasks/{taskId}/intervene", jobId, taskId)
-                .contentType(MediaType.APPLICATION_JSON)
+                .contentType(APPLICATION_JSON)
                 .body(Map.of("text", text))
                 .retrieve()
                 .toBodilessEntity();
@@ -315,7 +317,7 @@ public class ServiceClient implements Serializable {
      *  have server-side. */
     public Api.Job restartTask(final String jobId, final String taskId, final Map<String, Object> overrides) {
         return http.post().uri("/api/jobs/{id}/tasks/{taskId}/restart", jobId, taskId)
-                .contentType(MediaType.APPLICATION_JSON)
+                .contentType(APPLICATION_JSON)
                 .body(Map.of("overrides", overrides))
                 .retrieve()
                 .body(Api.Job.class);
@@ -326,7 +328,7 @@ public class ServiceClient implements Serializable {
      *  (it already hasn't run). */
     public Api.Job setPendingTaskOverride(final String jobId, final String taskId, final Map<String, Object> overrides) {
         return http.post().uri("/api/jobs/{id}/tasks/{taskId}/override", jobId, taskId)
-                .contentType(MediaType.APPLICATION_JSON)
+                .contentType(APPLICATION_JSON)
                 .body(Map.of("overrides", overrides))
                 .retrieve()
                 .body(Api.Job.class);
@@ -345,7 +347,7 @@ public class ServiceClient implements Serializable {
 
     public Api.Job restartSession(final String jobId, final String name, final Map<String, Object> overrides) {
         return http.post().uri("/api/jobs/{id}/sessions/{name}/restart", jobId, name)
-                .contentType(MediaType.APPLICATION_JSON)
+                .contentType(APPLICATION_JSON)
                 .body(Map.of("overrides", overrides))
                 .retrieve()
                 .body(Api.Job.class);
@@ -354,7 +356,7 @@ public class ServiceClient implements Serializable {
     /** POST /api/jobs — enqueue a run; spec maps 1:1 onto the service's RunSpec (snake_case flags). */
     public Api.Job enqueueJob(final Map<String, Object> spec, final int priority) {
         return http.post().uri("/api/jobs")
-                .contentType(MediaType.APPLICATION_JSON)
+                .contentType(APPLICATION_JSON)
                 .body(Map.of("spec", spec, "priority", priority))
                 .retrieve()
                 .body(Api.Job.class);
@@ -367,7 +369,7 @@ public class ServiceClient implements Serializable {
     public Api.Job setPriority(final String jobId, final int priority) {
         // #108: BenchController only exposes POST /api/jobs/{id}/priority, not PATCH /api/jobs/{id}
         return http.post().uri("/api/jobs/{id}/priority", jobId)
-                .contentType(MediaType.APPLICATION_JSON)
+                .contentType(APPLICATION_JSON)
                 .body(Map.of("priority", priority))
                 .retrieve()
                 .body(Api.Job.class);
@@ -390,7 +392,7 @@ public class ServiceClient implements Serializable {
         body.put("params", params);
         body.put("k", k);
         return http.post().uri("/api/experiments")
-                .contentType(MediaType.APPLICATION_JSON)
+                .contentType(APPLICATION_JSON)
                 .body(body)
                 .retrieve()
                 .body(Api.Experiment.class);
@@ -431,7 +433,7 @@ public class ServiceClient implements Serializable {
     }
 
     static String encodeSegment(final String segment) {
-        return java.net.URLEncoder.encode(segment, java.nio.charset.StandardCharsets.UTF_8)
+        return java.net.URLEncoder.encode(segment, UTF_8)
                 .replace("+", "%20");
     }
 

@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
 
+import static java.util.Objects.requireNonNull;
+
 /** Router-link factories (C-2) and run-list helpers, shared by all views. */
 public final class Links {
 
@@ -30,7 +32,7 @@ public final class Links {
 
     public static RouterLink experimentLink(final String experimentId) {
         // a null id would otherwise silently produce the route param value "null"
-        Objects.requireNonNull(experimentId, "experimentId");
+        requireNonNull(experimentId, "experimentId");
         return paramLink(experimentId, ExperimentDetailView.class, "experimentId", experimentId);
     }
 
@@ -49,7 +51,12 @@ public final class Links {
 
     /** Distinct, sorted, non-null values of a run attribute (used for picker suggestions). */
     public static List<String> distinctRuns(final List<Api.Run> runs, final Function<Api.Run, String> getter) {
-        return runs.stream().map(getter).filter(Objects::nonNull).distinct().sorted().toList();
+        return runs.stream()
+                .map(getter)
+                .filter(Objects::nonNull)
+                .distinct()
+                .sorted()
+                .toList();
     }
 
 }

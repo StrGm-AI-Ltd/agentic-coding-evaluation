@@ -2,6 +2,8 @@ package com.strgmai.ace.service.runner;
 
 import java.util.*;
 
+import static java.lang.Math.min;
+
 /** Port of run_bench.py's validity(): INVALID = recorded, never ranked. A phase or task that
  *  reaches its wall or token budget is a RESULT (over_budget) in BOTH modes — the two arms of a
  *  harness comparison must be censored the same way; the RUN is invalid only for harness/infra
@@ -38,8 +40,9 @@ public final class Validity {
             reasons.add(facts.get("foreign_workspace_refs") + " request(s) referenced another run's workspace");
         if (orch) {
             final Map<String, Object> plan = manifest.get("plan") instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
-            if (plan.get("error") != null) reasons.add("plan unparseable: " + String.valueOf(plan.get("error")).substring(0, Math.min(80, String.valueOf(plan.get("error")).length())));
-            else if (manifest.get("step") == null && phases(manifest, "tasks").stream().noneMatch(t -> "INTEGRATION".equals(t.get("id"))))
+            if (plan.get("error") != null) reasons.add("plan unparseable: " + String.valueOf(plan.get("error")).substring(0, min(80, String.valueOf(plan.get("error")).length())));
+            else if (manifest.get("step") == null && phases(manifest, "tasks").stream()
+                    .noneMatch(t -> "INTEGRATION".equals(t.get("id"))))
                 reasons.add("integration task never ran");
         }
         final Map<String, Object> out = new LinkedHashMap<>();

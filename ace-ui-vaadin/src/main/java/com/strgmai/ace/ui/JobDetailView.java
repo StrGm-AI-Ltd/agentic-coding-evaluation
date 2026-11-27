@@ -41,6 +41,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
+import static java.lang.Math.round;
+
 /**
  * Job detail — the Vaadin twin of the Jinja2 SSE live page. The page chrome is built
  * once per navigation; the 2 s poll of GET /api/jobs/{id} and the /jobs/{id}/events
@@ -520,7 +522,9 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
      *  PARALLEL_PLAN/INTEGRATION/REVIEW included, same set the Plan grid itself already lists). */
     static String tasksDoneText(final List<Api.PlanTask> tasks) {
         if (tasks.isEmpty()) return "–";
-        final long done = tasks.stream().filter(JobDetailView::isTaskDone).count();
+        final long done = tasks.stream()
+                .filter(JobDetailView::isTaskDone)
+                .count();
         return done + " / " + tasks.size();
     }
 
@@ -543,7 +547,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
         final var calls = bash.path("count").asInt(0);
         final var errors = bash.path("errors").asInt(0);
         if (calls == 0) return String.valueOf(errors);
-        return errors + " · " + Math.round(100.0 * errors / calls) + "% of bash calls";
+        return errors + " · " + round(100.0 * errors / calls) + "% of bash calls";
     }
 
     private static JobLiveState.SessionRow lastMatchingSession(final List<JobLiveState.SessionRow> sessions, final String taskId) {
@@ -683,7 +687,7 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
             fields.add(new StatField("Model turns", stats.path("turns").asText("0")));
         } else {
             fields.add(new StatField("Outcome", "still running"));
-            fields.add(new StatField("Wall time", Math.round(liveWallTime.wallSec()) + "s so far"));
+            fields.add(new StatField("Wall time", round(liveWallTime.wallSec()) + "s so far"));
             fields.add(new StatField("Model turns", stats.path("turns").asText("0") + " so far"));
         }
         fields.add(new StatField("Context compactions", stats.path("compactions").asText("0")));
@@ -1201,16 +1205,26 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     private static com.github.appreciated.apexcharts.helper.Series[] requestSpeedSeries(final List<RequestSpeedPoint> points,
             final List<Integer> compactionsBeforeRequest, final List<Integer> judgeOnTrackRequests, final List<Integer> judgeOffTrackRequests) {
         final var speedSeries = SeriesBuilder.get().withName("prefill tok/s")
-                .withData(points.stream().map(RequestSpeedPoint::prefillTokPerSec).toArray(Double[]::new)).build();
-        final var prefillPeak = points.stream().map(RequestSpeedPoint::prefillTokPerSec).filter(Objects::nonNull)
-                .mapToDouble(Double::doubleValue).max().orElse(0);
+                .withData(points.stream()
+                        .map(RequestSpeedPoint::prefillTokPerSec)
+                        .toArray(Double[]::new)).build();
+        final var prefillPeak = points.stream()
+                .map(RequestSpeedPoint::prefillTokPerSec)
+                .filter(Objects::nonNull)
+                .mapToDouble(Double::doubleValue)
+                .max()
+                .orElse(0);
         final var compactionSeries = SeriesBuilder.get().withName("compaction")
                 .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
                 .withData(compactionColumnData(compactionsBeforeRequest, points.size(), prefillPeak)).build();
         final var generationSeries = SeriesBuilder.get().withName("generation tok/s")
-                .withData(points.stream().map(RequestSpeedPoint::generationTokPerSec).toArray(Double[]::new)).build();
+                .withData(points.stream()
+                        .map(RequestSpeedPoint::generationTokPerSec)
+                        .toArray(Double[]::new)).build();
         final var contextSeries = SeriesBuilder.get().withName("context tokens")
-                .withData(points.stream().map(RequestSpeedPoint::contextTokens).toArray(Integer[]::new)).build();
+                .withData(points.stream()
+                        .map(RequestSpeedPoint::contextTokens)
+                        .toArray(Integer[]::new)).build();
         final var judgeOnTrackSeries = SeriesBuilder.get().withName("judge on track")
                 .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
                 .withData(compactionColumnData(judgeOnTrackRequests, points.size(), prefillPeak)).build();
@@ -1320,16 +1334,26 @@ public class JobDetailView extends VerticalLayout implements BeforeEnterObserver
     private static com.github.appreciated.apexcharts.helper.Series[] requestTimingSeries(final List<RequestSpeedPoint> points,
             final List<Integer> compactionsBeforeRequest, final List<Integer> judgeOnTrackRequests, final List<Integer> judgeOffTrackRequests) {
         final var ttftSeries = SeriesBuilder.get().withName("time to first token (s)")
-                .withData(points.stream().map(RequestSpeedPoint::timeToFirstTokenSec).toArray(Double[]::new)).build();
+                .withData(points.stream()
+                        .map(RequestSpeedPoint::timeToFirstTokenSec)
+                        .toArray(Double[]::new)).build();
         final var totalTimeSeries = SeriesBuilder.get().withName("total time (s)")
-                .withData(points.stream().map(RequestSpeedPoint::totalTimeSec).toArray(Double[]::new)).build();
-        final var ttftPeak = points.stream().map(RequestSpeedPoint::timeToFirstTokenSec).filter(Objects::nonNull)
-                .mapToDouble(Double::doubleValue).max().orElse(0);
+                .withData(points.stream()
+                        .map(RequestSpeedPoint::totalTimeSec)
+                        .toArray(Double[]::new)).build();
+        final var ttftPeak = points.stream()
+                .map(RequestSpeedPoint::timeToFirstTokenSec)
+                .filter(Objects::nonNull)
+                .mapToDouble(Double::doubleValue)
+                .max()
+                .orElse(0);
         final var compactionSeries = SeriesBuilder.get().withName("compaction")
                 .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
                 .withData(compactionColumnData(compactionsBeforeRequest, points.size(), ttftPeak)).build();
         final var contextSeries = SeriesBuilder.get().withName("context tokens")
-                .withData(points.stream().map(RequestSpeedPoint::contextTokens).toArray(Integer[]::new)).build();
+                .withData(points.stream()
+                        .map(RequestSpeedPoint::contextTokens)
+                        .toArray(Integer[]::new)).build();
         final var judgeOnTrackSeries = SeriesBuilder.get().withName("judge on track")
                 .withType(com.github.appreciated.apexcharts.config.series.SeriesType.COLUMN)
                 .withData(compactionColumnData(judgeOnTrackRequests, points.size(), ttftPeak)).build();

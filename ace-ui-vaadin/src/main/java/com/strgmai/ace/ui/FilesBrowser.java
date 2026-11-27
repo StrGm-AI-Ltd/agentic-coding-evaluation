@@ -8,10 +8,11 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+
+import static java.util.Comparator.comparingLong;
 
 /**
  * Run file browser — the Vaadin twin of the Jinja2 run page's file section:
@@ -60,7 +61,7 @@ public class FilesBrowser extends VerticalLayout {
         grid.addColumn(Api.RunFile::path).setHeader("path").setFlexGrow(1);
         grid.addColumn(f -> sizeText(f.size())).setHeader("size")
                 .setTextAlign(ColumnTextAlign.END).setAutoWidth(true)
-                .setComparator(Comparator.comparingLong(f -> f.size() < 0 ? Long.MAX_VALUE : f.size()));
+                .setComparator(comparingLong(f -> f.size() < 0 ? Long.MAX_VALUE : f.size()));
         grid.addClassName("clickable-rows");   // #39: the row itself opens the file, no separate link
         grid.addItemClickListener(e -> getUI().ifPresent(
                 ui -> ui.getPage().open(fileUrl(client, runId, e.getItem().path()), "_blank")));

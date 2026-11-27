@@ -172,7 +172,10 @@ class FmtTest {
                 new Row("2026-09-15 03:02:30"),       // 03:02Z — naive SQL style
                 new Row("2026-09-14T23:00:00+01:00"),   // 22:00Z — the earliest despite the later local hour
                 new Row("2026-09-15T02:00:00Z"));      // 02:00Z
-        final var sorted = rows.stream().sorted(Fmt.comparingTime(Row::t)).map(Row::t).toList();
+        final var sorted = rows.stream()
+                .sorted(Fmt.comparingTime(Row::t))
+                .map(Row::t)
+                .toList();
         assertEquals(java.util.Arrays.asList(
                 "2026-09-14T23:00:00+01:00",
                 "2026-09-15T02:00:00Z",

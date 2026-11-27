@@ -8,10 +8,10 @@ import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -91,7 +91,7 @@ class PreflightTest {
     private static HttpServer fakeModelServer(final String modelId) throws Exception {
         final HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/models", ex -> {
-            final byte[] body = ("{\"data\":[{\"id\":\"" + modelId + "\",\"max_model_len\":8192}]}").getBytes(StandardCharsets.UTF_8);
+            final byte[] body = ("{\"data\":[{\"id\":\"" + modelId + "\",\"max_model_len\":8192}]}").getBytes(UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(200, body.length);
             try (var os = ex.getResponseBody()) { os.write(body); }
@@ -101,7 +101,9 @@ class PreflightTest {
     }
 
     private static Preflight.Check byName(Preflight.Report r, final String name) {
-        return r.checks().stream().filter(c -> c.check().equals(name)).findFirst()
+        return r.checks().stream()
+                .filter(c -> c.check().equals(name))
+                .findFirst()
                 .orElseThrow(() -> new AssertionError("no check named " + name + " in " + r.checks()));
     }
 
@@ -270,7 +272,8 @@ class PreflightTest {
             final Preflight.Check modelServer = byName(r, "model server");
             assertFalse(modelServer.ok());
             assertTrue(modelServer.fatal());
-            assertTrue(r.checks().stream().noneMatch(c -> c.check().equals("target model served")),
+            assertTrue(r.checks().stream()
+                    .noneMatch(c -> c.check().equals("target model served")),
                     "the model list itself failed - there is nothing to check the target against");
         }
     }

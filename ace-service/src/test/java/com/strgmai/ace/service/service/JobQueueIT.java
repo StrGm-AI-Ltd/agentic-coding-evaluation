@@ -135,11 +135,18 @@ class JobQueueIT {
         t2.join(10_000);
 
         assertEquals(2, outcomes.size());
-        final long succeeded = outcomes.stream().filter(o -> o instanceof Map).count();
-        final long failed = outcomes.stream().filter(o -> o instanceof Throwable).count();
+        final long succeeded = outcomes.stream()
+                .filter(o -> o instanceof Map)
+                .count();
+        final long failed = outcomes.stream()
+                .filter(o -> o instanceof Throwable)
+                .count();
         assertEquals(1, succeeded, "exactly one of the two racing enqueues must win: " + outcomes);
         assertEquals(1, failed, "the other must lose, not also succeed (a real double-insert): " + outcomes);
-        final var loser = outcomes.stream().filter(o -> o instanceof Throwable).findFirst().orElseThrow();
+        final var loser = outcomes.stream()
+                .filter(o -> o instanceof Throwable)
+                .findFirst()
+                .orElseThrow();
         assertTrue(loser instanceof IllegalStateException,
                 "the losing request must surface as IllegalStateException (409), not a raw DB exception: " + loser);
     }

@@ -17,6 +17,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 
+import static java.lang.Math.min;
+import static java.nio.file.StandardOpenOption.APPEND;
+import static java.nio.file.StandardOpenOption.CREATE;
+
 /** Port of run_bench.py's self_review + trajectory_review: end-of-run reviews by a reviewer model
  *  (the run's own model by default, or any provider/model LangChain4j can reach). The reviewer's
  *  opinion is scored for CALIBRATION against the oracle — it never replaces it. The code is
@@ -50,7 +54,8 @@ public class Reviews {
             // skip dir (build/Foo.java) has no leading slash and would be wrongly reported as code
             final boolean skipDir = java.util.Arrays.stream(path.split("/")).anyMatch(com.strgmai.ace.service.oracle.checks.BuildChecks.SKIP_DIRS::contains);
             if (excluded || skipDir) continue;
-            if (List.of(".jar", ".class", ".war").stream().anyMatch(path::endsWith)) continue;
+            if (List.of(".jar", ".class", ".war").stream()
+                    .anyMatch(path::endsWith)) continue;
             out.add(path);
         }
         return out;
@@ -124,7 +129,7 @@ public class Reviews {
         }
         out.put("parse_ok", parsed != null);
         out.put("modified_code", !changed.isEmpty());
-        out.put("modified_paths", changed.subList(0, Math.min(10, changed.size())));
+        out.put("modified_paths", changed.subList(0, min(10, changed.size())));
         out.put("md_present", Files.isRegularFile(ws.resolve("review/SELF_REVIEW.md")));
         if (parsed != null) out.putAll(parsed);
         manifestCompute(manifest, "review_windows").add(List.of(rec.start().toString(), rec.end().toString()));
@@ -168,7 +173,7 @@ public class Reviews {
         }
         out.put("parse_ok", parsed != null);
         out.put("modified_code", !changed.isEmpty());
-        out.put("modified_paths", changed.subList(0, Math.min(10, changed.size())));
+        out.put("modified_paths", changed.subList(0, min(10, changed.size())));
         out.put("md_present", Files.isRegularFile(ws.resolve("review/SELF_REVIEW.md")));
         if (parsed != null) out.putAll(parsed);
         if (span != null) manifestCompute(manifest, "review_windows").add(List.of(span.start().toString(), span.end().toString()));
@@ -414,7 +419,7 @@ public class Reviews {
             // both self-review and trajectory-review write to the SAME log path - append, or the
             // second review's line silently replaces the first's (default writeString() truncates)
             if (log != null) Files.writeString(log, "review session " + name + " rc=" + res.rc() + " turns=" + res.turns() + "\n",
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                    CREATE, APPEND);
             return res;
         } finally {
             if (proxy != null) proxy.stop();

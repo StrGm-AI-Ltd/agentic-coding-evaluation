@@ -1,6 +1,7 @@
 package com.strgmai.ace.service.runner;
 
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.config.TestOperations;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
@@ -9,12 +10,12 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -40,7 +41,7 @@ class RecordingProxyFactoryTest {
             ex.getResponseHeaders().set("Content-Type", "text/event-stream");
             ex.sendResponseHeaders(200, 0);
             try (var os = ex.getResponseBody()) {
-                os.write("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n".getBytes(StandardCharsets.UTF_8));
+                os.write("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n".getBytes(UTF_8));
                 os.flush();
                 firstChunkSent.countDown();
                 Thread.sleep(5_000);   // never reached: abortAllInflight() closes this side first
@@ -48,7 +49,7 @@ class RecordingProxyFactoryTest {
         });
         upstream.start();
         final var journal = Files.createTempFile("proxy-factory-test", ".jsonl");
-        final var factory = new RecordingProxyFactory(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        final var factory = new RecordingProxyFactory(props("http://127.0.0.1:" + upstream.getAddress().getPort()), TestOperations.defaults());
         final var session = factory.start(journal, 1000L, null);
         try {
             final var client = HttpClient.newHttpClient();
@@ -62,10 +63,10 @@ class RecordingProxyFactoryTest {
                 finally { clientDone.complete(null); }
             });
 
-            assertTrue(firstChunkSent.await(5, TimeUnit.SECONDS), "the upstream must have started streaming");
+            assertTrue(firstChunkSent.await(5, SECONDS), "the upstream must have started streaming");
             Thread.sleep(200);   // give the proxy's own relay loop time to actually read that first chunk
             factory.abortAllInflight("paused");
-            clientDone.get(5, TimeUnit.SECONDS);   // times out (fails the test) if abortAllInflight() didn't reach it
+            clientDone.get(5, SECONDS);   // times out (fails the test) if abortAllInflight() didn't reach it
         } finally {
             session.stop().run();
             upstream.stop(0);
@@ -77,7 +78,7 @@ class RecordingProxyFactoryTest {
         final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         upstream.start();
         final var journal = Files.createTempFile("proxy-factory-test", ".jsonl");
-        final var factory = new RecordingProxyFactory(props("http://127.0.0.1:" + upstream.getAddress().getPort()));
+        final var factory = new RecordingProxyFactory(props("http://127.0.0.1:" + upstream.getAddress().getPort()), TestOperations.defaults());
         final var session = factory.start(journal, 1000L, null);
         session.stop().run();
         upstream.stop(0);
@@ -88,7 +89,7 @@ class RecordingProxyFactoryTest {
 
     @Test
     void abortAllInflightWithNoActiveSessionsIsANoOp() {
-        final var factory = new RecordingProxyFactory(props("http://127.0.0.1:1"));
+        final var factory = new RecordingProxyFactory(props("http://127.0.0.1:1"), TestOperations.defaults());
         assertDoesNotThrow(() -> factory.abortAllInflight("cancelled"));
     }
 }

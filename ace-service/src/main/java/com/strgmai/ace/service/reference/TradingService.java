@@ -3,9 +3,11 @@ package com.strgmai.ace.service.reference;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+
+import static java.time.temporal.ChronoUnit.MILLIS;
+import static java.util.UUID.randomUUID;
 
 /** Port of oracle/reference_server.py: the reference implementation of the frozen contract,
  *  CORRECT BY DEFAULT, used to calibrate the black-box suite. BUGS (a comma list via the `bugs`
@@ -53,7 +55,7 @@ public class TradingService {
     }
 
     public Map<String, Object> createAccount(final String currency) {
-        final var id = UUID.randomUUID().toString();
+        final var id = randomUUID().toString();
         accounts.put(id, new Account(id, currency == null || currency.isBlank() ? "USD" : currency, money(BigDecimal.ZERO)));
         return accountView(accounts.get(id));
     }
@@ -105,7 +107,7 @@ public class TradingService {
         if (bug("hollow")) {   // orders return 201 + executedAt but change NO account/ledger state -
             // the order itself IS still stored (an idempotency repeat or a direct order(id) lookup
             // needs something to find), so only accounts/ledger stay untouched, not orders
-            final Order o = filled(UUID.randomUUID().toString(), side, sym, qty, px);
+            final Order o = filled(randomUUID().toString(), side, sym, qty, px);
             orders.put(o.orderId(), o);
             if (idempotencyKey != null) idem.put(idempotencyKey, new Idem(o.orderId(), now().plusSeconds(60)));
             return new OrderOutcome(201, orderView(o), null);
@@ -131,7 +133,7 @@ public class TradingService {
         }
         final Instant ts = now();
         synchronized (ledger) { ledger.add(new LedgerEntry(ts, accountId, sym, side, qty)); }
-        final var o = new Order(UUID.randomUUID().toString(), "FILLED", side, sym, qty, px, ts);
+        final var o = new Order(randomUUID().toString(), "FILLED", side, sym, qty, px, ts);
         orders.put(o.orderId(), o);
         if (idempotencyKey != null) idem.put(idempotencyKey, new Idem(o.orderId(), now().plusSeconds(60)));
         return new OrderOutcome(201, orderView(o), null);
@@ -207,7 +209,7 @@ public class TradingService {
         return m;
     }
 
-    public static Instant now() { return Instant.now().truncatedTo(ChronoUnit.MILLIS); }
+    public static Instant now() { return Instant.now().truncatedTo(MILLIS); }
     public static String iso(Instant t) { return t.toString(); }
 
     public record OrderOutcome(int status, Map<String, Object> body, Object raw) {}

@@ -1,5 +1,6 @@
 package com.strgmai.ace.service.service;
 
+import com.strgmai.ace.service.config.OperationsProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -65,16 +66,16 @@ import java.util.Optional;
  *  the instant it starts again. currentJobStartedAt is now a FLOOR on the reference time (via max()),
  *  not merely a fallback for a file that doesn't exist yet - a freshly-restarted attempt's own
  *  staleness clock now genuinely starts at ITS OWN start, giving replay-skip (and any following
- *  real work) the full STUCK_THRESHOLD before the watchdog can fire again, closing the loop. */
+ *  real work) the full stuck threshold before the watchdog can fire again, closing the loop. */
 @Component
 public class StuckWorkerWatchdog {
     private static final Logger log = LoggerFactory.getLogger(StuckWorkerWatchdog.class);
-    static final Duration STUCK_THRESHOLD = Duration.ofMinutes(30);
-
     private final WorkerService worker;
+    private final Duration stuckThreshold;   // ace.operations.stuck-worker-threshold-sec
 
-    public StuckWorkerWatchdog(final WorkerService worker) {
+    public StuckWorkerWatchdog(final WorkerService worker, final OperationsProperties operations) {
         this.worker = worker;
+        this.stuckThreshold = Duration.ofSeconds(operations.stuckWorkerThresholdSec());
     }
 
     @Scheduled(fixedDelayString = "${ace.stuck-worker-check-sec:120}000", initialDelay = 120000)
@@ -85,14 +86,14 @@ public class StuckWorkerWatchdog {
         if (runDir == null || startedAt == null) return;   // raced a job starting/finishing - try again next tick
         final var fileTime = lastWriteTime(runDir.resolve("interactions.jsonl")).orElse(startedAt);
         final var reference = fileTime.isAfter(startedAt) ? fileTime : startedAt;
-        if (!isStuck(Instant.now(), reference, STUCK_THRESHOLD)) return;
+        if (!isStuck(Instant.now(), reference, stuckThreshold)) return;
         if (hasLiveDescendantProcess()) {
             log.debug("bench-runner: no new request logged under {} in over {}, but a live child process "
-                    + "proves real local work is still happening (a long build/verification step) - not wedged", runDir, STUCK_THRESHOLD);
+                    + "proves real local work is still happening (a long build/verification step) - not wedged", runDir, stuckThreshold);
             return;
         }
         log.error("bench-runner: no new request logged under {} in over {}, and no live child process either - "
-                + "presumed wedged (see #593); forcing a restart so reconcile() requeues it cleanly on the next startup", runDir, STUCK_THRESHOLD);
+                + "presumed wedged (see #593); forcing a restart so reconcile() requeues it cleanly on the next startup", runDir, stuckThreshold);
         Runtime.getRuntime().halt(1);   // halt(), not exit(): a shutdown hook doing its own I/O could hang too
     }
 

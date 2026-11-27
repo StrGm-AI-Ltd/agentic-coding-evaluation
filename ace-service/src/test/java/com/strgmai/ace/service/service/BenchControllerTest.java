@@ -2,6 +2,7 @@ package com.strgmai.ace.service.service;
 
 import com.strgmai.ace.service.backend.OmlxBackend;
 import com.strgmai.ace.service.config.BenchProperties;
+import com.strgmai.ace.service.config.TestOperations;
 import com.strgmai.ace.service.metrics.StatsService;
 import com.strgmai.ace.service.pack.Packs;
 import com.strgmai.ace.service.runner.Intervene;
@@ -12,7 +13,6 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -28,20 +28,22 @@ import java.util.UUID;
 
 import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
 import static com.strgmai.ace.service.jooq.Tables.RUNS;
+import static java.util.UUID.randomUUID;
 import static org.hamcrest.Matchers.closeTo;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.emptyString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
-import static org.hamcrest.Matchers.emptyString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -87,7 +89,7 @@ class BenchControllerTest {
         providerStore = new com.strgmai.ace.service.agent.ProviderStore(dsl);
         final var localBackend = new OmlxBackend(Files.createTempDirectory("omlx-test"));
         final var controller = new BenchController(dsl, queue, importer, experiments, stats, worker, props, preflight, pin, intervene, taskMatcher, pauseAfterTask, providerStore,
-                localBackend, new com.strgmai.ace.service.runner.ContextProbe(localBackend));
+                localBackend, new com.strgmai.ace.service.runner.ContextProbe(localBackend), TestOperations.defaults());
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ApiExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter())
@@ -113,7 +115,7 @@ class BenchControllerTest {
     @Test
     void jsonbObjectColumnAlsoComesBackNestedOnExperimentsList() throws Exception {
         dsl.insertInto(EXPERIMENTS)
-                .set(EXPERIMENTS.ID, UUID.randomUUID())   // no AUTOINCREMENT on a UUID PK - the real service always assigns one
+                .set(EXPERIMENTS.ID, randomUUID())   // no AUTOINCREMENT on a UUID PK - the real service always assigns one
                 .set(EXPERIMENTS.NAME, "exp").set(EXPERIMENTS.TAG, "t").set(EXPERIMENTS.TEMPLATE, "harness_effect")
                 .set(EXPERIMENTS.PARAMS, "{\"model\":\"m\",\"nested\":{\"a\":1}}").set(EXPERIMENTS.K, 1)
                 .execute();
@@ -213,7 +215,7 @@ class BenchControllerTest {
         mvc.perform(get("/api/providers")).andExpect(status().isOk())
                 .andExpect(jsonPath("$[?(@.provider_key == 'nebius')].is_local").value(false));
 
-        mvc.perform(post("/api/providers").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/providers").contentType(APPLICATION_JSON)
                         .content("{\"name\":\"Local oMLX\",\"provider_key\":\"omlx\",\"base_url\":\"http://127.0.0.1:9191/v1\",\"default_model\":\"m\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.is_local").value(true));
@@ -221,7 +223,7 @@ class BenchControllerTest {
 
     @Test
     void createProviderInsertsANewRowAndNeverEchoesTheApiKeyBack() throws Exception {
-        mvc.perform(post("/api/providers").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/providers").contentType(APPLICATION_JSON)
                         .content("{\"name\":\"Custom\",\"provider_key\":\"custom\",\"base_url\":\"https://custom.example/v1\",\"api_key\":\"sk-secret\",\"default_model\":\"some/model\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.provider_key").value("custom"))
@@ -233,7 +235,7 @@ class BenchControllerTest {
     void updateProviderWithNoApiKeyFieldLeavesTheStoredKeyUnchanged() throws Exception {
         final var created = providerStore.create("Custom", "custom", "https://custom.example/v1", "sk-original", null);
 
-        mvc.perform(put("/api/providers/" + created.id()).contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(put("/api/providers/" + created.id()).contentType(APPLICATION_JSON)
                         .content("{\"name\":\"Renamed\",\"provider_key\":\"custom\",\"base_url\":\"https://custom.example/v2\",\"default_model\":\"other/model\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name").value("Renamed"))
@@ -246,7 +248,7 @@ class BenchControllerTest {
     void updateProviderWithABlankApiKeyClearsIt() throws Exception {
         final var created = providerStore.create("Custom", "custom", "https://custom.example/v1", "sk-original", null);
 
-        mvc.perform(put("/api/providers/" + created.id()).contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(put("/api/providers/" + created.id()).contentType(APPLICATION_JSON)
                         .content("{\"name\":\"Custom\",\"provider_key\":\"custom\",\"base_url\":\"https://custom.example/v1\",\"api_key\":\"\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.has_api_key").value(false));
@@ -315,7 +317,7 @@ class BenchControllerTest {
 
     @Test
     void providerModelsOnAnUnknownIdReturnsAnError() throws Exception {
-        mvc.perform(get("/api/providers/" + UUID.randomUUID() + "/models"))
+        mvc.perform(get("/api/providers/" + randomUUID() + "/models"))
                 .andExpect(status().is4xxClientError());
     }
 
@@ -790,7 +792,7 @@ class BenchControllerTest {
                 argThat(l -> l.size() == 1 && l.get(0).id.equals("T9")), isNull(), any()))
                 .thenReturn(List.of(new com.strgmai.ace.service.runner.TaskMatcher.TaskMatch("T1", "deposits endpoint", "T9", "account and deposits")));
 
-        mvc.perform(post("/api/runs/run-a/compare/run-b/match-tasks").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(post("/api/runs/run-a/compare/run-b/match-tasks").contentType(APPLICATION_JSON).content("{}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.matches[0].aId").value("T1"))
                 .andExpect(jsonPath("$.matches[0].bId").value("T9"))
@@ -805,7 +807,7 @@ class BenchControllerTest {
         when(props.resultsDir()).thenReturn(resultsDir.toString());
         when(taskMatcher.match(List.of(), List.of(), null, resultsDir.resolve("run-a").toRealPath())).thenReturn(List.of());
 
-        mvc.perform(post("/api/runs/run-a/compare/run-b/match-tasks").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(post("/api/runs/run-a/compare/run-b/match-tasks").contentType(APPLICATION_JSON).content("{}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.matches").isEmpty());
     }
@@ -1926,7 +1928,7 @@ class BenchControllerTest {
     void interveneQueuesTheOperatorsTextForTheGivenTask() throws Exception {
         when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "running"));
 
-        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/intervene").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/intervene").contentType(APPLICATION_JSON)
                         .content("{\"text\": \"stop retrying X, do Y instead\"}"))
                 .andExpect(status().isOk());
 
@@ -1938,7 +1940,7 @@ class BenchControllerTest {
     void interveneRejectsBlankText() throws Exception {
         when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "running"));
 
-        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/intervene").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/intervene").contentType(APPLICATION_JSON)
                         .content("{\"text\": \"  \"}"))
                 .andExpect(status().isBadRequest());
     }
@@ -1976,7 +1978,7 @@ class BenchControllerTest {
     void restartTaskRequiresAPausedJob() throws Exception {
         when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "running"));
 
-        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/restart").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/restart").contentType(APPLICATION_JSON).content("{}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.detail", containsString("paused")));
         verify(queue, never()).setTaskOverride(any(), any(), any());
@@ -1991,7 +1993,7 @@ class BenchControllerTest {
         when(props.workspaceRoot()).thenReturn(wsRoot.toString());
         when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
 
-        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/restart").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/restart").contentType(APPLICATION_JSON).content("{}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.detail", containsString("nothing to restart")));
     }
@@ -2006,7 +2008,7 @@ class BenchControllerTest {
         when(props.workspaceRoot()).thenReturn(wsRoot.toString());
         when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
 
-        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/restart").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/restart").contentType(APPLICATION_JSON)
                         .content("{\"overrides\":{\"model\":\"some-other-model\"}}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.detail", containsString("model")));
@@ -2051,7 +2053,7 @@ class BenchControllerTest {
         when(queue.setTaskOverride(eq(JOB_1), eq("T2"), anyMap()))
                 .thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
 
-        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/restart").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/restart").contentType(APPLICATION_JSON)
                         .content("{\"overrides\":{\"task_wall_sec\":40000}}"))
                 .andExpect(status().isOk());
 
@@ -2112,7 +2114,7 @@ class BenchControllerTest {
         when(queue.setTaskOverride(eq(JOB_1), eq("T2"), anyMap()))
                 .thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
 
-        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/restart").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/restart").contentType(APPLICATION_JSON).content("{}"))
                 .andExpect(status().isOk());
 
         assertTrue(Files.exists(runDir.resolve("sessions/t1.jsonl")), "T1 is earlier and untouched - must stay where Stats/Live/Attempts can still find it");
@@ -2131,7 +2133,7 @@ class BenchControllerTest {
     void pendingOverrideRequiresAPausedJob() throws Exception {
         when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "running"));
 
-        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/override").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/override").contentType(APPLICATION_JSON).content("{}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.detail", containsString("paused")));
         verify(queue, never()).setTaskOverride(any(), any(), any());
@@ -2147,7 +2149,7 @@ class BenchControllerTest {
         when(props.workspaceRoot()).thenReturn(wsRoot.toString());
         when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
 
-        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/override").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/override").contentType(APPLICATION_JSON).content("{}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.detail", containsString("already run")))
                 .andExpect(jsonPath("$.detail", containsString("/restart")));
@@ -2168,7 +2170,7 @@ class BenchControllerTest {
         when(props.resultsDir()).thenReturn(resultsDir.toString());
         when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
 
-        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T99/override").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T99/override").contentType(APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.detail", containsString("T99")));
         verify(queue, never()).setTaskOverride(any(), any(), any());
@@ -2188,7 +2190,7 @@ class BenchControllerTest {
         when(props.resultsDir()).thenReturn(resultsDir.toString());
         when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
 
-        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/override").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/override").contentType(APPLICATION_JSON)
                         .content("{\"overrides\":{\"model\":\"some-other-model\"}}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.detail", containsString("model")));
@@ -2218,7 +2220,7 @@ class BenchControllerTest {
         when(queue.setTaskOverride(eq(JOB_1), eq("T2"), anyMap()))
                 .thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
 
-        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/override").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/tasks/T2/override").contentType(APPLICATION_JSON)
                         .content("{\"overrides\":{\"judge_enabled\":true,\"judge_every_n_turns\":10,\"budget_rescue_enabled\":true}}"))
                 .andExpect(status().isOk());
 
@@ -2231,7 +2233,7 @@ class BenchControllerTest {
 
     @Test
     void restartSessionRejectsAnUnknownName() throws Exception {
-        mvc.perform(post("/api/jobs/" + JOB_1 + "/sessions/T2/restart").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/sessions/T2/restart").contentType(APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.detail", containsString("not a restartable phase session")));
         verify(queue, never()).setTaskOverride(any(), any(), any());
@@ -2241,7 +2243,7 @@ class BenchControllerTest {
     void restartSessionRequiresAPausedJob() throws Exception {
         when(queue.get(JOB_1)).thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "running"));
 
-        mvc.perform(post("/api/jobs/" + JOB_1 + "/sessions/p1_plan/restart").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/sessions/p1_plan/restart").contentType(APPLICATION_JSON).content("{}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.detail", containsString("paused")));
         verify(queue, never()).setTaskOverride(any(), any(), any());
@@ -2284,7 +2286,7 @@ class BenchControllerTest {
         when(queue.setTaskOverride(eq(JOB_1), eq("p1_plan"), anyMap()))
                 .thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
 
-        mvc.perform(post("/api/jobs/" + JOB_1 + "/sessions/p1_plan/restart").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/sessions/p1_plan/restart").contentType(APPLICATION_JSON)
                         .content("{\"overrides\":{\"task_wall_sec\":5000}}"))
                 .andExpect(status().isOk());
 
@@ -2333,7 +2335,7 @@ class BenchControllerTest {
         when(queue.setTaskOverride(eq(JOB_1), eq("p1_plan"), anyMap()))
                 .thenReturn(Map.of("id", JOB_1.toString(), "run_id", "run-1", "status", "paused"));
 
-        mvc.perform(post("/api/jobs/" + JOB_1 + "/sessions/p1_plan/restart").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(post("/api/jobs/" + JOB_1 + "/sessions/p1_plan/restart").contentType(APPLICATION_JSON).content("{}"))
                 .andExpect(status().isOk());
 
         assertTrue(Files.exists(runDir.resolve("sessions/p0.jsonl")), "p0 is earlier and untouched");
@@ -2363,7 +2365,7 @@ class BenchControllerTest {
     @Test
     void illegalArgumentExceptionMapsTo400WithDetailBody() throws Exception {
         // RunSpec's own validation throws before queue.enqueue() is ever called
-        mvc.perform(post("/api/jobs").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/jobs").contentType(APPLICATION_JSON)
                         .content("{\"spec\": {\"task\": \"L3p_point_in_time\", \"mode\": \"bogus\"}}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.detail").value("mode must be monolithic or orchestrated"));
@@ -2373,7 +2375,7 @@ class BenchControllerTest {
     void noSuchElementExceptionMapsTo404WithDetailBody() throws Exception {
         doThrow(new NoSuchElementException("job 42 does not exist")).when(queue).setPriority(JOB_42, 5);
 
-        mvc.perform(post("/api/jobs/" + JOB_42 + "/priority").contentType(MediaType.APPLICATION_JSON).content("{\"priority\": 5}"))
+        mvc.perform(post("/api/jobs/" + JOB_42 + "/priority").contentType(APPLICATION_JSON).content("{\"priority\": 5}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.detail").value("job 42 does not exist"));
     }
@@ -2598,7 +2600,7 @@ class BenchControllerTest {
         when(stats.filterRuns(any(), anyBoolean(), anyBoolean(), any())).thenAnswer(inv -> inv.getArgument(0));
         when(stats.compare(any(), any(), any())).thenReturn(fullCompareResult(5.0));
 
-        mvc.perform(post("/api/compare").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/compare").contentType(APPLICATION_JSON)
                         .content("{\"a\": [\"runA\"], \"b\": [\"runB\"]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.refused").doesNotExist())
@@ -2616,7 +2618,7 @@ class BenchControllerTest {
         when(stats.filterRuns(any(), anyBoolean(), anyBoolean(), any())).thenAnswer(inv -> inv.getArgument(0));
         when(stats.compare(any(), any(), any())).thenReturn(fullCompareResult(0.0));
 
-        mvc.perform(post("/api/compare").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/compare").contentType(APPLICATION_JSON)
                         .content("{\"a\": [\"runA\"], \"b\": [\"runB\"]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.result.model_warning").doesNotExist());
@@ -2632,7 +2634,7 @@ class BenchControllerTest {
         when(stats.filterRuns(any(), anyBoolean(), anyBoolean(), any())).thenAnswer(inv -> inv.getArgument(0));
         when(stats.compare(any(), any(), any())).thenReturn(fullCompareResult(5.0));
 
-        mvc.perform(post("/api/compare").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/compare").contentType(APPLICATION_JSON)
                         .content("{\"a\": [\"runA\"], \"b\": [\"runB\"], \"model_ab\": true}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.refused").doesNotExist())
@@ -2652,7 +2654,7 @@ class BenchControllerTest {
         when(stats.filterRuns(any(), anyBoolean(), anyBoolean(), any())).thenAnswer(inv -> inv.getArgument(0));
         when(stats.compare(any(), any(), any())).thenReturn(fullCompareResult(3.5));
 
-        mvc.perform(post("/api/compare").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/compare").contentType(APPLICATION_JSON)
                         .content("{\"a\": [\"runA\"], \"b\": [\"runB\"]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.result.diff").value(3.5))

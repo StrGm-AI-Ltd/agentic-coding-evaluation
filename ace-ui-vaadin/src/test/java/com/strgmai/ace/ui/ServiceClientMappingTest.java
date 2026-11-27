@@ -9,11 +9,12 @@ import org.springframework.web.client.RestClientResponseException;
 import java.time.Duration;
 import java.util.List;
 
+import static java.lang.Math.min;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Live wire-mapping tests against a running agentbench-trading-service. Tagged "live" and
@@ -117,7 +118,7 @@ class ServiceClientMappingTest {
         assertFalse(lines.isEmpty(), "a real manifest produces provenance lines");
         for (final var line : lines) {
             assertTrue(line.length() < 10_000, "no runaway line: "
-                    + line.substring(0, Math.min(40, line.length())) + "…");
+                    + line.substring(0, min(40, line.length())) + "…");
         }
     }
 

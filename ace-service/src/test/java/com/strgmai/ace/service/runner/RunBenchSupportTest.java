@@ -12,9 +12,10 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static java.lang.System.currentTimeMillis;
+import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** 2026-09-25: task-wall enforcement moved OUT of ReferenceAgent (which used to check its own
@@ -89,15 +90,15 @@ class RunBenchSupportTest {
             return new ReferenceAgent.SessionResult("T1", 0, 10.0, "stop", null, 1, 0, 0, null, Instant.now(), Instant.now());
         };
 
-        final long t0 = System.currentTimeMillis();
+        final long t0 = currentTimeMillis();
         final var result = RunBenchSupport.runBounded(1, "T1", sessionDir, "sid", reason -> abortReason[0] = reason, call);
-        final long elapsedMs = System.currentTimeMillis() - t0;
+        final long elapsedMs = currentTimeMillis() - t0;
 
         assertEquals(124, result.rc(), "a call that outlives the wall budget must be reported as rc=124");
         assertNotNull(abortReason[0], "abortProxy must run on timeout with a reason, so the proxy's own relay thread isn't left blocked (R12)");
         assertTrue(abortReason[0].contains("task-wall"), "the reason should name the actual cause: " + abortReason[0]);
         assertTrue(elapsedMs < 5_000, "runBounded must return close to the 1s wall budget, not wait for the full 10s call: " + elapsedMs + "ms");
-        assertTrue(started.await(2, TimeUnit.SECONDS), "the call must have actually started");
+        assertTrue(started.await(2, SECONDS), "the call must have actually started");
         // cancellation is async relative to runBounded's own return - give the interrupted flag a moment to land
         for (int i = 0; i < 20 && !interrupted.get(); i++) Thread.sleep(50);
         assertTrue(interrupted.get(), "the call's own thread must be genuinely interrupted, not just abandoned");
@@ -209,7 +210,7 @@ class RunBenchSupportTest {
         }, "caller-under-test");
         caller.start();
 
-        assertTrue(innerStarted.await(5, TimeUnit.SECONDS), "the inner call must have actually started");
+        assertTrue(innerStarted.await(5, SECONDS), "the inner call must have actually started");
         caller.interrupt();   // exactly what WorkerService's cancel-watch does to the real worker thread
         caller.join(5_000);
 

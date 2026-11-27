@@ -83,7 +83,8 @@ public class RunRetention {
                 final String name = p.getFileName().toString();
                 if (Files.isDirectory(p)) {
                     if (BINARY_DIR_NAMES.contains(name) || EXTRACTED_DIST_DIR.matcher(name).matches()) dirs.add(p);
-                } else if (BINARY_FILE_SUFFIXES.stream().anyMatch(name::endsWith)) {
+                } else if (BINARY_FILE_SUFFIXES.stream()
+                        .anyMatch(name::endsWith)) {
                     files.add(p);
                 }
             });

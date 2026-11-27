@@ -12,6 +12,14 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static java.lang.Double.parseDouble;
+import static java.lang.Integer.parseInt;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.util.regex.Pattern.CASE_INSENSITIVE;
+import static java.util.regex.Pattern.DOTALL;
+import static java.util.regex.Pattern.MULTILINE;
+
 /** Port of runner/pack.py: deterministic context packs for the orchestrated harness mode.
  *  Two parts, kept apart on purpose: stable_pack(...) is byte-identical for every task of a run
  *  and goes into the SYSTEM prompt so the prefix cache serves it; task_pack(...) is the task
@@ -37,10 +45,10 @@ public final class Packs {
      *  scales with it (floor pack_scale_min); `floors` gives sections that must never be truncated
      *  (the contract: R5 C-25) their real size as a minimum. */
     public static Map<String, Integer> setScale(final double scale, final Map<String, Integer> floors) {
-        final double s = Math.max(0.25, Math.min(1.0, scale));
+        final double s = max(0.25, min(1.0, scale));
         for (Map.Entry<String, Integer> e : BASE_CAPS.entrySet())
-            CAPS.put(e.getKey(), Math.max("tree diffstat test_tail".contains(e.getKey()) ? 10 : 200,
-                    Math.max((int) (e.getValue() * s), floors.getOrDefault(e.getKey(), 0))));
+            CAPS.put(e.getKey(), max("tree diffstat test_tail".contains(e.getKey()) ? 10 : 200,
+                    max((int) (e.getValue() * s), floors.getOrDefault(e.getKey(), 0))));
         return CAPS;
     }
 
@@ -60,7 +68,7 @@ public final class Packs {
 
     /** the working rules name the run's measured window (R5 C-16); byte-stable within a run. */
     public static String setWindow(final int usableContext) {
-        HYGIENE = HYGIENE_TEMPLATE.replace("{window}", String.valueOf(Math.max(1, usableContext / 1000)));
+        HYGIENE = HYGIENE_TEMPLATE.replace("{window}", String.valueOf(max(1, usableContext / 1000)));
         return HYGIENE;
     }
     public static String hygiene() { return HYGIENE; }
@@ -98,7 +106,7 @@ public final class Packs {
 
     static String linesCap(final String text, final int n) {
         final String[] ls = text.split("\n", -1);
-        return String.join("\n", Arrays.asList(ls).subList(0, Math.min(n, ls.length)))
+        return String.join("\n", Arrays.asList(ls).subList(0, min(n, ls.length)))
                 + (ls.length > n ? "\n… [" + (ls.length - n) + " more lines]" : "");
     }
 
@@ -112,7 +120,7 @@ public final class Packs {
         final var out = new StringBuilder();
         for (String l : txt.split("\n"))
             if (!(l.contains("Protocol for this rung") || (l.contains("IMPLEMENTATION_PLAN.md") && !l.contains("read-only")))) out.append(l).append('\n');
-        txt = Pattern.compile("^(#[^\\n]*?)\\s*\\((?:total )?budget[^)]*\\)", Pattern.MULTILINE).matcher(out.toString()).replaceFirst("$1");
+        txt = Pattern.compile("^(#[^\\n]*?)\\s*\\((?:total )?budget[^)]*\\)", MULTILINE).matcher(out.toString()).replaceFirst("$1");
         return cap(txt, CAPS.get("contract"));
     }
 
@@ -120,7 +128,7 @@ public final class Packs {
         final var b = new StringBuilder();
         for (PlanTask t : tasks) {
             b.append("- ").append(t.id).append(" — ").append(t.title).append(": ")
-                    .append(t.goal == null ? "" : t.goal.substring(0, Math.min(160, t.goal.length())));
+                    .append(t.goal == null ? "" : t.goal.substring(0, min(160, t.goal.length())));
             if (t.deps != null && !t.deps.isEmpty()) b.append(" (after ").append(String.join(", ", t.deps)).append(")");
             b.append('\n');
         }
@@ -152,7 +160,7 @@ public final class Packs {
         return linesCap(String.join("\n", out), CAPS.get("tree"));
     }
 
-    static final Pattern SIG_RE = Pattern.compile("^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s*)*(?:public|protected|open|override|fun|interface|class|record|enum|abstract|sealed|data class)\\b[^;{=]*", Pattern.MULTILINE);
+    static final Pattern SIG_RE = Pattern.compile("^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s*)*(?:public|protected|open|override|fun|interface|class|record|enum|abstract|sealed|data class)\\b[^;{=]*", MULTILINE);
 
     /** public surface of a source file: package, type headers, public members. Migrations and
      *  OpenAPI are interfaces and go whole; build scripts and config are summarised to their
@@ -166,12 +174,13 @@ public final class Packs {
             for (String l : text.split("\n"))
                 if (Pattern.compile("plugins|id ['\"]|implementation|runtimeOnly|testImplementation|version|include|rootProject|server:|port:|datasource|url:|flyway|distributionUrl").matcher(l).find())
                     keep.add(l.stripTrailing());
-            return cap(String.join("\n", keep.subList(0, Math.min(40, keep.size()))), CAPS.get("iface_file") / 4);
+            return cap(String.join("\n", keep.subList(0, min(40, keep.size()))), CAPS.get("iface_file") / 4);
         }
         final List<String> keep = new ArrayList<>();
         for (String line : text.split("\n")) {
             final String s = line.strip();
-            if (s.startsWith("package ") || List.of("@Entity", "@Table", "@RestController", "@RequestMapping", "@GetMapping", "@PostMapping", "@Service", "@Repository").stream().anyMatch(s::startsWith)) keep.add(s);
+            if (s.startsWith("package ") || List.of("@Entity", "@Table", "@RestController", "@RequestMapping", "@GetMapping", "@PostMapping", "@Service", "@Repository").stream()
+                    .anyMatch(s::startsWith)) keep.add(s);
             else if (SIG_RE.matcher(line).find() && !(s.startsWith("private") || s.startsWith("//") || s.startsWith("*") || s.startsWith("/*")))
                 keep.add(line.stripTrailing().replaceAll("\\s*\\{\\s*$", ""));
             else if (Pattern.compile("^\\s*@Column|^\\s*@Id\\b|^\\s*@JoinColumn").matcher(s).find()) keep.add(s);
@@ -193,7 +202,8 @@ public final class Packs {
                 final String rel = ws.relativize(p).toString();
                 if (!files.contains(rel)) files.add(rel);
             }
-        final boolean hasSnapDeps = task.deps != null && task.deps.stream().anyMatch(snapshots::containsKey);
+        final boolean hasSnapDeps = task.deps != null && task.deps.stream()
+                .anyMatch(snapshots::containsKey);
         if (task.deps != null && !task.deps.isEmpty() && !hasSnapDeps)
             for (Path p : com.strgmai.ace.service.oracle.checks.StructureChecks.glob(ws, "**/src/main/**/*.*")) {
                 final String rel = ws.relativize(p).toString();
@@ -202,7 +212,8 @@ public final class Packs {
         final var parts = new StringBuilder();
         int total = 0;
         for (String f : files) {
-            if (!List.of(".java", ".kt", ".kts", ".gradle", ".yaml", ".yml", ".sql", ".json", ".properties").stream().anyMatch(f::endsWith)) continue;
+            if (!List.of(".java", ".kt", ".kts", ".gradle", ".yaml", ".yml", ".sql", ".json", ".properties").stream()
+                    .anyMatch(f::endsWith)) continue;
             String txt;
             try { txt = Files.readString(ws.resolve(f)); }
             catch (IOException e) { log.debug("could not read {} for dependency interfaces: {}", f, e.toString()); continue; }
@@ -282,7 +293,9 @@ public final class Packs {
      *  candidates; a task with no declared deps at all (e.g. the synthetic INTEGRATION task, which
      *  has no single dependency to scope to) still sees whatever fits from the full list. */
     static List<String[]> relevantHandoffs(final List<String[]> handoffs, final List<String> deps) {
-        return deps == null || deps.isEmpty() ? handoffs : handoffs.stream().filter(h -> deps.contains(h[0])).toList();
+        return deps == null || deps.isEmpty() ? handoffs : handoffs.stream()
+                .filter(h -> deps.contains(h[0]))
+                .toList();
     }
 
     /** #304: relevantHandoffs() scopes this down to the task's own direct deps - typically a
@@ -333,7 +346,9 @@ public final class Packs {
             final var files = new TreeSet<String>();
             mergeConflicts.forEach(c -> files.add(c[1]));
             parts.add("## Merge conflicts to resolve\nThe harness merged parallel tasks and kept their conflicts with `<<<<<<<`/`>>>>>>>` markers in: "
-                    + String.join(", ", files.stream().limit(20).toList()) + ". Resolve them first (the build fails until you do).");
+                    + String.join(", ", files.stream()
+                            .limit(20)
+                            .toList()) + ". Resolve them first (the build fails until you do).");
         }
         if (prevTask != null && snapshots.containsKey(prevTask)) {
             final String[] s = snapshots.get(prevTask);
@@ -529,27 +544,27 @@ public final class Packs {
 
     // which oracle check a free-text finding is about (keyword heuristic for the HIGH-finding precision proxy, R4 K-1)
     static final Map<String, Pattern> FINDING_KEYWORDS = Map.ofEntries(
-            Map.entry("F8", Pattern.compile("asOf|as-of|exclusive|boundary|asOfApplied", Pattern.CASE_INSENSITIVE)),
-            Map.entry("F2", Pattern.compile("point.in.time|between (a )?buy|replay|holdings at", Pattern.CASE_INSENSITIVE)),
-            Map.entry("F1", Pattern.compile("restore|equal sell|holdings after|subtract", Pattern.CASE_INSENSITIVE)),
-            Map.entry("F3", Pattern.compile("422|insufficient|balance check|holdings check", Pattern.CASE_INSENSITIVE)),
-            Map.entry("F4", Pattern.compile("409|transition|state machine|cancel", Pattern.CASE_INSENSITIVE)),
-            Map.entry("F5", Pattern.compile("round.?trip|scale|decimal string|trailing zero", Pattern.CASE_INSENSITIVE)),
-            Map.entry("F6", Pattern.compile("contract|openapi|schema|status code|body shape|field name", Pattern.CASE_INSENSITIVE)),
-            Map.entry("F7", Pattern.compile("HALF_EVEN|rounding|0\\.005|0\\.015", Pattern.CASE_INSENSITIVE)),
-            Map.entry("F9", Pattern.compile("idempoten", Pattern.CASE_INSENSITIVE)),
-            Map.entry("C1", Pattern.compile("healthcheck|health check|compose|docker|container", Pattern.CASE_INSENSITIVE)),
-            Map.entry("C2", Pattern.compile("/health|readiness", Pattern.CASE_INSENSITIVE)),
-            Map.entry("B1", Pattern.compile("compile|does not build|build fail", Pattern.CASE_INSENSITIVE)),
-            Map.entry("B2", Pattern.compile("\\btests? (fail|red|do not run|missing)|no tests", Pattern.CASE_INSENSITIVE)),
-            Map.entry("B3", Pattern.compile("coverage|assert|mutation|tests? (do|does) not (check|verify)|weak test", Pattern.CASE_INSENSITIVE)),
+            Map.entry("F8", Pattern.compile("asOf|as-of|exclusive|boundary|asOfApplied", CASE_INSENSITIVE)),
+            Map.entry("F2", Pattern.compile("point.in.time|between (a )?buy|replay|holdings at", CASE_INSENSITIVE)),
+            Map.entry("F1", Pattern.compile("restore|equal sell|holdings after|subtract", CASE_INSENSITIVE)),
+            Map.entry("F3", Pattern.compile("422|insufficient|balance check|holdings check", CASE_INSENSITIVE)),
+            Map.entry("F4", Pattern.compile("409|transition|state machine|cancel", CASE_INSENSITIVE)),
+            Map.entry("F5", Pattern.compile("round.?trip|scale|decimal string|trailing zero", CASE_INSENSITIVE)),
+            Map.entry("F6", Pattern.compile("contract|openapi|schema|status code|body shape|field name", CASE_INSENSITIVE)),
+            Map.entry("F7", Pattern.compile("HALF_EVEN|rounding|0\\.005|0\\.015", CASE_INSENSITIVE)),
+            Map.entry("F9", Pattern.compile("idempoten", CASE_INSENSITIVE)),
+            Map.entry("C1", Pattern.compile("healthcheck|health check|compose|docker|container", CASE_INSENSITIVE)),
+            Map.entry("C2", Pattern.compile("/health|readiness", CASE_INSENSITIVE)),
+            Map.entry("B1", Pattern.compile("compile|does not build|build fail", CASE_INSENSITIVE)),
+            Map.entry("B2", Pattern.compile("\\btests? (fail|red|do not run|missing)|no tests", CASE_INSENSITIVE)),
+            Map.entry("B3", Pattern.compile("coverage|assert|mutation|tests? (do|does) not (check|verify)|weak test", CASE_INSENSITIVE)),
             Map.entry("M1", Pattern.compile("\\bdouble\\b|\\bfloat\\b")),
             // #112: M2 ("BigDecimal imported where money is handled") had no entry here at all,
             // even though ladder.json scores it on 4 rungs (L1, L2, L3, L3p) - a self-review finding
             // correctly identifying a missing/absent BigDecimal could never be matched to it.
-            Map.entry("M2", Pattern.compile("BigDecimal", Pattern.CASE_INSENSITIVE)),
+            Map.entry("M2", Pattern.compile("BigDecimal", CASE_INSENSITIVE)),
             Map.entry("M3", Pattern.compile("\\.equals\\(|equals on")),
-            Map.entry("M4", Pattern.compile("sells? (are|is) (not )?subtract|adding replay", Pattern.CASE_INSENSITIVE)));
+            Map.entry("M4", Pattern.compile("sells? (are|is) (not )?subtract|adding replay", CASE_INSENSITIVE)));
 
     public static List<String> findingCheckIds(final String issue) {
         final List<String> out = new ArrayList<>();
@@ -572,7 +587,7 @@ public final class Packs {
         catch (IOException e) { log.warn("could not read {} (exists but unreadable): {}", path, e.toString()); return null; }
         JsonNode d;
         try { d = JSON.readTree(txt); } catch (Exception e) {
-            final Matcher m = Pattern.compile("\\{.*\\}", Pattern.DOTALL).matcher(txt);
+            final Matcher m = Pattern.compile("\\{.*\\}", DOTALL).matcher(txt);
             if (!m.find()) { log.warn("{} is not valid JSON and has no embedded {{...}} block, review discarded: {}", path, e.toString()); return null; }
             try { d = JSON.readTree(m.group(0)); }
             catch (Exception e2) { log.warn("could not parse the embedded JSON block in {}, review discarded: {}", path, e2.toString()); return null; }
@@ -607,7 +622,9 @@ public final class Packs {
         }
         out.put("findings", findings);
         final Map<String, Long> bySev = new LinkedHashMap<>();
-        for (String s : List.of("HIGH", "MEDIUM", "LOW")) bySev.put(s, findings.stream().filter(f -> s.equals(f.get("severity"))).count());
+        for (String s : List.of("HIGH", "MEDIUM", "LOW")) bySev.put(s, findings.stream()
+                .filter(f -> s.equals(f.get("severity")))
+                .count());
         out.put("findings_by_severity", bySev);
         if (trajectory) {
             out.put("wasted_turns_estimate", d.path("wasted_turns_estimate").isInt() ? d.path("wasted_turns_estimate").asInt() : null);
@@ -626,13 +643,13 @@ public final class Packs {
         double x;
         if (v.isNumber()) x = v.asDouble();
         else if (v.isTextual()) {
-            try { x = Double.parseDouble(v.asText().strip().replaceAll("%$", "")); }
+            try { x = parseDouble(v.asText().strip().replaceAll("%$", "")); }
             catch (NumberFormatException e) { log.debug("could not parse '{}' as a number: {}", v.asText(), e.toString()); return null; }
         }
         else return null;
-        return Math.max(lo, Math.min(hi, x));
+        return max(lo, min(hi, x));
     }
-    static String head(String s, int n) { return s == null ? "" : s.substring(0, Math.min(n, s.length())); }
+    static String head(String s, int n) { return s == null ? "" : s.substring(0, min(n, s.length())); }
 
     // ---------------------------------------------------------------- trajectory review (end-of-run)
     public static final String TRAJ_ROLE = """
@@ -666,7 +683,7 @@ public final class Packs {
         catch (Exception e) { log.warn("could not serialize the trajectory summary for the review pack: {}", e.toString()); json = "{}"; }
         return String.join("\n\n", List.of(
                 "# Trajectory under review",
-                "## Measured summary (trajectory/summary.json)\n```json\n" + json.substring(0, Math.min(6000, json.length())) + "\n```",
+                "## Measured summary (trajectory/summary.json)\n```json\n" + json.substring(0, min(6000, json.length())) + "\n```",
                 "## Transcript (the first " + CAPS.get("transcript_head") + " characters; the COMPLETE transcript with a per-task turn index is trajectory/TRAJECTORY.md - read the rest with grep/sed by turn number before judging)\n"
                         + cap(transcriptHead == null ? "" : transcriptHead, CAPS.get("transcript_head"))));
     }
@@ -702,19 +719,19 @@ public final class Packs {
         catch (IOException e) { log.warn("could not read {} (exists but unreadable): {}", path, e.toString()); return null; }
         JsonNode d;
         try { d = JSON.readTree(txt); } catch (Exception e) {
-            final Matcher m = Pattern.compile("\\{.*\\}", Pattern.DOTALL).matcher(txt);
+            final Matcher m = Pattern.compile("\\{.*\\}", DOTALL).matcher(txt);
             if (!m.find()) { log.warn("{} is not valid JSON and has no embedded {{...}} block, plan discarded: {}", path, e.toString()); return null; }
             try { d = JSON.readTree(m.group(0)); }
             catch (Exception e2) { log.warn("could not parse the embedded JSON block in {}, plan discarded: {}", path, e2.toString()); return null; }
         }
         if (!d.isObject() || !d.path("waves").isArray()) return null;
-        final Pattern idNorm = Pattern.compile("^(?:T|ST|Task|Subtask)[- ]?0*(\\d+)$", Pattern.CASE_INSENSITIVE);
+        final Pattern idNorm = Pattern.compile("^(?:T|ST|Task|Subtask)[- ]?0*(\\d+)$", CASE_INSENSITIVE);
         final List<List<String>> waves = new ArrayList<>();
         for (JsonNode w : d.get("waves")) {
             final List<String> wv = new ArrayList<>();
             for (JsonNode t : (w.isArray() ? w : List.of(w))) {   // a bare task id counts as a one-task wave
                 final Matcher m = idNorm.matcher(t.asText().strip());
-                wv.add(m.find() ? "T" + Integer.parseInt(m.group(1)) : t.asText().strip());
+                wv.add(m.find() ? "T" + parseInt(m.group(1)) : t.asText().strip());
             }
             waves.add(wv);
         }
@@ -722,7 +739,7 @@ public final class Packs {
         d.path("ownership").fields().forEachRemaining(e -> {
             if (e.getKey() != null) {
                 final Matcher m = idNorm.matcher(e.getKey().strip());
-                final String k = m.find() ? "T" + Integer.parseInt(m.group(1)) : e.getKey();
+                final String k = m.find() ? "T" + parseInt(m.group(1)) : e.getKey();
                 final List<String> globs = new ArrayList<>();
                 if (e.getValue().isArray()) e.getValue().forEach(g -> globs.add(g.asText()));
                 else if (e.getValue().isTextual()) globs.add(e.getValue().asText());   // a bare glob is a one-glob list
@@ -734,7 +751,7 @@ public final class Packs {
         final Map<String, Object> out = new LinkedHashMap<>();
         out.put("waves", waves);
         out.put("ownership", own);
-        out.put("shared_files", shared.subList(0, Math.min(50, shared.size())));
+        out.put("shared_files", shared.subList(0, min(50, shared.size())));
         out.put("rationale", head(d.path("rationale").asText(""), 1000));
         return out;
     }
@@ -755,7 +772,9 @@ public final class Packs {
         }
         if (problems.get("ownership_violations") instanceof List<?> vs && !vs.isEmpty()) {
             final var b = new StringBuilder();
-            vs.stream().limit(30).forEach(v -> { Object[] x = (Object[]) v; b.append("- ").append(x[0]).append(": ").append(x[1]).append('\n'); });
+            vs.stream()
+                    .limit(30)
+                    .forEach(v -> { Object[] x = (Object[]) v; b.append("- ").append(x[0]).append(": ").append(x[1]).append('\n'); });
             parts.add("## Files a task edited outside the ownership it declared\n" + b);
         }
         parts.add("## Repository tree\n```\n" + repoTree(ws, 8) + "\n```");

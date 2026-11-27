@@ -11,13 +11,15 @@ import tools.jackson.databind.JsonNode;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.ArrayList;
 import java.util.concurrent.Executors;
 
+import static java.lang.System.nanoTime;
+import static java.lang.Thread.currentThread;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -106,7 +108,7 @@ class ServiceClientWireTest {
         server.createContext("/", exchange -> {
             String method = exchange.getRequestMethod();
             String uri = exchange.getRequestURI().toString();
-            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            String body = new String(exchange.getRequestBody().readAllBytes(), UTF_8);
             captured.add(new Captured(method, uri, body));
 
             switch (method + " " + uri) {
@@ -141,7 +143,7 @@ class ServiceClientWireTest {
                     try {
                         Thread.sleep(3000);
                     } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
+                        currentThread().interrupt();
                     }
                     respond(exchange, 200, "late");
                 }
@@ -224,7 +226,7 @@ class ServiceClientWireTest {
 
     private static void respond(com.sun.net.httpserver.HttpExchange exchange, int status, String body)
             throws IOException {
-        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = body.getBytes(UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json");
         exchange.sendResponseHeaders(status, bytes.length == 0 ? -1 : bytes.length);
         try (var out = exchange.getResponseBody()) {
@@ -534,7 +536,7 @@ class ServiceClientWireTest {
             try {
                 Thread.sleep(1500);   // longer than the 500ms ordinary readTimeout below
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                currentThread().interrupt();
             }
             respond(exchange, 200, PREFLIGHT_JSON);
         });
@@ -562,7 +564,7 @@ class ServiceClientWireTest {
             try {
                 Thread.sleep(1500);
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                currentThread().interrupt();
             }
             respond(exchange, 200, PREFLIGHT_JSON);
         });
@@ -610,9 +612,9 @@ class ServiceClientWireTest {
 
     @Test
     void readTimeout_failsFastWithinBudget() {
-        long start = System.nanoTime();
+        long start = nanoTime();
         assertThrows(ResourceAccessException.class, () -> client.runFileText("r1", "slow"));
-        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        long elapsedMs = (nanoTime() - start) / 1_000_000;
         assertTrue(elapsedMs < 2500, "must fail within the 1s read timeout, took " + elapsedMs + "ms");
     }
 

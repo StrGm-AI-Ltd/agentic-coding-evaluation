@@ -377,7 +377,9 @@ public class JobNewView extends VerticalLayout {
      *  to, before it's ever enqueued. Hidden when nothing is selected or the rung is unrecognized
      *  (a free-typed custom value - task.setAllowCustomValue(true) - has no ladder entry to show). */
     private void renderTaskInfo(final String selected) {
-        final var detail = rungDetails.stream().filter(r -> r.name().equals(selected)).findFirst();
+        final var detail = rungDetails.stream()
+                .filter(r -> r.name().equals(selected))
+                .findFirst();
         if (selected == null || selected.isBlank() || detail.isEmpty()) {
             taskInfo.setVisible(false);
             return;

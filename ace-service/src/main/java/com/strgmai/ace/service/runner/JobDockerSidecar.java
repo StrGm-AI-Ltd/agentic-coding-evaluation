@@ -1,5 +1,6 @@
 package com.strgmai.ace.service.runner;
 
+import com.strgmai.ace.service.config.OperationsProperties;
 import com.strgmai.ace.service.docker.DockerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,6 +11,9 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+
+import static java.lang.System.nanoTime;
+import static java.lang.Thread.currentThread;
 
 /** #696, found live: ace-service mounts the HOST's real /var/run/docker.sock (Docker-outside-of-
  *  Docker) so the agent's own bash tool can use `docker` at all - but that gives the agent's own
@@ -38,7 +42,11 @@ public class JobDockerSidecar {
     // its "insecure, consider TLS" warning (see dind's own startup log) before it binds the TCP
     // port at all - 30s cut that too close on an ordinary machine with no other load. 60s leaves
     // real margin.
-    private static final int READY_TIMEOUT_SEC = 60;
+    private final int readyTimeoutSec;   // ace.operations.docker-sidecar-ready-timeout-sec
+
+    public JobDockerSidecar(final OperationsProperties operations) {
+        this.readyTimeoutSec = operations.dockerSidecarReadyTimeoutSec();
+    }
 
     private static String containerName(final String runId) {
         return "dind-" + runId;
@@ -95,13 +103,13 @@ public class JobDockerSidecar {
         return r.rc() == 0 && !ip.isBlank() ? ip : null;
     }
 
-    private static void waitUntilReady(final String name, final String ip) {
-        final long deadline = System.nanoTime() + READY_TIMEOUT_SEC * 1_000_000_000L;
-        while (System.nanoTime() < deadline) {
+    private void waitUntilReady(final String name, final String ip) {
+        final long deadline = nanoTime() + readyTimeoutSec * 1_000_000_000L;
+        while (nanoTime() < deadline) {
             if (DockerService.portInUse(DOCKER_PORT, ip)) return;
-            try { Thread.sleep(1000); } catch (final InterruptedException e) { Thread.currentThread().interrupt(); return; }
+            try { Thread.sleep(1000); } catch (final InterruptedException e) { currentThread().interrupt(); return; }
         }
-        log.warn("docker sidecar {} did not answer on port {} within {}s - proceeding anyway, the agent's first docker call will surface the real error", name, DOCKER_PORT, READY_TIMEOUT_SEC);
+        log.warn("docker sidecar {} did not answer on port {} within {}s - proceeding anyway, the agent's first docker call will surface the real error", name, DOCKER_PORT, readyTimeoutSec);
     }
 
     /** Best-effort, never throws - same philosophy RunRetention.stripBinaries already follows: a

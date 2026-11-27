@@ -12,15 +12,36 @@ public final class Scorer {
 
     public static Map<String, Object> score(final Collection<CheckResult> records) {
         final List<CheckResult> all = new ArrayList<>(records);
-        final List<CheckResult> counted = all.stream().filter(r -> !r.status().unscored()).toList();
-        final List<String> unscored = all.stream().filter(r -> r.status().unscored()).map(r -> r.id().name()).toList();
-        final int denom = counted.stream().mapToInt(r -> r.id().weight).sum();
-        final int got = counted.stream().filter(r -> r.status() == CheckStatus.PASS).mapToInt(r -> r.id().weight).sum();
-        final int fullDenom = all.stream().mapToInt(r -> r.id().weight).sum();
-        final List<CheckResult> fAll = all.stream().filter(r -> CheckId.functional().contains(r.id())).toList();
-        final List<CheckResult> fCounted = fAll.stream().filter(r -> !r.status().unscored()).toList();
-        final int fDenom = fCounted.stream().mapToInt(r -> r.id().weight).sum();
-        final int fGot = fCounted.stream().filter(r -> r.status() == CheckStatus.PASS).mapToInt(r -> r.id().weight).sum();
+        final List<CheckResult> counted = all.stream()
+                .filter(r -> !r.status().unscored())
+                .toList();
+        final List<String> unscored = all.stream()
+                .filter(r -> r.status().unscored())
+                .map(r -> r.id().name())
+                .toList();
+        final int denom = counted.stream()
+                .mapToInt(r -> r.id().weight)
+                .sum();
+        final int got = counted.stream()
+                .filter(r -> r.status() == CheckStatus.PASS)
+                .mapToInt(r -> r.id().weight)
+                .sum();
+        final int fullDenom = all.stream()
+                .mapToInt(r -> r.id().weight)
+                .sum();
+        final List<CheckResult> fAll = all.stream()
+                .filter(r -> CheckId.functional().contains(r.id()))
+                .toList();
+        final List<CheckResult> fCounted = fAll.stream()
+                .filter(r -> !r.status().unscored())
+                .toList();
+        final int fDenom = fCounted.stream()
+                .mapToInt(r -> r.id().weight)
+                .sum();
+        final int fGot = fCounted.stream()
+                .filter(r -> r.status() == CheckStatus.PASS)
+                .mapToInt(r -> r.id().weight)
+                .sum();
 
         final Map<String, Map<String, Object>> byCat = new LinkedHashMap<>();
         for (CheckResult r : all) {
@@ -36,19 +57,33 @@ public final class Scorer {
         rep.put("schema_version", com.strgmai.ace.service.config.BenchProperties.RESULT_SCHEMA);   // poolable runs are recognised by it
         rep.put("checks_expected", all.size());
         rep.put("checks_reported", all.size());
-        rep.put("passed", (int) counted.stream().filter(r -> r.status() == CheckStatus.PASS).count());
+        rep.put("passed", (int) counted.stream()
+                .filter(r -> r.status() == CheckStatus.PASS)
+                .count());
         rep.put("points_got", got);
-        rep.put("functional_ids", fAll.stream().map(r -> r.id().name()).toList());
+        rep.put("functional_ids", fAll.stream()
+                .map(r -> r.id().name())
+                .toList());
         rep.put("functional_points_got", fGot);
-        rep.put("not_attempted", (int) counted.stream().filter(r -> r.status() == CheckStatus.NOT_ATTEMPTED).count());
-        rep.put("skipped", all.stream().filter(r -> r.status() == CheckStatus.SKIPPED).map(r -> r.id().name()).toList());
-        rep.put("infra", all.stream().filter(r -> r.status() == CheckStatus.INFRA).map(r -> r.id().name()).toList());
+        rep.put("not_attempted", (int) counted.stream()
+                .filter(r -> r.status() == CheckStatus.NOT_ATTEMPTED)
+                .count());
+        rep.put("skipped", all.stream()
+                .filter(r -> r.status() == CheckStatus.SKIPPED)
+                .map(r -> r.id().name())
+                .toList());
+        rep.put("infra", all.stream()
+                .filter(r -> r.status() == CheckStatus.INFRA)
+                .map(r -> r.id().name())
+                .toList());
         rep.put("denominator", denom);
         rep.put("full_denominator", fullDenom);
         // counted denominator (consistent with `denominator` above) - fpct is computed over fDenom,
         // so on a partial run the full value would mislead any consumer that validates the stored points
         rep.put("functional_denominator", fDenom);
-        rep.put("functional_full_denominator", fAll.stream().mapToInt(r -> r.id().weight).sum());
+        rep.put("functional_full_denominator", fAll.stream()
+                .mapToInt(r -> r.id().weight)
+                .sum());
         rep.put("by_category", byCat);
         double pct = denom > 0 ? round1(100.0 * got / denom) : 0.0;   // Python round(x, 1) is banker's rounding
         final Double fpct = fDenom > 0 ? round1(100.0 * fGot / fDenom) : null;

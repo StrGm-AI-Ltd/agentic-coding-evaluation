@@ -180,7 +180,8 @@ public final class CompactionStrategies {
         // for at least one AiMessage (always and only present in the real tail, never the head -
         // see capForSummarization's own head/tail split) is representation-agnostic: it holds
         // whether headEnd is 2 or 3.
-        if (capped.stream().noneMatch(m -> m instanceof AiMessage)) return false;
+        if (capped.stream()
+                .noneMatch(m -> m instanceof AiMessage)) return false;
         final String summary;
         try {
             summary = summarize.apply(capped);

@@ -27,6 +27,18 @@ ace:
   docker-gc:
     interval-sec: 3600   # #621: periodic `docker container/image/volume prune -f` - never touches anything still in use
   max-error-rate: 0.2
+  # Operational settings (OperationsProperties): they depend on the machine and on how ACE is run, not on the
+  # benchmark. The harness's limits and thresholds stay in the code, versioned by HARNESS_VERSION.
+  operations:
+    stream-idle-timeout-sec: 1800          # abandon a model stream with no new output for 30 minutes
+    stream-poll-ms: 2000                   # how often a call waiting on the model checks for cancellation and idleness
+    gradle-timeout-sec: 2400               # the oracle's Gradle build and test steps
+    proxy-timeout-margin-sec: 30           # added to a job's first-token timeout for the proxy's upstream wait
+    docker-sidecar-ready-timeout-sec: 60   # a job's Docker sidecar answering on its port
+    transcript-tail-cap-chars: 20000       # the task transcript a transcript request returns
+    request-speed-window-tolerance-sec: 1800   # a request outside an attempt's window still counts for its speeds
+    judge-stamp-tolerance-sec: 300         # a judge verdict outside an attempt's window still counts for it
+    stuck-worker-threshold-sec: 1800       # a busy worker that logs nothing for this long is presumed wedged
   java-home: ${ACE_JAVA_HOME:}
   omlx-server-log: ${ACE_OMLX_SERVER_LOG:}   # EMPTY = no capture; the model server's own log (path is operator/machine-specific)
   # per-phase operator-wide defaults, keyed by phase id (p0_definition/p1_plan/p2_implementation/

@@ -37,7 +37,8 @@ class TrajectoryTest {
         final Map<String, Object> s = Trajectory.analyze(turns, Map.of(), null);
         assertEquals(1, ((Number) s.get("identical_calls_repeated")).intValue());
         assertEquals(2, ((Number) s.get("test_runs")).intValue());
-        assertTrue(((List<String>) s.get("flags")).stream().noneMatch(f -> f.startsWith("THRASH")), "one repeat does not flag");
+        assertTrue(((List<String>) s.get("flags")).stream()
+                .noneMatch(f -> f.startsWith("THRASH")), "one repeat does not flag");
     }
 
     @Test
@@ -84,7 +85,8 @@ class TrajectoryTest {
     void slowShortContextDecodeFlagsContention() {
         final var slow = List.of(turn(1, "ls", 100.0, 5.0, 200), turn(2, "ls", 200.0, 5.1, 200));
         final Map<String, Object> s = Trajectory.analyze(slow, Map.of("min_decode_tps", 10.0, "usable_context", 65536), null);
-        assertTrue(((List<String>) s.get("flags")).stream().anyMatch(f -> f.startsWith("SLOW_DECODE")));
+        assertTrue(((List<String>) s.get("flags")).stream()
+                .anyMatch(f -> f.startsWith("SLOW_DECODE")));
     }
 
     @Test

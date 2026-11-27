@@ -13,6 +13,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.NoSuchElementException;
 
+import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.CONFLICT;
+import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
+import static org.springframework.http.HttpStatus.NOT_FOUND;
+
 /** One error shape for the whole API: {"detail": "..."} — the shape the hand-rolled 404s in
  *  BenchController already return (and the one FastAPI's HTTPException produces in the Python
  *  service), now covering the exceptions that used to fall through to Spring Boot's default 500
@@ -28,21 +33,21 @@ public class ApiExceptionHandler {
      *  already queued, a results dir already on disk (JobQueue.enqueue) */
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> badRequest(final IllegalArgumentException e) {
-        return body(HttpStatus.BAD_REQUEST, e);
+        return body(BAD_REQUEST, e);
     }
 
     /** the row is not there: JobQueue.setPriority, and JdbcTemplate's own empty-result failure from
      *  queryForMap on a missing job/experiment */
     @ExceptionHandler({NoSuchElementException.class, org.springframework.dao.EmptyResultDataAccessException.class})
     public ResponseEntity<Map<String, Object>> notFound(final Exception e) {
-        return body(HttpStatus.NOT_FOUND, e);
+        return body(NOT_FOUND, e);
     }
 
     /** the row exists but is in the wrong state: cancelling a terminal job, requeueing a running one,
      *  requeueing over an existing results dir */
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<Map<String, Object>> conflict(final IllegalStateException e) {
-        return body(HttpStatus.CONFLICT, e);
+        return body(CONFLICT, e);
     }
 
     /** Found live: a long-lived SSE stream (/events) whose underlying response dies mid-stream -
@@ -70,7 +75,7 @@ public class ApiExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> serverError(final Exception e, final HttpServletRequest req) {
         log.error("unhandled exception on {} {}", req.getMethod(), req.getRequestURI(), e);
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("detail", "internal error; see the server log for detail"));
+        return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(Map.of("detail", "internal error; see the server log for detail"));
     }
 
     private static ResponseEntity<Map<String, Object>> body(final HttpStatus status, final Exception e) {

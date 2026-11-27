@@ -1,12 +1,15 @@
 package com.strgmai.ace.service.agent;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /** Port of agent_loop.py's tools: read/write/edit/bash with EXACT-match edits, ranged reads and
  *  mechanical output hygiene (ANSI stripped, head+tail caps) so context is spent on what the model
@@ -77,13 +80,13 @@ public final class AgentTools {
         if (!withinWorkspace(cwd, p)) return new Outcome("error: path escapes the task workspace: " + a.get("path"), FailureCategory.WORKSPACE_ESCAPE);
         if (!Files.isRegularFile(p)) return new Outcome("error: no such file: " + a.get("path"), FailureCategory.NOT_FOUND);
         List<String> lines;
-        try { lines = Files.readAllLines(p, StandardCharsets.UTF_8); }
+        try { lines = Files.readAllLines(p, UTF_8); }
         catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
         // clamp the lower bound: a 0/negative start_line would index lines.get(-1) and throw
-        final int s = Math.max(1, a.get("start_line") instanceof Number n ? n.intValue() : 1);
+        final int s = max(1, a.get("start_line") instanceof Number n ? n.intValue() : 1);
         if (!lines.isEmpty() && s > lines.size())
             return new Outcome("error: start_line " + s + " is past the end of the file (" + lines.size() + " lines)", FailureCategory.MALFORMED_ARGS);
-        int e = a.get("end_line") instanceof Number n ? Math.min(n.intValue(), lines.size()) : lines.size();
+        int e = a.get("end_line") instanceof Number n ? min(n.intValue(), lines.size()) : lines.size();
         if (e - s + 1 > READ_MAX_LINES && !a.containsKey("end_line")) e = s + READ_MAX_LINES - 1;
         final var out = new StringBuilder();
         for (int i = s; i <= e && i <= lines.size(); i++) out.append(String.format("%5d: %s%n", i, lines.get(i - 1)));
@@ -100,8 +103,8 @@ public final class AgentTools {
         if (!withinWorkspace(cwd, p)) return new Outcome("error: path escapes the task workspace: " + a.get("path"), FailureCategory.WORKSPACE_ESCAPE);
         try {
             Files.createDirectories(p.getParent() == null ? Paths.get(".") : p.getParent());
-            Files.writeString(p, content, StandardCharsets.UTF_8);
-            return new Outcome("wrote " + content.getBytes(StandardCharsets.UTF_8).length + " bytes to " + a.get("path"), null);
+            Files.writeString(p, content, UTF_8);
+            return new Outcome("wrote " + content.getBytes(UTF_8).length + " bytes to " + a.get("path"), null);
         } catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
     }
 
@@ -111,7 +114,7 @@ public final class AgentTools {
         if (!withinWorkspace(cwd, p)) return new Outcome("error: path escapes the task workspace: " + a.get("path"), FailureCategory.WORKSPACE_ESCAPE);
         if (!Files.isRegularFile(p)) return new Outcome("error: no such file: " + a.get("path"), FailureCategory.NOT_FOUND);
         String src;
-        try { src = Files.readString(p, StandardCharsets.UTF_8); } catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
+        try { src = Files.readString(p, UTF_8); } catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
         // explicit null check: getOrDefault returns null when the key is present with a JSON null,
         // and String.valueOf(null) would search for the literal text "null"
         final String old = a.get("old_string") == null ? "" : String.valueOf(a.get("old_string"));
@@ -122,7 +125,7 @@ public final class AgentTools {
         if (n == 0) return new Outcome("error: old_string not found (the match must be exact, including whitespace)", FailureCategory.NOT_FOUND);
         if (n > 1 && !all) return new Outcome("error: old_string occurs " + n + " times; add context to make it unique or set replace_all", FailureCategory.AMBIGUOUS_MATCH);
         final String out = all ? src.replace(old, neu) : src.replaceFirst(Pattern.quote(old), Matcher.quoteReplacement(neu));
-        try { Files.writeString(p, out, StandardCharsets.UTF_8); } catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
+        try { Files.writeString(p, out, UTF_8); } catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
         return new Outcome("edited " + a.get("path") + " (" + (all ? n : 1) + " replacement)", null);
     }
 
@@ -146,7 +149,7 @@ public final class AgentTools {
     public static Outcome bash(final String cwd, final Map<String, Object> a, final Map<String, String> env, final boolean errorLineExtractionEnabled) {
         final String cmd = String.valueOf(a.getOrDefault("command", ""));
         int to = 600;
-        if (a.get("timeout_sec") instanceof Number n) to = Math.min(1800, Math.max(5, n.intValue()));
+        if (a.get("timeout_sec") instanceof Number n) to = min(1800, max(5, n.intValue()));
         if (cmd.isBlank()) return new Outcome("error: empty command", FailureCategory.MALFORMED_ARGS);
         String out; int rc;
         try {
@@ -191,7 +194,8 @@ public final class AgentTools {
             String errorBlock = "";
             if (errorLineExtractionEnabled) {
                 final List<String> matched = lines.subList(midStart, midEnd).stream()
-                        .filter(l -> ERROR_LINE.matcher(l).find()).toList();
+                        .filter(l -> ERROR_LINE.matcher(l).find())
+                        .toList();
                 // #417 follow-up review: `.limit(MAX_ERROR_LINES_KEPT)` on the stream above kept the
                 // OLDEST matches - backwards, since early build/dependency noise (a Gradle plugin is
                 // literally named "error-prone") fills the quota before the real failure near the END
@@ -251,5 +255,5 @@ public final class AgentTools {
         return String.join("\n", out);
     }
 
-    public static Duration bashTimeout(int requested) { return Duration.ofSeconds(Math.min(1800, Math.max(5, requested))); }
+    public static Duration bashTimeout(int requested) { return Duration.ofSeconds(min(1800, max(5, requested))); }
 }

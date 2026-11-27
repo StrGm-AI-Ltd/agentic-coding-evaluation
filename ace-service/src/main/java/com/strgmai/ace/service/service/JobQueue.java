@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.*;
 
 import static com.strgmai.ace.service.jooq.Tables.JOBS;
+import static java.util.UUID.randomUUID;
 
 /** Port of service/queue.py: the DB-backed run queue. Claim uses an atomic UPDATE...WHERE id=(SELECT
  *  ... LIMIT 1) with the same priority order (priority DESC, then FIFO); a run id can never be queued
@@ -50,7 +51,7 @@ public class JobQueue {
         JobsRecord rec;
         try {
             rec = dsl.insertInto(JOBS)
-                    .set(JOBS.ID, UUID.randomUUID())   // no AUTOINCREMENT on a UUID PK - assigned here
+                    .set(JOBS.ID, randomUUID())   // no AUTOINCREMENT on a UUID PK - assigned here
                     .set(JOBS.EXPERIMENT_ID, experimentId)
                     .set(JOBS.ARM, arm)
                     .set(JOBS.REPEAT, repeat)

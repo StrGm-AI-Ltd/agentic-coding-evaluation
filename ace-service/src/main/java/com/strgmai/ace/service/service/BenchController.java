@@ -5,6 +5,7 @@ import com.strgmai.ace.service.agent.AgentSession;
 import com.strgmai.ace.service.backend.LocalModelBackend;
 import com.strgmai.ace.service.config.BenchProperties;
 import com.strgmai.ace.service.config.JsonColumns;
+import com.strgmai.ace.service.config.OperationsProperties;
 import com.strgmai.ace.service.metrics.StatsService;
 import com.strgmai.ace.service.oracle.CheckId;
 import com.strgmai.ace.service.pack.Packs;
@@ -27,12 +28,21 @@ import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 import static com.strgmai.ace.service.jooq.Tables.CHECK_RESULTS;
 import static com.strgmai.ace.service.jooq.Tables.EXPERIMENTS;
 import static com.strgmai.ace.service.jooq.Tables.JOBS;
 import static com.strgmai.ace.service.jooq.Tables.RUNS;
+import static java.lang.Integer.parseInt;
+import static java.lang.Math.abs;
+import static java.lang.Math.min;
+import static java.lang.System.currentTimeMillis;
+import static java.util.Comparator.comparing;
+import static java.util.Comparator.comparingDouble;
+import static java.util.Comparator.comparingInt;
+import static java.util.Comparator.comparingLong;
+import static java.util.stream.Collectors.toCollection;
+import static java.util.stream.Collectors.toSet;
 
 /** Security: files are confined to the run's own results directory (resolve + verified
  *  containment); workspace/ — the agent's live tree — is never served by raw path. taskDiff()
@@ -63,12 +73,19 @@ public class BenchController {
                            StatsService stats, WorkerService worker, BenchProperties props, Preflight preflight,
                            TreatmentPin pin, Intervene intervene, TaskMatcher taskMatcher, PauseAfterTask pauseAfterTask,
                            com.strgmai.ace.service.agent.ProviderStore providerStore, LocalModelBackend backend,
-                           ContextProbe contextProbe) {
+                           ContextProbe contextProbe, OperationsProperties operations) {
         this.dsl = dsl; this.queue = queue; this.importer = importer; this.experiments = experiments;
         this.stats = stats; this.worker = worker; this.props = props; this.preflight = preflight; this.pin = pin;
         this.intervene = intervene; this.taskMatcher = taskMatcher; this.pauseAfterTask = pauseAfterTask;
         this.providerStore = providerStore; this.backend = backend; this.contextProbe = contextProbe;
+        this.transcriptTailCapChars = operations.transcriptTailCapChars();
+        this.requestSpeedWindowTolerance = Duration.ofSeconds(operations.requestSpeedWindowToleranceSec());
+        this.judgeStampTolerance = Duration.ofSeconds(operations.judgeStampToleranceSec());
     }
+
+    private final int transcriptTailCapChars;   // ace.operations.transcript-tail-cap-chars
+    private final Duration requestSpeedWindowTolerance;   // ace.operations.request-speed-window-tolerance-sec
+    private final Duration judgeStampTolerance;   // ace.operations.judge-stamp-tolerance-sec
 
     @GetMapping("/api/preflight")
     public Map<String, Object> preflight(@RequestParam(required = false) String model) {
@@ -78,7 +95,10 @@ public class BenchController {
 
     @GetMapping("/api/models")
     public List<String> models() {
-        return Preflight.modelClient(props).models().list().data().stream().map(Model::id).sorted().toList();
+        return Preflight.modelClient(props).models().list().data().stream()
+                .map(Model::id)
+                .sorted()
+                .toList();
     }
 
     /** every rung tasks/ladder.json declares - "_doc" is a documentation string, not a rung.
@@ -90,7 +110,9 @@ public class BenchController {
         final com.fasterxml.jackson.databind.JsonNode ladder = new com.fasterxml.jackson.databind.ObjectMapper().readTree(ladderStream);
         final List<String> out = new ArrayList<>();
         ladder.fieldNames().forEachRemaining(name -> { if (!"_doc".equals(name)) out.add(name); });
-        return out.stream().sorted().toList();
+        return out.stream()
+                .sorted()
+                .toList();
     }
 
     /** Every rung's own description/budget/denominator/checks, each check resolved to its own
@@ -106,12 +128,14 @@ public class BenchController {
         final List<Map<String, Object>> out = new ArrayList<>();
         final var names = new ArrayList<String>();
         ladder.fieldNames().forEachRemaining(name -> { if (!"_doc".equals(name)) names.add(name); });
-        for (final String name : names.stream().sorted().toList()) {
+        for (final String name : names.stream()
+                .sorted()
+                .toList()) {
             final var rung = ladder.get(name);
             final Set<CheckId> ids = rung.get("checks").isTextual() && rung.get("checks").asText().equals("all")
                     ? EnumSet.allOf(CheckId.class)
                     : java.util.stream.StreamSupport.stream(rung.get("checks").spliterator(), false)
-                            .map(c -> CheckId.valueOf(c.asText())).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+                            .map(c -> CheckId.valueOf(c.asText())).collect(toCollection(LinkedHashSet::new));
             final List<Map<String, Object>> checks = ids.stream()
                     .map(id -> Map.<String, Object>of("check_id", id.name(), "category", id.category, "weight", id.weight, "description", id.description))
                     .toList();
@@ -143,7 +167,9 @@ public class BenchController {
                         RUNS.FUNCTIONAL_SCORE_PCT, RUNS.WEIGHTED_SCORE_PCT, RUNS.VALID, RUNS.CONTENDED, RUNS.WALL_SEC, RUNS.COMPLETION_TOKENS,
                         RUNS.POOLABLE, RUNS.PARTIAL_SCORE_PCT, RUNS.ORACLE, RUNS.STARTED, RUNS.EARLIER_ATTEMPTS)
                 .from(RUNS).where(where).orderBy(RUNS.IMPORTED_AT.desc()).limit(500).fetch().intoMaps())
-                .stream().map(BenchController::hoistFunctionalIds).toList();
+                .stream()
+                        .map(BenchController::hoistFunctionalIds)
+                        .toList();
     }
 
     @GetMapping("/api/runs/{id}")
@@ -153,7 +179,9 @@ public class BenchController {
         final Map<String, Object> run = hoistFunctionalIds(JsonColumns.parse(rec.intoMap()));
         run.put("checks", dsl.select(CHECK_RESULTS.CHECK_ID, CHECK_RESULTS.CATEGORY, CHECK_RESULTS.WEIGHT, CHECK_RESULTS.STATUS, CHECK_RESULTS.DETAIL, CHECK_RESULTS.DESCRIPTION)
                 .from(CHECK_RESULTS).where(CHECK_RESULTS.RUN_ID.eq(id)).orderBy(CHECK_RESULTS.CHECK_ID)
-                .fetch().intoMaps().stream().map(JsonColumns::parse).toList());
+                .fetch().intoMaps().stream()
+                        .map(JsonColumns::parse)
+                        .toList());
         return ResponseEntity.ok(run);
     }
 
@@ -358,7 +386,8 @@ public class BenchController {
                     row.put("reported_detail", reported == null ? null : reported.detail());
                 }
                 row.put("attempts", taskAttempts.size());
-                row.put("rescued", taskAttempts.stream().anyMatch(a -> Boolean.TRUE.equals(a.get("rescue_succeeded"))));
+                row.put("rescued", taskAttempts.stream()
+                        .anyMatch(a -> Boolean.TRUE.equals(a.get("rescue_succeeded"))));
                 row.put("stage", false);
                 rows.add(row);
             }
@@ -484,7 +513,9 @@ public class BenchController {
                 final List<String> orderedIds = orderedTaskIds(base);
                 final int fromIndex = orderedIds.indexOf(taskId);
                 final List<String> cascadeIds = fromIndex < 0 ? List.of(taskId) : orderedIds.subList(fromIndex, orderedIds.size());
-                return cascadeIds.stream().flatMap(cid -> java.util.stream.Stream.of("phase/" + cid, "phase/" + cid + "-handoff")).toList();
+                return cascadeIds.stream()
+                        .flatMap(cid -> java.util.stream.Stream.of("phase/" + cid, "phase/" + cid + "-handoff"))
+                        .toList();
             } catch (final Exception e) { throw new RuntimeException(e); }
         }, body);
     }
@@ -525,10 +556,12 @@ public class BenchController {
             throw new IllegalStateException(overrideKey + " has no " + ownTag + " tag yet - nothing to restart");
         final Object rawOverrides = body == null ? null : body.get("overrides");
         final Map<String, Object> overrides = rawOverrides instanceof Map<?, ?> o ? (Map<String, Object>) o : Map.of();
-        final var unknown = overrides.keySet().stream().filter(k -> !RESTART_OVERRIDE_KEYS.contains(k)).toList();
+        final var unknown = overrides.keySet().stream()
+                .filter(k -> !RESTART_OVERRIDE_KEYS.contains(k))
+                .toList();
         if (!unknown.isEmpty()) throw new IllegalArgumentException("unknown override field(s): " + unknown + "; allowed: " + RESTART_OVERRIDE_KEYS);
 
-        com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "tag", "backup/" + overrideKey + "-" + (System.currentTimeMillis() / 1000), "HEAD");
+        com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "tag", "backup/" + overrideKey + "-" + (currentTimeMillis() / 1000), "HEAD");
         final String before = com.strgmai.ace.service.runner.RunBenchSupport.nearestPhaseTagSha(ws, ownTag + "^");
         com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "reset", "--hard", before);
 
@@ -604,7 +637,9 @@ public class BenchController {
             throw new IllegalArgumentException("unknown task id: " + taskId);
         final Object rawOverrides = body == null ? null : body.get("overrides");
         final Map<String, Object> overrides = rawOverrides instanceof Map<?, ?> o ? (Map<String, Object>) o : Map.of();
-        final var unknown = overrides.keySet().stream().filter(k -> !RESTART_OVERRIDE_KEYS.contains(k)).toList();
+        final var unknown = overrides.keySet().stream()
+                .filter(k -> !RESTART_OVERRIDE_KEYS.contains(k))
+                .toList();
         if (!unknown.isEmpty()) throw new IllegalArgumentException("unknown override field(s): " + unknown + "; allowed: " + RESTART_OVERRIDE_KEYS);
         return queue.setTaskOverride(id, taskId, overrides);
     }
@@ -735,7 +770,7 @@ public class BenchController {
         }
         if (attempts.isEmpty()) return SessionCounts.NOT_FOUND;
         // chronological: oldest attempt first, so "Attempt 1" in the UI really is the earliest one
-        attempts.sort(Comparator.comparing(a -> a.startedIso() == null ? "" : a.startedIso()));
+        attempts.sort(comparing(a -> a.startedIso() == null ? "" : a.startedIso()));
         int turns = 0, compactions = 0, toolErrorsTotal = 0;
         double wallSec = 0.0;
         final Map<String, int[]> toolCounts = new LinkedHashMap<>();   // toolName -> [total, errors], summed across every attempt
@@ -839,10 +874,10 @@ public class BenchController {
                 if (!(records.get(ri).get("attempt_started") instanceof String s)) continue;
                 final Instant recStart = parseInstantOrNull(s);
                 if (recStart == null) continue;
-                candidates.add(new long[]{ai, ri, Math.abs(Duration.between(sessionStart, recStart).toMillis())});
+                candidates.add(new long[]{ai, ri, abs(Duration.between(sessionStart, recStart).toMillis())});
             }
         }
-        candidates.sort(Comparator.comparingLong(c -> c[2]));
+        candidates.sort(comparingLong(c -> c[2]));
         final boolean[] recordConsumed = new boolean[records.size()];
         for (final long[] c : candidates) {
             if (c[2] > 300_000) break;   // 5 minutes - generous given a true match should be near-instant
@@ -898,9 +933,9 @@ public class BenchController {
             am.put("compaction_distribution", compactionDistribution);
             am.put("compaction_reclaimed", compactionReclaimed);
             final List<JudgeCheckpoint> checkpoints = new ArrayList<>();
-            for (final String stamp : judgeStampsInAttemptWindow(judgeByStamp.keySet(), a))
+            for (final String stamp : judgeStampsInAttemptWindow(judgeByStamp.keySet(), a, judgeStampTolerance))
                 checkpoints.addAll(judgeByStamp.getOrDefault(stamp, List.of()));
-            checkpoints.sort(Comparator.comparingInt(JudgeCheckpoint::turn));
+            checkpoints.sort(comparingInt(JudgeCheckpoint::turn));
             final List<Integer> judgeOnTrack = new ArrayList<>();
             final List<Integer> judgeOffTrack = new ArrayList<>();
             for (final JudgeCheckpoint c : checkpoints) (c.offTrack() ? judgeOffTrack : judgeOnTrack).add(c.turn());
@@ -945,12 +980,13 @@ public class BenchController {
         try (var reader = Files.newBufferedReader(file)) {
             String line;
             while ((line = reader.readLine()) != null) {
-                if (line.isBlank() || sessionIds.stream().noneMatch(line::contains)) continue;
+                if (line.isBlank() || sessionIds.stream()
+                        .noneMatch(line::contains)) continue;
                 final Map<String, Object> entry = parseRequestSpeedEntry(factory, line, sessionIds, backend);
                 if (entry != null) bySession.computeIfAbsent((String) entry.remove("session_id"), k -> new ArrayList<>()).add(entry);
             }
         } catch (final Exception e) { return bySession; }
-        bySession.values().forEach(list -> list.sort(Comparator.comparingLong(e -> ((Number) e.get("seq")).longValue())));
+        bySession.values().forEach(list -> list.sort(comparingLong(e -> ((Number) e.get("seq")).longValue())));
         return bySession;
     }
 
@@ -987,11 +1023,13 @@ public class BenchController {
      *  right spot. A missing "ts" (only ever a hand-written test fixture shape - every real
      *  interactions.jsonl line has one) still passes through unfiltered: there is no timestamp to
      *  test, and - in the single-sharer case - no second candidate to confuse it with either. */
-    private static final Duration REQUEST_SPEED_WINDOW_TOLERANCE = Duration.ofMinutes(30);
 
     private List<List<Map<String, Object>>> requestSpeedsPerAttempt(final Path base, final List<AttemptCounts> attempts) {
         final Map<String, List<Map<String, Object>>> bySession = requestSpeedsBySession(base,
-                attempts.stream().map(AttemptCounts::sessionUuid).filter(Objects::nonNull).collect(Collectors.toSet()));
+                attempts.stream()
+                        .map(AttemptCounts::sessionUuid)
+                        .filter(Objects::nonNull)
+                        .collect(toSet()));
         final List<List<Map<String, Object>>> perAttempt = new ArrayList<>();
         for (int i = 0; i < attempts.size(); i++) perAttempt.add(new ArrayList<>());
         final Map<String, List<Integer>> indicesBySessionUuid = new LinkedHashMap<>();
@@ -1005,9 +1043,9 @@ public class BenchController {
             if (sharingIndices.size() == 1) {
                 final int idx = sharingIndices.get(0);
                 final Instant start = parseInstantOrNull(attempts.get(idx).startedIso());
-                final Instant windowStart = start == null ? null : start.minus(REQUEST_SPEED_WINDOW_TOLERANCE);
+                final Instant windowStart = start == null ? null : start.minus(requestSpeedWindowTolerance);
                 final Instant end = parseInstantOrNull(attempts.get(idx).endedIso());
-                final Instant windowEnd = end == null ? null : end.plus(REQUEST_SPEED_WINDOW_TOLERANCE);
+                final Instant windowEnd = end == null ? null : end.plus(requestSpeedWindowTolerance);
                 for (final Map<String, Object> reqEntry : sessionEntries) {
                     final Instant reqTs = parseInstantOrNull((String) reqEntry.get("ts"));
                     final boolean inWindow = reqTs == null || windowStart == null
@@ -1027,14 +1065,14 @@ public class BenchController {
                     final Instant end = parseInstantOrNull(att.endedIso());
                     if (start == null || end == null) continue;
                     final long dist = !reqTs.isBefore(start) && !reqTs.isAfter(end) ? 0
-                            : Math.min(Math.abs(Duration.between(start, reqTs).toMillis()), Math.abs(Duration.between(end, reqTs).toMillis()));
+                            : min(abs(Duration.between(start, reqTs).toMillis()), abs(Duration.between(end, reqTs).toMillis()));
                     if (dist < bestDist) { bestDist = dist; bestIdx = idx; }
                 }
-                if (bestIdx >= 0 && bestDist <= REQUEST_SPEED_WINDOW_TOLERANCE.toMillis()) perAttempt.get(bestIdx).add(reqEntry);
+                if (bestIdx >= 0 && bestDist <= requestSpeedWindowTolerance.toMillis()) perAttempt.get(bestIdx).add(reqEntry);
             }
         }
         for (final List<Map<String, Object>> list : perAttempt) {
-            list.sort(Comparator.comparingLong(e -> ((Number) e.get("seq")).longValue()));
+            list.sort(comparingLong(e -> ((Number) e.get("seq")).longValue()));
             for (final Map<String, Object> e : list) { e.remove("ts"); e.remove("session_id"); }
         }
         return perAttempt;
@@ -1274,8 +1312,10 @@ public class BenchController {
             // judgeStampsInAttemptWindow()'s own javadoc for why.
             final var attempts = sessionCounts(base, taskId).attempts();
             final Set<String> wanted = new LinkedHashSet<>();
-            for (final AttemptCounts a : attempts) wanted.addAll(judgeStampsInAttemptWindow(byAttempt.keySet(), a));
-            if (wanted.isEmpty()) wanted.add(byAttempt.keySet().stream().max(Comparator.naturalOrder()).orElseThrow());
+            for (final AttemptCounts a : attempts) wanted.addAll(judgeStampsInAttemptWindow(byAttempt.keySet(), a, judgeStampTolerance));
+            if (wanted.isEmpty()) wanted.add(byAttempt.keySet().stream()
+                    .max(Comparator.naturalOrder())
+                    .orElseThrow());
 
             record Entry(String stamp, int turn, String prompt, String recommendation) {}
             final List<Entry> entries = new ArrayList<>();
@@ -1283,7 +1323,7 @@ public class BenchController {
                 for (final Path f : byAttempt.getOrDefault(stamp, List.of())) {
                     final var m = pattern.matcher(f.getFileName().toString());
                     m.matches();
-                    final int turn = Integer.parseInt(m.group(2));
+                    final int turn = parseInt(m.group(2));
                     final String content = Files.readString(f);
                     final int promptIdx = content.indexOf("## Prompt");
                     final int recIdx = content.indexOf("## Recommendation");
@@ -1297,9 +1337,11 @@ public class BenchController {
             // two reconnects of the same task can each independently reach "turn 5" (the judge's own
             // interval state resets per reconnect, same root cause as the missing-checkpoints bug
             // this fixes), so a plain turn-only sort would interleave them confusingly
-            entries.sort(Comparator.comparing(Entry::stamp).thenComparingInt(Entry::turn));
-            return entries.stream().map(e -> Map.<String, Object>of(
-                    "turn", e.turn(), "prompt", e.prompt(), "recommendation", e.recommendation())).toList();
+            entries.sort(comparing(Entry::stamp).thenComparingInt(Entry::turn));
+            return entries.stream()
+                    .map(e -> Map.<String, Object>of(
+                            "turn", e.turn(), "prompt", e.prompt(), "recommendation", e.recommendation()))
+                    .toList();
         } catch (final Exception e) { return List.of(); }
     }
 
@@ -1317,14 +1359,13 @@ public class BenchController {
      *  task's real progress) is continuous, so more than one stamp can legitimately belong to the
      *  SAME one real attempt. Still correctly excludes a genuinely abandoned pre-Restart attempt's
      *  stale checkpoints, since a real Restart's new attempt starts well outside their tolerance. */
-    private static final Duration JUDGE_STAMP_TOLERANCE = Duration.ofMinutes(5);
 
-    private static List<String> judgeStampsInAttemptWindow(final Collection<String> stamps, final AttemptCounts a) {
+    private static List<String> judgeStampsInAttemptWindow(final Collection<String> stamps, final AttemptCounts a, final Duration tolerance) {
         final Instant start = parseInstantOrNull(a.startedIso());
         if (start == null) return List.of();
-        final Instant windowStart = start.minus(JUDGE_STAMP_TOLERANCE);
+        final Instant windowStart = start.minus(tolerance);
         final Instant end = parseInstantOrNull(a.endedIso());   // null (still running): window stays open-ended
-        final Instant windowEnd = end == null ? null : end.plus(JUDGE_STAMP_TOLERANCE);
+        final Instant windowEnd = end == null ? null : end.plus(tolerance);
         final List<String> out = new ArrayList<>();
         for (final String stamp : stamps) {
             if (stamp.isEmpty()) continue;   // the legacy, unstamped shape has no timestamp to test
@@ -1368,7 +1409,7 @@ public class BenchController {
                 if (!m.matches()) continue;
                 final String stamp = m.group(1);
                 if (stamp == null || stamp.isEmpty()) continue;
-                final int turn = Integer.parseInt(m.group(2));
+                final int turn = parseInt(m.group(2));
                 final String content = Files.readString(f);
                 final int recIdx = content.indexOf("## Recommendation");
                 final String recommendation = recIdx >= 0 ? content.substring(recIdx + "## Recommendation".length()).strip() : null;
@@ -1377,7 +1418,7 @@ public class BenchController {
                 byStamp.computeIfAbsent(stamp, k -> new ArrayList<>()).add(new JudgeCheckpoint(turn, offTrack));
             }
         } catch (final Exception e) { return Map.of(); }
-        byStamp.values().forEach(list -> list.sort(Comparator.comparingInt(JudgeCheckpoint::turn)));
+        byStamp.values().forEach(list -> list.sort(comparingInt(JudgeCheckpoint::turn)));
         return byStamp;
     }
 
@@ -1544,7 +1585,8 @@ public class BenchController {
     }
 
     private static boolean isVendored(final String relPath) {
-        return com.strgmai.ace.service.runner.RunBenchSupport.VENDORED_PATHS.stream().anyMatch(relPath::startsWith);
+        return com.strgmai.ace.service.runner.RunBenchSupport.VENDORED_PATHS.stream()
+                .anyMatch(relPath::startsWith);
     }
 
     /** #260, found live: a workspace initialised before VENDORED_PATHS grew a given entry (here,
@@ -1719,9 +1761,18 @@ public class BenchController {
 
     static List<Double> metricValues(final List<StatsService.RunSummary> runs, final String metric) {
         return switch (metric) {
-            case "score" -> runs.stream().map(StatsService.RunSummary::score).filter(Objects::nonNull).toList();
-            case "agent_result" -> runs.stream().map(StatsService.RunSummary::agentResult).filter(Objects::nonNull).toList();
-            default -> runs.stream().map(StatsService.RunSummary::functional).filter(Objects::nonNull).toList();
+            case "score" -> runs.stream()
+                    .map(StatsService.RunSummary::score)
+                    .filter(Objects::nonNull)
+                    .toList();
+            case "agent_result" -> runs.stream()
+                    .map(StatsService.RunSummary::agentResult)
+                    .filter(Objects::nonNull)
+                    .toList();
+            default -> runs.stream()
+                    .map(StatsService.RunSummary::functional)
+                    .filter(Objects::nonNull)
+                    .toList();
         };
     }
 
@@ -1744,7 +1795,9 @@ public class BenchController {
             group.put("model", entry.getKey().get(1));
             group.put("key_hash", entry.getKey().get(2));
             group.put("mode", groupRows.get(0).get("mode"));
-            group.put("run_ids", groupRows.stream().map(r -> r.get("run_id")).toList());
+            group.put("run_ids", groupRows.stream()
+                    .map(r -> r.get("run_id"))
+                    .toList());
             group.put("summary", Map.of("k", 0));
             group.put("printed", "");
             group.put("refused", null);
@@ -1762,7 +1815,7 @@ public class BenchController {
             final int k = kValue instanceof Number n ? n.intValue() : 0;
             (k >= 5 ? ranked : indicative).add(group);
         }
-        ranked.sort(Comparator.comparingDouble(BenchController::functionalMean).reversed());
+        ranked.sort(comparingDouble(BenchController::functionalMean).reversed());
         return Map.of("ranked", ranked, "indicative", indicative);
     }
 
@@ -1793,7 +1846,9 @@ public class BenchController {
 
     @GetMapping("/api/providers")
     public List<Map<String, Object>> providers() {
-        return providerStore.list().stream().map(this::providerRow).toList();
+        return providerStore.list().stream()
+                .map(this::providerRow)
+                .toList();
     }
 
     @PostMapping("/api/providers")
@@ -1808,7 +1863,9 @@ public class BenchController {
      *  as a step of a full job run) instead of duplicating its endpoint-normalization/timeout logic. */
     @GetMapping("/api/providers/{id}/health")
     public Map<String, Object> providerHealth(final @PathVariable UUID id) {
-        final var p = providerStore.list().stream().filter(x -> x.id().equals(id)).findFirst();
+        final var p = providerStore.list().stream()
+                .filter(x -> x.id().equals(id))
+                .findFirst();
         if (p.isEmpty()) return Map.of("ok", false);
         final var h = contextProbe.health(p.get().baseUrl(), p.get().apiKey());
         return Map.of("ok", "healthy".equals(h.path("status").asText()));
@@ -1844,14 +1901,19 @@ public class BenchController {
      *  "internal error" the operator has no way to act on. */
     @GetMapping("/api/providers/{id}/models")
     public List<String> providerModels(final @PathVariable UUID id) {
-        final var provider = providerStore.list().stream().filter(p -> p.id().equals(id)).findFirst()
+        final var provider = providerStore.list().stream()
+                .filter(p -> p.id().equals(id))
+                .findFirst()
                 .orElseThrow(() -> new NoSuchElementException("no such provider: " + id));
         final var client = com.openai.client.okhttp.OpenAIOkHttpClient.builder()
                 .baseUrl(provider.baseUrl())
                 .apiKey(provider.apiKey() == null || provider.apiKey().isBlank() ? "none" : provider.apiKey())
                 .build();
         try {
-            return client.models().list().data().stream().map(Model::id).sorted().toList();
+            return client.models().list().data().stream()
+                    .map(Model::id)
+                    .sorted()
+                    .toList();
         } catch (final com.openai.errors.OpenAIException e) {
             throw new IllegalArgumentException("could not list models for " + provider.name() + ": " + e.getMessage(), e);
         }
@@ -1911,7 +1973,6 @@ public class BenchController {
      *  thinking). Same SSE shape as events() above - a tail-capped catch-up batch on first
      *  connecting (or whenever the task's own session file changes, e.g. a restart), small
      *  incremental text after that - but scoped to one task's own session, not the whole job. */
-    private static final int TRANSCRIPT_TAIL_CAP_CHARS = 20_000;
 
     @GetMapping("/api/jobs/{id}/tasks/{taskId}/transcript")
     public SseEmitter taskTranscript(final @PathVariable UUID id, final @PathVariable String taskId) {
@@ -1923,7 +1984,7 @@ public class BenchController {
                 while (true) {
                     final Map<String, Object> job = queue.get(id);
                     final var sessionsDir = Path.of(props.resultsDir(), String.valueOf(job.get("run_id")), "sessions");
-                    final String block = transcript.poll(sessionsDir, taskId, TRANSCRIPT_TAIL_CAP_CHARS);
+                    final String block = transcript.poll(sessionsDir, taskId, transcriptTailCapChars);
                     // sent as a JSON object (never a raw multi-line String - every block here IS
                     // multi-line) for the same reason every other event on this stream already is:
                     // a raw string with embedded newlines breaks SSE's own line-oriented framing
@@ -1953,7 +2014,7 @@ public class BenchController {
     @GetMapping("/api/runs/{runId}/tasks/{taskId}/transcript")
     public Map<String, Object> taskTranscriptForRun(@PathVariable String runId, @PathVariable String taskId) {
         final var sessionsDir = Path.of(props.resultsDir(), runId, "sessions");
-        final String block = new TaskTranscript().poll(sessionsDir, taskId, TRANSCRIPT_TAIL_CAP_CHARS);
+        final String block = new TaskTranscript().poll(sessionsDir, taskId, transcriptTailCapChars);
         return Map.of("text", block == null ? "" : block);
     }
 

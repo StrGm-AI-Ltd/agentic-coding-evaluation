@@ -38,7 +38,10 @@ class StatsServiceTest {
     void bootCiBracketsTheMeanAndStaysInsideTheDataRange() {
         final var xs = List.of(10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0);
         final double[] ci = StatsService.bootCi(xs, 2000, 0.10, 0);
-        final double mean = xs.stream().mapToDouble(Double::doubleValue).average().orElseThrow();
+        final double mean = xs.stream()
+                .mapToDouble(Double::doubleValue)
+                .average()
+                .orElseThrow();
         assertTrue(ci[0] <= mean && ci[1] >= mean, "the CI must bracket the mean " + mean + ": [" + ci[0] + ", " + ci[1] + "]");
         assertTrue(ci[0] >= 10.0 && ci[1] <= 80.0, "a bootstrap mean cannot leave the data range");
         assertTrue(ci[0] < ci[1]);

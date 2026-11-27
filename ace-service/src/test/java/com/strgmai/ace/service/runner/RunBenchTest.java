@@ -11,7 +11,6 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -23,6 +22,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static java.lang.Math.min;
+import static java.lang.Thread.currentThread;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.stream.Collectors.toMap;
+import static java.util.stream.Collectors.toSet;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
@@ -69,9 +73,9 @@ class RunBenchTest {
     void promptResourcePrefersTheTaskSOwnPrompt() throws Exception {
         try (InputStream in = runBench().promptResource("L3p_point_in_time")) {
             assertNotNull(in, "tasks/L3p_point_in_time/PROMPT.md must be vendored as a resource");
-            final var text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            final var text = new String(in.readAllBytes(), UTF_8);
             assertTrue(text.contains("point-in-time") || text.contains("point in time") || text.length() > 100,
-                    "a real, task-specific prompt, not empty: " + text.substring(0, Math.min(200, text.length())));
+                    "a real, task-specific prompt, not empty: " + text.substring(0, min(200, text.length())));
         }
     }
 
@@ -106,8 +110,8 @@ class RunBenchTest {
                  InputStream generic = RunBenchTest.class.getResourceAsStream("/tasks/PROMPT.md")) {
                 assertNotNull(perTask, task + " must resolve to a vendored prompt");
                 assertNotNull(generic, "the generic tasks/PROMPT.md must be vendored");   // a missing resource is a clear message, not an NPE
-                final var taskText = new String(perTask.readAllBytes(), StandardCharsets.UTF_8);
-                final var genericText = new String(generic.readAllBytes(), StandardCharsets.UTF_8);
+                final var taskText = new String(perTask.readAllBytes(), UTF_8);
+                final var genericText = new String(generic.readAllBytes(), UTF_8);
                 assertNotEquals(genericText, taskText, task + " must not silently fall back to the generic prompt");
             }
         }
@@ -549,7 +553,7 @@ class RunBenchTest {
                 try {
                     sem.acquire();
                     try { shared.put(key, key); } finally { sem.release(); }
-                } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                } catch (InterruptedException ie) { currentThread().interrupt(); }
             });
             threads.add(th);
             th.start();
@@ -592,7 +596,7 @@ class RunBenchTest {
         final var cmd = new java.util.ArrayList<String>(List.of("git", "-C", dir.toString()));
         cmd.addAll(List.of(args));
         final Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
-        final String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        final String out = new String(p.getInputStream().readAllBytes(), UTF_8);
         assertEquals(0, p.waitFor(), "git " + args[0] + " failed: " + out);
     }
 
@@ -1229,8 +1233,11 @@ class RunBenchTest {
         final var handoffs = RunBench.loadHandoffs(ws, tasks, new java.util.LinkedHashMap<>());
 
         assertEquals(2, handoffs.size(), "only the two actually-tagged tasks are backfilled");
-        assertEquals(Set.of("T5", "T8"), handoffs.stream().map(h -> h[0]).collect(java.util.stream.Collectors.toSet()));
-        final var byId = handoffs.stream().collect(java.util.stream.Collectors.toMap(h -> h[0], h -> h[1]));
+        assertEquals(Set.of("T5", "T8"), handoffs.stream()
+                .map(h -> h[0])
+                .collect(toSet()));
+        final var byId = handoffs.stream()
+                .collect(toMap(h -> h[0], h -> h[1]));
         assertEquals("T5's own handoff note", byId.get("T5"));
         assertEquals("T8's own handoff note", byId.get("T8"));
     }

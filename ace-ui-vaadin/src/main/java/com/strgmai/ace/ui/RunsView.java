@@ -15,8 +15,9 @@ import com.vaadin.flow.router.Route;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Comparator;
 import java.util.List;
+
+import static java.util.Comparator.comparing;
 
 /** Runs list with server-side filters — the UI twin of GET /api/runs. */
 @Route(value = "runs", layout = MainLayout.class)
@@ -82,7 +83,7 @@ public class RunsView extends VerticalLayout {
 
         grid.addColumn(new ComponentRenderer<>(run -> Links.runLink(run.run_id())))
                 .setHeader("run").setAutoWidth(true).setFlexGrow(0).setKey("run")
-                .setSortable(true).setComparator(Comparator.comparing(Api.Run::run_id));
+                .setSortable(true).setComparator(comparing(Api.Run::run_id));
         grid.addColumn(Api.Run::task).setHeader("task").setAutoWidth(true);
         grid.addColumn(Api.Run::model).setHeader("model").setAutoWidth(true);
         grid.addColumn(Api.Run::mode).setHeader("mode").setAutoWidth(true);

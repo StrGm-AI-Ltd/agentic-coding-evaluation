@@ -31,11 +31,21 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static java.lang.Integer.parseInt;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.lang.Math.round;
+import static java.lang.System.currentTimeMillis;
+import static java.nio.file.StandardOpenOption.APPEND;
+import static java.nio.file.StandardOpenOption.CREATE;
+import static java.util.Comparator.comparingLong;
+import static java.util.regex.Pattern.CASE_INSENSITIVE;
+import static java.util.regex.Pattern.MULTILINE;
 
 /** Port of runner/run_bench.py's run_once — now at full scope. Isolation: each run gets a fresh
  *  workspace + scrubbed HOME with the Docker shim on PATH; snapshots are committed per phase and
@@ -84,7 +94,9 @@ public class RunBench {
         final Object v = cfg.get("phases");
         if (!(v instanceof String s) || s.isBlank()) return rungPhases;
         final Set<String> wanted = Set.of(s.split(","));
-        return rungPhases.stream().filter(wanted::contains).toList();
+        return rungPhases.stream()
+                .filter(wanted::contains)
+                .toList();
     }
 
     /** p1_plan/p2_implementation always run in orchestrated mode on a rung that defines them: p1_plan
@@ -109,7 +121,7 @@ public class RunBench {
      *  directly unit-tested. */
     static Map<String, Object> planErrorEntry(final String planSource, final PlanError e) {
         final String msg = e.getMessage() == null ? e.toString() : e.getMessage();
-        return Map.of("source", planSource, "error", msg.substring(0, Math.min(200, msg.length())), "tasks", List.of());
+        return Map.of("source", planSource, "error", msg.substring(0, min(200, msg.length())), "tasks", List.of());
     }
 
     /** Found live: self-review re-reads docs/IMPLEMENTATION_PLAN.md from disk purely for its own
@@ -173,7 +185,7 @@ public class RunBench {
      *  from what scanProgressStatus() itself accepts. */
     private static Pattern statusLineRegex(final String tid) {
         return Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*\\|?\\s*\\*{0,3}" + Pattern.quote(tid)
-                + "\\*{0,3}\\s*\\|\\s*\\*{0,3}(\\w+)\\*{0,3}(?:\\s*\\|\\s*\\*{0,3}(.*))?$", Pattern.CASE_INSENSITIVE);
+                + "\\*{0,3}\\s*\\|\\s*\\*{0,3}(\\w+)\\*{0,3}(?:\\s*\\|\\s*\\*{0,3}(.*))?$", CASE_INSENSITIVE);
     }
 
     private static ReportedStatus scanProgressStatus(final Path ws, final String tid, final boolean excludeHarnessFallback) {
@@ -326,7 +338,7 @@ public class RunBench {
      *  own adaptive doubling (nextJudgeInterval) already grows it back to everyN on the first ON
      *  TRACK verdict, so there's no separate "back to normal" step needed. */
     static final int FIRST_JUDGE_CHECK_TURN = 5;
-    static int firstJudgeInterval(final int everyN) { return Math.min(FIRST_JUDGE_CHECK_TURN, everyN); }
+    static int firstJudgeInterval(final int everyN) { return min(FIRST_JUDGE_CHECK_TURN, everyN); }
 
     /** #299: the next interval after a check - halved (floor 1) the moment the judge calls the
      *  task off track, so a drifting session gets re-checked sooner and sooner the longer it
@@ -336,7 +348,7 @@ public class RunBench {
      *  itself only specifies the tightening direction, and a hard reset risks flapping (tighten,
      *  reset, tighten, reset) if the agent's own trajectory oscillates right at the boundary. */
     static int nextJudgeInterval(final int currentInterval, final int everyN, final boolean offTrack) {
-        return offTrack ? Math.max(1, currentInterval / 2) : Math.min(everyN, currentInterval * 2);
+        return offTrack ? max(1, currentInterval / 2) : min(everyN, currentInterval * 2);
     }
 
     /** builds this task's own per-turn checkpoint - an operator's own mid-task intervention
@@ -353,7 +365,7 @@ public class RunBench {
         final boolean judgeEnabled = Boolean.TRUE.equals(judgeCfg.get("enabled"));
         final int everyN = judgeCfg.get("every_n_turns") instanceof Number n ? n.intValue() : 10;
         final ReferenceAgent.JudgeCheckpoint raw = judgeEnabled
-                ? judge.checkpoint(cfg, runId, ws, rd, proxies, taskId, goal, effWall, effTokens, System.currentTimeMillis(), judgeCfg) : null;
+                ? judge.checkpoint(cfg, runId, ws, rd, proxies, taskId, goal, effWall, effTokens, currentTimeMillis(), judgeCfg) : null;
         final int[] lastCheckedTurn = {0};
         final int[] interval = {firstJudgeInterval(everyN)};   // #402/#404: see its own javadoc
         return (turn, trajectory) -> {
@@ -532,7 +544,7 @@ public class RunBench {
                 entry.put("compaction_reclaimed", reclaimed);
             }
             Files.writeString(rd.resolve("task_attempts.jsonl"), json.writeValueAsString(entry) + "\n",
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                    CREATE, APPEND);
         } catch (Exception e) { log.warn("could not log task attempt for {}: {}", taskId, e.toString()); }
     }
 
@@ -588,7 +600,7 @@ public class RunBench {
         // #228: --java-home (JobCfgFactory -> cfg's "java_home") is a per-run override and must win
         // over the operator-wide BenchProperties default - this used to always overwrite it unconditionally
         if (!(cfg.get("java_home") instanceof String jh) || jh.isBlank()) {
-            final int javaMajor = cfg.get("java_major") instanceof Number n ? n.intValue() : Integer.parseInt(String.valueOf(cfg.getOrDefault("java_major", 21)));
+            final int javaMajor = cfg.get("java_major") instanceof Number n ? n.intValue() : parseInt(String.valueOf(cfg.getOrDefault("java_major", 21)));
             cfg.put("java_home", props.javaHome() == null || props.javaHome().isBlank() ? discoverJavaHome(javaMajor) : props.javaHome());
         }
         Map<String, Object> capInfo = null;
@@ -637,11 +649,11 @@ public class RunBench {
                 // (step 0's whole job is measuring it) means there is no measured decode throughput
                 final Map<String, Object> derivedNoProbe = new LinkedHashMap<>();
                 derivedNoProbe.put("usable_context", window);
-                derivedNoProbe.put("pack_scale", Math.max(0.25, Math.min(1.0, window / 65536.0)));
+                derivedNoProbe.put("pack_scale", max(0.25, min(1.0, window / 65536.0)));
                 // same operator/job-override-wins convention as the probe branch above; 0.5 matches
                 // ContextProbe.DEFAULTS' own "max_output_fraction" default
                 final double maxOutputFraction = cfg.get("max_output_fraction") instanceof Number mof ? mof.doubleValue() : 0.5;
-                derivedNoProbe.put("max_output_tokens", Math.min(props.maxOutputTokens(), (int) (window * maxOutputFraction)));
+                derivedNoProbe.put("max_output_tokens", min(props.maxOutputTokens(), (int) (window * maxOutputFraction)));
                 derivedNoProbe.put("compaction_trigger_tokens", (int) (window * 0.43));
                 derivedNoProbe.put("task_tokens", (int) (window * 1.25 / 1000) * 1000);
                 derivedNoProbe.put("min_decode_tps", null);
@@ -1230,7 +1242,7 @@ public class RunBench {
                 ? effectiveTaskGranularity(override, (String) cfg.get("task_granularity")) : null;
         final String effectiveInstruction = taskGranularity == null || taskGranularity.isBlank()
                 ? instruction : instruction + "\n\n" + Packs.taskGranularityInstruction(taskGranularity);
-        final long t0 = System.currentTimeMillis();
+        final long t0 = currentTimeMillis();
         // wall <= 0 means unlimited (the system-wide "0 = no budget" convention) - a "hard deadline"
         // of right now would be actively misleading, not just an edge case of the normal wording
         String full = plainPlan ? effectiveInstruction
@@ -1264,12 +1276,12 @@ public class RunBench {
         // (orchestratedPhase() then throws PlanError trying to parse the never-written file). p0/p1
         // face the exact same per-call output ceiling as a task session; nothing about this retry
         // is task-specific, so there was never a reason to exclude them.
-        if (shouldRetryOnLengthFinish(rec.finish(), rec.rc(), wall, (System.currentTimeMillis() - t0) / 1000)) {
+        if (shouldRetryOnLengthFinish(rec.finish(), rec.rc(), wall, (currentTimeMillis() - t0) / 1000)) {
             final long spent = ((Number) JournalFacts.facts(journal.toString(), rec.start().toString(), nowIso(), null, null, null).getOrDefault("completion_tokens", 0L)).longValue();
-            long remaining = tokens <= 0 ? 0 : Math.max(1000, tokens - spent);   // what is LEFT, not a fresh budget (R4 C-7); a fresh proxy enforces it
+            long remaining = tokens <= 0 ? 0 : max(1000, tokens - spent);   // what is LEFT, not a fresh budget (R4 C-7); a fresh proxy enforces it
             final var contProxy = proxies.start(journal, remaining, null, effectiveSamplerOverrides(cfg, override));
             try {
-                final long contWall = wall <= 0 ? 0 : wall - (System.currentTimeMillis() - t0) / 1000;
+                final long contWall = wall <= 0 ? 0 : wall - (currentTimeMillis() - t0) / 1000;
                 rec = RunBenchSupport.runBounded(contWall, name + "-continue", rd.resolve("sessions"), sid, contProxy.abort(), () -> runAgentSession(cfg, name + "-continue",
                         "Your previous turn was cut off at the output limit. Continue the task from where you stopped; be concise and act with tools.",
                         contWall, remaining, rd.resolve("sessions"), sid, true, appendSystem, ws.toString(), contProxy.base(), contProxy.abort(),
@@ -1288,11 +1300,11 @@ public class RunBench {
         String lastAttemptText = rec.lastText();
         if (!plainPlan && reported == null) {
             final long spentSoFar = ((Number) JournalFacts.facts(journal.toString(), rec.start().toString(), nowIso(), null, null, null).getOrDefault("completion_tokens", 0L)).longValue();
-            if (shouldReEngageOnEmptyStop(rec.finish(), rec.rc(), wall, (System.currentTimeMillis() - t0) / 1000, tokens, spentSoFar)) {
-                final long remaining = tokens <= 0 ? 0 : Math.max(1000, tokens - spentSoFar);
+            if (shouldReEngageOnEmptyStop(rec.finish(), rec.rc(), wall, (currentTimeMillis() - t0) / 1000, tokens, spentSoFar)) {
+                final long remaining = tokens <= 0 ? 0 : max(1000, tokens - spentSoFar);
                 final var reengageProxy = proxies.start(journal, remaining, null, effectiveSamplerOverrides(cfg, override));
                 try {
-                    final long reengageWall = wall <= 0 ? 0 : wall - (System.currentTimeMillis() - t0) / 1000;
+                    final long reengageWall = wall <= 0 ? 0 : wall - (currentTimeMillis() - t0) / 1000;
                     rec = RunBenchSupport.runBounded(reengageWall, name + "-reengage", rd.resolve("sessions"), sid, reengageProxy.abort(), () -> runAgentSession(cfg, name + "-reengage",
                             Packs.reEngageInstruction(name), reengageWall, remaining, rd.resolve("sessions"), sid, true, appendSystem, ws.toString(), reengageProxy.base(), reengageProxy.abort(),
                             firstTokenTimeoutMs, compactionTrigger, maxTurns, runModel, env, null, finalTurn, compactionStrategies, lessonRecorder));
@@ -1312,7 +1324,7 @@ public class RunBench {
             final Long pt = JournalFacts.lastPromptTokens(journal.toString(), rec.start().toString());
             final Double here = pt == null ? null : ContextProbe.decodeAt(curve(cfg), pt);
             final Double shortDps = ((Map<String, Object>) manifestOf(cfg).get("derived")).get("decode_tps_short") instanceof Number n ? n.doubleValue() : null;
-            final double scale = shortDps != null && here != null && here > 0 ? Math.min(4.0, Math.max(1.0, shortDps / here)) : 1.0;
+            final double scale = shortDps != null && here != null && here > 0 ? min(4.0, max(1.0, shortDps / here)) : 1.0;
             final String wrapInstr = name.startsWith("p") || name.equals("implement") ? Packs.MONO_WRAPUP_INSTRUCTION : Packs.wrapupInstruction(name);
             // the wrap-up is a continuation on top of the task budget: its own proxy with its own token
             // budget (run_bench run_task) - 0 means unlimited (the system-wide "0 = no budget" convention)
@@ -1337,7 +1349,7 @@ public class RunBench {
             } finally { wrapProxy.stop(); }
             out.put("wrapup_rc", w.rc());
             out.put("wrapup_seconds", w.seconds());
-            out.put("wrapup_scale", Math.round(scale * 100) / 100.0);
+            out.put("wrapup_scale", round(scale * 100) / 100.0);
             lastAttemptText = w.lastText();
             reported = progressStatus(ws, name);
             // #680-followup4, found live (job 378f87a3, T2): the wrap-up's WHOLE job is "status
@@ -1362,7 +1374,7 @@ public class RunBench {
             final Path pp = ws.resolve("docs/PROGRESS.md");
             Files.createDirectories(pp.getParent());
             final String existing = Files.isRegularFile(pp) ? Files.readString(pp) : "";
-            Files.writeString(pp, (existing.isEmpty() || existing.endsWith("\n") ? "" : "\n") + Packs.fallbackStatus(name, tail) + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            Files.writeString(pp, (existing.isEmpty() || existing.endsWith("\n") ? "" : "\n") + Packs.fallbackStatus(name, tail) + "\n", CREATE, APPEND);
             reported = "unfinished";
             out.put("status_by_harness", true);
             if (upstreamError != null && !upstreamError.isBlank()) out.put("upstream_error_text", upstreamError);
@@ -1602,7 +1614,9 @@ public class RunBench {
             return;
         }
         manifest.put("plan", Map.of("source", planSource, "sha", planSha,
-                "tasks", tasks.stream().map(t -> Map.of("id", t.id, "title", t.title == null ? "" : t.title, "deps", t.deps == null ? List.of() : t.deps, "checks", t.checks == null ? List.of() : t.checks)).toList()));
+                "tasks", tasks.stream()
+                        .map(t -> Map.of("id", t.id, "title", t.title == null ? "" : t.title, "deps", t.deps == null ? List.of() : t.deps, "checks", t.checks == null ? List.of() : t.checks))
+                        .toList()));
         final String stable = Packs.stablePack(promptText, tasks);
         Files.createDirectories(rd.resolve("packs"));   // orchestrated-only: monolithic mode never writes here
         Files.writeString(rd.resolve("packs/stable.md"), stable);
@@ -1626,11 +1640,16 @@ public class RunBench {
         if (useAgentWaves) {
             final Map<String, PlanTask> byId = new LinkedHashMap<>();
             tasks.forEach(t -> byId.put(t.id, t));
-            planWaves = ((List<List<String>>) parallelPlan.get("waves")).stream().map(wv -> wv.stream().map(byId::get).filter(Objects::nonNull).toList()).toList();
+            planWaves = ((List<List<String>>) parallelPlan.get("waves")).stream()
+                    .map(wv -> wv.stream()
+                            .map(byId::get)
+                            .filter(Objects::nonNull)
+                            .toList())
+                    .toList();
         }
         int parallel = cfg.get("parallel") instanceof Number n ? n.intValue() : 1;
         final Object mp = ((Map<String, Object>) manifest.get("derived")).get("max_parallel");
-        if (Boolean.TRUE.equals(cfg.get("parallel_auto")) && mp instanceof Number n2) parallel = Math.max(1, n2.intValue());
+        if (Boolean.TRUE.equals(cfg.get("parallel_auto")) && mp instanceof Number n2) parallel = max(1, n2.intValue());
         // #236: concurrent pi sessions would race on the one shared per-run models.json's baseUrl
         // field (see PiAgent) - rejected outright rather than silently corrupting one session's model
         // routing, matching this codebase's "never silently substitute" convention
@@ -1644,7 +1663,11 @@ public class RunBench {
         // live run's step order (e.g. T3 legitimately starting right after T4, not T2, when T3 only
         // depends on T2: both are in wave 2, run one at a time in list order under parallel=1)
         Files.writeString(rd.resolve("execution_order.json"),
-                json.writeValueAsString(planWaves.stream().map(w -> w.stream().map(t -> t.id).toList()).toList()));
+                json.writeValueAsString(planWaves.stream()
+                        .map(w -> w.stream()
+                                .map(t -> t.id)
+                                .toList())
+                        .toList()));
 
         String prev = null; Path prevSession = null; String prevVerified = null;
         // #303: loadHandoffs returns manifestHandoffs(manifest) itself, backfilled from disk for
@@ -1740,7 +1763,9 @@ public class RunBench {
                     promptText, stable, taskWall, taskTokens, handoffs, prevVerified, mergeConflicts, planSha);
             snapshotRunProgress(ws, rd, manifest);
             prev = null; prevSession = null;
-            prevVerified = "after the merged wave " + w.stream().map(t -> t.id).toList() + ": " + wave.get("verification_text");
+            prevVerified = "after the merged wave " + w.stream()
+                    .map(t -> t.id)
+                    .toList() + ": " + wave.get("verification_text");
             mergeConflicts = (List<String[]>) wave.get("merge_conflicts");
             // the whole wave is now fully committed and merged - the safe, between-waves moment
             // a "pause after the current task" request takes effect (see the sequential loop's
@@ -1931,7 +1956,7 @@ public class RunBench {
         try (var stream = Files.list(dir)) {
             final Path latest = stream
                     .filter(f -> f.getFileName().toString().startsWith(taskId + "-") && f.getFileName().toString().endsWith(".md"))
-                    .max(Comparator.comparingLong(f -> {
+                    .max(comparingLong(f -> {
                         try { return Files.getLastModifiedTime(f).toMillis(); } catch (IOException e) { return 0L; }
                     }))
                     .orElse(null);
@@ -2174,7 +2199,7 @@ public class RunBench {
                 Files.createDirectories(pp.getParent());
                 final String existing = Files.isRegularFile(pp) ? Files.readString(pp) : "";
                 Files.writeString(pp, (existing.isEmpty() || existing.endsWith("\n") ? "" : "\n") + line.strip() + "\n",
-                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                        CREATE, APPEND);
                 log.info("run: salvaged {}'s own status line from its rescue session's final response text "
                         + "(the model answered but never called write/edit): {}", tid, line.strip());
                 return;
@@ -2245,7 +2270,7 @@ public class RunBench {
     static void recordLesson(final Map<String, Object> cfg, final Path rd, final String heading, final String body) {
         try {
             Files.writeString(rd.resolve("lessons.md"), "## " + heading + "\n" + body.strip() + "\n\n",
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                    CREATE, APPEND);
         } catch (IOException e) {
             log.warn("could not append a lesson ({}): {}", heading, e.toString());
             return;
@@ -2300,7 +2325,7 @@ public class RunBench {
      *  part of the entry it introduces. */
     static List<String> splitLessonEntries(final String text) {
         final List<Integer> starts = new ArrayList<>();
-        final Matcher m = Pattern.compile("(?=^## )", Pattern.MULTILINE).matcher(text);
+        final Matcher m = Pattern.compile("(?=^## )", MULTILINE).matcher(text);
         while (m.find()) starts.add(m.start());
         final List<String> entries = new ArrayList<>();
         for (int i = 0; i < starts.size(); i++)
@@ -2335,7 +2360,7 @@ public class RunBench {
     static Integer parseJavacMajor(final String javacVersionOutput) {
         if (javacVersionOutput == null) return null;
         final var m = Pattern.compile("javac\\s+(?:1\\.)?(\\d+)").matcher(javacVersionOutput);
-        return m.find() ? Integer.parseInt(m.group(1)) : null;
+        return m.find() ? parseInt(m.group(1)) : null;
     }
 
     /** Actually runs the candidate's own `bin/javac -version` rather than trusting a path or a
@@ -2446,8 +2471,10 @@ public class RunBench {
                                                 String promptText, String stable, int taskWall, long taskTokens,
                                                 List<String[]> handoffs, String prevVerified, List<String[]> mergeConflicts, String planSha) throws Exception {
         final String pre = manifestSnap(manifest, "p1", planSha);
-        final List<String> waveIds = waveTasks.stream().map(t -> t.id).toList();
-        final long t0 = System.currentTimeMillis();
+        final List<String> waveIds = waveTasks.stream()
+                .map(t -> t.id)
+                .toList();
+        final long t0 = currentTimeMillis();
         cfg.put("_manifest", manifest);
         final Map<String, Path> taskJournals = new LinkedHashMap<>();
         final Map<String, String> packs = new LinkedHashMap<>();
@@ -2502,7 +2529,9 @@ public class RunBench {
             DockerService.dockerTools(homeT.toString());   // each HOME copy gets the shim + plugins too
             taskJournals.put(t.id, rd.resolve("interactions-" + t.id + ".jsonl"));
             packs.put(t.id, Packs.taskPack(ws, t, tasks, snapshots, doneSet(snapshots), null, null, handoffs, readLessons(rd), prevVerified,
-                    mergeConflicts.isEmpty() ? null : mergeConflicts, waveIds.stream().filter(x -> !x.equals(t.id)).toList()));
+                    mergeConflicts.isEmpty() ? null : mergeConflicts, waveIds.stream()
+                            .filter(x -> !x.equals(t.id))
+                            .toList()));
             Files.writeString(rd.resolve("packs/" + t.id + ".md"), packs.get(t.id));
         }
         final var sem = new java.util.concurrent.Semaphore(parallel);
@@ -2561,7 +2590,7 @@ public class RunBench {
         final Map<String, Object> waveRec = new LinkedHashMap<>();
         waveRec.put("tasks", waveIds);
         waveRec.put("start_iso", nowIso());
-        waveRec.put("seconds", Math.round((System.currentTimeMillis() - t0) / 100.0) / 10.0);
+        waveRec.put("seconds", round((currentTimeMillis() - t0) / 100.0) / 10.0);
         waveRec.put("merges", new ArrayList<Map<String, Object>>());
         for (PlanTask t : waveTasks) {
             if (setupFailedTaskIds.contains(t.id)) {
@@ -2621,7 +2650,7 @@ public class RunBench {
             // tagged records merge into the main journal; attribution is by tag (parallel windows overlap)
             final Path tj = taskJournals.get(t.id);
             if (tj != null && Files.isRegularFile(tj)) {
-                Files.writeString(journal, Files.readString(tj), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                Files.writeString(journal, Files.readString(tj), CREATE, APPEND);
                 Files.deleteIfExists(tj);
             }
         }
@@ -2647,16 +2676,22 @@ public class RunBench {
             final List<String> own = ownership.getOrDefault(tid, List.of());
             if (!own.isEmpty())
                 for (String f : changed.get(tid))
-                    if (own.stream().noneMatch(g -> matchesOwnership(g, f)))
+                    if (own.stream()
+                            .noneMatch(g -> matchesOwnership(g, f)))
                         violations.add(new String[]{tid, f});
         }
         boolean broken = !conflicts.isEmpty() || (!Boolean.TRUE.equals(wv.get("green"))
                 // a resumed task's synthetic rec (R18) carries no "verification" key - guard the cast instead of assuming one
-                && waveIds.stream().anyMatch(tid -> recs.get(tid) != null && recs.get(tid).get("verification") instanceof Map<?, ?> vm && Boolean.TRUE.equals(vm.get("green"))));
+                && waveIds.stream()
+                        .anyMatch(tid -> recs.get(tid) != null && recs.get(tid).get("verification") instanceof Map<?, ?> vm && Boolean.TRUE.equals(vm.get("green"))));
         final Map<String, Object> problems = new LinkedHashMap<>();
         problems.put("conflicts", conflicts);
         problems.put("verification", Boolean.TRUE.equals(wv.get("green")) ? null : VerifyTask.verifyText(wv));
-        problems.put("overlaps", overlapSet.stream().map(f -> new Object[]{f, waveIds.stream().filter(tid -> changed.get(tid).contains(f)).toList()}).toList());
+        problems.put("overlaps", overlapSet.stream()
+                .map(f -> new Object[]{f, waveIds.stream()
+                        .filter(tid -> changed.get(tid).contains(f))
+                        .toList()})
+                .toList());
         problems.put("ownership_violations", violations);
         problems.put("broken", broken);
         waveRec.putAll(problems);
