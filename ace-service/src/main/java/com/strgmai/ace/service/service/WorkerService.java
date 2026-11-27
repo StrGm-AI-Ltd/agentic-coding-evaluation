@@ -89,8 +89,10 @@ public class WorkerService {
         // that is no longer queued/running/waiting_lock/blocked/paused was left behind by a crash
         // (ace-service itself being killed before its own cleanup ran is exactly how this started)
         // and is safe to remove. Paused jobs are deliberately kept alive here (not terminal).
-        final Set<String> live = jobs.stream().filter(j -> !RunSpec.TERMINAL.contains(j.get("status")))
-                .map(j -> String.valueOf(j.get("run_id"))).collect(toSet());
+        final Set<String> live = jobs.stream()
+                .filter(j -> !RunSpec.TERMINAL.contains(j.get("status")))
+                .map(j -> String.valueOf(j.get("run_id")))
+                .collect(toSet());
         for (String runId : dockerSidecar.orphaned(live)) dockerSidecar.destroy(runId);
     }
 
@@ -127,7 +129,11 @@ public class WorkerService {
         } catch (Exception e) { return "run.lock: " + e; }
         final Preflight.Report pf = preflight.check(flag(job.argv(), "--model"));
         if (pf.blocked())
-            return "preflight: " + pf.checks().stream().filter(c -> c.fatal() && !c.ok()).findFirst().map(Preflight.Check::detail).orElse("");
+            return "preflight: " + pf.checks().stream()
+                    .filter(c -> c.fatal() && !c.ok())
+                    .findFirst()
+                    .map(Preflight.Check::detail)
+                    .orElse("");
         return null;
     }
 
@@ -293,7 +299,11 @@ public class WorkerService {
     }
 
     static String flag(final List<String> argv, final String name) {
-        return argv.stream().filter(a -> a.startsWith(name + "=")).map(a -> a.substring(name.length() + 1)).findFirst().orElse(null);
+        return argv.stream()
+                .filter(a -> a.startsWith(name + "="))
+                .map(a -> a.substring(name.length() + 1))
+                .findFirst()
+                .orElse(null);
     }
 
     public boolean busyNow() { return busy.get(); }

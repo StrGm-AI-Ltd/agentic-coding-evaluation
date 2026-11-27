@@ -347,7 +347,8 @@ class JournalFactsTest {
         assertEquals(8, buckets.size());
         assertEquals(0L, buckets.get(0).get("context_lo"));
         assertEquals(7168L, buckets.get(7).get("context_lo"));
-        assertTrue(buckets.stream().allMatch(b -> ((Number) b.get("requests")).longValue() == 1));
+        assertTrue(buckets.stream()
+                .allMatch(b -> ((Number) b.get("requests")).longValue() == 1));
     }
 
     /** A request with no prompt_tokens at all (an error/refused request) is skipped entirely -

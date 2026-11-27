@@ -87,7 +87,10 @@ public class BenchController {
 
     @GetMapping("/api/models")
     public List<String> models() {
-        return Preflight.modelClient(props).models().list().data().stream().map(Model::id).sorted().toList();
+        return Preflight.modelClient(props).models().list().data().stream()
+                .map(Model::id)
+                .sorted()
+                .toList();
     }
 
     /** every rung tasks/ladder.json declares - "_doc" is a documentation string, not a rung.
@@ -99,7 +102,9 @@ public class BenchController {
         final com.fasterxml.jackson.databind.JsonNode ladder = new com.fasterxml.jackson.databind.ObjectMapper().readTree(ladderStream);
         final List<String> out = new ArrayList<>();
         ladder.fieldNames().forEachRemaining(name -> { if (!"_doc".equals(name)) out.add(name); });
-        return out.stream().sorted().toList();
+        return out.stream()
+                .sorted()
+                .toList();
     }
 
     /** Every rung's own description/budget/denominator/checks, each check resolved to its own
@@ -115,7 +120,9 @@ public class BenchController {
         final List<Map<String, Object>> out = new ArrayList<>();
         final var names = new ArrayList<String>();
         ladder.fieldNames().forEachRemaining(name -> { if (!"_doc".equals(name)) names.add(name); });
-        for (final String name : names.stream().sorted().toList()) {
+        for (final String name : names.stream()
+                .sorted()
+                .toList()) {
             final var rung = ladder.get(name);
             final Set<CheckId> ids = rung.get("checks").isTextual() && rung.get("checks").asText().equals("all")
                     ? EnumSet.allOf(CheckId.class)
@@ -152,7 +159,9 @@ public class BenchController {
                         RUNS.FUNCTIONAL_SCORE_PCT, RUNS.WEIGHTED_SCORE_PCT, RUNS.VALID, RUNS.CONTENDED, RUNS.WALL_SEC, RUNS.COMPLETION_TOKENS,
                         RUNS.POOLABLE, RUNS.PARTIAL_SCORE_PCT, RUNS.ORACLE, RUNS.STARTED, RUNS.EARLIER_ATTEMPTS)
                 .from(RUNS).where(where).orderBy(RUNS.IMPORTED_AT.desc()).limit(500).fetch().intoMaps())
-                .stream().map(BenchController::hoistFunctionalIds).toList();
+                .stream()
+                        .map(BenchController::hoistFunctionalIds)
+                        .toList();
     }
 
     @GetMapping("/api/runs/{id}")
@@ -162,7 +171,9 @@ public class BenchController {
         final Map<String, Object> run = hoistFunctionalIds(JsonColumns.parse(rec.intoMap()));
         run.put("checks", dsl.select(CHECK_RESULTS.CHECK_ID, CHECK_RESULTS.CATEGORY, CHECK_RESULTS.WEIGHT, CHECK_RESULTS.STATUS, CHECK_RESULTS.DETAIL, CHECK_RESULTS.DESCRIPTION)
                 .from(CHECK_RESULTS).where(CHECK_RESULTS.RUN_ID.eq(id)).orderBy(CHECK_RESULTS.CHECK_ID)
-                .fetch().intoMaps().stream().map(JsonColumns::parse).toList());
+                .fetch().intoMaps().stream()
+                        .map(JsonColumns::parse)
+                        .toList());
         return ResponseEntity.ok(run);
     }
 
@@ -367,7 +378,8 @@ public class BenchController {
                     row.put("reported_detail", reported == null ? null : reported.detail());
                 }
                 row.put("attempts", taskAttempts.size());
-                row.put("rescued", taskAttempts.stream().anyMatch(a -> Boolean.TRUE.equals(a.get("rescue_succeeded"))));
+                row.put("rescued", taskAttempts.stream()
+                        .anyMatch(a -> Boolean.TRUE.equals(a.get("rescue_succeeded"))));
                 row.put("stage", false);
                 rows.add(row);
             }
@@ -493,7 +505,9 @@ public class BenchController {
                 final List<String> orderedIds = orderedTaskIds(base);
                 final int fromIndex = orderedIds.indexOf(taskId);
                 final List<String> cascadeIds = fromIndex < 0 ? List.of(taskId) : orderedIds.subList(fromIndex, orderedIds.size());
-                return cascadeIds.stream().flatMap(cid -> java.util.stream.Stream.of("phase/" + cid, "phase/" + cid + "-handoff")).toList();
+                return cascadeIds.stream()
+                        .flatMap(cid -> java.util.stream.Stream.of("phase/" + cid, "phase/" + cid + "-handoff"))
+                        .toList();
             } catch (final Exception e) { throw new RuntimeException(e); }
         }, body);
     }
@@ -534,7 +548,9 @@ public class BenchController {
             throw new IllegalStateException(overrideKey + " has no " + ownTag + " tag yet - nothing to restart");
         final Object rawOverrides = body == null ? null : body.get("overrides");
         final Map<String, Object> overrides = rawOverrides instanceof Map<?, ?> o ? (Map<String, Object>) o : Map.of();
-        final var unknown = overrides.keySet().stream().filter(k -> !RESTART_OVERRIDE_KEYS.contains(k)).toList();
+        final var unknown = overrides.keySet().stream()
+                .filter(k -> !RESTART_OVERRIDE_KEYS.contains(k))
+                .toList();
         if (!unknown.isEmpty()) throw new IllegalArgumentException("unknown override field(s): " + unknown + "; allowed: " + RESTART_OVERRIDE_KEYS);
 
         com.strgmai.ace.service.runner.RunBenchSupport.gitOut(ws, "tag", "backup/" + overrideKey + "-" + (currentTimeMillis() / 1000), "HEAD");
@@ -613,7 +629,9 @@ public class BenchController {
             throw new IllegalArgumentException("unknown task id: " + taskId);
         final Object rawOverrides = body == null ? null : body.get("overrides");
         final Map<String, Object> overrides = rawOverrides instanceof Map<?, ?> o ? (Map<String, Object>) o : Map.of();
-        final var unknown = overrides.keySet().stream().filter(k -> !RESTART_OVERRIDE_KEYS.contains(k)).toList();
+        final var unknown = overrides.keySet().stream()
+                .filter(k -> !RESTART_OVERRIDE_KEYS.contains(k))
+                .toList();
         if (!unknown.isEmpty()) throw new IllegalArgumentException("unknown override field(s): " + unknown + "; allowed: " + RESTART_OVERRIDE_KEYS);
         return queue.setTaskOverride(id, taskId, overrides);
     }
@@ -954,7 +972,8 @@ public class BenchController {
         try (var reader = Files.newBufferedReader(file)) {
             String line;
             while ((line = reader.readLine()) != null) {
-                if (line.isBlank() || sessionIds.stream().noneMatch(line::contains)) continue;
+                if (line.isBlank() || sessionIds.stream()
+                        .noneMatch(line::contains)) continue;
                 final Map<String, Object> entry = parseRequestSpeedEntry(factory, line, sessionIds, backend);
                 if (entry != null) bySession.computeIfAbsent((String) entry.remove("session_id"), k -> new ArrayList<>()).add(entry);
             }
@@ -1000,7 +1019,10 @@ public class BenchController {
 
     private List<List<Map<String, Object>>> requestSpeedsPerAttempt(final Path base, final List<AttemptCounts> attempts) {
         final Map<String, List<Map<String, Object>>> bySession = requestSpeedsBySession(base,
-                attempts.stream().map(AttemptCounts::sessionUuid).filter(Objects::nonNull).collect(toSet()));
+                attempts.stream()
+                        .map(AttemptCounts::sessionUuid)
+                        .filter(Objects::nonNull)
+                        .collect(toSet()));
         final List<List<Map<String, Object>>> perAttempt = new ArrayList<>();
         for (int i = 0; i < attempts.size(); i++) perAttempt.add(new ArrayList<>());
         final Map<String, List<Integer>> indicesBySessionUuid = new LinkedHashMap<>();
@@ -1284,7 +1306,9 @@ public class BenchController {
             final var attempts = sessionCounts(base, taskId).attempts();
             final Set<String> wanted = new LinkedHashSet<>();
             for (final AttemptCounts a : attempts) wanted.addAll(judgeStampsInAttemptWindow(byAttempt.keySet(), a));
-            if (wanted.isEmpty()) wanted.add(byAttempt.keySet().stream().max(Comparator.naturalOrder()).orElseThrow());
+            if (wanted.isEmpty()) wanted.add(byAttempt.keySet().stream()
+                    .max(Comparator.naturalOrder())
+                    .orElseThrow());
 
             record Entry(String stamp, int turn, String prompt, String recommendation) {}
             final List<Entry> entries = new ArrayList<>();
@@ -1307,8 +1331,10 @@ public class BenchController {
             // interval state resets per reconnect, same root cause as the missing-checkpoints bug
             // this fixes), so a plain turn-only sort would interleave them confusingly
             entries.sort(comparing(Entry::stamp).thenComparingInt(Entry::turn));
-            return entries.stream().map(e -> Map.<String, Object>of(
-                    "turn", e.turn(), "prompt", e.prompt(), "recommendation", e.recommendation())).toList();
+            return entries.stream()
+                    .map(e -> Map.<String, Object>of(
+                            "turn", e.turn(), "prompt", e.prompt(), "recommendation", e.recommendation()))
+                    .toList();
         } catch (final Exception e) { return List.of(); }
     }
 
@@ -1553,7 +1579,8 @@ public class BenchController {
     }
 
     private static boolean isVendored(final String relPath) {
-        return com.strgmai.ace.service.runner.RunBenchSupport.VENDORED_PATHS.stream().anyMatch(relPath::startsWith);
+        return com.strgmai.ace.service.runner.RunBenchSupport.VENDORED_PATHS.stream()
+                .anyMatch(relPath::startsWith);
     }
 
     /** #260, found live: a workspace initialised before VENDORED_PATHS grew a given entry (here,
@@ -1728,9 +1755,18 @@ public class BenchController {
 
     static List<Double> metricValues(final List<StatsService.RunSummary> runs, final String metric) {
         return switch (metric) {
-            case "score" -> runs.stream().map(StatsService.RunSummary::score).filter(Objects::nonNull).toList();
-            case "agent_result" -> runs.stream().map(StatsService.RunSummary::agentResult).filter(Objects::nonNull).toList();
-            default -> runs.stream().map(StatsService.RunSummary::functional).filter(Objects::nonNull).toList();
+            case "score" -> runs.stream()
+                    .map(StatsService.RunSummary::score)
+                    .filter(Objects::nonNull)
+                    .toList();
+            case "agent_result" -> runs.stream()
+                    .map(StatsService.RunSummary::agentResult)
+                    .filter(Objects::nonNull)
+                    .toList();
+            default -> runs.stream()
+                    .map(StatsService.RunSummary::functional)
+                    .filter(Objects::nonNull)
+                    .toList();
         };
     }
 
@@ -1753,7 +1789,9 @@ public class BenchController {
             group.put("model", entry.getKey().get(1));
             group.put("key_hash", entry.getKey().get(2));
             group.put("mode", groupRows.get(0).get("mode"));
-            group.put("run_ids", groupRows.stream().map(r -> r.get("run_id")).toList());
+            group.put("run_ids", groupRows.stream()
+                    .map(r -> r.get("run_id"))
+                    .toList());
             group.put("summary", Map.of("k", 0));
             group.put("printed", "");
             group.put("refused", null);
@@ -1802,7 +1840,9 @@ public class BenchController {
 
     @GetMapping("/api/providers")
     public List<Map<String, Object>> providers() {
-        return providerStore.list().stream().map(this::providerRow).toList();
+        return providerStore.list().stream()
+                .map(this::providerRow)
+                .toList();
     }
 
     @PostMapping("/api/providers")
@@ -1817,7 +1857,9 @@ public class BenchController {
      *  as a step of a full job run) instead of duplicating its endpoint-normalization/timeout logic. */
     @GetMapping("/api/providers/{id}/health")
     public Map<String, Object> providerHealth(final @PathVariable UUID id) {
-        final var p = providerStore.list().stream().filter(x -> x.id().equals(id)).findFirst();
+        final var p = providerStore.list().stream()
+                .filter(x -> x.id().equals(id))
+                .findFirst();
         if (p.isEmpty()) return Map.of("ok", false);
         final var h = contextProbe.health(p.get().baseUrl(), p.get().apiKey());
         return Map.of("ok", "healthy".equals(h.path("status").asText()));
@@ -1853,14 +1895,19 @@ public class BenchController {
      *  "internal error" the operator has no way to act on. */
     @GetMapping("/api/providers/{id}/models")
     public List<String> providerModels(final @PathVariable UUID id) {
-        final var provider = providerStore.list().stream().filter(p -> p.id().equals(id)).findFirst()
+        final var provider = providerStore.list().stream()
+                .filter(p -> p.id().equals(id))
+                .findFirst()
                 .orElseThrow(() -> new NoSuchElementException("no such provider: " + id));
         final var client = com.openai.client.okhttp.OpenAIOkHttpClient.builder()
                 .baseUrl(provider.baseUrl())
                 .apiKey(provider.apiKey() == null || provider.apiKey().isBlank() ? "none" : provider.apiKey())
                 .build();
         try {
-            return client.models().list().data().stream().map(Model::id).sorted().toList();
+            return client.models().list().data().stream()
+                    .map(Model::id)
+                    .sorted()
+                    .toList();
         } catch (final com.openai.errors.OpenAIException e) {
             throw new IllegalArgumentException("could not list models for " + provider.name() + ": " + e.getMessage(), e);
         }

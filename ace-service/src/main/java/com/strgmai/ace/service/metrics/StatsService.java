@@ -105,7 +105,9 @@ public final class StatsService {
 
     /** port of boot_ci: bootstrap CI for the mean (seeded, reproducible) */
     public static double[] bootCi(List<Double> xs, final int n, double alpha, final long seed) {
-        final List<Double> clean = xs.stream().filter(Objects::nonNull).toList();
+        final List<Double> clean = xs.stream()
+                .filter(Objects::nonNull)
+                .toList();
         if (clean.isEmpty()) return new double[]{Double.NaN, Double.NaN};
         if (clean.size() < 2) return new double[]{clean.get(0), clean.get(0)};
         final var rnd = new Random(seed);
@@ -161,11 +163,16 @@ public final class StatsService {
                 Map.entry("composite", (java.util.function.Function<RunSummary, Double>) RunSummary::score),
                 Map.entry("partial", (java.util.function.Function<RunSummary, Double>) RunSummary::partial),
                 Map.entry("agent_result", (java.util.function.Function<RunSummary, Double>) RunSummary::agentResult))) {
-            final List<Double> xs = runs.stream().map(metric.getValue()).filter(Objects::nonNull).toList();
+            final List<Double> xs = runs.stream()
+                    .map(metric.getValue())
+                    .filter(Objects::nonNull)
+                    .toList();
             if (xs.isEmpty()) continue;
             final double[] ci = bootCi(xs, 4000, 0.10, 0);   // seed=0: re-running this same run set later must reproduce a byte-identical CI
             final Map<String, Object> entry = new LinkedHashMap<>();
-            entry.put("mean", round1(xs.stream().mapToDouble(Double::doubleValue).sum() / xs.size()));
+            entry.put("mean", round1(xs.stream()
+                    .mapToDouble(Double::doubleValue)
+                    .sum() / xs.size()));
             entry.put("ci90", List.of(ci[0], ci[1]));
             entry.put("n", xs.size());
             out.put(metric.getKey(), entry);
@@ -174,8 +181,12 @@ public final class StatsService {
         runs.forEach(r -> ids.addAll(r.checkStatus().keySet()));
         final Map<String, Object> matrix = new LinkedHashMap<>();
         for (String id : ids) {
-            final List<String> col = runs.stream().map(r -> r.checkStatus().get(id)).toList();
-            final long passes = col.stream().filter(s -> "PASS".equals(s)).count();
+            final List<String> col = runs.stream()
+                    .map(r -> r.checkStatus().get(id))
+                    .toList();
+            final long passes = col.stream()
+                    .filter(s -> "PASS".equals(s))
+                    .count();
             final Map<String, Object> cell = new LinkedHashMap<>();
             cell.put("pass_rate", round(100.0 * passes / col.size()) / 100.0);
             cell.put("pass_k", passes == col.size());
@@ -188,10 +199,18 @@ public final class StatsService {
 
     /** the compare verdict: diff, CI, one-sided p, and the minimum-detectable-difference warning */
     public Map<String, Object> compare(final List<Double> a, final List<Double> b, final String metric) {
-        final double obs = mean(a.stream().mapToDouble(Double::doubleValue).toArray()) - mean(b.stream().mapToDouble(Double::doubleValue).toArray());
+        final double obs = mean(a.stream()
+                .mapToDouble(Double::doubleValue)
+                .toArray()) - mean(b.stream()
+                .mapToDouble(Double::doubleValue)
+                .toArray());
         // seed=0 everywhere in this method: re-comparing the same two run sets later must reproduce
         // a byte-identical p-value and CI, not a different one every time compare() happens to run
-        final double p = permutationTest(a.stream().mapToDouble(Double::doubleValue).toArray(), b.stream().mapToDouble(Double::doubleValue).toArray(), 10000, 0);
+        final double p = permutationTest(a.stream()
+                .mapToDouble(Double::doubleValue)
+                .toArray(), b.stream()
+                .mapToDouble(Double::doubleValue)
+                .toArray(), 10000, 0);
         final var rnd = new Random(0);
         final List<Double> ds = new ArrayList<>();
         for (int i = 0; i < 4000; i++) {

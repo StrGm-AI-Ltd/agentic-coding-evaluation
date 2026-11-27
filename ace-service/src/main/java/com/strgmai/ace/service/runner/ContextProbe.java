@@ -331,7 +331,10 @@ public final class ContextProbe {
                 else hi = mid;
             }
         }
-        final Step fail = curve.stream().filter(s -> !"200".equals(s.status())).findFirst().orElse(null);
+        final Step fail = curve.stream()
+                .filter(s -> !"200".equals(s.status()))
+                .findFirst()
+                .orElse(null);
         String binding = null;
         if (fail != null) {
             // the memory guard ALSO answers 400 "Prompt too long": a rejection well below the cap is memory, not the setting
@@ -341,8 +344,10 @@ public final class ContextProbe {
                     ? "cap" : "memory_or_server";
         } else if (o.containsKey("up_to") && lastOk >= (Integer) o.get("up_to") - (Integer) o.get("probe_max_tokens") - 64) binding = "probe_limit";
         else if (cap != null && lastOk >= cap - (Integer) o.get("probe_max_tokens") - 64) binding = "cap";
-        List<Double> shortDps = samples.stream().filter(s -> "200".equals(s.status()) && s.decodeTps() instanceof Double)
-                .map(s -> (Double) s.decodeTps()).toList();
+        List<Double> shortDps = samples.stream()
+                .filter(s -> "200".equals(s.status()) && s.decodeTps() instanceof Double)
+                .map(s -> (Double) s.decodeTps())
+                .toList();
         final Double shortMedian = shortDps.isEmpty() ? null : median(shortDps);
         final Map<String, Object> rec = new LinkedHashMap<>();
         rec.put("ok", lastOk > 0);
@@ -357,7 +362,9 @@ public final class ContextProbe {
         rec.put("decode_tps_short", shortMedian == null ? null : round(shortMedian * 10) / 10.0);
         rec.put("memory_guard", backend.memoryGuardFacts(tStart).orElse(null));
         rec.put("tokens_per_line", round(tpl * 1000) / 1000.0);
-        rec.put("curve", curve.stream().map(s -> Map.of("status", s.status(), "prompt_tokens", s.promptTokens(), "decode_tps", s.decodeTps())).toList());
+        rec.put("curve", curve.stream()
+                .map(s -> Map.of("status", s.status(), "prompt_tokens", s.promptTokens(), "decode_tps", s.decodeTps()))
+                .toList());
         return rec;
     }
 
@@ -367,7 +374,9 @@ public final class ContextProbe {
     public Map<String, Object> refreshDecode(final String model, final String endpoint, final String key, Map<String, Object> rec, Map<String, Object> o) {
         final double tpl = rec.get("tokens_per_line") instanceof Number n ? n.doubleValue() : 31.0;
         List<Double> dps = decodeSamples(endpoint, key, model, o, tpl, 35).stream()
-                .filter(s -> "200".equals(s.status()) && s.decodeTps() instanceof Double).map(s -> (Double) s.decodeTps()).toList();
+                .filter(s -> "200".equals(s.status()) && s.decodeTps() instanceof Double)
+                .map(s -> (Double) s.decodeTps())
+                .toList();
         if (!dps.isEmpty()) rec.put("decode_tps_short", round(median(dps) * 10) / 10.0);
         return rec;
     }
@@ -404,7 +413,11 @@ public final class ContextProbe {
             final List<Post> ok = Arrays.stream(res).filter(r -> r != null && r.status() == 200 && r.usage() != null && r.usage().hasNonNull("completion_tokens")).toList();
             if (K == 1 && !ok.isEmpty()) wall1 = wall;
             final Double speedup = wall1 > 0 ? round(K * wall1 / wall * 100) / 100.0 : null;
-            final List<Double> per = ok.stream().map(r -> r.usage().path("generation_tokens_per_second").asDouble(0)).filter(d -> d > 0).sorted().toList();
+            final List<Double> per = ok.stream()
+                    .map(r -> r.usage().path("generation_tokens_per_second").asDouble(0))
+                    .filter(d -> d > 0)
+                    .sorted()
+                    .toList();
             final Double perMed = per.isEmpty() ? null : per.get(per.size() / 2);
             levels.add(Map.of("K", K, "ok", ok.size(), "wall_sec", round(wall * 10) / 10.0,
                     "speedup_work_per_wall", speedup == null ? "" : speedup, "per_stream_decode_median", perMed == null ? "" : perMed));
@@ -480,7 +493,9 @@ public final class ContextProbe {
         // measured capacity - silently crippling every run on that setup. effectiveContextWindow()
         // already treats null-or-non-positive as "unset".
         if (props.effectiveContextWindow() != null) candidates.put("operator cap", props.effectiveContextWindow());
-        final Map.Entry<String, Integer> limited = candidates.entrySet().stream().min(Map.Entry.comparingByValue()).orElse(null);
+        final Map.Entry<String, Integer> limited = candidates.entrySet().stream()
+                .min(Map.Entry.comparingByValue())
+                .orElse(null);
         String limitedBy = limited == null ? "memory" : limited.getKey();
         if ("cap".equals(rec.get("binding")) && "memory".equals(limitedBy)) limitedBy = "positional/cap";
         final int usable = max(limited == null ? 2048 : limited.getValue(), 2048);

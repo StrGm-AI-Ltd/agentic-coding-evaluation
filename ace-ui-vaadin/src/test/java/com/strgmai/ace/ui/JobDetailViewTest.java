@@ -372,7 +372,9 @@ class JobDetailViewTest {
      *  tiles - looked up by label, since a tile list (unlike the old fixed-index text lines) can
      *  freely grow/shrink as optional fields appear, without earlier tests' own indices shifting. */
     private static JobDetailView.StatField field(final List<JobDetailView.StatField> fields, final String label) {
-        return fields.stream().filter(f -> f.label().equals(label)).findFirst()
+        return fields.stream()
+                .filter(f -> f.label().equals(label))
+                .findFirst()
                 .orElseThrow(() -> new AssertionError("no field labeled \"" + label + "\" among " + fields));
     }
 

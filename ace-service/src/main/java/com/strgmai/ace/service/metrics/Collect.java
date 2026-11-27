@@ -299,8 +299,13 @@ public final class Collect {
                 final JsonNode e = JSON.readTree(line);
                 byTask.computeIfAbsent(e.path("task_id").asText(""), k -> new ArrayList<>()).add(e);
             }
-            final long withRetries = byTask.values().stream().filter(l -> l.size() > 1).count();
-            final long rescued = byTask.values().stream().filter(l -> l.stream().anyMatch(e -> e.path("rescue_succeeded").asBoolean(false))).count();
+            final long withRetries = byTask.values().stream()
+                    .filter(l -> l.size() > 1)
+                    .count();
+            final long rescued = byTask.values().stream()
+                    .filter(l -> l.stream()
+                            .anyMatch(e -> e.path("rescue_succeeded").asBoolean(false)))
+                    .count();
             return Map.of("tasks_with_retries", (int) withRetries, "tasks_rescued", (int) rescued);
         } catch (Exception e) { return Map.of("tasks_with_retries", 0, "tasks_rescued", 0); }
     }
@@ -424,8 +429,12 @@ public final class Collect {
         if (ev == null || !Boolean.TRUE.equals(ev.get("valid"))) return 0;
         final double parallelism = num(ev.get("parallelism_pct"));
         final List<Map<String, Object>> waves = (List<Map<String, Object>>) manifest.getOrDefault("waves", List.of());
-        final double fixTokens = waves.stream().mapToDouble(w -> num(w.get("fix_tokens"))).sum();
-        final double allTokens = ((List<?>) manifest.getOrDefault("tasks", List.of())).stream().mapToDouble(t -> num(((Map<String, Object>) t).get("token_budget"))).sum();
+        final double fixTokens = waves.stream()
+                .mapToDouble(w -> num(w.get("fix_tokens")))
+                .sum();
+        final double allTokens = ((List<?>) manifest.getOrDefault("tasks", List.of())).stream()
+                .mapToDouble(t -> num(((Map<String, Object>) t).get("token_budget")))
+                .sum();
         final double friction = 0.4 * (allTokens > 0 ? fixTokens / allTokens : 0);
         // closed form of 0.3 x validity(=100, guaranteed by the valid check above) + 0.3 x parallelism + 0.4 x (100 x (1-friction))
         return 30 + 0.3 * parallelism + 0.4 * (100 * (1 - friction));
@@ -451,17 +460,28 @@ public final class Collect {
             final List<String> checks = (List<String>) t.get("checks");
             if (checks == null || checks.isEmpty()) continue;
             claimed.addAll(checks);
-            steps.put(String.valueOf(t.get("id")), Map.of("score_pct", round1(100.0 * checks.stream().filter(c -> byCheck.getOrDefault(c, 0.0) > 0).count() / checks.size()),
-                    "points", List.of(checks.stream().filter(c -> byCheck.getOrDefault(c, 0.0) > 0).count(), checks.size())));
+            steps.put(String.valueOf(t.get("id")), Map.of("score_pct", round1(100.0 * checks.stream()
+                    .filter(c -> byCheck.getOrDefault(c, 0.0) > 0)
+                    .count() / checks.size()),
+                    "points", List.of(checks.stream()
+                            .filter(c -> byCheck.getOrDefault(c, 0.0) > 0)
+                            .count(), checks.size())));
         }
-        final List<String> rest = byCheck.keySet().stream().filter(c -> c.matches("[SBM].*") && !claimed.contains(c)).toList();
-        if (!rest.isEmpty()) steps.put("INTEGRATION", Map.of("score_pct", round1(100.0 * rest.stream().filter(c -> byCheck.get(c) > 0).count() / rest.size()),
-                "points", List.of(rest.stream().filter(c -> byCheck.get(c) > 0).count(), rest.size())));
+        final List<String> rest = byCheck.keySet().stream()
+                .filter(c -> c.matches("[SBM].*") && !claimed.contains(c))
+                .toList();
+        if (!rest.isEmpty()) steps.put("INTEGRATION", Map.of("score_pct", round1(100.0 * rest.stream()
+                .filter(c -> byCheck.get(c) > 0)
+                .count() / rest.size()),
+                "points", List.of(rest.stream()
+                        .filter(c -> byCheck.get(c) > 0)
+                        .count(), rest.size())));
         return steps;
     }
 
     static boolean scoreOf(final Map<String, Double> byCheck, final List<String> ids) {
-        return ids.stream().allMatch(c -> byCheck.getOrDefault(c, 0.0) > 0);
+        return ids.stream()
+                .allMatch(c -> byCheck.getOrDefault(c, 0.0) > 0);
     }
 
     static double num(Object o) { return o instanceof Number n ? n.doubleValue() : 0; }

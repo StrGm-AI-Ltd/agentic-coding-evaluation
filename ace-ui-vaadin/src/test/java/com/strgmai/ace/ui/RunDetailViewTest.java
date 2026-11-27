@@ -59,15 +59,23 @@ class RunDetailViewTest {
 
         List<String> lines = RunDetailView.provenanceLines(manifest, "/tmp/results/r1");
 
-        assertTrue(lines.stream().anyMatch(line -> line.equals("model: Qwen3.8-27B-graft")));
-        assertTrue(lines.stream().anyMatch(line -> line.startsWith("harness: ref")));
-        String quantization = lines.stream().filter(l -> l.startsWith("quantization: ")).findFirst().orElseThrow();
+        assertTrue(lines.stream()
+                .anyMatch(line -> line.equals("model: Qwen3.8-27B-graft")));
+        assertTrue(lines.stream()
+                .anyMatch(line -> line.startsWith("harness: ref")));
+        String quantization = lines.stream()
+                .filter(l -> l.startsWith("quantization: "))
+                .findFirst()
+                .orElseThrow();
         assertTrue(quantization.contains("\"bits\" : 4"),
                 "the 11-property quantization map renders as pretty JSON, not asText()");
-        assertTrue(lines.stream().anyMatch(line -> line.equals("usable_context: 32,000")));
-        assertTrue(lines.stream().noneMatch(line -> line.startsWith("host:")),
+        assertTrue(lines.stream()
+                .anyMatch(line -> line.equals("usable_context: 32,000")));
+        assertTrue(lines.stream()
+                .noneMatch(line -> line.startsWith("host:")),
                 "unknown manifest keys are ignored (the Jinja2 key list)");
-        assertTrue(lines.stream().noneMatch(line -> line.startsWith("pyyaml:")),
+        assertTrue(lines.stream()
+                .noneMatch(line -> line.startsWith("pyyaml:")),
                 "keys outside the Jinja2 list never appear even when non-textual");
         assertEquals("results: /tmp/results/r1", lines.get(lines.size() - 1));
     }
@@ -83,7 +91,8 @@ class RunDetailViewTest {
         List<String> lines = RunDetailView.provenanceLines(manifest, null);
 
         assertTrue(lines.contains("self_review_cost_usd: $0.0375"));
-        assertTrue(lines.stream().noneMatch(l -> l.startsWith("trajectory_review_cost_usd")),
+        assertTrue(lines.stream()
+                .noneMatch(l -> l.startsWith("trajectory_review_cost_usd")),
                 "a null cost_usd (ran but unpriced) is omitted, not shown as $0.00");
     }
 

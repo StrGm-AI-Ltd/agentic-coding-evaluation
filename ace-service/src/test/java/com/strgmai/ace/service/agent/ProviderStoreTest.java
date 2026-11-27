@@ -29,7 +29,10 @@ class ProviderStoreTest {
     @Test
     void listReturnsTheFiveSeededProviders() throws Exception {
         final var store = freshStore("provider-store-list");
-        final var names = store.list().stream().map(ProviderStore.Provider::providerKey).sorted().toList();
+        final var names = store.list().stream()
+                .map(ProviderStore.Provider::providerKey)
+                .sorted()
+                .toList();
         assertEquals(List.of("anthropic", "gemini", "nebius", "openai", "openrouter"), names);
     }
 

@@ -27,7 +27,9 @@ class RunDetailViewMetricsTest {
     void perTaskRows_mapsAllFieldsSortedWithFallbacks() {
         final var rows =
                 RunDetailView.perTaskRows(Json.MAPPER.readTree(METRICS));
-        assertEquals(List.of("T1", "T2"), rows.stream().map(RunDetailView.PerTaskRow::tid).toList(),
+        assertEquals(List.of("T1", "T2"), rows.stream()
+                .map(RunDetailView.PerTaskRow::tid)
+                .toList(),
                 "tasks sort by id");
 
         final var t2 = rows.get(1);

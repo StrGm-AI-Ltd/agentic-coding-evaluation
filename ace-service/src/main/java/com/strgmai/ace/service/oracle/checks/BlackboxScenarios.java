@@ -393,7 +393,10 @@ public final class BlackboxScenarios {
                 if (tpl == null || !spec.get(tpl).get(m.toLowerCase()).contains(String.valueOf(st)))
                     problems.add("agent spec (" + where + ") does not declare " + m + " " + p + " -> " + st);
             }
-        final List<String> uniq = problems.stream().distinct().sorted().toList();
+        final List<String> uniq = problems.stream()
+                .distinct()
+                .sorted()
+                .toList();
         return check("F6", uniq.isEmpty(), calls.size() + " observed responses checked against contract+schemas+agent spec"
                 + (uniq.isEmpty() ? "" : "; problems: " + uniq.subList(0, min(3, uniq.size()))));
     }

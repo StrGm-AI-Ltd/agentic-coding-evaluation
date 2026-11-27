@@ -91,7 +91,9 @@ public class RunBench {
         final Object v = cfg.get("phases");
         if (!(v instanceof String s) || s.isBlank()) return rungPhases;
         final Set<String> wanted = Set.of(s.split(","));
-        return rungPhases.stream().filter(wanted::contains).toList();
+        return rungPhases.stream()
+                .filter(wanted::contains)
+                .toList();
     }
 
     /** p1_plan/p2_implementation always run in orchestrated mode on a rung that defines them: p1_plan
@@ -1609,7 +1611,9 @@ public class RunBench {
             return;
         }
         manifest.put("plan", Map.of("source", planSource, "sha", planSha,
-                "tasks", tasks.stream().map(t -> Map.of("id", t.id, "title", t.title == null ? "" : t.title, "deps", t.deps == null ? List.of() : t.deps, "checks", t.checks == null ? List.of() : t.checks)).toList()));
+                "tasks", tasks.stream()
+                        .map(t -> Map.of("id", t.id, "title", t.title == null ? "" : t.title, "deps", t.deps == null ? List.of() : t.deps, "checks", t.checks == null ? List.of() : t.checks))
+                        .toList()));
         final String stable = Packs.stablePack(promptText, tasks);
         Files.createDirectories(rd.resolve("packs"));   // orchestrated-only: monolithic mode never writes here
         Files.writeString(rd.resolve("packs/stable.md"), stable);
@@ -1633,7 +1637,12 @@ public class RunBench {
         if (useAgentWaves) {
             final Map<String, PlanTask> byId = new LinkedHashMap<>();
             tasks.forEach(t -> byId.put(t.id, t));
-            planWaves = ((List<List<String>>) parallelPlan.get("waves")).stream().map(wv -> wv.stream().map(byId::get).filter(Objects::nonNull).toList()).toList();
+            planWaves = ((List<List<String>>) parallelPlan.get("waves")).stream()
+                    .map(wv -> wv.stream()
+                            .map(byId::get)
+                            .filter(Objects::nonNull)
+                            .toList())
+                    .toList();
         }
         int parallel = cfg.get("parallel") instanceof Number n ? n.intValue() : 1;
         final Object mp = ((Map<String, Object>) manifest.get("derived")).get("max_parallel");
@@ -1651,7 +1660,11 @@ public class RunBench {
         // live run's step order (e.g. T3 legitimately starting right after T4, not T2, when T3 only
         // depends on T2: both are in wave 2, run one at a time in list order under parallel=1)
         Files.writeString(rd.resolve("execution_order.json"),
-                json.writeValueAsString(planWaves.stream().map(w -> w.stream().map(t -> t.id).toList()).toList()));
+                json.writeValueAsString(planWaves.stream()
+                        .map(w -> w.stream()
+                                .map(t -> t.id)
+                                .toList())
+                        .toList()));
 
         String prev = null; Path prevSession = null; String prevVerified = null;
         // #303: loadHandoffs returns manifestHandoffs(manifest) itself, backfilled from disk for
@@ -1747,7 +1760,9 @@ public class RunBench {
                     promptText, stable, taskWall, taskTokens, handoffs, prevVerified, mergeConflicts, planSha);
             snapshotRunProgress(ws, rd, manifest);
             prev = null; prevSession = null;
-            prevVerified = "after the merged wave " + w.stream().map(t -> t.id).toList() + ": " + wave.get("verification_text");
+            prevVerified = "after the merged wave " + w.stream()
+                    .map(t -> t.id)
+                    .toList() + ": " + wave.get("verification_text");
             mergeConflicts = (List<String[]>) wave.get("merge_conflicts");
             // the whole wave is now fully committed and merged - the safe, between-waves moment
             // a "pause after the current task" request takes effect (see the sequential loop's
@@ -2453,7 +2468,9 @@ public class RunBench {
                                                 String promptText, String stable, int taskWall, long taskTokens,
                                                 List<String[]> handoffs, String prevVerified, List<String[]> mergeConflicts, String planSha) throws Exception {
         final String pre = manifestSnap(manifest, "p1", planSha);
-        final List<String> waveIds = waveTasks.stream().map(t -> t.id).toList();
+        final List<String> waveIds = waveTasks.stream()
+                .map(t -> t.id)
+                .toList();
         final long t0 = currentTimeMillis();
         cfg.put("_manifest", manifest);
         final Map<String, Path> taskJournals = new LinkedHashMap<>();
@@ -2509,7 +2526,9 @@ public class RunBench {
             DockerService.dockerTools(homeT.toString());   // each HOME copy gets the shim + plugins too
             taskJournals.put(t.id, rd.resolve("interactions-" + t.id + ".jsonl"));
             packs.put(t.id, Packs.taskPack(ws, t, tasks, snapshots, doneSet(snapshots), null, null, handoffs, readLessons(rd), prevVerified,
-                    mergeConflicts.isEmpty() ? null : mergeConflicts, waveIds.stream().filter(x -> !x.equals(t.id)).toList()));
+                    mergeConflicts.isEmpty() ? null : mergeConflicts, waveIds.stream()
+                            .filter(x -> !x.equals(t.id))
+                            .toList()));
             Files.writeString(rd.resolve("packs/" + t.id + ".md"), packs.get(t.id));
         }
         final var sem = new java.util.concurrent.Semaphore(parallel);
@@ -2654,16 +2673,22 @@ public class RunBench {
             final List<String> own = ownership.getOrDefault(tid, List.of());
             if (!own.isEmpty())
                 for (String f : changed.get(tid))
-                    if (own.stream().noneMatch(g -> matchesOwnership(g, f)))
+                    if (own.stream()
+                            .noneMatch(g -> matchesOwnership(g, f)))
                         violations.add(new String[]{tid, f});
         }
         boolean broken = !conflicts.isEmpty() || (!Boolean.TRUE.equals(wv.get("green"))
                 // a resumed task's synthetic rec (R18) carries no "verification" key - guard the cast instead of assuming one
-                && waveIds.stream().anyMatch(tid -> recs.get(tid) != null && recs.get(tid).get("verification") instanceof Map<?, ?> vm && Boolean.TRUE.equals(vm.get("green"))));
+                && waveIds.stream()
+                        .anyMatch(tid -> recs.get(tid) != null && recs.get(tid).get("verification") instanceof Map<?, ?> vm && Boolean.TRUE.equals(vm.get("green"))));
         final Map<String, Object> problems = new LinkedHashMap<>();
         problems.put("conflicts", conflicts);
         problems.put("verification", Boolean.TRUE.equals(wv.get("green")) ? null : VerifyTask.verifyText(wv));
-        problems.put("overlaps", overlapSet.stream().map(f -> new Object[]{f, waveIds.stream().filter(tid -> changed.get(tid).contains(f)).toList()}).toList());
+        problems.put("overlaps", overlapSet.stream()
+                .map(f -> new Object[]{f, waveIds.stream()
+                        .filter(tid -> changed.get(tid).contains(f))
+                        .toList()})
+                .toList());
         problems.put("ownership_violations", violations);
         problems.put("broken", broken);
         waveRec.putAll(problems);

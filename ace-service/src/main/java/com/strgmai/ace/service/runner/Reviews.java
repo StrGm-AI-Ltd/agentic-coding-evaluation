@@ -52,7 +52,8 @@ public class Reviews {
             // skip dir (build/Foo.java) has no leading slash and would be wrongly reported as code
             final boolean skipDir = java.util.Arrays.stream(path.split("/")).anyMatch(com.strgmai.ace.service.oracle.checks.BuildChecks.SKIP_DIRS::contains);
             if (excluded || skipDir) continue;
-            if (List.of(".jar", ".class", ".war").stream().anyMatch(path::endsWith)) continue;
+            if (List.of(".jar", ".class", ".war").stream()
+                    .anyMatch(path::endsWith)) continue;
             out.add(path);
         }
         return out;

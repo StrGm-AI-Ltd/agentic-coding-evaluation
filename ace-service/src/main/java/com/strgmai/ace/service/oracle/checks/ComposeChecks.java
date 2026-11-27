@@ -94,13 +94,16 @@ public final class ComposeChecks {
 
     static boolean isDb(final Map<String, Object> row) {
         final String svc = String.valueOf(row.getOrDefault("Service", row.getOrDefault("Name", "")));
-        return DB_HINTS.stream().anyMatch(h -> svc.toLowerCase().contains(h));
+        return DB_HINTS.stream()
+                .anyMatch(h -> svc.toLowerCase().contains(h));
     }
 
     record Classified(List<Map<String, Object>> svc, List<Map<String, Object>> healthy, List<Map<String, Object>> bad) {}
 
     static Classified classify(List<Map<String, Object>> rows) {
-        final List<Map<String, Object>> svc = rows.stream().filter(r -> !isDb(r)).toList();
+        final List<Map<String, Object>> svc = rows.stream()
+                .filter(r -> !isDb(r))
+                .toList();
         final List<Map<String, Object>> bad = new ArrayList<>(), healthy = new ArrayList<>();
         for (Map<String, Object> r : svc) {   // database rows are never "bad" (C-12): a slow Postgres shows up as unhealthy services
             final String state = String.valueOf(r.getOrDefault("State", "")).toLowerCase();
@@ -270,11 +273,17 @@ public final class ComposeChecks {
                 Thread.sleep(10_000);
             }
             final Classified c = classify(rows);
-            List<String> nohc = c.svc().stream().filter(r -> String.valueOf(r.getOrDefault("Health", "")).isEmpty())
-                    .map(r -> String.valueOf(r.get("Service"))).limit(3).toList();
+            List<String> nohc = c.svc().stream()
+                    .filter(r -> String.valueOf(r.getOrDefault("Health", "")).isEmpty())
+                    .map(r -> String.valueOf(r.get("Service")))
+                    .limit(3)
+                    .toList();
             out.add(new CheckResult(CheckId.C1, emitted.add(CheckId.C1) && c.healthy().size() >= 3 && c.bad().isEmpty() ? CheckStatus.PASS : CheckStatus.FAIL,
                     c.healthy().size() + "/" + c.svc().size() + " non-db services healthy; bad="
-                            + c.bad().stream().limit(3).map(r -> "(" + r.get("Service") + "," + r.get("State") + "," + r.get("ExitCode") + ")").toList()
+                            + c.bad().stream()
+                                    .limit(3)
+                                    .map(r -> "(" + r.get("Service") + "," + r.get("State") + "," + r.get("ExitCode") + ")")
+                                    .toList()
                             + "; no-healthcheck=" + nohc));
             // ---- C2: readiness endpoint at the contract's base (status only) ----
             boolean ok2 = false; String det = "";

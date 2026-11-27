@@ -529,10 +529,12 @@ public class ExperimentsService {
         if (exp == null || !"queued".equals(exp.getStatus())) return;
         var jobs = dsl.select(JOBS.ARM, JOBS.RUN_ID, JOBS.STATUS).from(JOBS)
                 .where(JOBS.EXPERIMENT_ID.eq(experimentId)).orderBy(JOBS.REPEAT, JOBS.ARM).fetch();
-        if (jobs.stream().anyMatch(j -> !RunSpec.TERMINAL.contains(j.get(JOBS.STATUS)))) return;
+        if (jobs.stream()
+                .anyMatch(j -> !RunSpec.TERMINAL.contains(j.get(JOBS.STATUS)))) return;
         // issue #18: every job cancelled (none ever succeeded or failed) means there is nothing to
         // compare - the experiment itself is cancelled, not "finished" with an empty comparison
-        if (jobs.stream().allMatch(j -> "cancelled".equals(j.get(JOBS.STATUS)))) {
+        if (jobs.stream()
+                .allMatch(j -> "cancelled".equals(j.get(JOBS.STATUS)))) {
             dsl.update(EXPERIMENTS).set(EXPERIMENTS.STATUS, "cancelled").where(EXPERIMENTS.ID.eq(experimentId)).execute();
             return;
         }
@@ -577,7 +579,9 @@ public class ExperimentsService {
                 comparisons.put(label, Map.of("refused", String.valueOf(e)));
             }
         }
-        comparisons.put("arms", jobs.stream().map(j -> Map.of("arm", j.get(JOBS.ARM), "status", j.get(JOBS.STATUS))).toList());
+        comparisons.put("arms", jobs.stream()
+                .map(j -> Map.of("arm", j.get(JOBS.ARM), "status", j.get(JOBS.STATUS)))
+                .toList());
         dsl.update(EXPERIMENTS).set(EXPERIMENTS.STATUS, "finished").set(EXPERIMENTS.COMPARISON, toJson(comparisons))
                 .where(EXPERIMENTS.ID.eq(experimentId)).execute();
     }

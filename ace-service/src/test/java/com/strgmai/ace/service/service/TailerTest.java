@@ -34,10 +34,14 @@ class TailerTest {
         final var tailer = new Tailer();
 
         final List<Object> seqs = new java.util.ArrayList<>();
-        tailer.poll(runDir, backend()).stream().filter(e -> "request".equals(e.get("type"))).forEach(e -> seqs.add(e.get("seq")));
+        tailer.poll(runDir, backend()).stream()
+                .filter(e -> "request".equals(e.get("type")))
+                .forEach(e -> seqs.add(e.get("seq")));
         Files.write(interactions, concat(firstTwo,
                 "{\"seq\": 3, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200}\n".getBytes()));
-        tailer.poll(runDir, backend()).stream().filter(e -> "request".equals(e.get("type"))).forEach(e -> seqs.add(e.get("seq")));
+        tailer.poll(runDir, backend()).stream()
+                .filter(e -> "request".equals(e.get("type")))
+                .forEach(e -> seqs.add(e.get("seq")));
 
         assertEquals(List.of(1, 2, 3), seqs);
     }
@@ -57,7 +61,9 @@ class TailerTest {
         final var tailer = new Tailer();
         assertTrue(tailer.poll(runDir, backend()).isEmpty());
         Files.writeString(interactions, "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200}\n");
-        final List<Map<String, Object>> events = tailer.poll(runDir, backend()).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        final List<Map<String, Object>> events = tailer.poll(runDir, backend()).stream()
+                .filter(e -> "request".equals(e.get("type")))
+                .toList();
         assertEquals(1, events.size());
         assertTrue(tailer.poll(runDir, backend()).isEmpty());   // a no-op poll reports nothing new
     }
@@ -71,7 +77,9 @@ class TailerTest {
         Files.writeString(runDir.resolve("interactions.jsonl"),
                 "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
                         + "\"latency_sec\": 12.34, \"first_byte_ms\": 340}\n");
-        final var events = new Tailer().poll(runDir, backend()).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        final var events = new Tailer().poll(runDir, backend()).stream()
+                .filter(e -> "request".equals(e.get("type")))
+                .toList();
         assertEquals(1, events.size());
         assertEquals(12.34, (Double) events.get(0).get("latency_sec"), 0.001);
         // first_byte_ms is milliseconds; the client's field name implies seconds - converted here
@@ -86,7 +94,9 @@ class TailerTest {
         final var runDir = Files.createTempDirectory("tailer");
         Files.writeString(runDir.resolve("interactions.jsonl"),
                 "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200, \"latency_sec\": 5.0}\n");
-        final var events = new Tailer().poll(runDir, backend()).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        final var events = new Tailer().poll(runDir, backend()).stream()
+                .filter(e -> "request".equals(e.get("type")))
+                .toList();
         assertEquals(5.0, (Double) events.get(0).get("latency_sec"), 0.001);
         assertNull(events.get(0).get("ttft_sec"));
     }
@@ -101,7 +111,9 @@ class TailerTest {
                 "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
                         + "\"session_id\": \"755478fc-f323-565e-92f8-1a5b10584e41\", "
                         + "\"response\": {\"usage\": {\"prompt_tokens_per_second\": 99.15, \"generation_tokens_per_second\": 24.05}}}\n");
-        final var events = new Tailer().poll(runDir, backend()).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        final var events = new Tailer().poll(runDir, backend()).stream()
+                .filter(e -> "request".equals(e.get("type")))
+                .toList();
         assertEquals(1, events.size());
         assertEquals("755478fc-f323-565e-92f8-1a5b10584e41", events.get(0).get("session_id"));
         assertEquals(99.15, (Double) events.get(0).get("prefill_tok_per_sec"), 0.001);
@@ -115,7 +127,9 @@ class TailerTest {
         final var runDir = Files.createTempDirectory("tailer");
         Files.writeString(runDir.resolve("interactions.jsonl"),
                 "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 429, \"budget_exceeded\": true}\n");
-        final var events = new Tailer().poll(runDir, backend()).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        final var events = new Tailer().poll(runDir, backend()).stream()
+                .filter(e -> "request".equals(e.get("type")))
+                .toList();
         assertNull(events.get(0).get("session_id"));
         assertNull(events.get(0).get("prefill_tok_per_sec"));
         assertNull(events.get(0).get("decode_tok_per_sec"));
@@ -136,7 +150,9 @@ class TailerTest {
                 "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
                         + "\"latency_sec\": 10.0, \"first_byte_ms\": 2000, "
                         + "\"response\": {\"usage\": {\"prompt_tokens\": 500, \"completion_tokens\": 160}}}\n");
-        final var events = new Tailer().poll(runDir, backend()).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        final var events = new Tailer().poll(runDir, backend()).stream()
+                .filter(e -> "request".equals(e.get("type")))
+                .toList();
         assertEquals(1, events.size());
         assertEquals(250.0, (Double) events.get(0).get("prefill_tok_per_sec"), 0.001);
         assertEquals(20.0, (Double) events.get(0).get("decode_tok_per_sec"), 0.001);
@@ -153,7 +169,9 @@ class TailerTest {
                         + "\"latency_sec\": 10.0, \"first_byte_ms\": 2000, "
                         + "\"response\": {\"usage\": {\"prompt_tokens\": 500, \"completion_tokens\": 160, "
                         + "\"prompt_tokens_per_second\": 99.15, \"generation_tokens_per_second\": 24.05}}}\n");
-        final var events = new Tailer().poll(runDir, backend()).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        final var events = new Tailer().poll(runDir, backend()).stream()
+                .filter(e -> "request".equals(e.get("type")))
+                .toList();
         assertEquals(99.15, (Double) events.get(0).get("prefill_tok_per_sec"), 0.001);
         assertEquals(24.05, (Double) events.get(0).get("decode_tok_per_sec"), 0.001);
     }
@@ -167,7 +185,9 @@ class TailerTest {
         Files.writeString(runDir.resolve("interactions.jsonl"),
                 "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
                         + "\"response\": {\"usage\": {\"completion_tokens\": 340}}}\n");
-        final var events = new Tailer().poll(runDir, backend()).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        final var events = new Tailer().poll(runDir, backend()).stream()
+                .filter(e -> "request".equals(e.get("type")))
+                .toList();
         assertEquals(340L, events.get(0).get("completion_tokens"));
     }
 
@@ -179,7 +199,9 @@ class TailerTest {
         Files.writeString(runDir.resolve("interactions.jsonl"),
                 "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
                         + "\"response\": {\"usage\": {\"prompt_tokens\": 12345}}}\n");
-        final var events = new Tailer().poll(runDir, backend()).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        final var events = new Tailer().poll(runDir, backend()).stream()
+                .filter(e -> "request".equals(e.get("type")))
+                .toList();
         assertEquals(12345L, events.get(0).get("prompt_tokens"));
     }
 
@@ -191,7 +213,9 @@ class TailerTest {
         Files.writeString(runDir.resolve("interactions.jsonl"),
                 "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200, "
                         + "\"client_aborted\": true, \"abort_reason\": \"task-wall budget exceeded (900s)\"}\n");
-        final var events = new Tailer().poll(runDir, backend()).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        final var events = new Tailer().poll(runDir, backend()).stream()
+                .filter(e -> "request".equals(e.get("type")))
+                .toList();
         assertEquals(true, events.get(0).get("client_aborted"));
         assertEquals("task-wall budget exceeded (900s)", events.get(0).get("abort_reason"));
     }
@@ -201,7 +225,9 @@ class TailerTest {
         final var runDir = Files.createTempDirectory("tailer");
         Files.writeString(runDir.resolve("interactions.jsonl"),
                 "{\"seq\": 1, \"ts\": \"t\", \"path\": \"/v1/chat/completions\", \"status\": 200}\n");
-        final var events = new Tailer().poll(runDir, backend()).stream().filter(e -> "request".equals(e.get("type"))).toList();
+        final var events = new Tailer().poll(runDir, backend()).stream()
+                .filter(e -> "request".equals(e.get("type")))
+                .toList();
         assertNull(events.get(0).get("abort_reason"));
     }
 
@@ -219,7 +245,8 @@ class TailerTest {
         Files.writeString(runDir.resolve("packs/stable.md"), "the persistent pack, not a step");
         final List<Map<String, Object>> events = new Tailer().poll(runDir, backend());
         assertEquals(2, events.size());   // T1 and its continuation; stable is not a step
-        assertTrue(events.stream().anyMatch(e -> "T1".equals(e.get("step")) && Boolean.TRUE.equals(e.get("continuation"))));
+        assertTrue(events.stream()
+                .anyMatch(e -> "T1".equals(e.get("step")) && Boolean.TRUE.equals(e.get("continuation"))));
     }
 
     private static final String SESSION_HEADER = "{\"type\": \"session\", \"id\": \"755478fc-f323-565e-92f8-1a5b10584e41\", "
@@ -233,7 +260,10 @@ class TailerTest {
         Files.createDirectories(runDir.resolve("sessions"));
         Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"), SESSION_HEADER);
         final var events = new Tailer().poll(runDir, backend());
-        final var started = events.stream().filter(e -> "session_started".equals(e.get("type"))).findFirst().orElseThrow();
+        final var started = events.stream()
+                .filter(e -> "session_started".equals(e.get("type")))
+                .findFirst()
+                .orElseThrow();
         assertEquals("T2", started.get("label"));
     }
 
@@ -249,7 +279,10 @@ class TailerTest {
         Files.writeString(runDir.resolve("packs/T2.md"), "# Current task: T2 — Real Gradle wrapper + project baseline\n\nmore stuff\n");
         Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"), SESSION_HEADER);
         final var events = new Tailer().poll(runDir, backend());
-        final var started = events.stream().filter(e -> "session_started".equals(e.get("type"))).findFirst().orElseThrow();
+        final var started = events.stream()
+                .filter(e -> "session_started".equals(e.get("type")))
+                .findFirst()
+                .orElseThrow();
         assertEquals("Real Gradle wrapper + project baseline", started.get("task_title"));
     }
 
@@ -259,7 +292,10 @@ class TailerTest {
         Files.createDirectories(runDir.resolve("sessions"));
         Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"), SESSION_HEADER);
         final var events = new Tailer().poll(runDir, backend());
-        final var started = events.stream().filter(e -> "session_started".equals(e.get("type"))).findFirst().orElseThrow();
+        final var started = events.stream()
+                .filter(e -> "session_started".equals(e.get("type")))
+                .findFirst()
+                .orElseThrow();
         assertFalse(started.containsKey("task_title"), "must be absent, not merely null, when there's no matching pack");
     }
 
@@ -275,7 +311,10 @@ class TailerTest {
                 + "\"model\": \"m\", \"ts\": \"t\", \"agent\": \"a\", \"label\": \"T2-handoff\"}\n";
         Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"), header);
         final var events = new Tailer().poll(runDir, backend());
-        final var started = events.stream().filter(e -> "session_started".equals(e.get("type"))).findFirst().orElseThrow();
+        final var started = events.stream()
+                .filter(e -> "session_started".equals(e.get("type")))
+                .findFirst()
+                .orElseThrow();
         assertEquals("Real Gradle wrapper + project baseline", started.get("task_title"));
     }
 
@@ -287,7 +326,10 @@ class TailerTest {
         Files.writeString(runDir.resolve("packs/T2.md"), "not the expected header shape at all\n");
         Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"), SESSION_HEADER);
         final var events = new Tailer().poll(runDir, backend());
-        final var started = events.stream().filter(e -> "session_started".equals(e.get("type"))).findFirst().orElseThrow();
+        final var started = events.stream()
+                .filter(e -> "session_started".equals(e.get("type")))
+                .findFirst()
+                .orElseThrow();
         assertFalse(started.containsKey("task_title"));
     }
 
@@ -299,7 +341,10 @@ class TailerTest {
         Files.createDirectories(runDir.resolve("sessions"));
         Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"), SESSION_HEADER);
         final var events = new Tailer().poll(runDir, backend());
-        final var started = events.stream().filter(e -> "session_started".equals(e.get("type"))).findFirst().orElseThrow();
+        final var started = events.stream()
+                .filter(e -> "session_started".equals(e.get("type")))
+                .findFirst()
+                .orElseThrow();
         assertEquals("t", started.get("ts"));
     }
 
@@ -322,7 +367,9 @@ class TailerTest {
         Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_b2222222-2222-2222-2222-222222222222.jsonl"), earlierHeader);
 
         final var labels = new Tailer().poll(runDir, backend()).stream()
-                .filter(e -> "session_started".equals(e.get("type"))).map(e -> e.get("label")).toList();
+                .filter(e -> "session_started".equals(e.get("type")))
+                .map(e -> e.get("label"))
+                .toList();
 
         assertEquals(List.of("T13-earlier", "T13-later"), labels, "filename (timestamp) order, not disk-write order");
     }
@@ -340,7 +387,10 @@ class TailerTest {
         Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"),
                 SESSION_HEADER + "{\"type\": \"end\", \"finish\": \"stop\", \"turns\": 2}\n");
         final var events = new Tailer().poll(runDir, backend());
-        final var done = events.stream().filter(e -> "session_done".equals(e.get("type"))).findFirst().orElseThrow();
+        final var done = events.stream()
+                .filter(e -> "session_done".equals(e.get("type")))
+                .findFirst()
+                .orElseThrow();
         assertEquals("755478fc-f323-565e-92f8-1a5b10584e41", done.get("session_id"));
         assertEquals("stop", done.get("finish"));
     }
@@ -359,7 +409,10 @@ class TailerTest {
         Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"),
                 SESSION_HEADER + "{\"type\": \"end\", \"finish\": \"\", \"turns\": 0}\n");
         final var events = new Tailer().poll(runDir, backend());
-        final var done = events.stream().filter(e -> "session_done".equals(e.get("type"))).findFirst().orElseThrow();
+        final var done = events.stream()
+                .filter(e -> "session_done".equals(e.get("type")))
+                .findFirst()
+                .orElseThrow();
         assertEquals("?", done.get("finish"));
     }
 
@@ -371,7 +424,10 @@ class TailerTest {
         Files.createDirectories(runDir.resolve("sessions"));
         Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"),
                 SESSION_HEADER + "{\"type\": \"end\", \"finish\": \"stop\", \"turns\": 2, \"ts\": \"2026-01-01T00:12:30Z\"}\n");
-        final var done = new Tailer().poll(runDir, backend()).stream().filter(e -> "session_done".equals(e.get("type"))).findFirst().orElseThrow();
+        final var done = new Tailer().poll(runDir, backend()).stream()
+                .filter(e -> "session_done".equals(e.get("type")))
+                .findFirst()
+                .orElseThrow();
         assertEquals("2026-01-01T00:12:30Z", done.get("ts"));
     }
 
@@ -382,8 +438,12 @@ class TailerTest {
         Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"),
                 SESSION_HEADER + "{\"type\": \"end\", \"finish\": \"stop\", \"turns\": 2}\n");
         final var tailer = new Tailer();
-        final long first = tailer.poll(runDir, backend()).stream().filter(e -> "session_done".equals(e.get("type"))).count();
-        final long second = tailer.poll(runDir, backend()).stream().filter(e -> "session_done".equals(e.get("type"))).count();
+        final long first = tailer.poll(runDir, backend()).stream()
+                .filter(e -> "session_done".equals(e.get("type")))
+                .count();
+        final long second = tailer.poll(runDir, backend()).stream()
+                .filter(e -> "session_done".equals(e.get("type")))
+                .count();
         assertEquals(1, first);
         assertEquals(0, second);
     }
@@ -395,7 +455,8 @@ class TailerTest {
         Files.writeString(runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl"),
                 SESSION_HEADER + "{\"type\": \"message\", \"message\": {\"role\": \"assistant\"}}\n");
         final var events = new Tailer().poll(runDir, backend());
-        assertTrue(events.stream().noneMatch(e -> "session_done".equals(e.get("type"))));
+        assertTrue(events.stream()
+                .noneMatch(e -> "session_done".equals(e.get("type"))));
     }
 
     @Test
@@ -405,9 +466,13 @@ class TailerTest {
         final var f = runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl");
         Files.writeString(f, SESSION_HEADER);
         final var tailer = new Tailer();
-        assertTrue(tailer.poll(runDir, backend()).stream().noneMatch(e -> "session_done".equals(e.get("type"))));
+        assertTrue(tailer.poll(runDir, backend()).stream()
+                .noneMatch(e -> "session_done".equals(e.get("type"))));
         Files.writeString(f, "{\"type\": \"end\", \"finish\": \"length\", \"turns\": 9}\n", java.nio.file.StandardOpenOption.APPEND);
-        final var done = tailer.poll(runDir, backend()).stream().filter(e -> "session_done".equals(e.get("type"))).findFirst().orElseThrow();
+        final var done = tailer.poll(runDir, backend()).stream()
+                .filter(e -> "session_done".equals(e.get("type")))
+                .findFirst()
+                .orElseThrow();
         assertEquals("length", done.get("finish"));
     }
 
@@ -423,10 +488,16 @@ class TailerTest {
         final var f = runDir.resolve("sessions/2026-01-01T00-00-00.000Z_755478fc-f323-565e-92f8-1a5b10584e41.jsonl");
         Files.writeString(f, SESSION_HEADER + "{\"type\": \"end\", \"finish\": \"length\", \"turns\": 4}\n");
         final var tailer = new Tailer();
-        final var firstDone = tailer.poll(runDir, backend()).stream().filter(e -> "session_done".equals(e.get("type"))).findFirst().orElseThrow();
+        final var firstDone = tailer.poll(runDir, backend()).stream()
+                .filter(e -> "session_done".equals(e.get("type")))
+                .findFirst()
+                .orElseThrow();
         assertEquals("length", firstDone.get("finish"), "the truncated call's own outcome, reported first");
         Files.writeString(f, "{\"type\": \"end\", \"finish\": \"stop\", \"turns\": 10}\n", java.nio.file.StandardOpenOption.APPEND);
-        final var secondDone = tailer.poll(runDir, backend()).stream().filter(e -> "session_done".equals(e.get("type"))).findFirst().orElseThrow();
+        final var secondDone = tailer.poll(runDir, backend()).stream()
+                .filter(e -> "session_done".equals(e.get("type")))
+                .findFirst()
+                .orElseThrow();
         assertEquals("stop", secondDone.get("finish"), "the continuation's real outcome must supersede the truncated one");
     }
 
@@ -439,17 +510,22 @@ class TailerTest {
         Files.writeString(runDir.resolve("execution_order.json"), "[[\"T1\"],[\"T2\",\"T4\"],[\"T3\"]]");
         final var tailer = new Tailer();
         final var events = tailer.poll(runDir, backend());
-        final var order = events.stream().filter(e -> "execution_order".equals(e.get("type"))).findFirst().orElseThrow();
+        final var order = events.stream()
+                .filter(e -> "execution_order".equals(e.get("type")))
+                .findFirst()
+                .orElseThrow();
         assertEquals("[[\"T1\"],[\"T2\",\"T4\"],[\"T3\"]]".replace(" ", ""),
                 order.get("waves").toString().replaceAll("\\s", ""));
-        assertTrue(tailer.poll(runDir, backend()).stream().noneMatch(e -> "execution_order".equals(e.get("type"))),
+        assertTrue(tailer.poll(runDir, backend()).stream()
+                .noneMatch(e -> "execution_order".equals(e.get("type"))),
                 "the file never changes after it's written - reported once, not every poll");
     }
 
     @Test
     void aRunWithNoExecutionOrderFileReportsNone() throws Exception {
         final var events = new Tailer().poll(Files.createTempDirectory("tailer"), backend());
-        assertTrue(events.stream().noneMatch(e -> "execution_order".equals(e.get("type"))));
+        assertTrue(events.stream()
+                .noneMatch(e -> "execution_order".equals(e.get("type"))));
     }
 
     @Test
@@ -458,7 +534,10 @@ class TailerTest {
         Files.createDirectories(runDir.resolve("rescue"));
         Files.writeString(runDir.resolve("rescue/T14.start"), "ran out of its own token budget");
         final var events = new Tailer().poll(runDir, backend());
-        final var started = events.stream().filter(e -> "rescue_started".equals(e.get("type"))).findFirst().orElseThrow();
+        final var started = events.stream()
+                .filter(e -> "rescue_started".equals(e.get("type")))
+                .findFirst()
+                .orElseThrow();
         assertEquals("T14", started.get("task"));
         assertEquals("ran out of its own token budget", started.get("reason"));
     }
@@ -470,7 +549,8 @@ class TailerTest {
         Files.writeString(runDir.resolve("rescue/T14.start"), "ran out of its own token budget");
         Files.writeString(runDir.resolve("rescue/T14.done"), "");
         final var events = new Tailer().poll(runDir, backend());
-        assertTrue(events.stream().anyMatch(e -> "rescue_done".equals(e.get("type")) && "T14".equals(e.get("task"))));
+        assertTrue(events.stream()
+                .anyMatch(e -> "rescue_done".equals(e.get("type")) && "T14".equals(e.get("task"))));
     }
 
     @Test
@@ -480,12 +560,14 @@ class TailerTest {
         Files.writeString(runDir.resolve("rescue/T14.start"), "ran out of its own token budget");
         final var tailer = new Tailer();
         tailer.poll(runDir, backend());
-        assertTrue(tailer.poll(runDir, backend()).stream().noneMatch(e -> "rescue_started".equals(e.get("type"))));
+        assertTrue(tailer.poll(runDir, backend()).stream()
+                .noneMatch(e -> "rescue_started".equals(e.get("type"))));
     }
 
     @Test
     void aRunWithNoRescueDirectoryReportsNoRescueEvents() throws Exception {
         final var events = new Tailer().poll(Files.createTempDirectory("tailer"), backend());
-        assertTrue(events.stream().noneMatch(e -> "rescue_started".equals(e.get("type")) || "rescue_done".equals(e.get("type"))));
+        assertTrue(events.stream()
+                .noneMatch(e -> "rescue_started".equals(e.get("type")) || "rescue_done".equals(e.get("type"))));
     }
 }

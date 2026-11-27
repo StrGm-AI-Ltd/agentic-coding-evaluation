@@ -119,7 +119,8 @@ class CompactionStrategiesTest {
         CompactionStrategies.apply(List.of(CompactionStrategies.STRUCTURED_EVICTION, CompactionStrategies.TOOL_RESULT_MASK),
                 msgs, 1, 0, new CompactionStrategies.State(), range -> { seen[0] = List.copyOf(range); return "a summary"; });
         assertNotNull(seen[0], "the summarizer must have been called");
-        assertTrue(seen[0].stream().anyMatch(m -> m instanceof ToolExecutionResultMessage t && t.text().equals("output 0")),
+        assertTrue(seen[0].stream()
+                .anyMatch(m -> m instanceof ToolExecutionResultMessage t && t.text().equals("output 0")),
                 "structured_eviction ran BEFORE the mask in this configured order, so it must see the real output");
     }
 
@@ -129,7 +130,8 @@ class CompactionStrategiesTest {
         final List<ChatMessage>[] seen = new List[1];
         CompactionStrategies.apply(List.of(CompactionStrategies.TOOL_RESULT_MASK, CompactionStrategies.STRUCTURED_EVICTION),
                 msgs, 1, 0, new CompactionStrategies.State(), range -> { seen[0] = List.copyOf(range); return "a summary"; });
-        assertTrue(seen[0].stream().anyMatch(m -> m instanceof ToolExecutionResultMessage t && t.text().startsWith("[output dropped")),
+        assertTrue(seen[0].stream()
+                .anyMatch(m -> m instanceof ToolExecutionResultMessage t && t.text().startsWith("[output dropped")),
                 "mask ran first in THIS configured order, so structured_eviction sees its stub, not the real output");
     }
 
@@ -165,7 +167,8 @@ class CompactionStrategiesTest {
         try {
             CompactionStrategies.apply(CompactionStrategies.DEFAULT, threeTurns(), 1, 0, new CompactionStrategies.State(),
                     range -> fail("structured_eviction wasn't configured"));
-            assertTrue(appender.list.stream().noneMatch(e -> e.getFormattedMessage().contains("unknown compaction strategy")),
+            assertTrue(appender.list.stream()
+                    .noneMatch(e -> e.getFormattedMessage().contains("unknown compaction strategy")),
                     "DEFAULT's own entries must never be logged as unknown: " + appender.list);
         } finally { logger.detachAppender(appender); }
     }

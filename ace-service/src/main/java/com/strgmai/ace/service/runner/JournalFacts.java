@@ -83,7 +83,10 @@ public final class JournalFacts {
         final OffsetDateTime lo = sinceIso == null ? null : OffsetDateTime.parse(sinceIso);
         final OffsetDateTime hi = untilIso == null ? null : OffsetDateTime.parse(untilIso);
         final List<String[]> ex = exclude == null ? List.of() : exclude;
-        final String wsRoot = normalise == null ? null : normalise.stream().filter(n -> n != null && n.contains("agentbench-ws")).findFirst().orElse(null);
+        final String wsRoot = normalise == null ? null : normalise.stream()
+                .filter(n -> n != null && n.contains("agentbench-ws"))
+                .findFirst()
+                .orElse(null);
         final String own = wsRoot == null ? null : Path.of(wsRoot).getParent().getFileName().toString();
         final boolean window = lo != null || hi != null || !ex.isEmpty();
         double latencySum = 0; int latencyN = 0;
@@ -96,14 +99,16 @@ public final class JournalFacts {
             if (tag != null && !Objects.equals(e.task(), tag)) continue;          // a parallel task's own records
             if (window) {
                 if (e.ts() == null || (lo != null && e.ts().isBefore(lo)) || (hi != null && e.ts().isAfter(hi))
-                        || ex.stream().anyMatch(w -> { OffsetDateTime a = OffsetDateTime.parse(w[0]), b = OffsetDateTime.parse(w[1]);
-                            return !e.ts().isBefore(a) && !e.ts().isAfter(b); })) continue;
+                        || ex.stream()
+                                .anyMatch(w -> { OffsetDateTime a = OffsetDateTime.parse(w[0]), b = OffsetDateTime.parse(w[1]);
+                                    return !e.ts().isBefore(a) && !e.ts().isAfter(b); })) continue;
             }
             f.merge("requests", 1, (a, b) -> (int) a + 1);
             if (e.budget()) f.merge("budget_refusals", 1, (a, b) -> (int) a + 1);
             else if (e.upstream()) f.merge("upstream_errors", 1, (a, b) -> (int) a + 1);
             else if (e.status() >= 400) f.merge("errors", 1, (a, b) -> (int) a + 1);
-            if (wsRoot != null && e.ws() != null && e.ws().stream().anyMatch(x -> !x.equals(own)))
+            if (wsRoot != null && e.ws() != null && e.ws().stream()
+                    .anyMatch(x -> !x.equals(own)))
                 f.merge("foreign_workspace_refs", 1, (a, b) -> (int) a + 1);      // a reference to ANOTHER run's workspace
             if (e.clientAbort()) f.merge("client_aborts", 1, (a, b) -> (int) a + 1);
             if (e.drainAbort()) f.merge("drain_aborted", 1, (a, b) -> (int) a + 1);

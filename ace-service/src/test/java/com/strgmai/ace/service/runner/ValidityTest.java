@@ -29,7 +29,8 @@ class ValidityTest {
     void aLengthDeathWithoutAnArtifactIsAStopPolicyArtefact() {
         final var manifest = Map.of("mode", "monolithic", "phases", List.of(phase("p2_implementation", 0, "length", false)));
         final Map<String, Object> v = Validity.validity(manifest, facts(10, 0), 0.2);
-        assertTrue(((List<String>) v.get("reasons")).stream().anyMatch(r -> r.contains("length")));
+        assertTrue(((List<String>) v.get("reasons")).stream()
+                .anyMatch(r -> r.contains("length")));
     }
 
     @Test
@@ -58,7 +59,8 @@ class ValidityTest {
         final var manifest = Map.of("mode", "monolithic", "phases", List.of(phase("p1_plan", 0, "stop", true)));
         assertTrue(((List<String>) Validity.validity(manifest, facts(0, 0), 0.2).get("reasons")).contains("no LLM requests recorded"));
         final List<String> reasons = (List<String>) Validity.validity(manifest, facts(10, 3), 0.2).get("reasons");
-        assertTrue(reasons.stream().anyMatch(r -> r.contains("requests errored")));
+        assertTrue(reasons.stream()
+                .anyMatch(r -> r.contains("requests errored")));
         assertTrue(Validity.validity(manifest, facts(10, 1), 0.2).get("valid") instanceof Boolean);   // 10% <= maxErrorRate: fine
     }
 

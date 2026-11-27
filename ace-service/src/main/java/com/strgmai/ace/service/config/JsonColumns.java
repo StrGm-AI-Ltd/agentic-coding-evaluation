@@ -39,6 +39,8 @@ public final class JsonColumns {
     }
 
     public static List<Map<String, Object>> parseAll(final List<Map<String, Object>> rows) {
-        return rows.stream().map(JsonColumns::parse).toList();
+        return rows.stream()
+                .map(JsonColumns::parse)
+                .toList();
     }
 }

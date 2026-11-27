@@ -176,7 +176,8 @@ public final class Packs {
         final List<String> keep = new ArrayList<>();
         for (String line : text.split("\n")) {
             final String s = line.strip();
-            if (s.startsWith("package ") || List.of("@Entity", "@Table", "@RestController", "@RequestMapping", "@GetMapping", "@PostMapping", "@Service", "@Repository").stream().anyMatch(s::startsWith)) keep.add(s);
+            if (s.startsWith("package ") || List.of("@Entity", "@Table", "@RestController", "@RequestMapping", "@GetMapping", "@PostMapping", "@Service", "@Repository").stream()
+                    .anyMatch(s::startsWith)) keep.add(s);
             else if (SIG_RE.matcher(line).find() && !(s.startsWith("private") || s.startsWith("//") || s.startsWith("*") || s.startsWith("/*")))
                 keep.add(line.stripTrailing().replaceAll("\\s*\\{\\s*$", ""));
             else if (Pattern.compile("^\\s*@Column|^\\s*@Id\\b|^\\s*@JoinColumn").matcher(s).find()) keep.add(s);
@@ -198,7 +199,8 @@ public final class Packs {
                 final String rel = ws.relativize(p).toString();
                 if (!files.contains(rel)) files.add(rel);
             }
-        final boolean hasSnapDeps = task.deps != null && task.deps.stream().anyMatch(snapshots::containsKey);
+        final boolean hasSnapDeps = task.deps != null && task.deps.stream()
+                .anyMatch(snapshots::containsKey);
         if (task.deps != null && !task.deps.isEmpty() && !hasSnapDeps)
             for (Path p : com.strgmai.ace.service.oracle.checks.StructureChecks.glob(ws, "**/src/main/**/*.*")) {
                 final String rel = ws.relativize(p).toString();
@@ -207,7 +209,8 @@ public final class Packs {
         final var parts = new StringBuilder();
         int total = 0;
         for (String f : files) {
-            if (!List.of(".java", ".kt", ".kts", ".gradle", ".yaml", ".yml", ".sql", ".json", ".properties").stream().anyMatch(f::endsWith)) continue;
+            if (!List.of(".java", ".kt", ".kts", ".gradle", ".yaml", ".yml", ".sql", ".json", ".properties").stream()
+                    .anyMatch(f::endsWith)) continue;
             String txt;
             try { txt = Files.readString(ws.resolve(f)); }
             catch (IOException e) { log.debug("could not read {} for dependency interfaces: {}", f, e.toString()); continue; }
@@ -287,7 +290,9 @@ public final class Packs {
      *  candidates; a task with no declared deps at all (e.g. the synthetic INTEGRATION task, which
      *  has no single dependency to scope to) still sees whatever fits from the full list. */
     static List<String[]> relevantHandoffs(final List<String[]> handoffs, final List<String> deps) {
-        return deps == null || deps.isEmpty() ? handoffs : handoffs.stream().filter(h -> deps.contains(h[0])).toList();
+        return deps == null || deps.isEmpty() ? handoffs : handoffs.stream()
+                .filter(h -> deps.contains(h[0]))
+                .toList();
     }
 
     /** #304: relevantHandoffs() scopes this down to the task's own direct deps - typically a
@@ -338,7 +343,9 @@ public final class Packs {
             final var files = new TreeSet<String>();
             mergeConflicts.forEach(c -> files.add(c[1]));
             parts.add("## Merge conflicts to resolve\nThe harness merged parallel tasks and kept their conflicts with `<<<<<<<`/`>>>>>>>` markers in: "
-                    + String.join(", ", files.stream().limit(20).toList()) + ". Resolve them first (the build fails until you do).");
+                    + String.join(", ", files.stream()
+                            .limit(20)
+                            .toList()) + ". Resolve them first (the build fails until you do).");
         }
         if (prevTask != null && snapshots.containsKey(prevTask)) {
             final String[] s = snapshots.get(prevTask);
@@ -612,7 +619,9 @@ public final class Packs {
         }
         out.put("findings", findings);
         final Map<String, Long> bySev = new LinkedHashMap<>();
-        for (String s : List.of("HIGH", "MEDIUM", "LOW")) bySev.put(s, findings.stream().filter(f -> s.equals(f.get("severity"))).count());
+        for (String s : List.of("HIGH", "MEDIUM", "LOW")) bySev.put(s, findings.stream()
+                .filter(f -> s.equals(f.get("severity")))
+                .count());
         out.put("findings_by_severity", bySev);
         if (trajectory) {
             out.put("wasted_turns_estimate", d.path("wasted_turns_estimate").isInt() ? d.path("wasted_turns_estimate").asInt() : null);
@@ -760,7 +769,9 @@ public final class Packs {
         }
         if (problems.get("ownership_violations") instanceof List<?> vs && !vs.isEmpty()) {
             final var b = new StringBuilder();
-            vs.stream().limit(30).forEach(v -> { Object[] x = (Object[]) v; b.append("- ").append(x[0]).append(": ").append(x[1]).append('\n'); });
+            vs.stream()
+                    .limit(30)
+                    .forEach(v -> { Object[] x = (Object[]) v; b.append("- ").append(x[0]).append(": ").append(x[1]).append('\n'); });
             parts.add("## Files a task edited outside the ownership it declared\n" + b);
         }
         parts.add("## Repository tree\n```\n" + repoTree(ws, 8) + "\n```");

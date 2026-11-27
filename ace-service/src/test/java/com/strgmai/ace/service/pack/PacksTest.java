@@ -90,7 +90,9 @@ class PacksTest {
     @Test
     void relevantHandoffsKeepsOnlyTheTasksOwnDeclaredDependencies() {
         final var handoffs = List.of(new String[]{"T1", "T1's note"}, new String[]{"T2", "T2's note"}, new String[]{"T5", "T5's note"});
-        assertEquals(List.of("T5"), Packs.relevantHandoffs(handoffs, List.of("T5", "T8")).stream().map(h -> h[0]).toList(),
+        assertEquals(List.of("T5"), Packs.relevantHandoffs(handoffs, List.of("T5", "T8")).stream()
+                .map(h -> h[0])
+                .toList(),
                 "T8 has no handoff at all yet - only T5's matches");
     }
 

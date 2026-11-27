@@ -198,7 +198,8 @@ public final class BuildChecks {
             // file under it - this was a real bug (B3 always NOT_ATTEMPTED: "no sell-side
             // arithmetic... to mutate" even when the source plainly had it).
             final List<String> segs = Arrays.asList(jf.toString().split("/"));
-            if (SKIP_DIRS.stream().anyMatch(segs::contains)) continue;
+            if (SKIP_DIRS.stream()
+                    .anyMatch(segs::contains)) continue;
             String src;
             try { src = Files.readString(jf); }
             catch (IOException e) { log.warn("could not read {} while picking mutation candidates: {}", jf, e.toString()); continue; }
@@ -243,8 +244,10 @@ public final class BuildChecks {
             for (Path p : walk.filter(Files::isRegularFile).toList()) {
                 final String rel = ws.relativize(p).toString();
                 final String[] segs = rel.split("/");
-                if (SKIP_DIRS.stream().anyMatch(d -> Arrays.asList(segs).contains(d))) continue;   // SEGMENTS, not substrings: "build.gradle" is not "build/"
-                if (List.of(".jar", ".class", ".war").stream().anyMatch(rel::endsWith)
+                if (SKIP_DIRS.stream()
+                        .anyMatch(d -> Arrays.asList(segs).contains(d))) continue;   // SEGMENTS, not substrings: "build.gradle" is not "build/"
+                if (List.of(".jar", ".class", ".war").stream()
+                        .anyMatch(rel::endsWith)
                         && !rel.endsWith("gradle/wrapper/gradle-wrapper.jar")) continue;   // the wrapper is source, not a build artefact (R5 C-2)
                 Files.createDirectories(copy.resolve(rel).getParent());
                 Files.copy(p, copy.resolve(rel));
@@ -281,8 +284,12 @@ public final class BuildChecks {
         final var tmp = Files.createTempDirectory(ws.getParent(), "ab-build-");
         try {
             final Path copy = scratchCopy(ws, tmp);
-            final List<Path> croots = roots.stream().map(r -> r.equals(ws) ? copy : copy.resolve(ws.relativize(r))).toList();
-            final List<String> names = roots.stream().map(r -> ws.relativize(r).toString().isEmpty() ? "." : ws.relativize(r).toString()).toList();
+            final List<Path> croots = roots.stream()
+                    .map(r -> r.equals(ws) ? copy : copy.resolve(ws.relativize(r)))
+                    .toList();
+            final List<String> names = roots.stream()
+                    .map(r -> ws.relativize(r).toString().isEmpty() ? "." : ws.relativize(r).toString())
+                    .toList();
 
             // ---- B1: every root assembles
             final List<String> fails = new ArrayList<>(), infraHits = new ArrayList<>();
@@ -342,7 +349,8 @@ public final class BuildChecks {
             if (!neut.isEmpty()) { b2 = CheckStatus.FAIL; out.add(CheckResult.fail(CheckId.B2, "test task neutered in " + neut.subList(0, min(2, neut.size())))); }
             else if (ex == 0) { b2 = CheckStatus.FAIL; out.add(CheckResult.fail(CheckId.B2, "0 tests executed (gradle test exit 0 with no tests is not evidence)")); }
             else {
-                b2 = (rcs.stream().allMatch(r -> r == 0) && fl == 0) ? CheckStatus.PASS : CheckStatus.FAIL;
+                b2 = (rcs.stream()
+                        .allMatch(r -> r == 0) && fl == 0) ? CheckStatus.PASS : CheckStatus.FAIL;
                 out.add(new CheckResult(CheckId.B2, b2, ex + " executed, " + fl + " failed, rc=" + rcs));
             }
 
@@ -357,7 +365,10 @@ public final class BuildChecks {
             for (Candidate c : cands) {
                 final String src = Files.readString(c.file());
                 Files.writeString(c.file(), src.substring(0, c.start()) + c.replacement() + src.substring(c.end()));
-                final Path rootOf = croots.stream().filter(r -> c.file().startsWith(r) && !r.equals(copy)).findFirst().orElse(copy);
+                final Path rootOf = croots.stream()
+                        .filter(r -> c.file().startsWith(r) && !r.equals(copy))
+                        .findFirst()
+                        .orElse(copy);
                 for (Path x : StructureChecks.glob(rootOf, "**/build/test-results/**/*.xml")) Files.deleteIfExists(x);
                 infra.resetDb();
                 final String[] res = gradle(rootOf, image, "test", infra, GRADLE_TIMEOUT).split("\n", 2);

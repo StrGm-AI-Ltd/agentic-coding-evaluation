@@ -55,8 +55,14 @@ class ExperimentsServiceTest {
         final List<ExperimentsService.ArmSpec> specs = svc.plan("harness_effect", Map.of("model", "modelX"), 1);
 
         assertEquals(2, specs.size());
-        final ExperimentsService.ArmSpec orch = specs.stream().filter(s -> s.arm().equals("orch")).findFirst().orElseThrow();
-        final ExperimentsService.ArmSpec mono = specs.stream().filter(s -> s.arm().equals("mono")).findFirst().orElseThrow();
+        final ExperimentsService.ArmSpec orch = specs.stream()
+                .filter(s -> s.arm().equals("orch"))
+                .findFirst()
+                .orElseThrow();
+        final ExperimentsService.ArmSpec mono = specs.stream()
+                .filter(s -> s.arm().equals("mono"))
+                .findFirst()
+                .orElseThrow();
 
         assertEquals("orchestrated", orch.spec().mode());
         assertNull(orch.spec().implWall());
@@ -82,7 +88,8 @@ class ExperimentsServiceTest {
         final List<ExperimentsService.ArmSpec> specs = svc.plan("harness_effect",
                 Map.of("model", "modelX", "task", "L1_migration_entity"), 1);
 
-        assertTrue(specs.stream().allMatch(s -> "L1_migration_entity".equals(s.spec().task())));
+        assertTrue(specs.stream()
+                .allMatch(s -> "L1_migration_entity".equals(s.spec().task())));
     }
 
     /** every existing caller that never set params.task must keep getting the same RUNG default
@@ -92,7 +99,8 @@ class ExperimentsServiceTest {
         final ExperimentsService svc = serviceWithUnreachableModelServer();
         final List<ExperimentsService.ArmSpec> specs = svc.plan("harness_effect", Map.of("model", "modelX"), 1);
 
-        assertTrue(specs.stream().allMatch(s -> ExperimentsService.RUNG.equals(s.spec().task())));
+        assertTrue(specs.stream()
+                .allMatch(s -> ExperimentsService.RUNG.equals(s.spec().task())));
     }
 
     /** with an explicit, positive task_wall/task_tokens the monolithic multiplier still applies -
@@ -104,7 +112,10 @@ class ExperimentsServiceTest {
         final List<ExperimentsService.ArmSpec> specs = svc.plan("harness_effect",
                 Map.of("model", "modelX", "task_wall", 3600, "task_tokens", 60000), 1);
 
-        final ExperimentsService.ArmSpec mono = specs.stream().filter(s -> s.arm().equals("mono")).findFirst().orElseThrow();
+        final ExperimentsService.ArmSpec mono = specs.stream()
+                .filter(s -> s.arm().equals("mono"))
+                .findFirst()
+                .orElseThrow();
         assertEquals(3600 * n, mono.spec().implWall());
         assertEquals(60000 * n, mono.spec().implTokens());
     }
@@ -128,8 +139,14 @@ class ExperimentsServiceTest {
                     Map.of("model_a", "qwenmodel", "model_b", "llamamodel"), 1);
 
             assertEquals(2, specs.size());
-            final ExperimentsService.ArmSpec a = specs.stream().filter(s -> s.arm().equals("A")).findFirst().orElseThrow();
-            final ExperimentsService.ArmSpec b = specs.stream().filter(s -> s.arm().equals("B")).findFirst().orElseThrow();
+            final ExperimentsService.ArmSpec a = specs.stream()
+                    .filter(s -> s.arm().equals("A"))
+                    .findFirst()
+                    .orElseThrow();
+            final ExperimentsService.ArmSpec b = specs.stream()
+                    .filter(s -> s.arm().equals("B"))
+                    .findFirst()
+                    .orElseThrow();
             assertEquals(32768, a.spec().contextWindow());
             assertEquals(8192, b.spec().contextWindow());
             assertEquals("qwenmodel", a.spec().model());
@@ -148,8 +165,14 @@ class ExperimentsServiceTest {
         final List<ExperimentsService.ArmSpec> specs = svc.plan("agent_ab", Map.of("model", "modelX"), 1);
 
         assertEquals(2, specs.size());
-        final ExperimentsService.ArmSpec ref = specs.stream().filter(s -> s.arm().equals("ref")).findFirst().orElseThrow();
-        final ExperimentsService.ArmSpec pi = specs.stream().filter(s -> s.arm().equals("pi")).findFirst().orElseThrow();
+        final ExperimentsService.ArmSpec ref = specs.stream()
+                .filter(s -> s.arm().equals("ref"))
+                .findFirst()
+                .orElseThrow();
+        final ExperimentsService.ArmSpec pi = specs.stream()
+                .filter(s -> s.arm().equals("pi"))
+                .findFirst()
+                .orElseThrow();
         assertEquals("ref", ref.spec().harness());
         assertEquals("pi", pi.spec().harness());
         // 0 = unlimited (the system-wide "0 = no budget" convention), the new default
@@ -163,33 +186,42 @@ class ExperimentsServiceTest {
     void harnessEffectReviewsAreOptInOnAReviewerModelBeingSet() {
         final ExperimentsService svc = serviceWithUnreachableModelServer();
         final List<ExperimentsService.ArmSpec> noReviewer = svc.plan("harness_effect", Map.of("model", "modelX"), 1);
-        assertTrue(noReviewer.stream().noneMatch(s -> s.spec().selfReview() || s.spec().trajectoryReview()), "no reviewer_model -> reviews off, unlike model_ab which always reviews");
-        assertTrue(noReviewer.stream().allMatch(s -> s.spec().reviewerModel() == null));
+        assertTrue(noReviewer.stream()
+                .noneMatch(s -> s.spec().selfReview() || s.spec().trajectoryReview()), "no reviewer_model -> reviews off, unlike model_ab which always reviews");
+        assertTrue(noReviewer.stream()
+                .allMatch(s -> s.spec().reviewerModel() == null));
 
         final List<ExperimentsService.ArmSpec> withReviewer = svc.plan("harness_effect", Map.of("model", "modelX", "reviewer_model", "openai/gpt-5"), 1);
-        assertTrue(withReviewer.stream().allMatch(s -> s.spec().selfReview() && s.spec().trajectoryReview()));
-        assertTrue(withReviewer.stream().allMatch(s -> "openai/gpt-5".equals(s.spec().reviewerModel())));
+        assertTrue(withReviewer.stream()
+                .allMatch(s -> s.spec().selfReview() && s.spec().trajectoryReview()));
+        assertTrue(withReviewer.stream()
+                .allMatch(s -> "openai/gpt-5".equals(s.spec().reviewerModel())));
     }
 
     @Test
     void agentAbReviewsAreOptInOnAReviewerModelBeingSet() {
         final ExperimentsService svc = serviceWithUnreachableModelServer();
         final List<ExperimentsService.ArmSpec> noReviewer = svc.plan("agent_ab", Map.of("model", "modelX"), 1);
-        assertTrue(noReviewer.stream().noneMatch(s -> s.spec().selfReview() || s.spec().trajectoryReview()));
+        assertTrue(noReviewer.stream()
+                .noneMatch(s -> s.spec().selfReview() || s.spec().trajectoryReview()));
 
         final List<ExperimentsService.ArmSpec> withReviewer = svc.plan("agent_ab", Map.of("model", "modelX", "reviewer_model", "openai/gpt-5"), 1);
-        assertTrue(withReviewer.stream().allMatch(s -> s.spec().selfReview() && s.spec().trajectoryReview()));
-        assertTrue(withReviewer.stream().allMatch(s -> "openai/gpt-5".equals(s.spec().reviewerModel())));
+        assertTrue(withReviewer.stream()
+                .allMatch(s -> s.spec().selfReview() && s.spec().trajectoryReview()));
+        assertTrue(withReviewer.stream()
+                .allMatch(s -> "openai/gpt-5".equals(s.spec().reviewerModel())));
     }
 
     @Test
     void noContextProbeFlowsThroughToEveryTemplateArm() {
         final ExperimentsService svc = serviceWithUnreachableModelServer();
         final List<ExperimentsService.ArmSpec> off = svc.plan("harness_effect", Map.of("model", "modelX"), 1);
-        assertTrue(off.stream().noneMatch(s -> s.spec().noContextProbe()));
+        assertTrue(off.stream()
+                .noneMatch(s -> s.spec().noContextProbe()));
 
         final List<ExperimentsService.ArmSpec> on = svc.plan("harness_effect", Map.of("model", "modelX", "no_context_probe", true), 1);
-        assertTrue(on.stream().allMatch(s -> s.spec().noContextProbe()));
+        assertTrue(on.stream()
+                .allMatch(s -> s.spec().noContextProbe()));
     }
 
     // --- issue #30: review_blind/trajectory_reviewer_model/review_weight/trajectory_weight/
@@ -202,8 +234,10 @@ class ExperimentsServiceTest {
                 "trajectory_reviewer_model", "openai/gpt-6");
         for (String template : List.of("harness_effect", "agent_ab")) {
             final List<ExperimentsService.ArmSpec> specs = svc.plan(template, params, 1);
-            assertTrue(specs.stream().allMatch(s -> s.spec().reviewBlind()), template);
-            assertTrue(specs.stream().allMatch(s -> "openai/gpt-6".equals(s.spec().trajectoryReviewerModel())), template);
+            assertTrue(specs.stream()
+                    .allMatch(s -> s.spec().reviewBlind()), template);
+            assertTrue(specs.stream()
+                    .allMatch(s -> "openai/gpt-6".equals(s.spec().trajectoryReviewerModel())), template);
         }
     }
 
@@ -214,7 +248,8 @@ class ExperimentsServiceTest {
                 Map.of("model", "modelX", "reviewer_model", "openai/gpt-5"), 1);
         // no trajectory_reviewer_model in params - a run naming one reviewer wants it for both jobs,
         // not a silent divergence to the run's own local model for trajectory specifically
-        assertTrue(specs.stream().allMatch(s -> "openai/gpt-5".equals(s.spec().trajectoryReviewerModel())));
+        assertTrue(specs.stream()
+                .allMatch(s -> "openai/gpt-5".equals(s.spec().trajectoryReviewerModel())));
     }
 
     @Test
@@ -222,9 +257,12 @@ class ExperimentsServiceTest {
         final ExperimentsService svc = serviceWithUnreachableModelServer();
         final List<ExperimentsService.ArmSpec> specs = svc.plan("harness_effect",
                 Map.<String, Object>of("model", "modelX", "review_weight", 0.3, "trajectory_weight", 0.2, "trajectory_use", "direct"), 1);
-        assertTrue(specs.stream().allMatch(s -> Double.valueOf(0.3).equals(s.spec().reviewWeight())));
-        assertTrue(specs.stream().allMatch(s -> Double.valueOf(0.2).equals(s.spec().trajectoryWeight())));
-        assertTrue(specs.stream().allMatch(s -> "direct".equals(s.spec().trajectoryUse())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Double.valueOf(0.3).equals(s.spec().reviewWeight())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Double.valueOf(0.2).equals(s.spec().trajectoryWeight())));
+        assertTrue(specs.stream()
+                .allMatch(s -> "direct".equals(s.spec().trajectoryUse())));
     }
 
     /** #72: the sampler knobs are shared across every template, same as review/trajectory weight. */
@@ -235,12 +273,18 @@ class ExperimentsServiceTest {
                 Map.<String, Object>of("model_a", "a", "model_b", "b", "temperature", 0.7, "top_p", 0.9,
                         "top_k", 40, "repetition_penalty", 1.1, "max_tokens", 2000, "reasoning_effort", "high"), 1);
         assertFalse(specs.isEmpty());
-        assertTrue(specs.stream().allMatch(s -> Double.valueOf(0.7).equals(s.spec().temperature())));
-        assertTrue(specs.stream().allMatch(s -> Double.valueOf(0.9).equals(s.spec().topP())));
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(40).equals(s.spec().topK())));
-        assertTrue(specs.stream().allMatch(s -> Double.valueOf(1.1).equals(s.spec().repetitionPenalty())));
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(2000).equals(s.spec().maxTokens())));
-        assertTrue(specs.stream().allMatch(s -> "high".equals(s.spec().reasoningEffort())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Double.valueOf(0.7).equals(s.spec().temperature())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Double.valueOf(0.9).equals(s.spec().topP())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Integer.valueOf(40).equals(s.spec().topK())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Double.valueOf(1.1).equals(s.spec().repetitionPenalty())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Integer.valueOf(2000).equals(s.spec().maxTokens())));
+        assertTrue(specs.stream()
+                .allMatch(s -> "high".equals(s.spec().reasoningEffort())));
     }
 
     @Test
@@ -248,8 +292,9 @@ class ExperimentsServiceTest {
         final ExperimentsService svc = serviceWithUnreachableModelServer();
         final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab", Map.of("model_a", "a", "model_b", "b"), 1);
         assertFalse(specs.isEmpty());
-        assertTrue(specs.stream().allMatch(s -> s.spec().temperature() == null && s.spec().topK() == null
-                && s.spec().reasoningEffort() == null));
+        assertTrue(specs.stream()
+                .allMatch(s -> s.spec().temperature() == null && s.spec().topK() == null
+                        && s.spec().reasoningEffort() == null));
     }
 
     /** Found live 2026-09-25: PARALLEL_PLAN/handoff/wrap-up walls were fixed literals in
@@ -261,9 +306,12 @@ class ExperimentsServiceTest {
                 Map.<String, Object>of("model_a", "a", "model_b", "b",
                         "parallel_plan_wall", 900, "handoff_wall", 450, "wrapup_wall", 600), 1);
         assertFalse(specs.isEmpty());
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(900).equals(s.spec().parallelPlanWall())));
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(450).equals(s.spec().handoffWall())));
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(600).equals(s.spec().wrapupWall())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Integer.valueOf(900).equals(s.spec().parallelPlanWall())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Integer.valueOf(450).equals(s.spec().handoffWall())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Integer.valueOf(600).equals(s.spec().wrapupWall())));
     }
 
     /** #700-followup, found live: comparing two models via a real model_ab Experiment silently
@@ -279,12 +327,18 @@ class ExperimentsServiceTest {
                         "task_tokens", 100000, "parallel_plan", "on", "system_rules", true,
                         "handoff_notes", true, "task_granularity", "fine", "lesson_recording_enabled", false), 1);
         assertFalse(specs.isEmpty());
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(100000).equals(s.spec().taskTokens())));
-        assertTrue(specs.stream().allMatch(s -> "on".equals(s.spec().parallelPlan())));
-        assertTrue(specs.stream().allMatch(s -> s.spec().systemRules()));
-        assertTrue(specs.stream().allMatch(s -> s.spec().handoffNotes()));
-        assertTrue(specs.stream().allMatch(s -> "fine".equals(s.spec().taskGranularity())));
-        assertTrue(specs.stream().allMatch(s -> !s.spec().lessonRecordingEnabled()));
+        assertTrue(specs.stream()
+                .allMatch(s -> Integer.valueOf(100000).equals(s.spec().taskTokens())));
+        assertTrue(specs.stream()
+                .allMatch(s -> "on".equals(s.spec().parallelPlan())));
+        assertTrue(specs.stream()
+                .allMatch(s -> s.spec().systemRules()));
+        assertTrue(specs.stream()
+                .allMatch(s -> s.spec().handoffNotes()));
+        assertTrue(specs.stream()
+                .allMatch(s -> "fine".equals(s.spec().taskGranularity())));
+        assertTrue(specs.stream()
+                .allMatch(s -> !s.spec().lessonRecordingEnabled()));
     }
 
     /** #700-followup: the remaining nine New-Job-form fields model_ab was missing, beyond the six
@@ -303,15 +357,24 @@ class ExperimentsServiceTest {
                         Map.entry("context_probe_fresh", true), Map.entry("compaction_strategies", "tool_result_mask"),
                         Map.entry("java_home", "/opt/jdk-21")), 1);
         assertFalse(specs.isEmpty());
-        assertTrue(specs.stream().allMatch(s -> "pi".equals(s.spec().harness())));
-        assertTrue(specs.stream().allMatch(s -> "p1_plan,p2_implementation".equals(s.spec().phases())));
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(1800).equals(s.spec().planWall())));
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(5000).equals(s.spec().planTokens())));
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(100000).equals(s.spec().wallBudget())));
-        assertTrue(specs.stream().allMatch(s -> "2".equals(s.spec().parallel())));
-        assertTrue(specs.stream().allMatch(s -> s.spec().contextProbeFresh()));
-        assertTrue(specs.stream().allMatch(s -> "tool_result_mask".equals(s.spec().compactionStrategies())));
-        assertTrue(specs.stream().allMatch(s -> "/opt/jdk-21".equals(s.spec().javaHome())));
+        assertTrue(specs.stream()
+                .allMatch(s -> "pi".equals(s.spec().harness())));
+        assertTrue(specs.stream()
+                .allMatch(s -> "p1_plan,p2_implementation".equals(s.spec().phases())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Integer.valueOf(1800).equals(s.spec().planWall())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Integer.valueOf(5000).equals(s.spec().planTokens())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Integer.valueOf(100000).equals(s.spec().wallBudget())));
+        assertTrue(specs.stream()
+                .allMatch(s -> "2".equals(s.spec().parallel())));
+        assertTrue(specs.stream()
+                .allMatch(s -> s.spec().contextProbeFresh()));
+        assertTrue(specs.stream()
+                .allMatch(s -> "tool_result_mask".equals(s.spec().compactionStrategies())));
+        assertTrue(specs.stream()
+                .allMatch(s -> "/opt/jdk-21".equals(s.spec().javaHome())));
     }
 
     /** found live: plan_source was hardcoded "reference" with no override - L2_one_endpoint has no
@@ -323,10 +386,12 @@ class ExperimentsServiceTest {
     void planSourceDefaultsToReferenceButCanBeOverriddenToAgent() {
         final ExperimentsService svc = serviceWithUnreachableModelServer();
         final var defaulted = svc.plan("model_ab", Map.of("model_a", "a", "model_b", "b"), 1);
-        assertTrue(defaulted.stream().allMatch(s -> "reference".equals(s.spec().planSource())));
+        assertTrue(defaulted.stream()
+                .allMatch(s -> "reference".equals(s.spec().planSource())));
         final var overridden = svc.plan("model_ab",
                 Map.<String, Object>of("model_a", "a", "model_b", "b", "plan_source", "agent"), 1);
-        assertTrue(overridden.stream().allMatch(s -> "agent".equals(s.spec().planSource())));
+        assertTrue(overridden.stream()
+                .allMatch(s -> "agent".equals(s.spec().planSource())));
     }
 
     /** lesson_recording_enabled defaults to true when omitted, same as RunSpec.from()'s own default
@@ -337,7 +402,8 @@ class ExperimentsServiceTest {
         final ExperimentsService svc = serviceWithUnreachableModelServer();
         final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab", Map.of("model_a", "a", "model_b", "b"), 1);
         assertFalse(specs.isEmpty());
-        assertTrue(specs.stream().allMatch(s -> s.spec().lessonRecordingEnabled()));
+        assertTrue(specs.stream()
+                .allMatch(s -> s.spec().lessonRecordingEnabled()));
     }
 
     /** #90: self-review's token budget was a Reviews.java-local hardcoded 12000 with no
@@ -348,7 +414,8 @@ class ExperimentsServiceTest {
         final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab",
                 Map.<String, Object>of("model_a", "a", "model_b", "b", "review_tokens", 5000), 1);
         assertFalse(specs.isEmpty());
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(5000).equals(s.spec().reviewTokens())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Integer.valueOf(5000).equals(s.spec().reviewTokens())));
     }
 
     /** Found live 2026-09-27: the FIX step (merge-conflict repair after a broken parallel wave) was
@@ -360,8 +427,10 @@ class ExperimentsServiceTest {
         final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab",
                 Map.<String, Object>of("model_a", "a", "model_b", "b", "fix_wall", 1200, "fix_tokens", 30000), 1);
         assertFalse(specs.isEmpty());
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(1200).equals(s.spec().fixWall())));
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(30000).equals(s.spec().fixTokens())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Integer.valueOf(1200).equals(s.spec().fixWall())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Integer.valueOf(30000).equals(s.spec().fixTokens())));
     }
 
     /** Found live 2026-09-27: the PARALLEL_PLAN/handoff/wrap-up TOKEN budgets (unlike their walls,
@@ -374,9 +443,12 @@ class ExperimentsServiceTest {
                 Map.<String, Object>of("model_a", "a", "model_b", "b",
                         "parallel_plan_tokens", 9000, "handoff_tokens", 4000, "wrapup_tokens", 2500), 1);
         assertFalse(specs.isEmpty());
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(9000).equals(s.spec().parallelPlanTokens())));
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(4000).equals(s.spec().handoffTokens())));
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(2500).equals(s.spec().wrapupTokens())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Integer.valueOf(9000).equals(s.spec().parallelPlanTokens())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Integer.valueOf(4000).equals(s.spec().handoffTokens())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Integer.valueOf(2500).equals(s.spec().wrapupTokens())));
     }
 
     /** Found in the #236 audit: parallel_weight/efficiency_weight exist on JobNewView (a single ad-
@@ -388,8 +460,10 @@ class ExperimentsServiceTest {
         final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab",
                 Map.<String, Object>of("model_a", "a", "model_b", "b", "parallel_weight", 0.2, "efficiency_weight", 0.3), 1);
         assertFalse(specs.isEmpty());
-        assertTrue(specs.stream().allMatch(s -> Double.valueOf(0.2).equals(s.spec().parallelWeight())));
-        assertTrue(specs.stream().allMatch(s -> Double.valueOf(0.3).equals(s.spec().efficiencyWeight())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Double.valueOf(0.2).equals(s.spec().parallelWeight())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Double.valueOf(0.3).equals(s.spec().efficiencyWeight())));
     }
 
     /** #259: the same bug class as the #236 audit just above, recurred for the judge feature -
@@ -411,11 +485,16 @@ class ExperimentsServiceTest {
             params.putAll(judgeParams);
             final List<ExperimentsService.ArmSpec> specs = svc.plan(e.getKey(), params, 1);
             assertFalse(specs.isEmpty(), e.getKey());
-            assertTrue(specs.stream().allMatch(s -> s.spec().judgeEnabled()), e.getKey() + ": judgeEnabled");
-            assertTrue(specs.stream().allMatch(s -> Integer.valueOf(7).equals(s.spec().judgeEveryNTurns())), e.getKey() + ": judgeEveryNTurns");
-            assertTrue(specs.stream().allMatch(s -> "openai/gpt-4".equals(s.spec().judgeModel())), e.getKey() + ": judgeModel");
-            assertTrue(specs.stream().allMatch(s -> Integer.valueOf(120).equals(s.spec().judgeWallSec())), e.getKey() + ": judgeWallSec");
-            assertTrue(specs.stream().allMatch(s -> Integer.valueOf(4000).equals(s.spec().judgeTokens())), e.getKey() + ": judgeTokens");
+            assertTrue(specs.stream()
+                    .allMatch(s -> s.spec().judgeEnabled()), e.getKey() + ": judgeEnabled");
+            assertTrue(specs.stream()
+                    .allMatch(s -> Integer.valueOf(7).equals(s.spec().judgeEveryNTurns())), e.getKey() + ": judgeEveryNTurns");
+            assertTrue(specs.stream()
+                    .allMatch(s -> "openai/gpt-4".equals(s.spec().judgeModel())), e.getKey() + ": judgeModel");
+            assertTrue(specs.stream()
+                    .allMatch(s -> Integer.valueOf(120).equals(s.spec().judgeWallSec())), e.getKey() + ": judgeWallSec");
+            assertTrue(specs.stream()
+                    .allMatch(s -> Integer.valueOf(4000).equals(s.spec().judgeTokens())), e.getKey() + ": judgeTokens");
         }
     }
 
@@ -427,7 +506,8 @@ class ExperimentsServiceTest {
         final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab",
                 Map.<String, Object>of("model_a", "a", "model_b", "b", "max_turns", 50), 1);
         assertFalse(specs.isEmpty());
-        assertTrue(specs.stream().allMatch(s -> Integer.valueOf(50).equals(s.spec().maxTurns())));
+        assertTrue(specs.stream()
+                .allMatch(s -> Integer.valueOf(50).equals(s.spec().maxTurns())));
     }
 
     /** #90: taskCount()'s fallback used to be visible only via a WARN log an operator creating an
@@ -451,7 +531,8 @@ class ExperimentsServiceTest {
         final ExperimentsService svc = serviceWithUnreachableModelServer();
         final List<ExperimentsService.ArmSpec> specs = svc.plan("model_ab", Map.of("model_a", "a", "model_b", "b"), 1);
         assertFalse(specs.isEmpty());
-        assertTrue(specs.stream().allMatch(s -> s.spec().maxTurns() == null));
+        assertTrue(specs.stream()
+                .allMatch(s -> s.spec().maxTurns() == null));
     }
 
     // --- #3: enqueue() rolls back the whole experiment on a mid-loop failure ---------------------

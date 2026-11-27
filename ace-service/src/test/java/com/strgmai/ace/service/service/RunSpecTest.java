@@ -39,9 +39,10 @@ class RunSpecTest {
     @Test
     void argvOmitsEverySamplerFlagWhenUnset() {
         final var argv = base(null, null, null, null, null, null).argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--temperature")
-                || a.startsWith("--top-p") || a.startsWith("--top-k") || a.startsWith("--repetition-penalty")
-                || a.startsWith("--max-tokens") || a.startsWith("--reasoning-effort")));
+        assertTrue(argv.stream()
+                .noneMatch(a -> a.startsWith("--temperature")
+                        || a.startsWith("--top-p") || a.startsWith("--top-k") || a.startsWith("--repetition-penalty")
+                        || a.startsWith("--max-tokens") || a.startsWith("--reasoning-effort")));
     }
 
     @Test
@@ -95,7 +96,8 @@ class RunSpecTest {
     @Test
     void argvOmitsPhasesWhenUnset() {
         final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--phases")));
+        assertTrue(argv.stream()
+                .noneMatch(a -> a.startsWith("--phases")));
     }
 
     @Test
@@ -121,7 +123,8 @@ class RunSpecTest {
     @Test
     void argvOmitsCompactionStrategiesWhenUnset() {
         final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--compaction-strategies")));
+        assertTrue(argv.stream()
+                .noneMatch(a -> a.startsWith("--compaction-strategies")));
     }
 
     @Test
@@ -146,7 +149,8 @@ class RunSpecTest {
     @Test
     void argvOmitsTaskGranularityWhenUnset() {
         final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--task-granularity")));
+        assertTrue(argv.stream()
+                .noneMatch(a -> a.startsWith("--task-granularity")));
     }
 
     @Test
@@ -173,8 +177,9 @@ class RunSpecTest {
     @Test
     void argvOmitsTheNewWallFlagsWhenUnset() {
         final var argv = base(null, null, null, null, null, null).argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--parallel-plan-wall")
-                || a.startsWith("--handoff-wall") || a.startsWith("--wrapup-wall")));
+        assertTrue(argv.stream()
+                .noneMatch(a -> a.startsWith("--parallel-plan-wall")
+                        || a.startsWith("--handoff-wall") || a.startsWith("--wrapup-wall")));
     }
 
     @Test
@@ -197,7 +202,8 @@ class RunSpecTest {
     @Test
     void argvOmitsMaxTurnsWhenUnset() {
         final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--max-turns")));
+        assertTrue(argv.stream()
+                .noneMatch(a -> a.startsWith("--max-turns")));
     }
 
     @Test
@@ -217,7 +223,8 @@ class RunSpecTest {
     @Test
     void argvOmitsReviewTokensWhenUnset() {
         final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--review-tokens")));
+        assertTrue(argv.stream()
+                .noneMatch(a -> a.startsWith("--review-tokens")));
     }
 
     @Test
@@ -239,7 +246,8 @@ class RunSpecTest {
     @Test
     void argvOmitsFixBudgetWhenUnset() {
         final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--fix-wall") || a.startsWith("--fix-tokens")));
+        assertTrue(argv.stream()
+                .noneMatch(a -> a.startsWith("--fix-wall") || a.startsWith("--fix-tokens")));
     }
 
     @Test
@@ -264,8 +272,9 @@ class RunSpecTest {
     @Test
     void argvOmitsTheNewTokenBudgetsWhenUnset() {
         final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--parallel-plan-tokens")
-                || a.startsWith("--handoff-tokens") || a.startsWith("--wrapup-tokens")));
+        assertTrue(argv.stream()
+                .noneMatch(a -> a.startsWith("--parallel-plan-tokens")
+                        || a.startsWith("--handoff-tokens") || a.startsWith("--wrapup-tokens")));
     }
 
     @Test
@@ -324,7 +333,8 @@ class RunSpecTest {
     @Test
     void argvOmitsPlanTokensAndWallBudgetWhenUnset() {
         final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--plan-tokens") || a.startsWith("--wall-budget")));
+        assertTrue(argv.stream()
+                .noneMatch(a -> a.startsWith("--plan-tokens") || a.startsWith("--wall-budget")));
     }
 
     @Test
@@ -346,7 +356,8 @@ class RunSpecTest {
     @Test
     void argvOmitsPlanWallWhenUnset() {
         final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--plan-wall")));
+        assertTrue(argv.stream()
+                .noneMatch(a -> a.startsWith("--plan-wall")));
     }
 
     @Test
@@ -365,7 +376,8 @@ class RunSpecTest {
     @Test
     void argvOmitsParallelPlanAndWeightWhenUnset() {
         final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--parallel-plan") || a.startsWith("--parallel-weight")));
+        assertTrue(argv.stream()
+                .noneMatch(a -> a.startsWith("--parallel-plan") || a.startsWith("--parallel-weight")));
     }
 
     @Test
@@ -394,7 +406,8 @@ class RunSpecTest {
     @Test
     void argvOmitsEfficiencyWeightWhenUnset() {
         final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--efficiency-weight")));
+        assertTrue(argv.stream()
+                .noneMatch(a -> a.startsWith("--efficiency-weight")));
     }
 
     @Test
@@ -414,7 +427,8 @@ class RunSpecTest {
     @Test
     void argvOmitsJavaHomeWhenUnset() {
         final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--java-home")));
+        assertTrue(argv.stream()
+                .noneMatch(a -> a.startsWith("--java-home")));
     }
 
     @Test
@@ -443,7 +457,8 @@ class RunSpecTest {
     @Test
     void argvOmitsHarnessWhenUnset() {
         final var argv = RunSpec.builder().task("t").model("m").runId("r1").build().argv("r1");
-        assertTrue(argv.stream().noneMatch(a -> a.startsWith("--harness")));
+        assertTrue(argv.stream()
+                .noneMatch(a -> a.startsWith("--harness")));
     }
 
     /** #77: every field set to a DISTINCT, recognizable value via the map, so a from()/Builder bug

@@ -288,9 +288,13 @@ class ReferenceAgentTest {
      *  of the toggle, alongside executeTool()'s own direct-call refusal above. */
     @Test
     void toolSpecsOffersRecallToolOutputOnlyWhenTheStrategyIsEnabled() {
-        final var enabled = ReferenceAgent.toolSpecs(true, false).stream().map(dev.langchain4j.agent.tool.ToolSpecification::name).toList();
+        final var enabled = ReferenceAgent.toolSpecs(true, false).stream()
+                .map(dev.langchain4j.agent.tool.ToolSpecification::name)
+                .toList();
         assertTrue(enabled.contains("recall_tool_output"));
-        final var disabled = ReferenceAgent.toolSpecs(false, false).stream().map(dev.langchain4j.agent.tool.ToolSpecification::name).toList();
+        final var disabled = ReferenceAgent.toolSpecs(false, false).stream()
+                .map(dev.langchain4j.agent.tool.ToolSpecification::name)
+                .toList();
         assertFalse(disabled.contains("recall_tool_output"));
         assertEquals(enabled.size() - 1, disabled.size(), "disabling the strategy must remove exactly one tool, nothing else");
     }
@@ -298,9 +302,13 @@ class ReferenceAgentTest {
     /** #332: same structural-half-of-the-toggle reasoning as recall_tool_output's own test above. */
     @Test
     void toolSpecsOffersRecordLessonOnlyWhenTheStrategyIsEnabled() {
-        final var enabled = ReferenceAgent.toolSpecs(false, true).stream().map(dev.langchain4j.agent.tool.ToolSpecification::name).toList();
+        final var enabled = ReferenceAgent.toolSpecs(false, true).stream()
+                .map(dev.langchain4j.agent.tool.ToolSpecification::name)
+                .toList();
         assertTrue(enabled.contains("record_lesson"));
-        final var disabled = ReferenceAgent.toolSpecs(false, false).stream().map(dev.langchain4j.agent.tool.ToolSpecification::name).toList();
+        final var disabled = ReferenceAgent.toolSpecs(false, false).stream()
+                .map(dev.langchain4j.agent.tool.ToolSpecification::name)
+                .toList();
         assertFalse(disabled.contains("record_lesson"));
         assertEquals(enabled.size() - 1, disabled.size(), "disabling the strategy must remove exactly one tool, nothing else");
     }

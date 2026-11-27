@@ -40,7 +40,8 @@ class RunOracleTest {
         final List<Map<String, Object>> results = (List<Map<String, Object>>) rep.get("results");
         assertEquals(7, results.size(), "every id in the rung's checks list gets exactly one record");
 
-        final var byId = results.stream().collect(toMap(r -> r.get("id"), r -> r.get("status")));
+        final var byId = results.stream()
+                .collect(toMap(r -> r.get("id"), r -> r.get("status")));
         if (dockerAvailable) {
             assertNotEquals("SKIPPED", byId.get("B1"), "a real daemon is reachable - B1 must run for real, not be skipped");
             assertNotEquals("SKIPPED", byId.get("B2"), "a real daemon is reachable - B2 must run for real, not be skipped");

@@ -194,7 +194,8 @@ public final class AgentTools {
             String errorBlock = "";
             if (errorLineExtractionEnabled) {
                 final List<String> matched = lines.subList(midStart, midEnd).stream()
-                        .filter(l -> ERROR_LINE.matcher(l).find()).toList();
+                        .filter(l -> ERROR_LINE.matcher(l).find())
+                        .toList();
                 // #417 follow-up review: `.limit(MAX_ERROR_LINES_KEPT)` on the stream above kept the
                 // OLDEST matches - backwards, since early build/dependency noise (a Gradle plugin is
                 // literally named "error-prone") fills the quota before the real failure near the END

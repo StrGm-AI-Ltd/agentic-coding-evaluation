@@ -155,7 +155,8 @@ public final class VerifyTask {
             res.put("green", null);   // inconclusive: nothing was executed, win or lose
             res.put("could_not_run", true);
         } else {
-            res.put("green", rcs.stream().allMatch(rc -> rc == 0) && ((int) res.get("failed")) == 0);
+            res.put("green", rcs.stream()
+                    .allMatch(rc -> rc == 0) && ((int) res.get("failed")) == 0);
         }
         return res;
     }
@@ -204,7 +205,8 @@ public final class VerifyTask {
         final Object g = v.get("green");
         final List<Integer> rcs = v.get("rc") instanceof List<?> l ? (List<Integer>) l : List.of(1);
         final int executed = v.get("executed") instanceof Number n ? n.intValue() : 0;
-        if (g == null || (Boolean.FALSE.equals(g) && executed == 0 && rcs.stream().anyMatch(rc -> rc != 0))) return null;
+        if (g == null || (Boolean.FALSE.equals(g) && executed == 0 && rcs.stream()
+                .anyMatch(rc -> rc != 0))) return null;
         return (Boolean) g;
     }
 }

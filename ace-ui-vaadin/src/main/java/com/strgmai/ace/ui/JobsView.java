@@ -170,8 +170,12 @@ public class JobsView extends VerticalLayout {
         grid.setItems(jobs);
         emptyState.setText("The queue is empty — queue a run with “New job” or an experiment.");
         emptyState.setVisible(jobs.isEmpty());
-        final var runningNow = jobs.stream().filter(j -> "running".equals(j.status())).count();
-        final var blocked = jobs.stream().filter(j -> "blocked".equals(j.status())).count();
+        final var runningNow = jobs.stream()
+                .filter(j -> "running".equals(j.status()))
+                .count();
+        final var blocked = jobs.stream()
+                .filter(j -> "blocked".equals(j.status()))
+                .count();
         running.setText(jobs.size() + " jobs · " + runningNow + " running"
                 + (blocked > 0 ? " · " + blocked + " blocked" : ""));
     }

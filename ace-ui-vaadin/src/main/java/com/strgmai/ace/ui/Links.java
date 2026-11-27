@@ -51,7 +51,12 @@ public final class Links {
 
     /** Distinct, sorted, non-null values of a run attribute (used for picker suggestions). */
     public static List<String> distinctRuns(final List<Api.Run> runs, final Function<Api.Run, String> getter) {
-        return runs.stream().map(getter).filter(Objects::nonNull).distinct().sorted().toList();
+        return runs.stream()
+                .map(getter)
+                .filter(Objects::nonNull)
+                .distinct()
+                .sorted()
+                .toList();
     }
 
 }

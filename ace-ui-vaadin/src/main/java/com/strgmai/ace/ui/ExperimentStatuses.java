@@ -23,7 +23,8 @@ public final class ExperimentStatuses {
         if (progressing) {
             return "running";
         }
-        final var blocked = jobStatuses.stream().anyMatch("blocked"::equals);
+        final var blocked = jobStatuses.stream()
+                .anyMatch("blocked"::equals);
         if (blocked) {
             return "blocked";
         }

@@ -80,7 +80,9 @@ public final class OmlxBackend implements LocalModelBackend {
             if (isHealthy.getAsBoolean()) { healthy = true; break; }
         }
         final List<Long> now = pids();
-        final List<Long> survivors = old.stream().filter(now::contains).toList();
+        final List<Long> survivors = old.stream()
+                .filter(now::contains)
+                .toList();
         try {
             if (!survivors.isEmpty() && now.size() > survivors.size()) {   // the app started a new server but the old one still holds resources
                 for (long p : survivors) ProcessHandle.of(p).ifPresent(ProcessHandle::destroy);

@@ -19,11 +19,13 @@ import static org.junit.jupiter.api.Assertions.*;
 class OracleChecksTest {
 
     private static Map<CheckId, CheckResult> runStructure(Path ws) {
-        return StructureChecks.run(ws).stream().collect(toMap(CheckResult::id, r -> r));
+        return StructureChecks.run(ws).stream()
+                .collect(toMap(CheckResult::id, r -> r));
     }
 
     private static Map<CheckId, CheckResult> runMoney(Path ws) {
-        return MoneySafetyChecks.run(ws).stream().collect(toMap(CheckResult::id, r -> r));
+        return MoneySafetyChecks.run(ws).stream()
+                .collect(toMap(CheckResult::id, r -> r));
     }
 
     @Test

@@ -480,7 +480,9 @@ public final class JobLiveSection extends VerticalLayout {
         for (int i = 0; i < recent.size(); i++) {
             categories[i] = String.valueOf(i + 1);
         }
-        final var data = recent.stream().map(JobLiveState.RequestRow::latencySec).toArray(Double[]::new);
+        final var data = recent.stream()
+                .map(JobLiveState.RequestRow::latencySec)
+                .toArray(Double[]::new);
         if (shouldRebuildChart(lastChartedPointCount, recent.size())) {
             final var fresh = requestLatencyChartWithData(categories, data);
             fresh.setVisible(requestLatencyChart.isVisible());
@@ -621,6 +623,8 @@ public final class JobLiveSection extends VerticalLayout {
      *  matches this row's raw label (planTasks hasn't loaded yet, or a stray/unexpected label) -
      *  the caller then falls back to JobSessionDialog instead of passing a null task through. */
     static java.util.Optional<Api.PlanTask> matchingTask(final List<Api.PlanTask> planTasks, final JobLiveState.SessionRow row) {
-        return planTasks.stream().filter(t -> JobDetailView.matchesSession(row.name(), t.id())).findFirst();
+        return planTasks.stream()
+                .filter(t -> JobDetailView.matchesSession(row.name(), t.id()))
+                .findFirst();
     }
 }

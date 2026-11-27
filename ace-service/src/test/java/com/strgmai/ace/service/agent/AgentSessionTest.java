@@ -299,7 +299,9 @@ class AgentSessionTest {
         final var continuation = new AgentSession(dir, "shared-id", true);
         assertEquals("2030-01-01T00-00-00.000Z_shared-id.jsonl", continuation.path().getFileName().toString());
         assertEquals(List.of("the real, final attempt - a hundred real turns of work"),
-                continuation.loadMessages().stream().map(m -> ((UserMessage) m).singleText()).toList());
+                continuation.loadMessages().stream()
+                        .map(m -> ((UserMessage) m).singleText())
+                        .toList());
     }
 
     @Test
@@ -369,7 +371,9 @@ class AgentSessionTest {
 
         final var resumed = new AgentSession(dir, "s3b", true);
         assertEquals(List.of("the pack"), resumed.loadMessages().stream()
-                .filter(m -> m instanceof UserMessage).map(m -> ((UserMessage) m).singleText()).toList());
+                .filter(m -> m instanceof UserMessage)
+                .map(m -> ((UserMessage) m).singleText())
+                .toList());
     }
 
     /** #424: the tool-output archive is the session file itself - the (already AgentTools-capped)

@@ -75,7 +75,9 @@ public class RunOracle {
         }
         // ---- the docker-gated scripts, as one gate (the Python oracle gates per script) ----
         // P1 needs no extra exclusion: it is in `offline` above, so !offline.contains(id) already filters it
-        final List<CheckId> gated = wanted.stream().filter(id -> !offline.contains(id)).toList();
+        final List<CheckId> gated = wanted.stream()
+                .filter(id -> !offline.contains(id))
+                .toList();
         final boolean dockerOk = DockerService.sh(15, "docker", "info", "--format", "{{.ServerVersion}}").rc() == 0;
         if (dockerOk) {
             try {   // 03_build.py: the pinned container, the sidecar, the mutation
@@ -86,7 +88,8 @@ public class RunOracle {
                     if (id == CheckId.B1 || id == CheckId.B2 || id == CheckId.B3)
                         got.put(id, CheckResult.fail(id, "build checker crashed: " + e));
             }
-            if (wanted.stream().anyMatch(id -> id == CheckId.C1 || id == CheckId.C2 || id.name().startsWith("F"))) {
+            if (wanted.stream()
+                    .anyMatch(id -> id == CheckId.C1 || id == CheckId.C2 || id.name().startsWith("F"))) {
                 try {   // 04_compose.py: build -> up -> C1/C2 -> F* (F6 grades the observed responses) -> down
                     final String base = effectiveSystemBaseUrl(systemBaseUrl);
                     for (CheckResult r : ComposeChecks.run(ws, 2400, 600, wanted::contains, base, manifest == null ? ws : Path.of(String.valueOf(manifest.getOrDefault("workspace", ws)))))
@@ -107,7 +110,9 @@ public class RunOracle {
 
         final Map<String, Object> rep = Scorer.score(records);
         rep.put("task", task);
-        rep.put("checks_subset", wanted.stream().map(Enum::name).toList());
+        rep.put("checks_subset", wanted.stream()
+                .map(Enum::name)
+                .toList());
         rep.put("workspace", ws.toString());
         rep.put("system", systemBaseUrl);
         rep.put("docker_available", dockerOk);
@@ -118,10 +123,14 @@ public class RunOracle {
         final var prov = new LinkedHashMap<String, Object>();
         prov.put("build_image", BUILD_IMAGE);
         prov.put("build_image_digest", digest.rc() == 0 ? digest.out().strip() : null);
-        prov.put("checks", wanted.stream().map(Enum::name).toList());
+        prov.put("checks", wanted.stream()
+                .map(Enum::name)
+                .toList());
         rep.put("provenance", prov);
-        rep.put("results", records.stream().map(r -> Map.of(
-                "id", r.id().name(), "status", r.status().name(), "weight", r.id().weight, "detail", r.detail())).toList());
+        rep.put("results", records.stream()
+                .map(r -> Map.of(
+                        "id", r.id().name(), "status", r.status().name(), "weight", r.id().weight, "detail", r.detail()))
+                .toList());
         return rep;
     }
 
@@ -145,11 +154,15 @@ public class RunOracle {
         if (planTxt.length() < 200) return CheckResult.notAttempted(CheckId.P2, "IMPLEMENTATION_PLAN.md missing or trivial");
         try {
             final var tasks = com.strgmai.ace.service.plan.PlanParser.parseFile(plan);
-            boolean ok = tasks.stream().allMatch(t -> t.goal != null && !t.goal.isBlank() && t.deps != null
-                    && t.acceptance != null && !t.acceptance.isBlank());
+            boolean ok = tasks.stream()
+                    .allMatch(t -> t.goal != null && !t.goal.isBlank() && t.deps != null
+                            && t.acceptance != null && !t.acceptance.isBlank());
             return new CheckResult(CheckId.P2, ok ? CheckStatus.PASS : CheckStatus.FAIL,
                     tasks.size() + " tasks parsed; " + (ok ? "all carry goal/deps/criterion"
-                            : "missing fields in " + tasks.stream().filter(t -> t.goal == null || t.goal.isBlank() || t.acceptance == null || t.acceptance.isBlank()).map(t -> t.id).toList()));
+                            : "missing fields in " + tasks.stream()
+                                    .filter(t -> t.goal == null || t.goal.isBlank() || t.acceptance == null || t.acceptance.isBlank())
+                                    .map(t -> t.id)
+                                    .toList()));
         } catch (com.strgmai.ace.service.plan.PlanError e) {
             return CheckResult.fail(CheckId.P2, "plan unparseable: " + e.getMessage());
         }
@@ -171,7 +184,9 @@ public class RunOracle {
         final String txt = Files.isRegularFile(td) ? Files.readString(td) : "";
         if (txt.length() < 200) return CheckResult.notAttempted(CheckId.P1, "TASK_DEFINITION.md missing or trivial");
         List<String> missing = REQ_SECTIONS.entrySet().stream()
-                .filter(e -> !e.getValue().matcher(txt).find()).map(Map.Entry::getKey).toList();
+                .filter(e -> !e.getValue().matcher(txt).find())
+                .map(Map.Entry::getKey)
+                .toList();
         return new CheckResult(CheckId.P1, missing.size() <= 1 ? CheckStatus.PASS : CheckStatus.FAIL,
                 missing.isEmpty() ? "all sections present" : (REQ_SECTIONS.size() - missing.size()) + "/" + REQ_SECTIONS.size() + " sections; missing: " + missing);
     }
@@ -202,7 +217,8 @@ public class RunOracle {
             }
             if (code.size() >= 6) break;
         }
-        final boolean noCode = code.stream().noneMatch(c -> c.endsWith(".java") || c.endsWith(".kt"));
+        final boolean noCode = code.stream()
+                .noneMatch(c -> c.endsWith(".java") || c.endsWith(".kt"));
         return new CheckResult(CheckId.P3, noCode ? CheckStatus.PASS : CheckStatus.FAIL,
                 noCode ? "no production sources at definition time" : "sources present: " + code);
     }

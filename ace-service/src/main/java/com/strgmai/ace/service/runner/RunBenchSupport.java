@@ -137,7 +137,8 @@ public final class RunBenchSupport {
             for (Path p : walk.filter(q -> q.getFileName() != null && q.getFileName().toString().equals(".git")).toList()) {
                 if (p.equals(ws.resolve(".git"))) continue;   // the outer repo's own .git - never touch it
                 final Path rel = ws.relativize(p);
-                if (rel.getNameCount() > 1 && VENDORED_PATHS.stream().anyMatch(v -> rel.getName(0).toString().equals(v.replace("/", "")))) continue;
+                if (rel.getNameCount() > 1 && VENDORED_PATHS.stream()
+                        .anyMatch(v -> rel.getName(0).toString().equals(v.replace("/", "")))) continue;
                 try (var inner = Files.walk(p)) {
                     for (Path f : inner.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(f);
                     log.warn("stripped a stray nested git repo at {} before snapshotting {} - an agent scaffolding tool likely auto-initialized it", rel, ws);
@@ -216,7 +217,9 @@ public final class RunBenchSupport {
         final Path progress = ws.resolve("docs/PROGRESS.md");
         if (!Files.isRegularFile(progress)) return;
         final List<String> lines = Files.readAllLines(progress);
-        final List<String> kept = lines.stream().filter(l -> !l.startsWith(taskId + " | ")).toList();
+        final List<String> kept = lines.stream()
+                .filter(l -> !l.startsWith(taskId + " | "))
+                .toList();
         if (kept.size() != lines.size()) Files.write(progress, kept);
     }
 

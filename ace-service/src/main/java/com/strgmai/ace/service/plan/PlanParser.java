@@ -150,8 +150,10 @@ public final class PlanParser {
                 }
             }
             if (t.goal == null || t.goal.isBlank()) {
-                String body = String.join(" ", block.subList(1, block.size()).stream().map(String::strip)
-                        .filter(s -> !s.isEmpty() && !s.startsWith("|")).toList());
+                String body = String.join(" ", block.subList(1, block.size()).stream()
+                        .map(String::strip)
+                        .filter(s -> !s.isEmpty() && !s.startsWith("|"))
+                        .toList());
                 t.goal = (body.isEmpty() ? t.title : body.substring(0, min(body.length(), 300)));
             }
             if (t.deps == null) {
@@ -167,7 +169,9 @@ public final class PlanParser {
         }
         if (tasks.isEmpty()) throw new PlanError("no tasks found (expected headings/list items/table rows carrying ids like T1, ST-01, Task 3)");
         for (PlanTask t : tasks.values())
-            t.deps = t.deps.stream().filter(d -> tasks.containsKey(d) && !d.equals(t.id)).toList();
+            t.deps = t.deps.stream()
+                    .filter(d -> tasks.containsKey(d) && !d.equals(t.id))
+                    .toList();
         return topological(tasks);
     }
 
@@ -185,7 +189,8 @@ public final class PlanParser {
         if (line.strip().isEmpty()) return false;
         if (NEW_LIST_ITEM.matcher(line).find()) return false;
         if (line.matches("\\s{0,3}#{1,6}\\s.*")) return false;
-        return FIELD_RE.values().stream().noneMatch(p -> p.matcher(line).find());
+        return FIELD_RE.values().stream()
+                .noneMatch(p -> p.matcher(line).find());
     }
 
     static List<String> parseDeps(final String s) {
@@ -217,7 +222,9 @@ public final class PlanParser {
     private static List<PlanTask> topological(final Map<String, PlanTask> tasks) {
         final List<PlanTask> order = new ArrayList<>();
         final Set<String> done = new HashSet<>(), visiting = new HashSet<>();
-        for (String tid : tasks.keySet().stream().sorted(comparingInt(x -> parseInt(x.substring(1)))).toList())
+        for (String tid : tasks.keySet().stream()
+                .sorted(comparingInt(x -> parseInt(x.substring(1))))
+                .toList())
             visit(tid, tasks, new ArrayDeque<>(), done, visiting, order);
         return order;
     }
@@ -234,30 +241,48 @@ public final class PlanParser {
     public static List<List<PlanTask>> waves(final List<PlanTask> tasks) {
         final Map<String, Integer> level = new HashMap<>();
         for (PlanTask t : tasks) {
-            final int max = t.deps.stream().filter(level::containsKey).mapToInt(level::get).max().orElse(-1);
+            final int max = t.deps.stream()
+                    .filter(level::containsKey)
+                    .mapToInt(level::get)
+                    .max()
+                    .orElse(-1);
             level.put(t.id, 1 + max);
         }
         final Map<Integer, List<PlanTask>> out = new TreeMap<>();
         for (PlanTask t : tasks) out.computeIfAbsent(level.get(t.id), x -> new ArrayList<>()).add(t);
-        return out.values().stream().toList();
+        return out.values().stream()
+                .toList();
     }
 
     /** port of evaluate_parallel_plan: valid = every task exactly once, never before/beside a dependency;
      *  parallelism_pct = how much of the available parallelism the schedule captures. */
     public static Map<String, Object> evaluateParallelPlan(final Map<String, Object> pp, final List<PlanTask> tasks) {
         final List<String> errors = new ArrayList<>();
-        final List<String> ids = tasks.stream().map(t -> t.id).toList();
+        final List<String> ids = tasks.stream()
+                .map(t -> t.id)
+                .toList();
         final Map<String, Set<String>> deps = new HashMap<>();
         tasks.forEach(t -> deps.put(t.id, new HashSet<>(t.deps == null ? List.of() : t.deps)));
         final int minWaves = waves(tasks).size();
         if (pp == null || !(pp.get("waves") instanceof List<?> ws) || ws.isEmpty())
             return Map.of("valid", false, "errors", List.of("no parallelisation plan"), "n_tasks", ids.size(), "min_waves", minWaves, "parallelism_pct", 0.0);
         final List<List<String>> planWaves = new ArrayList<>();
-        ws.forEach(w -> planWaves.add(((List<?>) w).stream().map(String::valueOf).toList()));
-        final List<String> flat = planWaves.stream().flatMap(List::stream).toList();
-        final List<String> missing = ids.stream().filter(i -> !flat.contains(i)).toList();
-        final List<String> unknown = flat.stream().filter(i -> !ids.contains(i)).toList();
-        final List<String> dup = flat.stream().filter(i -> Collections.frequency(flat, i) > 1).distinct().toList();
+        ws.forEach(w -> planWaves.add(((List<?>) w).stream()
+                .map(String::valueOf)
+                .toList()));
+        final List<String> flat = planWaves.stream()
+                .flatMap(List::stream)
+                .toList();
+        final List<String> missing = ids.stream()
+                .filter(i -> !flat.contains(i))
+                .toList();
+        final List<String> unknown = flat.stream()
+                .filter(i -> !ids.contains(i))
+                .toList();
+        final List<String> dup = flat.stream()
+                .filter(i -> Collections.frequency(flat, i) > 1)
+                .distinct()
+                .toList();
         if (!missing.isEmpty()) errors.add("tasks missing from the schedule: " + missing);
         if (!unknown.isEmpty()) errors.add("unknown task ids: " + unknown);
         if (!dup.isEmpty()) errors.add("tasks scheduled more than once: " + dup);
@@ -268,7 +293,9 @@ public final class PlanParser {
                     if (!seen.contains(d)) errors.add(t + " in wave " + (i + 1) + " before/beside its dependency " + d);
             seen.addAll(planWaves.get(i));   // per-wave, exactly as the Python original: only earlier waves count as seen
         }
-        final int n = ids.size(), wPlan = (int) planWaves.stream().filter(w -> !w.isEmpty()).count();
+        final int n = ids.size(), wPlan = (int) planWaves.stream()
+                .filter(w -> !w.isEmpty())
+                .count();
         final double par = n <= minWaves ? 100.0 : max(0, min(100, 100.0 * (n - wPlan) / (n - minWaves)));
         final Map<String, Object> out = new LinkedHashMap<>();
         out.put("valid", errors.isEmpty());
@@ -277,7 +304,10 @@ public final class PlanParser {
         out.put("min_waves", minWaves);
         out.put("plan_waves", wPlan);
         out.put("parallelism_pct", round((errors.isEmpty() ? par : 0.0) * 10) / 10.0);
-        out.put("max_wave_width", planWaves.stream().mapToInt(List::size).max().orElse(1));
+        out.put("max_wave_width", planWaves.stream()
+                .mapToInt(List::size)
+                .max()
+                .orElse(1));
         return out;
     }
 }

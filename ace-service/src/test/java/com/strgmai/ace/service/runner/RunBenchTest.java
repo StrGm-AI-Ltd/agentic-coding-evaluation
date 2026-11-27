@@ -1233,8 +1233,11 @@ class RunBenchTest {
         final var handoffs = RunBench.loadHandoffs(ws, tasks, new java.util.LinkedHashMap<>());
 
         assertEquals(2, handoffs.size(), "only the two actually-tagged tasks are backfilled");
-        assertEquals(Set.of("T5", "T8"), handoffs.stream().map(h -> h[0]).collect(toSet()));
-        final var byId = handoffs.stream().collect(toMap(h -> h[0], h -> h[1]));
+        assertEquals(Set.of("T5", "T8"), handoffs.stream()
+                .map(h -> h[0])
+                .collect(toSet()));
+        final var byId = handoffs.stream()
+                .collect(toMap(h -> h[0], h -> h[1]));
         assertEquals("T5's own handoff note", byId.get("T5"));
         assertEquals("T8's own handoff note", byId.get("T8"));
     }

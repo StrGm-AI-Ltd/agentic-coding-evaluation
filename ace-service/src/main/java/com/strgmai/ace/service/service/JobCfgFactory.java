@@ -29,7 +29,11 @@ final class JobCfgFactory {
         cfg.put("task_overrides", taskOverrides == null ? Map.of() : taskOverrides);
         cfg.put("results_root", props.resultsDir());
         cfg.put("workspace_root", props.workspaceRoot());
-        cfg.put("model", argv.stream().filter(a -> a.startsWith("--model=")).map(a -> a.substring(8)).findFirst().orElse(props.model()));
+        cfg.put("model", argv.stream()
+                .filter(a -> a.startsWith("--model="))
+                .map(a -> a.substring(8))
+                .findFirst()
+                .orElse(props.model()));
         cfg.put("system_base_url", null);
         // #236: --harness was never read back out of argv into cfg at all - RunBench always ran
         // ReferenceAgent regardless of what a run actually asked for

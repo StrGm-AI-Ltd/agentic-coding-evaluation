@@ -41,7 +41,8 @@ public final class Validity {
         if (orch) {
             final Map<String, Object> plan = manifest.get("plan") instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
             if (plan.get("error") != null) reasons.add("plan unparseable: " + String.valueOf(plan.get("error")).substring(0, min(80, String.valueOf(plan.get("error")).length())));
-            else if (manifest.get("step") == null && phases(manifest, "tasks").stream().noneMatch(t -> "INTEGRATION".equals(t.get("id"))))
+            else if (manifest.get("step") == null && phases(manifest, "tasks").stream()
+                    .noneMatch(t -> "INTEGRATION".equals(t.get("id"))))
                 reasons.add("integration task never ran");
         }
         final Map<String, Object> out = new LinkedHashMap<>();
