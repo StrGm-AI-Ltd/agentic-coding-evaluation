@@ -1,7 +1,6 @@
 package com.strgmai.ace.service.agent;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.*;
@@ -10,6 +9,7 @@ import java.util.regex.Pattern;
 
 import static java.lang.Math.max;
 import static java.lang.Math.min;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /** Port of agent_loop.py's tools: read/write/edit/bash with EXACT-match edits, ranged reads and
  *  mechanical output hygiene (ANSI stripped, head+tail caps) so context is spent on what the model
@@ -80,7 +80,7 @@ public final class AgentTools {
         if (!withinWorkspace(cwd, p)) return new Outcome("error: path escapes the task workspace: " + a.get("path"), FailureCategory.WORKSPACE_ESCAPE);
         if (!Files.isRegularFile(p)) return new Outcome("error: no such file: " + a.get("path"), FailureCategory.NOT_FOUND);
         List<String> lines;
-        try { lines = Files.readAllLines(p, StandardCharsets.UTF_8); }
+        try { lines = Files.readAllLines(p, UTF_8); }
         catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
         // clamp the lower bound: a 0/negative start_line would index lines.get(-1) and throw
         final int s = max(1, a.get("start_line") instanceof Number n ? n.intValue() : 1);
@@ -103,8 +103,8 @@ public final class AgentTools {
         if (!withinWorkspace(cwd, p)) return new Outcome("error: path escapes the task workspace: " + a.get("path"), FailureCategory.WORKSPACE_ESCAPE);
         try {
             Files.createDirectories(p.getParent() == null ? Paths.get(".") : p.getParent());
-            Files.writeString(p, content, StandardCharsets.UTF_8);
-            return new Outcome("wrote " + content.getBytes(StandardCharsets.UTF_8).length + " bytes to " + a.get("path"), null);
+            Files.writeString(p, content, UTF_8);
+            return new Outcome("wrote " + content.getBytes(UTF_8).length + " bytes to " + a.get("path"), null);
         } catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
     }
 
@@ -114,7 +114,7 @@ public final class AgentTools {
         if (!withinWorkspace(cwd, p)) return new Outcome("error: path escapes the task workspace: " + a.get("path"), FailureCategory.WORKSPACE_ESCAPE);
         if (!Files.isRegularFile(p)) return new Outcome("error: no such file: " + a.get("path"), FailureCategory.NOT_FOUND);
         String src;
-        try { src = Files.readString(p, StandardCharsets.UTF_8); } catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
+        try { src = Files.readString(p, UTF_8); } catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
         // explicit null check: getOrDefault returns null when the key is present with a JSON null,
         // and String.valueOf(null) would search for the literal text "null"
         final String old = a.get("old_string") == null ? "" : String.valueOf(a.get("old_string"));
@@ -125,7 +125,7 @@ public final class AgentTools {
         if (n == 0) return new Outcome("error: old_string not found (the match must be exact, including whitespace)", FailureCategory.NOT_FOUND);
         if (n > 1 && !all) return new Outcome("error: old_string occurs " + n + " times; add context to make it unique or set replace_all", FailureCategory.AMBIGUOUS_MATCH);
         final String out = all ? src.replace(old, neu) : src.replaceFirst(Pattern.quote(old), Matcher.quoteReplacement(neu));
-        try { Files.writeString(p, out, StandardCharsets.UTF_8); } catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
+        try { Files.writeString(p, out, UTF_8); } catch (IOException e) { return new Outcome("error: " + e, FailureCategory.IO_ERROR); }
         return new Outcome("edited " + a.get("path") + " (" + (all ? n : 1) + " replacement)", null);
     }
 

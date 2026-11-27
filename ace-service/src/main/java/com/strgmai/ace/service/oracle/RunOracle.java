@@ -16,6 +16,8 @@ import java.time.Instant;
 import java.util.*;
 
 import static java.lang.Math.min;
+import static java.util.regex.Pattern.CASE_INSENSITIVE;
+import static java.util.regex.Pattern.MULTILINE;
 
 /** Port of oracle/run_oracle.py: runs the checkers over a workspace with the FIXED-denominator
  *  invariants. Rung-aware (tasks/ladder.json restricts the check set). Docker-gated scripts run at
@@ -176,14 +178,14 @@ public class RunOracle {
 
     /** P1: required sections of the task definition; PASS when at most one is missing (05_phases.py) */
     private static final Map<String, java.util.regex.Pattern> REQ_SECTIONS = Map.ofEntries(
-            Map.entry("scope", java.util.regex.Pattern.compile("^#+\\s*.*\\b(scope|overview)\\b", java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.MULTILINE)),
-            Map.entry("actors", java.util.regex.Pattern.compile("^#+\\s*.*\\bactors?\\b", java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.MULTILINE)),
-            Map.entry("domain model", java.util.regex.Pattern.compile("^#+\\s*.*\\b(domain|entit)", java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.MULTILINE)),
-            Map.entry("service boundaries", java.util.regex.Pattern.compile("^#+\\s*.*\\b(service|microservice|boundar)", java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.MULTILINE)),
-            Map.entry("non-functional", java.util.regex.Pattern.compile("^#+\\s*.*\\b(non-?functional|nfr|latency|consistency|audit)", java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.MULTILINE)),
-            Map.entry("out of scope", java.util.regex.Pattern.compile("\\bout[- ]of[- ]scope\\b", java.util.regex.Pattern.CASE_INSENSITIVE)),
-            Map.entry("money handling", java.util.regex.Pattern.compile("\\b(BigDecimal|minor units|decimal|precision|rounding)\\b", java.util.regex.Pattern.CASE_INSENSITIVE)),
-            Map.entry("order states", java.util.regex.Pattern.compile("\\b(state machine|order state|status transition|NEW|FILLED|CANCEL)", java.util.regex.Pattern.CASE_INSENSITIVE)));
+            Map.entry("scope", java.util.regex.Pattern.compile("^#+\\s*.*\\b(scope|overview)\\b", CASE_INSENSITIVE | MULTILINE)),
+            Map.entry("actors", java.util.regex.Pattern.compile("^#+\\s*.*\\bactors?\\b", CASE_INSENSITIVE | MULTILINE)),
+            Map.entry("domain model", java.util.regex.Pattern.compile("^#+\\s*.*\\b(domain|entit)", CASE_INSENSITIVE | MULTILINE)),
+            Map.entry("service boundaries", java.util.regex.Pattern.compile("^#+\\s*.*\\b(service|microservice|boundar)", CASE_INSENSITIVE | MULTILINE)),
+            Map.entry("non-functional", java.util.regex.Pattern.compile("^#+\\s*.*\\b(non-?functional|nfr|latency|consistency|audit)", CASE_INSENSITIVE | MULTILINE)),
+            Map.entry("out of scope", java.util.regex.Pattern.compile("\\bout[- ]of[- ]scope\\b", CASE_INSENSITIVE)),
+            Map.entry("money handling", java.util.regex.Pattern.compile("\\b(BigDecimal|minor units|decimal|precision|rounding)\\b", CASE_INSENSITIVE)),
+            Map.entry("order states", java.util.regex.Pattern.compile("\\b(state machine|order state|status transition|NEW|FILLED|CANCEL)", CASE_INSENSITIVE)));
 
     private CheckResult p1(final Path ws) throws java.io.IOException {
         final Path td = ws.resolve("docs/TASK_DEFINITION.md");

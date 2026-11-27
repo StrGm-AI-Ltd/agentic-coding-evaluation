@@ -11,7 +11,6 @@ import tools.jackson.databind.JsonNode;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +19,7 @@ import java.util.concurrent.Executors;
 
 import static java.lang.System.nanoTime;
 import static java.lang.Thread.currentThread;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -108,7 +108,7 @@ class ServiceClientWireTest {
         server.createContext("/", exchange -> {
             String method = exchange.getRequestMethod();
             String uri = exchange.getRequestURI().toString();
-            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            String body = new String(exchange.getRequestBody().readAllBytes(), UTF_8);
             captured.add(new Captured(method, uri, body));
 
             switch (method + " " + uri) {
@@ -226,7 +226,7 @@ class ServiceClientWireTest {
 
     private static void respond(com.sun.net.httpserver.HttpExchange exchange, int status, String body)
             throws IOException {
-        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = body.getBytes(UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json");
         exchange.sendResponseHeaders(status, bytes.length == 0 ? -1 : bytes.length);
         try (var out = exchange.getResponseBody()) {

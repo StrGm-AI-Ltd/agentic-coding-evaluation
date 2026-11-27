@@ -10,11 +10,12 @@ import org.slf4j.LoggerFactory;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /** Port of oracle/reference_server.py's entrypoint: the reference trading server on a plain JDK
  *  HttpServer (the Spring TradingController serves the same contract inside the app; this is the
@@ -55,7 +56,7 @@ public final class ReferenceServer {
     private void route(final HttpExchange x) throws Exception {
         final String p = x.getRequestURI().getPath();
         final String q = x.getRequestURI().getQuery() == null ? "" : x.getRequestURI().getQuery();
-        final var raw = new String(x.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        final var raw = new String(x.getRequestBody().readAllBytes(), UTF_8);
         final JsonNode body = raw.isBlank() ? JSON.createObjectNode() : JSON.readTree(raw);
         final String method = x.getRequestMethod();
         try {
@@ -102,7 +103,7 @@ public final class ReferenceServer {
 
     private static String param(final String query, final String name) {
         // URL-decode: getQuery() is still percent-encoded, so asOf=2024-01-15T10%3A30%3A00Z would fail Instant.parse
-        for (String kv : query.split("&")) if (kv.startsWith(name + "=")) return URLDecoder.decode(kv.substring(name.length() + 1), StandardCharsets.UTF_8);
+        for (String kv : query.split("&")) if (kv.startsWith(name + "=")) return URLDecoder.decode(kv.substring(name.length() + 1), UTF_8);
         return null;
     }
 

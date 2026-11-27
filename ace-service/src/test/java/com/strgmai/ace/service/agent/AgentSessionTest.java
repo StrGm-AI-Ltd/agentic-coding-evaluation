@@ -11,11 +11,11 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import static java.nio.file.StandardOpenOption.APPEND;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** AgentSession's JSONL persistence (header/message/compaction/end), --continue resume via
@@ -263,7 +263,7 @@ class AgentSessionTest {
         final var dir = Files.createTempDirectory("session");
         final var session = new AgentSession(dir, "s2", false);
         session.user("the pack");
-        Files.writeString(session.path(), "not valid json\n", StandardOpenOption.APPEND);
+        Files.writeString(session.path(), "not valid json\n", APPEND);
         session.toolResult("c1", "bash", "after the corrupt line", null);
 
         final List<ChatMessage> msgs = session.loadMessages();

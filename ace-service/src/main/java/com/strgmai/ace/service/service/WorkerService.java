@@ -20,6 +20,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static java.lang.System.currentTimeMillis;
+import static java.nio.file.StandardOpenOption.CREATE;
+import static java.nio.file.StandardOpenOption.WRITE;
 import static java.util.stream.Collectors.toSet;
 
 /** Port of service/worker.py: runs queued benchmark jobs ONE AT A TIME (two would share the model
@@ -123,7 +125,7 @@ public class WorkerService {
                 final java.nio.file.Path lockPath = java.nio.file.Path.of(System.getProperty("user.home"), ".cache/agentbench/run.lock");
                 java.nio.file.Files.createDirectories(lockPath.getParent());
                 runLock = java.nio.channels.FileChannel.open(lockPath,
-                        java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE);
+                        CREATE, WRITE);
                 if (runLock.tryLock() == null) { runLock.close(); runLock = null; return "run.lock is held by another benchmark run"; }
             }
         } catch (Exception e) { return "run.lock: " + e; }

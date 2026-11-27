@@ -11,12 +11,13 @@ import org.junit.jupiter.api.Test;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 import static java.lang.System.currentTimeMillis;
+import static java.nio.file.StandardOpenOption.CREATE;
+import static java.nio.file.StandardOpenOption.WRITE;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -131,7 +132,7 @@ class WorkerServiceTest {
         final var tmpHome = Files.createTempDirectory("fake-home");
         final Path lockPath = tmpHome.resolve(".cache/agentbench/run.lock");
         Files.createDirectories(lockPath.getParent());
-        final FileChannel holder = FileChannel.open(lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+        final FileChannel holder = FileChannel.open(lockPath, CREATE, WRITE);
         try {
             assertNotNull(holder.tryLock(), "test setup: this test must hold the lock itself");
 

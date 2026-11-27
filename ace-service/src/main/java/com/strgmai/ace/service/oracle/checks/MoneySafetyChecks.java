@@ -12,6 +12,9 @@ import java.util.regex.*;
 
 import static java.lang.Math.max;
 import static java.lang.Math.min;
+import static java.util.regex.Pattern.CASE_INSENSITIVE;
+import static java.util.regex.Pattern.DOTALL;
+import static java.util.regex.Pattern.MULTILINE;
 
 /** Port of oracle/checks/02_money_safety.py (M1-M4). Regex lint over source — a cheap early signal,
  *  NOT the correctness oracle (the black-box suite is). Hardened ports kept: multi-line declarations,
@@ -22,22 +25,22 @@ public final class MoneySafetyChecks {
     private MoneySafetyChecks() {}
 
     static final String MONEY = "(?:price|amount|balance|cash|total|cost|fee|fees|qty|quantity|notional|premium|margin)";
-    static final Pattern DECL = Pattern.compile("\\b(double|float|Double|Float)\\s*(\\[\\s*\\])?\\s+(\\w*" + MONEY + "\\w*)\\b", Pattern.CASE_INSENSITIVE);
-    static final Pattern KT = Pattern.compile("\\b(\\w*" + MONEY + "\\w*)\\s*:\\s*(Double|Float)\\b", Pattern.CASE_INSENSITIVE);
-    static final Pattern SQL_BAD = Pattern.compile("\\b(\\w*" + MONEY + "\\w*)\\s+(FLOAT8|FLOAT|REAL|DOUBLE\\s+PRECISION)\\b", Pattern.CASE_INSENSITIVE);
+    static final Pattern DECL = Pattern.compile("\\b(double|float|Double|Float)\\s*(\\[\\s*\\])?\\s+(\\w*" + MONEY + "\\w*)\\b", CASE_INSENSITIVE);
+    static final Pattern KT = Pattern.compile("\\b(\\w*" + MONEY + "\\w*)\\s*:\\s*(Double|Float)\\b", CASE_INSENSITIVE);
+    static final Pattern SQL_BAD = Pattern.compile("\\b(\\w*" + MONEY + "\\w*)\\s+(FLOAT8|FLOAT|REAL|DOUBLE\\s+PRECISION)\\b", CASE_INSENSITIVE);
     static final Pattern BD_IMPORT = Pattern.compile("(?m)^\\s*import\\s+java\\.math\\.BigDecimal");
-    static final Pattern EQUALS = Pattern.compile("(?:\\b\\w*" + MONEY + "\\w*\\s*\\.equals\\(|Objects\\.equals\\(\\s*\\w*" + MONEY + "|get" + MONEY + "\\w*\\(\\)\\s*\\.equals\\()", Pattern.CASE_INSENSITIVE);
-    static final Pattern PIT_DEF = Pattern.compile("(?:\\b(?:public|private|protected|static|final|suspend|override|fun)\\b[^;{}=]*?\\s|^\\s*fun\\s+)(holdings?At|positions?At|balanceAt|asOf|pointInTime|snapshotAt|replay\\w*)\\s*\\(", Pattern.CASE_INSENSITIVE | Pattern.MULTILINE);
-    static final Pattern PIT_PARAM = Pattern.compile("(?:\\b(?:public|private|protected|static|final|suspend|override|fun)\\b[^;{}=]*?\\s|^\\s*fun\\s+)(\\w+)\\s*\\([^)]*\\b(?:Instant|OffsetDateTime|ZonedDateTime|LocalDateTime)\\b[^)]*\\)", Pattern.MULTILINE);
+    static final Pattern EQUALS = Pattern.compile("(?:\\b\\w*" + MONEY + "\\w*\\s*\\.equals\\(|Objects\\.equals\\(\\s*\\w*" + MONEY + "|get" + MONEY + "\\w*\\(\\)\\s*\\.equals\\()", CASE_INSENSITIVE);
+    static final Pattern PIT_DEF = Pattern.compile("(?:\\b(?:public|private|protected|static|final|suspend|override|fun)\\b[^;{}=]*?\\s|^\\s*fun\\s+)(holdings?At|positions?At|balanceAt|asOf|pointInTime|snapshotAt|replay\\w*)\\s*\\(", CASE_INSENSITIVE | MULTILINE);
+    static final Pattern PIT_PARAM = Pattern.compile("(?:\\b(?:public|private|protected|static|final|suspend|override|fun)\\b[^;{}=]*?\\s|^\\s*fun\\s+)(\\w+)\\s*\\([^)]*\\b(?:Instant|OffsetDateTime|ZonedDateTime|LocalDateTime)\\b[^)]*\\)", MULTILINE);
     static final Pattern SUBTRACTS = Pattern.compile("(\\.subtract\\(|-=|\\.negate\\(\\)|\\* ?-1|\\bminus\\b|\\bsign(um)?\\b|-\\s*\\w*(qty|quantity|amount)\\b|" +
-            "\\bSELL\\b[^;]{0,80}?(-|subtract|negate)|CASE\\s+WHEN[^;]*SELL[^;]*-)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+            "\\bSELL\\b[^;]{0,80}?(-|subtract|negate)|CASE\\s+WHEN[^;]*SELL[^;]*-)", CASE_INSENSITIVE | DOTALL);
     // credits a signed CASE on the sell side, or the sign carried via ELSE (BUY branch positive, ELSE negative) -
     // the ELSE form was a false negative until this fix; kept conservative: a buys-minus-sells of two aliased
     // SUM()s cannot be told apart from source without false-positives, so it deliberately stays undetected here
     static final Pattern SQL_PIT = Pattern.compile(
             "CASE\\s+WHEN[^;]*(SELL|SOLD)[^;]*(-\\s*\\w*(qty|quantity)|\\* ?-1)"
                     + "|CASE\\s+WHEN[^;]*(BUY|BOUGHT)[^;]*ELSE\\s*-\\s*\\w*(qty|quantity)",
-            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+            CASE_INSENSITIVE | DOTALL);
 
     public static List<CheckResult> run(final Path ws) {
         final List<Path> java = sources(ws, ".java", ".kt"), sql = sources(ws, ".sql");
@@ -64,7 +67,7 @@ public final class MoneySafetyChecks {
         final List<Path> moneyFiles = new ArrayList<>(), withBd = new ArrayList<>();
         for (Path p : java) {
             final String src = read(p);
-            if (Pattern.compile("\\b" + MONEY + "\\b", Pattern.CASE_INSENSITIVE).matcher(stripComments(src)).find()) {
+            if (Pattern.compile("\\b" + MONEY + "\\b", CASE_INSENSITIVE).matcher(stripComments(src)).find()) {
                 moneyFiles.add(p);
                 if (BD_IMPORT.matcher(src).find()) withBd.add(p);
             }
@@ -93,7 +96,7 @@ public final class MoneySafetyChecks {
             final String s = stripComments(read(p));
             final Map<Integer, MatchResult> hits = new TreeMap<>();
             for (var m : PIT_DEF.matcher(s).results().toList()) hits.putIfAbsent(m.start(), m);
-            if (Pattern.compile("holding|position|portfolio|ledger", Pattern.CASE_INSENSITIVE).matcher(p.getFileName().toString()).find())
+            if (Pattern.compile("holding|position|portfolio|ledger", CASE_INSENSITIVE).matcher(p.getFileName().toString()).find())
                 for (var m : PIT_PARAM.matcher(s).results().toList()) hits.putIfAbsent(m.start(), m);
             for (MatchResult m : hits.values()) {
                 pitMethods[0]++;

@@ -16,6 +16,9 @@ import static java.lang.Double.parseDouble;
 import static java.lang.Integer.parseInt;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
+import static java.util.regex.Pattern.CASE_INSENSITIVE;
+import static java.util.regex.Pattern.DOTALL;
+import static java.util.regex.Pattern.MULTILINE;
 
 /** Port of runner/pack.py: deterministic context packs for the orchestrated harness mode.
  *  Two parts, kept apart on purpose: stable_pack(...) is byte-identical for every task of a run
@@ -117,7 +120,7 @@ public final class Packs {
         final var out = new StringBuilder();
         for (String l : txt.split("\n"))
             if (!(l.contains("Protocol for this rung") || (l.contains("IMPLEMENTATION_PLAN.md") && !l.contains("read-only")))) out.append(l).append('\n');
-        txt = Pattern.compile("^(#[^\\n]*?)\\s*\\((?:total )?budget[^)]*\\)", Pattern.MULTILINE).matcher(out.toString()).replaceFirst("$1");
+        txt = Pattern.compile("^(#[^\\n]*?)\\s*\\((?:total )?budget[^)]*\\)", MULTILINE).matcher(out.toString()).replaceFirst("$1");
         return cap(txt, CAPS.get("contract"));
     }
 
@@ -157,7 +160,7 @@ public final class Packs {
         return linesCap(String.join("\n", out), CAPS.get("tree"));
     }
 
-    static final Pattern SIG_RE = Pattern.compile("^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s*)*(?:public|protected|open|override|fun|interface|class|record|enum|abstract|sealed|data class)\\b[^;{=]*", Pattern.MULTILINE);
+    static final Pattern SIG_RE = Pattern.compile("^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s*)*(?:public|protected|open|override|fun|interface|class|record|enum|abstract|sealed|data class)\\b[^;{=]*", MULTILINE);
 
     /** public surface of a source file: package, type headers, public members. Migrations and
      *  OpenAPI are interfaces and go whole; build scripts and config are summarised to their
@@ -541,27 +544,27 @@ public final class Packs {
 
     // which oracle check a free-text finding is about (keyword heuristic for the HIGH-finding precision proxy, R4 K-1)
     static final Map<String, Pattern> FINDING_KEYWORDS = Map.ofEntries(
-            Map.entry("F8", Pattern.compile("asOf|as-of|exclusive|boundary|asOfApplied", Pattern.CASE_INSENSITIVE)),
-            Map.entry("F2", Pattern.compile("point.in.time|between (a )?buy|replay|holdings at", Pattern.CASE_INSENSITIVE)),
-            Map.entry("F1", Pattern.compile("restore|equal sell|holdings after|subtract", Pattern.CASE_INSENSITIVE)),
-            Map.entry("F3", Pattern.compile("422|insufficient|balance check|holdings check", Pattern.CASE_INSENSITIVE)),
-            Map.entry("F4", Pattern.compile("409|transition|state machine|cancel", Pattern.CASE_INSENSITIVE)),
-            Map.entry("F5", Pattern.compile("round.?trip|scale|decimal string|trailing zero", Pattern.CASE_INSENSITIVE)),
-            Map.entry("F6", Pattern.compile("contract|openapi|schema|status code|body shape|field name", Pattern.CASE_INSENSITIVE)),
-            Map.entry("F7", Pattern.compile("HALF_EVEN|rounding|0\\.005|0\\.015", Pattern.CASE_INSENSITIVE)),
-            Map.entry("F9", Pattern.compile("idempoten", Pattern.CASE_INSENSITIVE)),
-            Map.entry("C1", Pattern.compile("healthcheck|health check|compose|docker|container", Pattern.CASE_INSENSITIVE)),
-            Map.entry("C2", Pattern.compile("/health|readiness", Pattern.CASE_INSENSITIVE)),
-            Map.entry("B1", Pattern.compile("compile|does not build|build fail", Pattern.CASE_INSENSITIVE)),
-            Map.entry("B2", Pattern.compile("\\btests? (fail|red|do not run|missing)|no tests", Pattern.CASE_INSENSITIVE)),
-            Map.entry("B3", Pattern.compile("coverage|assert|mutation|tests? (do|does) not (check|verify)|weak test", Pattern.CASE_INSENSITIVE)),
+            Map.entry("F8", Pattern.compile("asOf|as-of|exclusive|boundary|asOfApplied", CASE_INSENSITIVE)),
+            Map.entry("F2", Pattern.compile("point.in.time|between (a )?buy|replay|holdings at", CASE_INSENSITIVE)),
+            Map.entry("F1", Pattern.compile("restore|equal sell|holdings after|subtract", CASE_INSENSITIVE)),
+            Map.entry("F3", Pattern.compile("422|insufficient|balance check|holdings check", CASE_INSENSITIVE)),
+            Map.entry("F4", Pattern.compile("409|transition|state machine|cancel", CASE_INSENSITIVE)),
+            Map.entry("F5", Pattern.compile("round.?trip|scale|decimal string|trailing zero", CASE_INSENSITIVE)),
+            Map.entry("F6", Pattern.compile("contract|openapi|schema|status code|body shape|field name", CASE_INSENSITIVE)),
+            Map.entry("F7", Pattern.compile("HALF_EVEN|rounding|0\\.005|0\\.015", CASE_INSENSITIVE)),
+            Map.entry("F9", Pattern.compile("idempoten", CASE_INSENSITIVE)),
+            Map.entry("C1", Pattern.compile("healthcheck|health check|compose|docker|container", CASE_INSENSITIVE)),
+            Map.entry("C2", Pattern.compile("/health|readiness", CASE_INSENSITIVE)),
+            Map.entry("B1", Pattern.compile("compile|does not build|build fail", CASE_INSENSITIVE)),
+            Map.entry("B2", Pattern.compile("\\btests? (fail|red|do not run|missing)|no tests", CASE_INSENSITIVE)),
+            Map.entry("B3", Pattern.compile("coverage|assert|mutation|tests? (do|does) not (check|verify)|weak test", CASE_INSENSITIVE)),
             Map.entry("M1", Pattern.compile("\\bdouble\\b|\\bfloat\\b")),
             // #112: M2 ("BigDecimal imported where money is handled") had no entry here at all,
             // even though ladder.json scores it on 4 rungs (L1, L2, L3, L3p) - a self-review finding
             // correctly identifying a missing/absent BigDecimal could never be matched to it.
-            Map.entry("M2", Pattern.compile("BigDecimal", Pattern.CASE_INSENSITIVE)),
+            Map.entry("M2", Pattern.compile("BigDecimal", CASE_INSENSITIVE)),
             Map.entry("M3", Pattern.compile("\\.equals\\(|equals on")),
-            Map.entry("M4", Pattern.compile("sells? (are|is) (not )?subtract|adding replay", Pattern.CASE_INSENSITIVE)));
+            Map.entry("M4", Pattern.compile("sells? (are|is) (not )?subtract|adding replay", CASE_INSENSITIVE)));
 
     public static List<String> findingCheckIds(final String issue) {
         final List<String> out = new ArrayList<>();
@@ -584,7 +587,7 @@ public final class Packs {
         catch (IOException e) { log.warn("could not read {} (exists but unreadable): {}", path, e.toString()); return null; }
         JsonNode d;
         try { d = JSON.readTree(txt); } catch (Exception e) {
-            final Matcher m = Pattern.compile("\\{.*\\}", Pattern.DOTALL).matcher(txt);
+            final Matcher m = Pattern.compile("\\{.*\\}", DOTALL).matcher(txt);
             if (!m.find()) { log.warn("{} is not valid JSON and has no embedded {{...}} block, review discarded: {}", path, e.toString()); return null; }
             try { d = JSON.readTree(m.group(0)); }
             catch (Exception e2) { log.warn("could not parse the embedded JSON block in {}, review discarded: {}", path, e2.toString()); return null; }
@@ -716,13 +719,13 @@ public final class Packs {
         catch (IOException e) { log.warn("could not read {} (exists but unreadable): {}", path, e.toString()); return null; }
         JsonNode d;
         try { d = JSON.readTree(txt); } catch (Exception e) {
-            final Matcher m = Pattern.compile("\\{.*\\}", Pattern.DOTALL).matcher(txt);
+            final Matcher m = Pattern.compile("\\{.*\\}", DOTALL).matcher(txt);
             if (!m.find()) { log.warn("{} is not valid JSON and has no embedded {{...}} block, plan discarded: {}", path, e.toString()); return null; }
             try { d = JSON.readTree(m.group(0)); }
             catch (Exception e2) { log.warn("could not parse the embedded JSON block in {}, plan discarded: {}", path, e2.toString()); return null; }
         }
         if (!d.isObject() || !d.path("waves").isArray()) return null;
-        final Pattern idNorm = Pattern.compile("^(?:T|ST|Task|Subtask)[- ]?0*(\\d+)$", Pattern.CASE_INSENSITIVE);
+        final Pattern idNorm = Pattern.compile("^(?:T|ST|Task|Subtask)[- ]?0*(\\d+)$", CASE_INSENSITIVE);
         final List<List<String>> waves = new ArrayList<>();
         for (JsonNode w : d.get("waves")) {
             final List<String> wv = new ArrayList<>();

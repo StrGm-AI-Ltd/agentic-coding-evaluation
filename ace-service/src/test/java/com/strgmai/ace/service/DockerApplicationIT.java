@@ -27,9 +27,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 import static java.lang.System.getenv;
+import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -101,7 +101,7 @@ class DockerApplicationIT {
         // indefinitely. Best-effort: a failed removal here must not fail the suite.
         final String image = app.getDockerImageName();
         app.stop();
-        try { new ProcessBuilder("docker", "rmi", "-f", image).start().waitFor(30, TimeUnit.SECONDS); }
+        try { new ProcessBuilder("docker", "rmi", "-f", image).start().waitFor(30, SECONDS); }
         catch (Exception ignore) {}
     }
 

@@ -16,11 +16,11 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 import static java.lang.Math.round;
 import static java.lang.Thread.currentThread;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 /** #236: the "pi" harness - a real, external coding-assistant CLI (confirmed installed:
  *  `pi --version`), NOT something this project reimplements. Sibling to ReferenceAgent, same
@@ -171,7 +171,7 @@ public class PiAgent {
         final long waitSec = wallSec > 0 ? wallSec : Long.MAX_VALUE;   // wallSec <= 0 means unlimited (the system-wide "0 = no budget" convention)
         int rc;
         try {
-            if (process.waitFor(waitSec, TimeUnit.SECONDS)) {
+            if (process.waitFor(waitSec, SECONDS)) {
                 rc = process.exitValue();
             } else {
                 log.warn("session {} exceeded its {}s wall budget - killing the pi process tree", name, wallSec);

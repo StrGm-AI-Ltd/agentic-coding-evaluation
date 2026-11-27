@@ -17,12 +17,14 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 import static java.lang.System.getenv;
+import static java.nio.file.StandardOpenOption.CREATE;
+import static java.nio.file.StandardOpenOption.WRITE;
 import static java.util.Comparator.comparing;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 /** Ports of run_bench.py's process-level machinery: the single-run lock (two runs would share the
  *  model server and fight over Docker), git workspace snapshots (the commit SHAs live OUTSIDE the
@@ -40,7 +42,7 @@ public final class RunBenchSupport {
     public static FileChannel acquireLock(final Path lockPath) {
         try {
             Files.createDirectories(lockPath.toAbsolutePath().getParent());
-            final FileChannel ch = FileChannel.open(lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            final FileChannel ch = FileChannel.open(lockPath, CREATE, WRITE);
             if (ch.tryLock() == null) {
                 ch.close();
                 throw new IllegalStateException("another run holds " + lockPath + "; refusing to start a concurrent run");
@@ -335,7 +337,7 @@ public final class RunBenchSupport {
             try {
                 // wallSec <= 0 means unlimited (the system-wide "0 = no budget" convention) -
                 // future.get(0, SECONDS) would mean "timeout immediately", the opposite of that
-                return wallSec > 0 ? future.get(wallSec, TimeUnit.SECONDS) : future.get();
+                return wallSec > 0 ? future.get(wallSec, SECONDS) : future.get();
             } catch (TimeoutException te) {
                 abortProxy.accept("task-wall budget exceeded (" + wallSec + "s)");
                 future.cancel(true);

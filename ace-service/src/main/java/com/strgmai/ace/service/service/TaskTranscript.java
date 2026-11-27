@@ -6,11 +6,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /** An operator-facing, plain-text rendering of a task's own live session, for a dedicated "Live"
  *  tab on the task dialog - distinct from the Judge's own trajectory rendering
@@ -81,7 +82,7 @@ final class TaskTranscript {
      *  as this task's again for the rest of the SSE connection. */
     private static String readLabel(final Path p) {
         try {
-            final String first = Files.readString(p, StandardCharsets.UTF_8).split("\n", 2)[0];
+            final String first = Files.readString(p, UTF_8).split("\n", 2)[0];
             final JsonNode r = JSON.readTree(first);
             return "session".equals(r.path("type").asText()) ? r.path("label").asText("") : "";
         } catch (final Exception e) {

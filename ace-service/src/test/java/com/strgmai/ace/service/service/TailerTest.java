@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
+import static java.nio.file.StandardOpenOption.APPEND;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Port of the Tailer tests including the byte-exact UTF-8 offset fix: a journal line with
@@ -468,7 +469,7 @@ class TailerTest {
         final var tailer = new Tailer();
         assertTrue(tailer.poll(runDir, backend()).stream()
                 .noneMatch(e -> "session_done".equals(e.get("type"))));
-        Files.writeString(f, "{\"type\": \"end\", \"finish\": \"length\", \"turns\": 9}\n", java.nio.file.StandardOpenOption.APPEND);
+        Files.writeString(f, "{\"type\": \"end\", \"finish\": \"length\", \"turns\": 9}\n", APPEND);
         final var done = tailer.poll(runDir, backend()).stream()
                 .filter(e -> "session_done".equals(e.get("type")))
                 .findFirst()
@@ -493,7 +494,7 @@ class TailerTest {
                 .findFirst()
                 .orElseThrow();
         assertEquals("length", firstDone.get("finish"), "the truncated call's own outcome, reported first");
-        Files.writeString(f, "{\"type\": \"end\", \"finish\": \"stop\", \"turns\": 10}\n", java.nio.file.StandardOpenOption.APPEND);
+        Files.writeString(f, "{\"type\": \"end\", \"finish\": \"stop\", \"turns\": 10}\n", APPEND);
         final var secondDone = tailer.poll(runDir, backend()).stream()
                 .filter(e -> "session_done".equals(e.get("type")))
                 .findFirst()

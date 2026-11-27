@@ -14,6 +14,8 @@ import java.util.stream.Stream;
 
 import static java.lang.Math.min;
 import static java.util.Comparator.comparingInt;
+import static java.util.regex.Pattern.CASE_INSENSITIVE;
+import static java.util.regex.Pattern.DOTALL;
 
 /** Port of oracle/checks/01_structure.py (S1-S9). Always applicable. Hardened ports kept:
  *  S5 counts only build files that apply Spring Boot AND have src/main; S6 wants a real wrapper
@@ -81,8 +83,8 @@ public final class StructureChecks {
         boolean ok7 = false; String det7 = "none found";
         for (Path p : specs.subList(0, min(5, specs.size()))) {
             final String src = read(p);
-            if (Pattern.compile("(?m)^\\s*openapi\\s*:", Pattern.CASE_INSENSITIVE).matcher(src).find()
-                    && Pattern.compile("(?m)^\\s*paths\\s*:", Pattern.CASE_INSENSITIVE).matcher(src).find()) {
+            if (Pattern.compile("(?m)^\\s*openapi\\s*:", CASE_INSENSITIVE).matcher(src).find()
+                    && Pattern.compile("(?m)^\\s*paths\\s*:", CASE_INSENSITIVE).matcher(src).find()) {
                 ok7 = true; det7 = ws.relativize(p) + " (openapi+paths keys)"; break;
             }
             det7 = ws.relativize(p) + ": no openapi/paths";
@@ -94,7 +96,7 @@ public final class StructureChecks {
         for (Path p : glob(ws, "**/package.json")) {
             if (skip(p)) continue;
             final String src = read(p);
-            if (Pattern.compile("\"dependencies\"\\s*:\\s*\\{[^}]*\"react\"\\s*:", Pattern.DOTALL).matcher(src).find()) {
+            if (Pattern.compile("\"dependencies\"\\s*:\\s*\\{[^}]*\"react\"\\s*:", DOTALL).matcher(src).find()) {
                 ok8 = true; det8 = ws.relativize(p).toString(); break;
             }
         }

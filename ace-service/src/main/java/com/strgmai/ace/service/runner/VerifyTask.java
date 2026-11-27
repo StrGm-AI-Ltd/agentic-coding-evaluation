@@ -14,6 +14,8 @@ import static java.lang.Math.min;
 import static java.lang.Math.round;
 import static java.lang.System.getenv;
 import static java.lang.System.nanoTime;
+import static java.nio.file.StandardOpenOption.APPEND;
+import static java.nio.file.StandardOpenOption.CREATE;
 
 /** Port of run_bench.py's verify_task (M-1): the harness runs the tests itself after every task —
  *  the truthful record of where the code stands, independent of what the model wrote in
@@ -62,7 +64,7 @@ public final class VerifyTask {
                 // run" instead of ever executing the real test suite - for every task, for the whole
                 // run, with no crash to signal it. Creating it HERE, once, covers every caller.
                 if (logPath != null) Files.createDirectories(logPath.getParent());
-                verifyLog = logPath == null ? null : Files.newBufferedWriter(logPath, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                verifyLog = logPath == null ? null : Files.newBufferedWriter(logPath, CREATE, APPEND);
                 // one factory for the whole glob: newInstance() per XML file re-ran security/feature setup every time
                 final var docFactory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
                 for (Path r : roots) {

@@ -6,9 +6,9 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -20,7 +20,7 @@ class ServiceClientErrorTextTest {
 
     private static RestClientResponseException response(final int status, final String body) {
         return new RestClientResponseException("boom", status, "status", new HttpHeaders(),
-                body.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+                body.getBytes(UTF_8), UTF_8);
     }
 
     @Test

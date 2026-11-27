@@ -26,6 +26,7 @@ import static java.lang.System.currentTimeMillis;
 import static java.lang.System.nanoTime;
 import static java.lang.Thread.currentThread;
 import static java.util.Comparator.comparingDouble;
+import static java.util.regex.Pattern.CASE_INSENSITIVE;
 
 /** Port of runner/context_probe.py, step 0 of a benchmark run: measure the context window this
  *  SETUP actually offers, then derive every context-dependent knob from it.
@@ -340,7 +341,7 @@ public final class ContextProbe {
             // the memory guard ALSO answers 400 "Prompt too long": a rejection well below the cap is memory, not the setting
             final boolean atCap = cap != null && firstFail >= cap - (Integer) o.get("step_tokens") - (Integer) o.get("probe_max_tokens");
             binding = (List.of("400", "413").contains(fail.status()) && atCap
-                    && java.util.regex.Pattern.compile("too long|max_model_len|context", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(fail.error()).find())
+                    && java.util.regex.Pattern.compile("too long|max_model_len|context", CASE_INSENSITIVE).matcher(fail.error()).find())
                     ? "cap" : "memory_or_server";
         } else if (o.containsKey("up_to") && lastOk >= (Integer) o.get("up_to") - (Integer) o.get("probe_max_tokens") - 64) binding = "probe_limit";
         else if (cap != null && lastOk >= cap - (Integer) o.get("probe_max_tokens") - 64) binding = "cap";

@@ -11,7 +11,6 @@ import org.w3c.dom.Element;
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import java.util.regex.*;
 
 import static java.lang.Integer.parseInt;
@@ -19,6 +18,7 @@ import static java.lang.Math.abs;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.util.Comparator.comparingInt;
+import static java.util.regex.Pattern.CASE_INSENSITIVE;
 
 /** Port of oracle/checks/03_build.py: build checks made EVIDENTIAL. gradle always runs from the
  *  PINNED IMAGE (the agent's wrapper is never executed); every Gradle root is built; B1 = all
@@ -48,14 +48,14 @@ public final class BuildChecks {
             new Mutant("-=->+=", Pattern.compile("-="), "+=", true),
             new Mutant("minus->plus", Pattern.compile("\\.minus\\("), ".plus(", true));
     static final Pattern ANCHOR = Pattern.compile("\\b(SELL|BUY|Side\\.\\w+|OrderSide\\.\\w+)\\b");
-    static final Pattern PIT_DEF = Pattern.compile("\\b(holdings?At|positions?At|balanceAt|asOf|pointInTime|snapshotAt|replay\\w*)\\s*\\(", Pattern.CASE_INSENSITIVE);
-    static final Pattern FILE_HINT = Pattern.compile("holding|position|ledger|portfolio", Pattern.CASE_INSENSITIVE);
-    static final Pattern MONEY_LINE = Pattern.compile("qty|quantity|amount|balance|holding|position", Pattern.CASE_INSENSITIVE);
+    static final Pattern PIT_DEF = Pattern.compile("\\b(holdings?At|positions?At|balanceAt|asOf|pointInTime|snapshotAt|replay\\w*)\\s*\\(", CASE_INSENSITIVE);
+    static final Pattern FILE_HINT = Pattern.compile("holding|position|ledger|portfolio", CASE_INSENSITIVE);
+    static final Pattern MONEY_LINE = Pattern.compile("qty|quantity|amount|balance|holding|position", CASE_INSENSITIVE);
     static final int ANCHOR_DISTANCE = 3000;
 
     public static String infraReason(final String text) {
         if (text == null) return "";
-        final Matcher m = Pattern.compile(INFRA_RE, Pattern.CASE_INSENSITIVE).matcher(text);
+        final Matcher m = Pattern.compile(INFRA_RE, CASE_INSENSITIVE).matcher(text);
         return m.find() ? m.group(0).substring(0, min(80, m.group(0).length())) : "";
     }
 

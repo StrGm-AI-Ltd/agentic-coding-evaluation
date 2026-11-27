@@ -18,6 +18,8 @@ import java.time.Instant;
 import java.util.*;
 
 import static java.lang.Math.min;
+import static java.nio.file.StandardOpenOption.APPEND;
+import static java.nio.file.StandardOpenOption.CREATE;
 
 /** Port of run_bench.py's self_review + trajectory_review: end-of-run reviews by a reviewer model
  *  (the run's own model by default, or any provider/model LangChain4j can reach). The reviewer's
@@ -417,7 +419,7 @@ public class Reviews {
             // both self-review and trajectory-review write to the SAME log path - append, or the
             // second review's line silently replaces the first's (default writeString() truncates)
             if (log != null) Files.writeString(log, "review session " + name + " rc=" + res.rc() + " turns=" + res.turns() + "\n",
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                    CREATE, APPEND);
             return res;
         } finally {
             if (proxy != null) proxy.stop();

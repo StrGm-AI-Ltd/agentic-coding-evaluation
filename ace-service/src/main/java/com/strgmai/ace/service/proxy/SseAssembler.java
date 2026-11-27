@@ -7,6 +7,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 /** Port of record_proxy.py's parse_sse_chunks: reassemble a streamed chat completion —
  *  content, reasoning, tool_calls (arguments concatenated per index), finish, usage. */
 public final class SseAssembler {
@@ -37,7 +39,7 @@ public final class SseAssembler {
         final Map<Integer, Map<String, Object>> tools = new TreeMap<>();
         String finish = null; JsonNode usage = null; String error = null;
         for (byte[] raw : chunks) {
-            for (String line : new String(raw, java.nio.charset.StandardCharsets.UTF_8).split("\n")) {
+            for (String line : new String(raw, UTF_8).split("\n")) {
                 if (!line.startsWith("data:")) continue;
                 final String data = line.substring(5).strip();
                 if (data.equals("[DONE]")) continue;

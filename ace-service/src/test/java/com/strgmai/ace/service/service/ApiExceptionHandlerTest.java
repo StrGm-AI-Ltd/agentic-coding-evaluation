@@ -2,7 +2,6 @@ package com.strgmai.ace.service.service;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 
 import java.util.NoSuchElementException;
@@ -12,6 +11,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.CONFLICT;
+import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
+import static org.springframework.http.HttpStatus.NOT_FOUND;
 
 class ApiExceptionHandlerTest {
 
@@ -20,21 +23,21 @@ class ApiExceptionHandlerTest {
     @Test
     void badRequestReturns400WithTheExceptionMessage() {
         final var res = handler.badRequest(new IllegalArgumentException("task must be set"));
-        assertEquals(HttpStatus.BAD_REQUEST, res.getStatusCode());
+        assertEquals(BAD_REQUEST, res.getStatusCode());
         assertEquals("task must be set", res.getBody().get("detail"));
     }
 
     @Test
     void notFoundReturns404WithTheExceptionMessage() {
         final var res = handler.notFound(new NoSuchElementException("job abc123 does not exist"));
-        assertEquals(HttpStatus.NOT_FOUND, res.getStatusCode());
+        assertEquals(NOT_FOUND, res.getStatusCode());
         assertEquals("job abc123 does not exist", res.getBody().get("detail"));
     }
 
     @Test
     void conflictReturns409WithTheExceptionMessage() {
         final var res = handler.conflict(new IllegalStateException("job abc123 is already succeeded"));
-        assertEquals(HttpStatus.CONFLICT, res.getStatusCode());
+        assertEquals(CONFLICT, res.getStatusCode());
         assertEquals("job abc123 is already succeeded", res.getBody().get("detail"));
     }
 
@@ -51,7 +54,7 @@ class ApiExceptionHandlerTest {
 
         final var res = handler.serverError(sensitive, req);
 
-        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, res.getStatusCode());
+        assertEquals(INTERNAL_SERVER_ERROR, res.getStatusCode());
         final var detail = String.valueOf(res.getBody().get("detail"));
         assertFalse(detail.contains("jdbc:sqlite"), "the raw exception message must never reach the client: " + detail);
         assertFalse(detail.contains("/Users/"), "no internal path must leak into the client-visible message: " + detail);

@@ -9,6 +9,7 @@ import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.lang.Math.round;
 import static java.util.Comparator.comparingInt;
+import static java.util.regex.Pattern.CASE_INSENSITIVE;
 
 /** Port of runner/plan.py: parse an IMPLEMENTATION_PLAN.md into ordered tasks. Deterministic.
  *  A task is a heading/list item/table row carrying an id like T1 / ST-01 / Task 3; fields are
@@ -28,8 +29,8 @@ public final class PlanParser {
     // "### S6 — notes" could be misdetected as introducing a new task T6. Dropped outright rather
     // than narrowed (e.g. "S only for 3+ digit ids") - it was never a real, supported form to begin
     // with, so there is nothing legitimate left to preserve.
-    static final Pattern ID_RE = Pattern.compile("\\b(?:T|ST|Task|Subtask)[- ]?0*(\\d{1,3})\\b", Pattern.CASE_INSENSITIVE);
-    static final Pattern FIELD_HEADING = Pattern.compile("^\\s{0,3}#{2,6}\\s*(goal|objective|services?|components?|dependencies|depends on|after|requires|acceptance(?: criteri\\w+)?|criteri\\w+|verified by|verification|done when)\\s*$", Pattern.CASE_INSENSITIVE);
+    static final Pattern ID_RE = Pattern.compile("\\b(?:T|ST|Task|Subtask)[- ]?0*(\\d{1,3})\\b", CASE_INSENSITIVE);
+    static final Pattern FIELD_HEADING = Pattern.compile("^\\s{0,3}#{2,6}\\s*(goal|objective|services?|components?|dependencies|depends on|after|requires|acceptance(?: criteri\\w+)?|criteri\\w+|verified by|verification|done when)\\s*$", CASE_INSENSITIVE);
     static final Pattern CHECK_ID = Pattern.compile("\\b([SPMBCF]\\d{1,2})\\b");
     // #257, found live: "**Goal:** text" (the bold span wrapping the label AND its colon together,
     // the common way a model actually writes a bold field label) closes its "**" AFTER the colon,
@@ -38,13 +39,13 @@ public final class PlanParser {
     // "** Give `trading-service`..."). A second optional \*{0,3}\s* right after the colon consumes
     // it either way, matching both bold styles identically.
     static final Map<String, Pattern> FIELD_RE = Map.of(
-            "goal", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(goal|objective|deliverable|what)\\s*\\*{0,3}\\s*[:—-]\\s*\\*{0,3}\\s*(.+)", Pattern.CASE_INSENSITIVE),
-            "services", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(services?|components?|modules?|affected)\\s*\\*{0,3}\\s*[:—-]\\s*\\*{0,3}\\s*(.+)", Pattern.CASE_INSENSITIVE),
-            "deps", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(dependencies|depends? on|deps|after|requires|prereq(?:uisite)?s?|blocked by)\\s*\\*{0,3}\\s*(?:[:—-]\\s*)?\\*{0,3}\\s*(.+)", Pattern.CASE_INSENSITIVE),
-            "acceptance", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(acceptance(?: criteri(?:on|a))?|criteri(?:on|a)|verified by|verification|done when|test)\\s*\\*{0,3}\\s*[:—-]\\s*\\*{0,3}\\s*(.+)", Pattern.CASE_INSENSITIVE),
-            "checks", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(oracle|checks|scored by)\\s*\\*{0,3}\\s*[:—-]\\s*\\*{0,3}\\s*(.+)", Pattern.CASE_INSENSITIVE));
-    static final Pattern SEGMENT = Pattern.compile("(?=\\b(?:Goal|Objective|Deliverable|Services?|Components?|Modules?|Dependencies|Depends on|Deps|After|Requires|Prereq\\w*|Blocked by|Acceptance(?: criteri\\w+)?|Criteri\\w+|Verified by|Verification|Done when|Oracle|Checks|Scored by)\\s*[:—-])", Pattern.CASE_INSENSITIVE);
-    static final Pattern LIST_HEAD = Pattern.compile("^\\s*(?:[-*]|\\d+[.)])\\s+\\*{0,3}\\s*(?:T|ST|Task|Subtask)[- ]?\\d", Pattern.CASE_INSENSITIVE);
+            "goal", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(goal|objective|deliverable|what)\\s*\\*{0,3}\\s*[:—-]\\s*\\*{0,3}\\s*(.+)", CASE_INSENSITIVE),
+            "services", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(services?|components?|modules?|affected)\\s*\\*{0,3}\\s*[:—-]\\s*\\*{0,3}\\s*(.+)", CASE_INSENSITIVE),
+            "deps", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(dependencies|depends? on|deps|after|requires|prereq(?:uisite)?s?|blocked by)\\s*\\*{0,3}\\s*(?:[:—-]\\s*)?\\*{0,3}\\s*(.+)", CASE_INSENSITIVE),
+            "acceptance", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(acceptance(?: criteri(?:on|a))?|criteri(?:on|a)|verified by|verification|done when|test)\\s*\\*{0,3}\\s*[:—-]\\s*\\*{0,3}\\s*(.+)", CASE_INSENSITIVE),
+            "checks", Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*(oracle|checks|scored by)\\s*\\*{0,3}\\s*[:—-]\\s*\\*{0,3}\\s*(.+)", CASE_INSENSITIVE));
+    static final Pattern SEGMENT = Pattern.compile("(?=\\b(?:Goal|Objective|Deliverable|Services?|Components?|Modules?|Dependencies|Depends on|Deps|After|Requires|Prereq\\w*|Blocked by|Acceptance(?: criteri\\w+)?|Criteri\\w+|Verified by|Verification|Done when|Oracle|Checks|Scored by)\\s*[:—-])", CASE_INSENSITIVE);
+    static final Pattern LIST_HEAD = Pattern.compile("^\\s*(?:[-*]|\\d+[.)])\\s+\\*{0,3}\\s*(?:T|ST|Task|Subtask)[- ]?\\d", CASE_INSENSITIVE);
     static final Pattern NEW_LIST_ITEM = Pattern.compile("^\\s*(?:[-*]|\\d+[.)])\\s+");
 
     public static String normId(String n) { return "T" + parseInt(n); }
@@ -160,7 +161,7 @@ public final class PlanParser {
                 final String body = String.join("\n", block.subList(1, block.size()));
                 final Set<String> mentioned = new TreeSet<>(comparingInt(x -> parseInt(x.substring(1))));
                 for (var dm : ID_RE.matcher(body).results().toList()) { String x = normId(dm.group(1)); if (!x.equals(tid)) mentioned.add(x); }
-                t.deps = (!mentioned.isEmpty() && Pattern.compile("\\b(depend|after|requires|prereq|blocked)", Pattern.CASE_INSENSITIVE).matcher(body).find())
+                t.deps = (!mentioned.isEmpty() && Pattern.compile("\\b(depend|after|requires|prereq|blocked)", CASE_INSENSITIVE).matcher(body).find())
                         ? List.copyOf(mentioned) : List.of();
             }
             t.dedupScore = t.score() + (table ? 0 : 1);   // a detailed section beats an overview row
@@ -194,7 +195,7 @@ public final class PlanParser {
     }
 
     static List<String> parseDeps(final String s) {
-        if (Pattern.compile("\\b(none|n/a|-|—|no dependencies|nothing)\\b", Pattern.CASE_INSENSITIVE).matcher(s.strip()).find() && !ID_RE.matcher(s).find())
+        if (Pattern.compile("\\b(none|n/a|-|—|no dependencies|nothing)\\b", CASE_INSENSITIVE).matcher(s.strip()).find() && !ID_RE.matcher(s).find())
             return List.of();
         final Set<String> ids = new TreeSet<>(comparingInt(x -> parseInt(x.substring(1))));
         for (var m : ID_RE.matcher(s).results().toList()) ids.add(normId(m.group(1)));

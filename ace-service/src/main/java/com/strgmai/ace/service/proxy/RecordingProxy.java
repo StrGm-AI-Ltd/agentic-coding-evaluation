@@ -14,7 +14,6 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.*;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Instant;
 import java.util.List;
@@ -26,6 +25,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import static java.lang.Math.max;
 import static java.lang.Math.round;
 import static java.lang.System.nanoTime;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.nio.file.StandardOpenOption.APPEND;
+import static java.nio.file.StandardOpenOption.CREATE;
 
 /** Port of runner/record_proxy.py: transparent recording proxy, agent -> :PORT -> upstream.
  *  Journals EVERY interaction as JSONL (ts, method, path, request as forwarded, response, status,
@@ -342,13 +344,13 @@ public class RecordingProxy {
                 maxReadGapMs = max(maxReadGapMs, (now - lastReadAt) / 1_000_000);
                 if (firstByteMs < 0) firstByteMs = (now - t0) / 1_000_000;
                 lastReadAt = now; reads++;
-                final var s = new String(buf, 0, n, StandardCharsets.UTF_8);
+                final var s = new String(buf, 0, n, UTF_8);
                 int start = 0;
                 while (start <= s.length()) {
                     final int nl = s.indexOf('\n', start);
                     if (nl < 0) { line.append(s, start, s.length()); break; }
                     line.append(s, start, nl + 1);
-                    final byte[] c = line.toString().getBytes(StandardCharsets.UTF_8);
+                    final byte[] c = line.toString().getBytes(UTF_8);
                     line.setLength(0);
                     chunks.add(c);
                     out.write(c); out.flush();
@@ -431,8 +433,8 @@ public class RecordingProxy {
             if (u != null && u.hasNonNull("completion_tokens")) spent.addAndGet(u.get("completion_tokens").asLong());
             rec.put("budget_spent_completion_tokens", spent.get());
             rec.put("seq", seq.incrementAndGet());
-            Files.write(journal, json.writeValueAsBytes(rec), StandardOpenOption.CREATE, StandardOpenOption.APPEND);   // APPEND: a journal is never truncated
-            Files.writeString(journal, "\n", StandardOpenOption.APPEND);
+            Files.write(journal, json.writeValueAsBytes(rec), CREATE, APPEND);   // APPEND: a journal is never truncated
+            Files.writeString(journal, "\n", APPEND);
         } catch (Exception e) {
             // the journal must never break the proxy - but losing a journal record (the run's own
             // ground truth for metrics/validity) is worth knowing about, so log it rather than vanish it

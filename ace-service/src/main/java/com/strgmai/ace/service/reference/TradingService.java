@@ -3,10 +3,10 @@ package com.strgmai.ace.service.reference;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
+import static java.time.temporal.ChronoUnit.MILLIS;
 import static java.util.UUID.randomUUID;
 
 /** Port of oracle/reference_server.py: the reference implementation of the frozen contract,
@@ -209,7 +209,7 @@ public class TradingService {
         return m;
     }
 
-    public static Instant now() { return Instant.now().truncatedTo(ChronoUnit.MILLIS); }
+    public static Instant now() { return Instant.now().truncatedTo(MILLIS); }
     public static String iso(Instant t) { return t.toString(); }
 
     public record OrderOutcome(int status, Map<String, Object> body, Object raw) {}

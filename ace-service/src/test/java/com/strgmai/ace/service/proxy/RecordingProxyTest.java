@@ -12,15 +12,15 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -59,7 +59,7 @@ class RecordingProxyTest {
         upstream.createContext("/v1/chat/completions", ex -> {
             ex.getRequestBody().readAllBytes();
             final byte[] body = ("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"}}],"
-                    + "\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}").getBytes(StandardCharsets.UTF_8);
+                    + "\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}").getBytes(UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(200, body.length);
             try (var os = ex.getResponseBody()) { os.write(body); }
@@ -90,7 +90,7 @@ class RecordingProxyTest {
             upstreamSawSessionHeader.set(ex.getRequestHeaders().get(RecordingProxy.SESSION_HEADER));
             ex.getRequestBody().readAllBytes();
             final byte[] body = ("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"}}],"
-                    + "\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}").getBytes(StandardCharsets.UTF_8);
+                    + "\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}").getBytes(UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(200, body.length);
             try (var os = ex.getResponseBody()) { os.write(body); }
@@ -127,7 +127,7 @@ class RecordingProxyTest {
         final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         upstream.createContext("/v1/chat/completions", ex -> {
             ex.getRequestBody().readAllBytes();
-            final byte[] body = "{\"choices\":[],\"usage\":{}}".getBytes(StandardCharsets.UTF_8);
+            final byte[] body = "{\"choices\":[],\"usage\":{}}".getBytes(UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(200, body.length);
             try (var os = ex.getResponseBody()) { os.write(body); }
@@ -164,7 +164,7 @@ class RecordingProxyTest {
             ex.getResponseHeaders().set("Content-Type", "text/event-stream");
             ex.sendResponseHeaders(200, 0);
             try (var os = ex.getResponseBody()) {
-                os.write("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n".getBytes(StandardCharsets.UTF_8));
+                os.write("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n".getBytes(UTF_8));
                 os.flush();
                 firstChunkSent.countDown();
                 Thread.sleep(5_000);   // never reached: the proxy closes this side first
@@ -187,10 +187,10 @@ class RecordingProxyTest {
                 finally { clientDone.complete(null); }
             });
 
-            assertTrue(firstChunkSent.await(5, TimeUnit.SECONDS), "the upstream must have started streaming");
+            assertTrue(firstChunkSent.await(5, SECONDS), "the upstream must have started streaming");
             Thread.sleep(200);   // give the proxy's own relay loop time to actually read that first chunk
             proxy.abortInflight("test abort reason");
-            clientDone.get(5, TimeUnit.SECONDS);
+            clientDone.get(5, SECONDS);
 
             final var rec = new ObjectMapper().readTree(awaitJournalLines(journal).get(0));
             assertTrue(rec.path("client_aborted").asBoolean(false), "the aborted request must be journaled as such");
@@ -245,7 +245,7 @@ class RecordingProxyTest {
         upstream.createContext("/v1/chat/completions", ex -> {
             final var body = new ObjectMapper().readTree(ex.getRequestBody().readAllBytes());
             sawMaxTokens.set(body.path("max_tokens").asInt());
-            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(StandardCharsets.UTF_8);
+            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(200, resp.length);
             try (var os = ex.getResponseBody()) { os.write(resp); }
@@ -321,7 +321,7 @@ class RecordingProxyTest {
         final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         upstream.createContext("/v1/chat/completions", ex -> {
             sawBody.set(new ObjectMapper().readTree(ex.getRequestBody().readAllBytes()));
-            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(StandardCharsets.UTF_8);
+            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(200, resp.length);
             try (var os = ex.getResponseBody()) { os.write(resp); }
@@ -383,7 +383,7 @@ class RecordingProxyTest {
         final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         upstream.createContext("/", ex -> {
             upstreamCalled.set(true);
-            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(StandardCharsets.UTF_8);
+            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(UTF_8);
             ex.sendResponseHeaders(200, resp.length);
             try (var os = ex.getResponseBody()) { os.write(resp); }
         });
@@ -422,7 +422,7 @@ class RecordingProxyTest {
         external.createContext("/v1/chat/completions", ex -> {
             sawAuth.set(ex.getRequestHeaders().get("Authorization"));
             ex.getRequestBody().readAllBytes();
-            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(StandardCharsets.UTF_8);
+            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(200, resp.length);
             try (var os = ex.getResponseBody()) { os.write(resp); }
@@ -433,7 +433,7 @@ class RecordingProxyTest {
         local.createContext("/", ex -> {
             localWasCalled.set(true);
             ex.getRequestBody().readAllBytes();
-            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(StandardCharsets.UTF_8);
+            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(UTF_8);
             ex.sendResponseHeaders(200, resp.length);
             try (var os = ex.getResponseBody()) { os.write(resp); }
         });
@@ -470,7 +470,7 @@ class RecordingProxyTest {
         external.createContext("/v1/chat/completions", ex -> {
             sawAuth.set(ex.getRequestHeaders().get("Authorization"));
             ex.getRequestBody().readAllBytes();
-            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(StandardCharsets.UTF_8);
+            final byte[] resp = "{\"choices\":[],\"usage\":{}}".getBytes(UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(200, resp.length);
             try (var os = ex.getResponseBody()) { os.write(resp); }
@@ -498,7 +498,7 @@ class RecordingProxyTest {
         final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         upstream.createContext("/v1/chat/completions", ex -> {
             ex.getRequestBody().readAllBytes();
-            final byte[] body = "{\"choices\":[{\"message\":{\"content\":\"hi\"}}]}".getBytes(StandardCharsets.UTF_8);
+            final byte[] body = "{\"choices\":[{\"message\":{\"content\":\"hi\"}}]}".getBytes(UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(200, body.length);
             try (var os = ex.getResponseBody()) { os.write(body); }

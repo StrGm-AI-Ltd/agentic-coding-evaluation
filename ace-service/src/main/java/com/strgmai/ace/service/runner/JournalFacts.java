@@ -8,13 +8,14 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.regex.Pattern;
 
 import static java.lang.Math.round;
+import static java.nio.charset.StandardCharsets.ISO_8859_1;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /** Port of run_bench.py's journal_facts (WITH the parse-once-per-version cache from the Python fix):
  *  what was ACTUALLY sent — request counts, error classes, budget refusals, completion tokens,
@@ -223,7 +224,7 @@ public final class JournalFacts {
                             for (int i = 0; i <= lastNl; i++) {
                                 if (data[i] == '\n') {
                                     if (i > lineStart) {
-                                        final Entry e = parseEntry(new String(data, lineStart, i - lineStart, StandardCharsets.UTF_8), off, backend);
+                                        final Entry e = parseEntry(new String(data, lineStart, i - lineStart, UTF_8), off, backend);
                                         if (e != null) entries.add(e);
                                     }
                                     off += (i - lineStart) + 1;   // byte-exact: offsets stay in BYTES whatever the encoding
@@ -306,7 +307,7 @@ public final class JournalFacts {
         try (RandomAccessFile raf = new RandomAccessFile(p.toFile(), "r")) {
             raf.seek(off);
             final String line = raf.readLine();
-            final JsonNode r = JSON.readTree(new String(line.getBytes(StandardCharsets.ISO_8859_1), StandardCharsets.UTF_8));
+            final JsonNode r = JSON.readTree(new String(line.getBytes(ISO_8859_1), UTF_8));
             return r.path("request");
         } catch (Exception e) {
             // sampler_effective/system_prompt_sha silently end up uncomputed for this journal - a
@@ -353,7 +354,7 @@ public final class JournalFacts {
     static String jsonQuote(String t) { return "\"" + t.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""; }
 
     static String sha(final String s) {
-        try { return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8))).substring(0, 16); }
+        try { return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(s.getBytes(UTF_8))).substring(0, 16); }
         catch (Exception e) { log.debug("SHA-256 unavailable: {}", e.toString()); return null; }
     }
 }

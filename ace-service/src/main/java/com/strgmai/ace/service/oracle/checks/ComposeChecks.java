@@ -19,6 +19,7 @@ import java.util.regex.Pattern;
 
 import static java.lang.Math.min;
 import static java.lang.System.currentTimeMillis;
+import static java.util.regex.Pattern.CASE_INSENSITIVE;
 
 /** Port of oracle/checks/04_compose.py: runtime lifecycle. sweep stale stacks -> compose build ->
  *  up -> C1/C2 health -> black-box suite (F*) -> down.
@@ -173,9 +174,9 @@ public final class ComposeChecks {
         // local path (R5 C-19) - an empty result then reads as "clean", not "could not check"
         try { txt = Files.readString(composeFile); }
         catch (IOException e) { log.warn("could not read {} for the local-path check: {}", composeFile, e.toString()); return hits; }
-        for (var m : Pattern.compile("(?m)^\\s*(?:context|dockerfile)\\s*:\\s*(/\\S+)", Pattern.CASE_INSENSITIVE).matcher(txt).results().toList())
+        for (var m : Pattern.compile("(?m)^\\s*(?:context|dockerfile)\\s*:\\s*(/\\S+)", CASE_INSENSITIVE).matcher(txt).results().toList())
             hits.add(m.group(0).strip());
-        for (var m : Pattern.compile("(?m)^\\s*-\\s*['\"]?((?:\\.{1,2}/|/(?!dev/|proc/|sys/))[^:'\"\\s]+):", Pattern.CASE_INSENSITIVE).matcher(txt).results().toList())
+        for (var m : Pattern.compile("(?m)^\\s*-\\s*['\"]?((?:\\.{1,2}/|/(?!dev/|proc/|sys/))[^:'\"\\s]+):", CASE_INSENSITIVE).matcher(txt).results().toList())
             hits.add(m.group(0).strip());
         return hits;
     }

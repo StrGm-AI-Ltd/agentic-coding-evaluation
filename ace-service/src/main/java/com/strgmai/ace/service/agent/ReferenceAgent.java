@@ -26,7 +26,6 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 import static java.lang.Math.max;
@@ -36,6 +35,7 @@ import static java.lang.System.currentTimeMillis;
 import static java.lang.System.getenv;
 import static java.lang.System.nanoTime;
 import static java.lang.Thread.currentThread;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 /** Port of runner/agent_loop.py, the reference agent, on LangChain4j. The harness owns every part
  *  of the loop: four tools (read/write/edit/bash with mechanical output hygiene), structural
@@ -979,7 +979,7 @@ public class ReferenceAgent {
             final long streamPollMs) throws InterruptedException {
         while (true) {
             try {
-                return collector.future.get(streamPollMs, TimeUnit.MILLISECONDS);
+                return collector.future.get(streamPollMs, MILLISECONDS);
             } catch (java.util.concurrent.TimeoutException pollTimeout) {
                 final long idleMs = currentTimeMillis() - collector.lastActivityMs;
                 // firstTokenTimeoutMs <= 0 means unlimited (the system-wide "0 = no budget"

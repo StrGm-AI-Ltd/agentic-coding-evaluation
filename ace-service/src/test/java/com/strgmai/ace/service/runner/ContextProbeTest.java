@@ -6,13 +6,13 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
 
 import static java.lang.Math.max;
 import static java.lang.Math.min;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** The context probe's pure derivations: the effective window is min(memory, performance, operator
@@ -110,7 +110,7 @@ class ContextProbeTest {
     void postExtractsTheErrorMessageFromANonStreamingErrorResponse() throws Exception {
         final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         upstream.createContext("/chat/completions", ex -> {
-            final byte[] body = "{\"error\":{\"message\":\"This model's maximum context length is 65536 tokens\",\"type\":\"invalid_request_error\"}}".getBytes(StandardCharsets.UTF_8);
+            final byte[] body = "{\"error\":{\"message\":\"This model's maximum context length is 65536 tokens\",\"type\":\"invalid_request_error\"}}".getBytes(UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(400, body.length);
             try (var os = ex.getResponseBody()) { os.write(body); }
@@ -129,7 +129,7 @@ class ContextProbeTest {
     void postLeavesErrorNullWhenTheNonStreamingResponseHasNoErrorField() throws Exception {
         final HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         upstream.createContext("/chat/completions", ex -> {
-            final byte[] body = "{\"choices\":[{\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5}}".getBytes(StandardCharsets.UTF_8);
+            final byte[] body = "{\"choices\":[{\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5}}".getBytes(UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(200, body.length);
             try (var os = ex.getResponseBody()) { os.write(body); }

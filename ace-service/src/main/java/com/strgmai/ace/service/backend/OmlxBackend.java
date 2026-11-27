@@ -16,7 +16,6 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -26,6 +25,7 @@ import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.lang.System.currentTimeMillis;
 import static java.lang.Thread.currentThread;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 /** #65: the reference/default `LocalModelBackend` - oMLX, on this one machine. Every method here is
  *  a verbatim relocation of logic that used to live inline in `ContextProbe`; none of it is
@@ -72,7 +72,7 @@ public final class OmlxBackend implements LocalModelBackend {
     public void restart(final BooleanSupplier isHealthy) {
         if (!Files.exists(bin)) throw new IllegalStateException("~/.omlx/bin/omlx not present: cannot restart the server");
         final List<Long> old = pids();
-        try { new ProcessBuilder(bin.toString(), "restart").start().waitFor(180, TimeUnit.SECONDS); } catch (Exception e) { throw new IllegalStateException(e); }
+        try { new ProcessBuilder(bin.toString(), "restart").start().waitFor(180, SECONDS); } catch (Exception e) { throw new IllegalStateException(e); }
         final long t0 = currentTimeMillis();
         boolean healthy = false;
         while (currentTimeMillis() - t0 < 150_000) {
@@ -89,7 +89,7 @@ public final class OmlxBackend implements LocalModelBackend {
             } else if (!survivors.isEmpty() && !healthy) {                   // nothing replaced the old server: kill it and start fresh
                 for (long p : survivors) ProcessHandle.of(p).ifPresent(ProcessHandle::destroy);
                 Thread.sleep(3000);
-                new ProcessBuilder(bin.toString(), "start").start().waitFor(180, TimeUnit.SECONDS);
+                new ProcessBuilder(bin.toString(), "start").start().waitFor(180, SECONDS);
                 final long t = currentTimeMillis();
                 while (currentTimeMillis() - t < 150_000) {
                     Thread.sleep(5000);

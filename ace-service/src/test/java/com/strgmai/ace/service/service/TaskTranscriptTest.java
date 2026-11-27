@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static java.nio.file.StandardOpenOption.APPEND;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** The operator-facing "Live" tab's own text rendering - distinct from (and deliberately
@@ -122,7 +123,7 @@ class TaskTranscriptTest {
         assertEquals("USER:\nfirst", first);
 
         Files.writeString(file, "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second\"}]}}\n",
-                java.nio.file.StandardOpenOption.APPEND);
+                APPEND);
         final var second = transcript.poll(sessionsDir, "T13", 20_000);
         assertEquals("USER:\nsecond", second, "only the NEW line, not first+second re-rendered");
     }
@@ -154,7 +155,7 @@ class TaskTranscriptTest {
         assertNull(transcript.poll(sessionsDir, "T13", 20_000), "not yet readable - must not match, and must not cache that as permanent");
 
         Files.writeString(file, "\"}\n{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}}\n",
-                java.nio.file.StandardOpenOption.APPEND);
+                APPEND);
         assertEquals("USER:\nhi", transcript.poll(sessionsDir, "T13", 20_000),
                 "now that the header is complete, this file must be recognized as T13's - the earlier failed read must not have been cached forever");
     }

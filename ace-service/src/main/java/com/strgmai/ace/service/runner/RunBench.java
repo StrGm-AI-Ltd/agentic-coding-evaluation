@@ -31,7 +31,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
@@ -42,7 +41,11 @@ import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.lang.Math.round;
 import static java.lang.System.currentTimeMillis;
+import static java.nio.file.StandardOpenOption.APPEND;
+import static java.nio.file.StandardOpenOption.CREATE;
 import static java.util.Comparator.comparingLong;
+import static java.util.regex.Pattern.CASE_INSENSITIVE;
+import static java.util.regex.Pattern.MULTILINE;
 
 /** Port of runner/run_bench.py's run_once — now at full scope. Isolation: each run gets a fresh
  *  workspace + scrubbed HOME with the Docker shim on PATH; snapshots are committed per phase and
@@ -182,7 +185,7 @@ public class RunBench {
      *  from what scanProgressStatus() itself accepts. */
     private static Pattern statusLineRegex(final String tid) {
         return Pattern.compile("^\\s*(?:[-*]\\s*)?\\*{0,3}\\s*\\|?\\s*\\*{0,3}" + Pattern.quote(tid)
-                + "\\*{0,3}\\s*\\|\\s*\\*{0,3}(\\w+)\\*{0,3}(?:\\s*\\|\\s*\\*{0,3}(.*))?$", Pattern.CASE_INSENSITIVE);
+                + "\\*{0,3}\\s*\\|\\s*\\*{0,3}(\\w+)\\*{0,3}(?:\\s*\\|\\s*\\*{0,3}(.*))?$", CASE_INSENSITIVE);
     }
 
     private static ReportedStatus scanProgressStatus(final Path ws, final String tid, final boolean excludeHarnessFallback) {
@@ -541,7 +544,7 @@ public class RunBench {
                 entry.put("compaction_reclaimed", reclaimed);
             }
             Files.writeString(rd.resolve("task_attempts.jsonl"), json.writeValueAsString(entry) + "\n",
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                    CREATE, APPEND);
         } catch (Exception e) { log.warn("could not log task attempt for {}: {}", taskId, e.toString()); }
     }
 
@@ -1371,7 +1374,7 @@ public class RunBench {
             final Path pp = ws.resolve("docs/PROGRESS.md");
             Files.createDirectories(pp.getParent());
             final String existing = Files.isRegularFile(pp) ? Files.readString(pp) : "";
-            Files.writeString(pp, (existing.isEmpty() || existing.endsWith("\n") ? "" : "\n") + Packs.fallbackStatus(name, tail) + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            Files.writeString(pp, (existing.isEmpty() || existing.endsWith("\n") ? "" : "\n") + Packs.fallbackStatus(name, tail) + "\n", CREATE, APPEND);
             reported = "unfinished";
             out.put("status_by_harness", true);
             if (upstreamError != null && !upstreamError.isBlank()) out.put("upstream_error_text", upstreamError);
@@ -2196,7 +2199,7 @@ public class RunBench {
                 Files.createDirectories(pp.getParent());
                 final String existing = Files.isRegularFile(pp) ? Files.readString(pp) : "";
                 Files.writeString(pp, (existing.isEmpty() || existing.endsWith("\n") ? "" : "\n") + line.strip() + "\n",
-                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                        CREATE, APPEND);
                 log.info("run: salvaged {}'s own status line from its rescue session's final response text "
                         + "(the model answered but never called write/edit): {}", tid, line.strip());
                 return;
@@ -2267,7 +2270,7 @@ public class RunBench {
     static void recordLesson(final Map<String, Object> cfg, final Path rd, final String heading, final String body) {
         try {
             Files.writeString(rd.resolve("lessons.md"), "## " + heading + "\n" + body.strip() + "\n\n",
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                    CREATE, APPEND);
         } catch (IOException e) {
             log.warn("could not append a lesson ({}): {}", heading, e.toString());
             return;
@@ -2322,7 +2325,7 @@ public class RunBench {
      *  part of the entry it introduces. */
     static List<String> splitLessonEntries(final String text) {
         final List<Integer> starts = new ArrayList<>();
-        final Matcher m = Pattern.compile("(?=^## )", Pattern.MULTILINE).matcher(text);
+        final Matcher m = Pattern.compile("(?=^## )", MULTILINE).matcher(text);
         while (m.find()) starts.add(m.start());
         final List<String> entries = new ArrayList<>();
         for (int i = 0; i < starts.size(); i++)
@@ -2647,7 +2650,7 @@ public class RunBench {
             // tagged records merge into the main journal; attribution is by tag (parallel windows overlap)
             final Path tj = taskJournals.get(t.id);
             if (tj != null && Files.isRegularFile(tj)) {
-                Files.writeString(journal, Files.readString(tj), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                Files.writeString(journal, Files.readString(tj), CREATE, APPEND);
                 Files.deleteIfExists(tj);
             }
         }

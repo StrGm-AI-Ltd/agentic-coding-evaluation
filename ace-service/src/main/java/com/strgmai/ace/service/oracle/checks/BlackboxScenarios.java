@@ -18,6 +18,7 @@ import java.util.regex.Pattern;
 import static java.lang.Math.abs;
 import static java.lang.Math.min;
 import static java.lang.System.currentTimeMillis;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /** Port of oracle/checks/06_blackbox.py: THE correctness score. Oracle-owned scenarios driven
  *  over HTTP against the frozen contract; the agent never sees them. Every scenario creates ITS
@@ -352,7 +353,7 @@ public final class BlackboxScenarios {
         }
         Map<String, Map<String, List<String>>> contract;
         try (var in = getClass().getResourceAsStream("/contract/openapi.yaml")) {
-            contract = parseOpenApiPaths(new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+            contract = parseOpenApiPaths(new String(in.readAllBytes(), UTF_8));
         } catch (Exception e) { return fail("F6", "frozen contract unreadable: " + e); }
         final List<String> problems = new ArrayList<>();
         for (Object[] c : calls) {
